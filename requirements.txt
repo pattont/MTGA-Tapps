@@ -1,0 +1,13 @@
+# Core dependencies
+watchdog>=3.0.0  # File system monitoring for log watching
+python-dateutil>=2.8.2  # Date parsing for log timestamps
+
+# Optional UI dependencies (install when ready for GUI)
+# PyQt6>=6.6.0  # Cross-platform GUI framework
+# pyqt6-tools>=6.6.0  # Additional Qt tools
+
+# Development dependencies
+pytest>=7.4.0
+pytest-cov>=4.1.0
+black>=23.0.0
+flake8>=6.0.0
