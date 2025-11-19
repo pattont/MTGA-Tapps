@@ -17,16 +17,23 @@ class GameState:
         self.player_life = 20
         self.opponent_life = 20
         self.turn_number = 0
-        self.active_player = None  # 1 for you, 2 for opponent
+        self.active_player = None  # Seat ID of active player
         self.phase = ""
         self.step = ""
         self.in_match = False
         self.seen_instance_ids: Set[int] = set()  # Track cards we've already announced
         self.last_turn_announced = 0
+        self.player_seat_id: Optional[int] = None  # Auto-detected player seat
+        self.opponent_seat_id: Optional[int] = None  # Auto-detected opponent seat
 
     def reset(self):
         """Reset the game state for a new match."""
+        player_seat = self.player_seat_id
+        opponent_seat = self.opponent_seat_id
         self.__init__()
+        # Preserve seat IDs across matches
+        self.player_seat_id = player_seat
+        self.opponent_seat_id = opponent_seat
 
 
 class CardEvent:
@@ -73,7 +80,17 @@ class CardTracker:
         print("=" * 70)
         print(f"📂 Monitoring: {self.parser.log_path}")
         print(f"💾 Card cache: {len(self.card_db.cache)} cards loaded")
-        print("\n   Waiting for match to start...")
+
+        # Try to detect player seat from recent log history
+        print("🔍 Detecting player seat ID...")
+        self._detect_player_seat_from_log()
+
+        if self.game_state.player_seat_id:
+            print(f"✓ You are Seat {self.game_state.player_seat_id}")
+        else:
+            print("⚠ Could not detect seat ID yet - will detect during next match")
+
+        print("\n   Waiting for game events...")
         print("   Play a game in MTGA to see cards tracked in real-time!")
         print("\n   Press Ctrl+C to stop")
         print("=" * 70 + "\n")
@@ -96,6 +113,45 @@ class CardTracker:
         """Stop tracking cards."""
         self.running = False
 
+    def _detect_player_seat_from_log(self):
+        """Scan recent log history to detect player seat ID."""
+        try:
+            with open(self.parser.log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                # Read last 5000 lines to find seat assignment
+                lines = f.readlines()
+                recent_lines = lines[-5000:] if len(lines) > 5000 else lines
+
+                for line in recent_lines:
+                    # Look for matchGameRoomStateChangedEvent
+                    if "matchgameroomstatechangedevent" in line.lower():
+                        json_data = self.parser.parse_json_from_line(line)
+                        if json_data and "matchGameRoomStateChangedEvent" in json_data:
+                            event = json_data["matchGameRoomStateChangedEvent"]
+                            if "gameRoomInfo" in event and "gameRoomConfig" in event["gameRoomInfo"]:
+                                config = event["gameRoomInfo"]["gameRoomConfig"]
+                                if "reservedPlayers" in config and len(config["reservedPlayers"]) >= 2:
+                                    self.game_state.player_seat_id = config["reservedPlayers"][0].get("systemSeatId", 1)
+                                    self.game_state.opponent_seat_id = config["reservedPlayers"][1].get("systemSeatId", 2)
+                                    return
+
+                # Fallback: Look for game state messages
+                for line in reversed(recent_lines):
+                    if self.game_state.player_seat_id:
+                        break
+                    json_data = self.parser.parse_json_from_line(line)
+                    if json_data and "greToClientEvent" in json_data:
+                        gre = json_data["greToClientEvent"]
+                        if "greToClientMessages" in gre:
+                            for msg in gre["greToClientMessages"]:
+                                if msg.get("type") == "GREMessageType_GameStateMessage":
+                                    game_state = msg.get("gameStateMessage", {})
+                                    if "players" in game_state and len(game_state["players"]) >= 2:
+                                        self.game_state.player_seat_id = game_state["players"][0].get("systemSeatNumber", 1)
+                                        self.game_state.opponent_seat_id = game_state["players"][1].get("systemSeatNumber", 2)
+                                        return
+        except Exception as e:
+            print(f"Warning: Could not scan log for seat detection: {e}")
+
     def _process_new_events(self):
         """Process new events from the log file."""
         for line in self.parser.read_new_lines():
@@ -107,10 +163,49 @@ class CardTracker:
         Args:
             line: A line from the MTGA log file.
         """
+        # Try to detect player seat if not yet detected
+        if self.game_state.player_seat_id is None:
+            self._try_detect_player_seat(line)
+
         # Look for card-related events
         event = self.parser.extract_card_events(line)
         if event:
             self._handle_event(event)
+
+    def _try_detect_player_seat(self, line: str):
+        """Try to detect which seat ID belongs to the player.
+
+        Args:
+            line: A line from the MTGA log file.
+        """
+        # Look for matchGameRoomStateChangedEvent
+        if "matchgameroomstatechangedevent" in line.lower():
+            json_data = self.parser.parse_json_from_line(line)
+            if json_data and "matchGameRoomStateChangedEvent" in json_data:
+                event = json_data["matchGameRoomStateChangedEvent"]
+                if "gameRoomInfo" in event and "gameRoomConfig" in event["gameRoomInfo"]:
+                    config = event["gameRoomInfo"]["gameRoomConfig"]
+                    if "reservedPlayers" in config and len(config["reservedPlayers"]) >= 2:
+                        # First player is typically you
+                        self.game_state.player_seat_id = config["reservedPlayers"][0].get("systemSeatId", 1)
+                        self.game_state.opponent_seat_id = config["reservedPlayers"][1].get("systemSeatId", 2)
+                        print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id}")
+
+        # Fallback: Look at game state to infer from priority/starting player
+        # The player who goes first in a game often has priority first
+        if self.game_state.player_seat_id is None:
+            json_data = self.parser.parse_json_from_line(line)
+            if json_data and "greToClientEvent" in json_data:
+                gre = json_data["greToClientEvent"]
+                if "greToClientMessages" in gre:
+                    for msg in gre["greToClientMessages"]:
+                        if msg.get("type") == "GREMessageType_GameStateMessage":
+                            game_state = msg.get("gameStateMessage", {})
+                            if "players" in game_state and len(game_state["players"]) >= 2:
+                                # Use first player as default
+                                self.game_state.player_seat_id = game_state["players"][0].get("systemSeatNumber", 1)
+                                self.game_state.opponent_seat_id = game_state["players"][1].get("systemSeatNumber", 2)
+                                print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id} (inferred)")
 
 
     def _handle_event(self, event: Dict[str, Any]):
@@ -139,20 +234,20 @@ class CardTracker:
                 seat_id = player.get("systemSeatNumber")
                 life = player.get("lifeTotal")
 
-                if life is not None:
-                    if seat_id == 1:
+                if life is not None and seat_id is not None:
+                    if seat_id == self.game_state.player_seat_id:
                         old_life = self.game_state.player_life
                         self.game_state.player_life = life
-                        if old_life != life and self.game_state.in_match:
+                        if old_life != life and self.game_state.in_match and old_life != 20:
                             diff = life - old_life
                             if diff > 0:
                                 print(f"💚 You gained {diff} life ({life})")
                             elif diff < 0:
                                 print(f"💔 You lost {-diff} life ({life})")
-                    elif seat_id == 2:
+                    elif seat_id == self.game_state.opponent_seat_id:
                         old_life = self.game_state.opponent_life
                         self.game_state.opponent_life = life
-                        if old_life != life and self.game_state.in_match:
+                        if old_life != life and self.game_state.in_match and old_life != 20:
                             diff = life - old_life
                             if diff > 0:
                                 print(f"   Opponent gained {diff} life ({life})")
@@ -177,7 +272,7 @@ class CardTracker:
                 # Announce turn change
                 if turn_num > self.game_state.last_turn_announced:
                     self.game_state.last_turn_announced = turn_num
-                    player_name = "YOUR" if active_player == 1 else "OPPONENT'S"
+                    player_name = "YOUR" if active_player == self.game_state.player_seat_id else "OPPONENT'S"
                     print(f"\n{'='*70}")
                     print(f"⚔️  Turn {turn_num} - {player_name} TURN")
                     print(f"   Life: You {self.game_state.player_life} - {self.game_state.opponent_life} Opponent")
@@ -227,8 +322,8 @@ class CardTracker:
                     owner_seat = card_obj.get("ownerSeatId")
                     card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
 
-                    player = "You" if owner_seat == 1 else "Opponent"
-                    player_symbol = "🎯" if owner_seat == 1 else "👤"
+                    player = "You" if owner_seat == self.game_state.player_seat_id else "Opponent"
+                    player_symbol = "🎯" if owner_seat == self.game_state.player_seat_id else "👤"
 
                     # Get card type info
                     card_types = card_obj.get("cardTypes", [])
@@ -244,7 +339,7 @@ class CardTracker:
 
                     # Track the event
                     event = CardEvent(card_name, player.lower())
-                    if owner_seat == 1:
+                    if owner_seat == self.game_state.player_seat_id:
                         self.player_cards.append(event)
                     else:
                         self.opponent_cards.append(event)
