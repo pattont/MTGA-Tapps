@@ -5,8 +5,28 @@ Tracks cards played by the player and opponents.
 
 import time
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Set
 from .log_parser import MTGALogParser
+from .card_database import CardDatabase
+
+
+class GameState:
+    """Tracks the current game state."""
+
+    def __init__(self):
+        self.player_life = 20
+        self.opponent_life = 20
+        self.turn_number = 0
+        self.active_player = None  # 1 for you, 2 for opponent
+        self.phase = ""
+        self.step = ""
+        self.in_match = False
+        self.seen_instance_ids: Set[int] = set()  # Track cards we've already announced
+        self.last_turn_announced = 0
+
+    def reset(self):
+        """Reset the game state for a new match."""
+        self.__init__()
 
 
 class CardEvent:
@@ -31,27 +51,32 @@ class CardEvent:
 class CardTracker:
     """Tracks cards played during MTGA matches."""
 
-    def __init__(self, log_parser: Optional[MTGALogParser] = None):
+    def __init__(self, log_parser: Optional[MTGALogParser] = None,
+                 card_db: Optional[CardDatabase] = None):
         """Initialize the card tracker.
 
         Args:
             log_parser: Optional MTGALogParser instance. If not provided, creates one.
+            card_db: Optional CardDatabase instance. If not provided, creates one.
         """
         self.parser = log_parser or MTGALogParser()
+        self.card_db = card_db or CardDatabase()
+        self.game_state = GameState()
         self.player_cards: List[CardEvent] = []
         self.opponent_cards: List[CardEvent] = []
         self.running = False
 
     def start(self):
         """Start tracking cards."""
+        print("\n" + "=" * 70)
+        print("🎮 MTGA Card Tracker - Real-time Match Analyzer")
         print("=" * 70)
-        print("MTGA Card Tracker")
-        print("=" * 70)
-        print(f"Monitoring log file: {self.parser.log_path}")
-        print("Starting from current position (new events only)...")
-        print("Press Ctrl+C to stop")
-        print("=" * 70)
-        print()
+        print(f"📂 Monitoring: {self.parser.log_path}")
+        print(f"💾 Card cache: {len(self.card_db.cache)} cards loaded")
+        print("\n   Waiting for match to start...")
+        print("   Play a game in MTGA to see cards tracked in real-time!")
+        print("\n   Press Ctrl+C to stop")
+        print("=" * 70 + "\n")
 
         # Start from current end of file
         self.parser.reset_position()
@@ -60,10 +85,10 @@ class CardTracker:
         try:
             while self.running:
                 self._process_new_events()
-                time.sleep(1)  # Check for new events every second
+                time.sleep(0.5)  # Check for new events twice per second
         except KeyboardInterrupt:
             print("\n" + "=" * 70)
-            print("Stopping tracker...")
+            print("🛑 Stopping tracker...")
             self._print_summary()
             print("=" * 70)
 
@@ -87,48 +112,6 @@ class CardTracker:
         if event:
             self._handle_event(event)
 
-        # Also look for simpler card play patterns
-        # This is a basic implementation - MTGA log parsing can be quite complex
-        if "CardInstance" in line or "cast" in line.lower():
-            # Try to extract card name
-            card_info = self._extract_card_info(line)
-            if card_info:
-                self._log_card_play(card_info)
-
-    def _extract_card_info(self, line: str) -> Optional[Dict[str, Any]]:
-        """Extract card information from a log line.
-
-        This is a simplified extraction. MTGA logs are complex and this
-        may need refinement based on actual log format.
-
-        Args:
-            line: A line from the MTGA log file.
-
-        Returns:
-            Dictionary with card info or None.
-        """
-        # Parse JSON if present
-        data = self.parser.parse_json_from_line(line)
-        if not data:
-            return None
-
-        card_info = {}
-
-        # Look for card instance data
-        if "grpId" in data:  # Card ID
-            card_info["card_id"] = data["grpId"]
-
-        # Look for zone transfers (when cards move zones, like hand to battlefield)
-        if "zoneId" in data or "destinationZoneId" in data:
-            card_info["zone_change"] = True
-
-        # Try to determine if it's player or opponent
-        # This is simplified - actual determination requires tracking seat IDs
-        if "ownerSeatId" in data or "controllerSeatId" in data:
-            seat_id = data.get("ownerSeatId") or data.get("controllerSeatId")
-            card_info["seat_id"] = seat_id
-
-        return card_info if card_info else None
 
     def _handle_event(self, event: Dict[str, Any]):
         """Handle a card event.
@@ -136,56 +119,207 @@ class CardTracker:
         Args:
             event: Event data extracted from the log.
         """
-        # This is a placeholder for more sophisticated event handling
-        # You would parse the event data to extract card names, players, etc.
-        if event.get("type") == "zone_change":
-            # Handle zone changes (cards moving between zones)
-            pass
+        event_type = event.get("type")
+        event_data = event.get("data", {})
 
-    def _log_card_play(self, card_info: Dict[str, Any]):
-        """Log a card play event to console.
+        if event_type != "game_state":
+            return
 
-        Args:
-            card_info: Information about the card played.
-        """
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        # Update game state first
+        self._update_game_state(event_data)
 
-        # Determine player (simplified - would need proper seat tracking)
-        player = "Player" if card_info.get("seat_id", 1) == 1 else "Opponent"
+        # Process important events only
+        self._process_game_events(event_data)
 
-        # Get card ID (would need card database to convert to name)
-        card_id = card_info.get("card_id", "Unknown")
+    def _update_game_state(self, data: Dict[str, Any]):
+        """Update the tracked game state from event data."""
+        # Update life totals
+        if "players" in data:
+            for player in data["players"]:
+                seat_id = player.get("systemSeatNumber")
+                life = player.get("lifeTotal")
 
-        print(f"[{timestamp}] {player} played card ID: {card_id}")
+                if life is not None:
+                    if seat_id == 1:
+                        old_life = self.game_state.player_life
+                        self.game_state.player_life = life
+                        if old_life != life and self.game_state.in_match:
+                            diff = life - old_life
+                            if diff > 0:
+                                print(f"💚 You gained {diff} life ({life})")
+                            elif diff < 0:
+                                print(f"💔 You lost {-diff} life ({life})")
+                    elif seat_id == 2:
+                        old_life = self.game_state.opponent_life
+                        self.game_state.opponent_life = life
+                        if old_life != life and self.game_state.in_match:
+                            diff = life - old_life
+                            if diff > 0:
+                                print(f"   Opponent gained {diff} life ({life})")
+                            elif diff < 0:
+                                print(f"   Opponent lost {-diff} life ({life})")
 
-        # Create event
-        event = CardEvent(
-            card_name=f"Card_{card_id}",
-            player=player.lower(),
-        )
+        # Update turn info
+        if "turnInfo" in data:
+            turn_info = data["turnInfo"]
+            turn_num = turn_info.get("turnNumber")
+            active_player = turn_info.get("activePlayer")
+            phase = turn_info.get("phase", "")
+            step = turn_info.get("step", "")
 
-        # Store event
-        if player == "Player":
-            self.player_cards.append(event)
-        else:
-            self.opponent_cards.append(event)
+            # Detect new turn
+            if turn_num and turn_num != self.game_state.turn_number:
+                self.game_state.turn_number = turn_num
+                self.game_state.active_player = active_player
+                self.game_state.phase = phase
+                self.game_state.step = step
+
+                # Announce turn change
+                if turn_num > self.game_state.last_turn_announced:
+                    self.game_state.last_turn_announced = turn_num
+                    player_name = "YOUR" if active_player == 1 else "OPPONENT'S"
+                    print(f"\n{'='*70}")
+                    print(f"⚔️  Turn {turn_num} - {player_name} TURN")
+                    print(f"   Life: You {self.game_state.player_life} - {self.game_state.opponent_life} Opponent")
+                    print(f"{'='*70}\n")
+
+                    if not self.game_state.in_match:
+                        self.game_state.in_match = True
+
+    def _process_game_events(self, data: Dict[str, Any]):
+        """Process and display important game events."""
+        # Process annotations for high-level events
+        if "annotations" in data:
+            for annotation in data["annotations"]:
+                self._process_annotation(annotation, data.get("gameObjects", []))
+
+    def _process_annotation(self, annotation: Dict[str, Any], game_objects: List[Dict[str, Any]]):
+        """Process a single annotation (game event)."""
+        ann_type = annotation.get("type", [])
+        affected_ids = annotation.get("affectedIds", [])
+        details = annotation.get("details", [])
+
+        # Extract category and other details
+        category = None
+        for detail in details:
+            if detail.get("key") == "category":
+                category = detail.get("valueString", [None])[0]
+
+        # Only process if we haven't seen this card instance before
+        if not affected_ids:
+            return
+
+        instance_id = affected_ids[0]
+
+        # Find the card object for this instance
+        card_obj = None
+        for obj in game_objects:
+            if obj.get("instanceId") == instance_id:
+                card_obj = obj
+                break
+
+        # Handle different annotation types
+        if "AnnotationType_ZoneTransfer" in ann_type:
+            if category == "CastSpell" and instance_id not in self.game_state.seen_instance_ids:
+                self.game_state.seen_instance_ids.add(instance_id)
+                if card_obj:
+                    grp_id = card_obj.get("grpId")
+                    owner_seat = card_obj.get("ownerSeatId")
+                    card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
+
+                    player = "You" if owner_seat == 1 else "Opponent"
+                    player_symbol = "🎯" if owner_seat == 1 else "👤"
+
+                    # Get card type info
+                    card_types = card_obj.get("cardTypes", [])
+                    type_str = self._format_card_type(card_types)
+
+                    # Format output based on card type
+                    if "CardType_Creature" in card_types:
+                        power = card_obj.get("power", {}).get("value", "?")
+                        toughness = card_obj.get("toughness", {}).get("value", "?")
+                        print(f"{player_symbol} {player:8} cast {card_name} ({type_str} {power}/{toughness})")
+                    else:
+                        print(f"{player_symbol} {player:8} cast {card_name} ({type_str})")
+
+                    # Track the event
+                    event = CardEvent(card_name, player.lower())
+                    if owner_seat == 1:
+                        self.player_cards.append(event)
+                    else:
+                        self.opponent_cards.append(event)
+
+            elif category == "Destroy":
+                if card_obj:
+                    grp_id = card_obj.get("grpId")
+                    card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
+                    print(f"💥 {card_name} was destroyed")
+
+            elif category == "Damage":
+                # Track damage events
+                pass  # Could be implemented for more detailed tracking
+
+        elif "AnnotationType_Scry" in ann_type:
+            # Scry events
+            pass  # Could show scry information
+
+    def _format_card_type(self, card_types: List[str]) -> str:
+        """Format card types for display."""
+        if not card_types:
+            return "Card"
+
+        # Clean up and prioritize card types
+        types = [t.replace("CardType_", "") for t in card_types]
+
+        # Show main types
+        main_types = []
+        for t in ["Creature", "Instant", "Sorcery", "Enchantment", "Artifact", "Planeswalker", "Land"]:
+            if t in types:
+                main_types.append(t)
+
+        return ", ".join(main_types) if main_types else "Card"
 
     def _print_summary(self):
         """Print a summary of tracked cards."""
         print()
-        print("Session Summary:")
-        print(f"  Your cards played: {len(self.player_cards)}")
-        print(f"  Opponent cards played: {len(self.opponent_cards)}")
+        print("📊 Session Summary")
+        print("=" * 70)
+
+        if not self.game_state.in_match and not self.player_cards:
+            print("   No matches tracked this session.")
+            print("   Make sure to start the tracker before playing a game!")
+            return
+
+        print(f"   Final Life: You {self.game_state.player_life} - {self.game_state.opponent_life} Opponent")
+        print(f"   Turns Played: {self.game_state.turn_number}")
+        print(f"   Your cards played: {len(self.player_cards)}")
+        print(f"   Opponent cards played: {len(self.opponent_cards)}")
 
         if self.player_cards:
-            print("\nYour cards:")
-            for event in self.player_cards[-10:]:  # Show last 10
-                print(f"  - {event.card_name} at {event.timestamp.strftime('%H:%M:%S')}")
+            print(f"\n   🎯 Your Cards This Game:")
+            # Count duplicates
+            card_counts = {}
+            for event in self.player_cards:
+                card_counts[event.card_name] = card_counts.get(event.card_name, 0) + 1
+
+            for card_name, count in sorted(card_counts.items()):
+                if count > 1:
+                    print(f"      • {card_name} x{count}")
+                else:
+                    print(f"      • {card_name}")
 
         if self.opponent_cards:
-            print("\nOpponent cards:")
-            for event in self.opponent_cards[-10:]:  # Show last 10
-                print(f"  - {event.card_name} at {event.timestamp.strftime('%H:%M:%S')}")
+            print(f"\n   👤 Opponent's Cards This Game:")
+            # Count duplicates
+            card_counts = {}
+            for event in self.opponent_cards:
+                card_counts[event.card_name] = card_counts.get(event.card_name, 0) + 1
+
+            for card_name, count in sorted(card_counts.items()):
+                if count > 1:
+                    print(f"      • {card_name} x{count}")
+                else:
+                    print(f"      • {card_name}")
 
     def get_player_cards(self) -> List[CardEvent]:
         """Get list of cards played by the player."""
