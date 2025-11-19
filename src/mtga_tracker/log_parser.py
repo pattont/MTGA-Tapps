@@ -73,8 +73,29 @@ class MTGALogParser:
                 f.seek(self.last_position)
 
                 # Read new lines
+                # Handle case where JSON might be on next line after log prefix
+                prev_line = None
                 for line in f:
-                    yield line.rstrip()
+                    line = line.rstrip()
+                    
+                    # If current line is JSON and previous had a pattern, combine
+                    if line.startswith("{") and prev_line:
+                        if any(pattern in prev_line.lower() for pattern in ["gretoclientevent", "gamestatemessage", "greto"]):
+                            # Combine previous line with JSON
+                            combined = prev_line + " " + line
+                            yield combined
+                            prev_line = None
+                            continue
+                    
+                    # If we had a previous line, yield it
+                    if prev_line:
+                        yield prev_line
+                    
+                    prev_line = line
+
+                # Yield any remaining line
+                if prev_line:
+                    yield prev_line
 
                 # Update position
                 self.last_position = f.tell()
@@ -115,15 +136,23 @@ class MTGALogParser:
         Returns:
             Dictionary with event data if a card event is found, None otherwise.
         """
-        # Look for common card event indicators in MTGA logs
+        # Look for common card event indicators in MTGA logs (case-insensitive)
+        line_lower = line.lower()
         card_event_patterns = [
-            "GameStateMessage",
-            "GREToClientEvent",
-            "ClientToGREMessage",
+            "gamestatemessage",
+            "gretoclientevent",
+            "clienttogremessage",
+            "greto",
         ]
 
-        # Check if this line contains a card event
-        if not any(pattern in line for pattern in card_event_patterns):
+        # Check if this line contains a card event indicator
+        has_pattern = any(pattern in line_lower for pattern in card_event_patterns)
+        
+        # Also check if line starts with JSON (might be a JSON-only line)
+        line_stripped = line.strip()
+        is_json_line = line_stripped.startswith("{") and line_stripped.endswith("}")
+
+        if not has_pattern and not is_json_line:
             return None
 
         # Parse JSON from line
@@ -132,24 +161,25 @@ class MTGALogParser:
             return None
 
         # Extract card play information
-        # This is a simplified parser - MTGA logs are complex and may need refinement
         event_info = {}
 
         # Check for game state messages
         if "gameStateMessage" in data:
             game_state = data["gameStateMessage"]
-            if "zones" in game_state:
-                event_info["type"] = "zone_change"
-                event_info["data"] = game_state
+            event_info["type"] = "game_state"
+            event_info["data"] = game_state
+            return event_info
 
         # Check for GRE (Game Rules Engine) events
         if "greToClientEvent" in data:
             gre_event = data["greToClientEvent"]
             if "greToClientMessages" in gre_event:
                 for message in gre_event["greToClientMessages"]:
-                    if "type" in message and message["type"] == "GREMessageType_GameStateMessage":
+                    msg_type = message.get("type", "")
+                    if msg_type == "GREMessageType_GameStateMessage":
                         event_info["type"] = "game_state"
-                        event_info["data"] = message
+                        event_info["data"] = message.get("gameStateMessage", {})
+                        return event_info
 
         return event_info if event_info else None
 
