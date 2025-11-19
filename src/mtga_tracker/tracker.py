@@ -296,11 +296,19 @@ class CardTracker:
 
         # Extract category and other details
         category = None
-        for detail in details:
-            if detail.get("key") == "category":
-                category = detail.get("valueString", [None])[0]
+        zone_src = None
+        zone_dest = None
 
-        # Only process if we haven't seen this card instance before
+        for detail in details:
+            key = detail.get("key", "")
+            if key == "category":
+                category = detail.get("valueString", [None])[0]
+            elif key == "zone_src":
+                zone_src = detail.get("valueInt32", [None])[0]
+            elif key == "zone_dest":
+                zone_dest = detail.get("valueInt32", [None])[0]
+
+        # Only process if we have affected cards
         if not affected_ids:
             return
 
@@ -315,7 +323,8 @@ class CardTracker:
 
         # Handle different annotation types
         if "AnnotationType_ZoneTransfer" in ann_type:
-            if category == "CastSpell" and instance_id not in self.game_state.seen_instance_ids:
+            # Casting spells - includes instants, sorceries, creatures, etc.
+            if category in ["CastSpell", "PlaySpell"] and instance_id not in self.game_state.seen_instance_ids:
                 self.game_state.seen_instance_ids.add(instance_id)
                 if card_obj:
                     grp_id = card_obj.get("grpId")
@@ -344,19 +353,73 @@ class CardTracker:
                     else:
                         self.opponent_cards.append(event)
 
-            elif category == "Destroy":
+            # Destruction and removal effects
+            elif category in ["Destroy", "Exile", "Sacrifice", "Discard"]:
                 if card_obj:
                     grp_id = card_obj.get("grpId")
+                    owner_seat = card_obj.get("ownerSeatId")
                     card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
-                    print(f"💥 {card_name} was destroyed")
 
-            elif category == "Damage":
-                # Track damage events
-                pass  # Could be implemented for more detailed tracking
+                    # Determine who owned the destroyed card
+                    owner = "your" if owner_seat == self.game_state.player_seat_id else "opponent's"
+
+                    # Choose appropriate icon
+                    if category == "Destroy":
+                        icon = "💥"
+                        action = "destroyed"
+                    elif category == "Exile":
+                        icon = "🚫"
+                        action = "exiled"
+                    elif category == "Sacrifice":
+                        icon = "⚰️"
+                        action = "sacrificed"
+                    elif category == "Discard":
+                        icon = "🗑️"
+                        action = "discarded"
+                    else:
+                        icon = "💥"
+                        action = category.lower()
+
+                    print(f"{icon} {card_name} ({owner}) was {action}")
+
+            # Counter spells
+            elif category == "Countered":
+                if card_obj:
+                    grp_id = card_obj.get("grpId")
+                    owner_seat = card_obj.get("ownerSeatId")
+                    card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
+                    owner = "your" if owner_seat == self.game_state.player_seat_id else "opponent's"
+                    print(f"🚫 {card_name} ({owner}) was countered")
+
+            # Draw cards
+            elif category == "Draw":
+                if card_obj:
+                    owner_seat = card_obj.get("ownerSeatId")
+                    if owner_seat == self.game_state.player_seat_id:
+                        print(f"📥 You drew a card")
+                    else:
+                        print(f"   Opponent drew a card")
+
+            # Mill effects
+            elif category == "Mill":
+                if card_obj:
+                    grp_id = card_obj.get("grpId")
+                    owner_seat = card_obj.get("ownerSeatId")
+                    card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
+                    owner = "You" if owner_seat == self.game_state.player_seat_id else "Opponent"
+                    print(f"🌊 {owner} milled {card_name}")
+
+        # Handle resolution annotations
+        elif "AnnotationType_ResolutionStart" in ann_type:
+            # This tracks when spells resolve - useful for seeing instants resolve
+            pass  # Can be used for more detailed instant tracking
 
         elif "AnnotationType_Scry" in ann_type:
-            # Scry events
-            pass  # Could show scry information
+            # Scry events - show when players scry
+            if affected_ids and card_obj:
+                owner_seat = card_obj.get("ownerSeatId")
+                player = "You" if owner_seat == self.game_state.player_seat_id else "Opponent"
+                print(f"🔮 {player} scried")
 
     def _format_card_type(self, card_types: List[str]) -> str:
         """Format card types for display."""

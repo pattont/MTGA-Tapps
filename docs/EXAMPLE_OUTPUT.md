@@ -62,19 +62,44 @@ This document shows what the improved MTGA Tracker output looks like during a ga
 
 🎯 You      cast Forest (Land)
 🎯 You      cast Lightning Bolt (Instant)
-💥 Vampire Nighthawk was destroyed
+💥 Vampire Nighthawk (opponent's) was destroyed
+
+   Opponent lost 3 life (17)
 
 ======================================================================
 ⚔️  Turn 6 - OPPONENT'S TURN
    Life: You 18 - 17 Opponent
 ======================================================================
 
-   Opponent lost 3 life (17)
-
 👤 Opponent  cast Mountain (Land)
 👤 Opponent  cast Anger of the Gods (Sorcery)
 
-💥 Llanowar Elves was destroyed
+💥 Llanowar Elves (your) was destroyed
+
+======================================================================
+⚔️  Turn 7 - YOUR TURN
+   Life: You 18 - 17 Opponent
+======================================================================
+
+🎯 You      cast Opt (Instant)
+🔮 You scried
+📥 You drew a card
+
+🎯 You      cast Forest (Land)
+🎯 You      cast Serra Angel (Creature 4/4)
+
+======================================================================
+⚔️  Turn 8 - OPPONENT'S TURN
+   Life: You 18 - 17 Opponent
+======================================================================
+
+👤 Opponent  cast Doom Blade (Instant)
+💥 Serra Angel (your) was destroyed
+
+👤 Opponent  cast Thoughtseize (Sorcery)
+🗑️ Wrath of God (your) was discarded
+
+💔 You lost 2 life (16)
 ```
 
 ## When You Stop the Tracker (Ctrl+C)
@@ -135,9 +160,26 @@ This document shows what the improved MTGA Tracker output looks like during a ga
 6. **Deduplication** - Each card announced only once
    - No more seeing the same card 3 times
 
-7. **Summary** - Game overview with card counts
-   - See what cards were played multiple times
-   - Quick deck analysis
+7. **Interaction Tracking** - See what happens to cards
+   - Destruction: `💥 Serra Angel (your) was destroyed`
+   - Exile: `🚫 Tarmogoyf (opponent's) was exiled`
+   - Counters: `🚫 Lightning Bolt (your) was countered`
+   - Discard: `🗑️ Force of Will (your) was discarded`
+   - Shows ownership: your vs opponent's cards
+
+8. **Instant Detection** - Instants are now tracked properly
+   - Catches both CastSpell and PlaySpell categories
+   - Shows when instants resolve
+
+9. **Additional Effects** - Tracks more game actions
+   - Card draw: `📥 You drew a card`
+   - Scry: `🔮 You scried`
+   - Mill: `🌊 You milled Brainstorm`
+   - Sacrifice: `⚰️ Bloodghast (your) was sacrificed`
+
+10. **Summary** - Game overview with card counts
+    - See what cards were played multiple times
+    - Quick deck analysis
 
 ### What's Not Perfect Yet
 
