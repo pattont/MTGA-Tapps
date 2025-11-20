@@ -21,10 +21,27 @@ class GameState:
         self.phase = ""
         self.step = ""
         self.in_match = False
+        self.match_complete = False
         self.seen_instance_ids: Set[int] = set()  # Track cards we've already announced
         self.last_turn_announced = 0
         self.player_seat_id: Optional[int] = None  # Auto-detected player seat
         self.opponent_seat_id: Optional[int] = None  # Auto-detected opponent seat
+
+        # Starting hand tracking
+        self.starting_hand: List[str] = []
+        self.mulligan_count = 0
+        self.initial_hand_size = 7
+
+        # Combat tracking
+        self.attackers: List[int] = []  # Instance IDs of attacking creatures
+        self.blockers: Dict[int, int] = {}  # blocker_id: attacker_id
+
+        # Game timing
+        self.game_start_time: Optional[datetime] = None
+        self.game_end_time: Optional[datetime] = None
+
+        # Match result
+        self.winner_seat: Optional[int] = None
 
     def reset(self):
         """Reset the game state for a new match."""
@@ -167,6 +184,14 @@ class CardTracker:
         if self.game_state.player_seat_id is None:
             self._try_detect_player_seat(line)
 
+        # Check for game start
+        if not self.game_state.in_match:
+            self._check_game_start(line)
+
+        # Check for game end
+        if self.game_state.in_match and not self.game_state.match_complete:
+            self._check_game_end(line)
+
         # Look for card-related events
         event = self.parser.extract_card_events(line)
         if event:
@@ -207,6 +232,72 @@ class CardTracker:
                                 self.game_state.opponent_seat_id = game_state["players"][1].get("systemSeatNumber", 2)
                                 print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id} (inferred)")
 
+    def _check_game_start(self, line: str):
+        """Check if a game is starting."""
+        # Look for game start indicators
+        if "mulligantype" in line.lower() or "mulligan" in line.lower():
+            json_data = self.parser.parse_json_from_line(line)
+            if json_data:
+                # Game is starting - track mulligan
+                if not self.game_state.in_match:
+                    self.game_state.game_start_time = datetime.now()
+                    self.game_state.in_match = True
+                    print("\n" + "="*70)
+                    print("🎮 GAME STARTED")
+                    print("="*70 + "\n")
+
+        # Check for opening hand
+        if "openinghand" in line.lower() or '"hand":' in line.lower():
+            event = self.parser.extract_card_events(line)
+            if event and event.get("type") == "game_state":
+                data = event.get("data", {})
+                if "zones" in data:
+                    for zone in data["zones"]:
+                        if zone.get("type") == "ZoneType_Hand":
+                            owner_seat = zone.get("ownerSeatId")
+                            if owner_seat == self.game_state.player_seat_id:
+                                # This is your hand
+                                obj_ids = zone.get("objectInstanceIds", [])
+                                if obj_ids and not self.game_state.starting_hand:
+                                    # Get card names
+                                    game_objects = data.get("gameObjects", [])
+                                    hand_cards = []
+                                    for obj in game_objects:
+                                        if obj.get("instanceId") in obj_ids:
+                                            grp_id = obj.get("grpId")
+                                            if grp_id:
+                                                card_name = self.card_db.get_card_name(grp_id)
+                                                hand_cards.append(card_name)
+
+                                    if hand_cards and len(hand_cards) <= 7:
+                                        self.game_state.starting_hand = hand_cards
+                                        self.game_state.initial_hand_size = len(hand_cards)
+
+                                        if len(hand_cards) < 7:
+                                            self.game_state.mulligan_count = 7 - len(hand_cards)
+                                            print(f"🔄 Mulligan to {len(hand_cards)} (mulligans: {self.game_state.mulligan_count})")
+
+                                        print(f"\n🎴 Your Starting Hand ({len(hand_cards)} cards):")
+                                        for card in hand_cards:
+                                            print(f"   • {card}")
+                                        print()
+
+    def _check_game_end(self, line: str):
+        """Check if the game has ended."""
+        # Look for game result indicators
+        if "gamecompletedtype" in line.lower() or "matchcompleted" in line.lower() or "finalresults" in line.lower():
+            json_data = self.parser.parse_json_from_line(line)
+            if json_data and not self.game_state.match_complete:
+                self.game_state.match_complete = True
+                self.game_state.game_end_time = datetime.now()
+
+                # Try to determine winner
+                if "winningteamid" in str(json_data).lower():
+                    # Parse winner from the data
+                    pass
+
+                # Print summary
+                self._print_game_summary()
 
     def _handle_event(self, event: Dict[str, Any]):
         """Handle a card event.
@@ -237,22 +328,28 @@ class CardTracker:
                 if life is not None and seat_id is not None:
                     if seat_id == self.game_state.player_seat_id:
                         old_life = self.game_state.player_life
-                        self.game_state.player_life = life
-                        if old_life != life and self.game_state.in_match and old_life != 20:
-                            diff = life - old_life
-                            if diff > 0:
-                                print(f"💚 You gained {diff} life ({life})")
-                            elif diff < 0:
-                                print(f"💔 You lost {-diff} life ({life})")
+                        # Only update if changed and we're tracking
+                        if life != old_life:
+                            self.game_state.player_life = life
+                            # Only announce if match started and not initial life set
+                            if self.game_state.turn_number > 0:
+                                diff = life - old_life
+                                if diff > 0:
+                                    print(f"💚 You gained {diff} life (now {life})")
+                                elif diff < 0:
+                                    print(f"💔 You lost {-diff} life (now {life})")
                     elif seat_id == self.game_state.opponent_seat_id:
                         old_life = self.game_state.opponent_life
-                        self.game_state.opponent_life = life
-                        if old_life != life and self.game_state.in_match and old_life != 20:
-                            diff = life - old_life
-                            if diff > 0:
-                                print(f"   Opponent gained {diff} life ({life})")
-                            elif diff < 0:
-                                print(f"   Opponent lost {-diff} life ({life})")
+                        # Only update if changed and we're tracking
+                        if life != old_life:
+                            self.game_state.opponent_life = life
+                            # Only announce if match started and not initial life set
+                            if self.game_state.turn_number > 0:
+                                diff = life - old_life
+                                if diff > 0:
+                                    print(f"   Opponent gained {diff} life (now {life})")
+                                elif diff < 0:
+                                    print(f"   Opponent lost {-diff} life (now {life})")
 
         # Update turn info
         if "turnInfo" in data:
@@ -298,6 +395,7 @@ class CardTracker:
         category = None
         zone_src = None
         zone_dest = None
+        target_id = None
 
         for detail in details:
             key = detail.get("key", "")
@@ -307,6 +405,19 @@ class CardTracker:
                 zone_src = detail.get("valueInt32", [None])[0]
             elif key == "zone_dest":
                 zone_dest = detail.get("valueInt32", [None])[0]
+            elif key == "target" or key == "target_id":
+                target_id = detail.get("valueInt32", [None])[0]
+
+        # Handle combat-specific annotations
+        if "AnnotationType_AttackerDeclared" in ann_type:
+            self._handle_attacker_declared(affected_ids, game_objects)
+            return
+        elif "AnnotationType_BlockerDeclared" in ann_type:
+            self._handle_blocker_declared(affected_ids, annotation, game_objects)
+            return
+        elif "AnnotationType_Damage" in ann_type:
+            self._handle_damage(affected_ids, annotation, game_objects)
+            return
 
         # Only process if we have affected cards
         if not affected_ids:
@@ -316,10 +427,12 @@ class CardTracker:
 
         # Find the card object for this instance
         card_obj = None
+        target_obj = None
         for obj in game_objects:
             if obj.get("instanceId") == instance_id:
                 card_obj = obj
-                break
+            if target_id and obj.get("instanceId") == target_id:
+                target_obj = obj
 
         # Handle different annotation types
         if "AnnotationType_ZoneTransfer" in ann_type:
@@ -339,12 +452,20 @@ class CardTracker:
                     type_str = self._format_card_type(card_types)
 
                     # Format output based on card type
+                    target_str = ""
+                    if target_obj:
+                        target_grp_id = target_obj.get("grpId")
+                        target_name = self.card_db.get_card_name(target_grp_id) if target_grp_id else "Unknown"
+                        target_owner_seat = target_obj.get("ownerSeatId")
+                        target_owner = "your" if target_owner_seat == self.game_state.player_seat_id else "opponent's"
+                        target_str = f" targeting {target_name} ({target_owner})"
+
                     if "CardType_Creature" in card_types:
                         power = card_obj.get("power", {}).get("value", "?")
                         toughness = card_obj.get("toughness", {}).get("value", "?")
-                        print(f"{player_symbol} {player:8} cast {card_name} ({type_str} {power}/{toughness})")
+                        print(f"{player_symbol} {player:8} cast {card_name} ({type_str} {power}/{toughness}){target_str}")
                     else:
-                        print(f"{player_symbol} {player:8} cast {card_name} ({type_str})")
+                        print(f"{player_symbol} {player:8} cast {card_name} ({type_str}){target_str}")
 
                     # Track the event
                     event = CardEvent(card_name, player.lower())
@@ -436,6 +557,160 @@ class CardTracker:
                 main_types.append(t)
 
         return ", ".join(main_types) if main_types else "Card"
+
+    def _handle_attacker_declared(self, affected_ids: List[int], game_objects: List[Dict[str, Any]]):
+        """Handle attacker declarations."""
+        for instance_id in affected_ids:
+            if instance_id not in self.game_state.attackers:
+                self.game_state.attackers.append(instance_id)
+
+                # Find the attacker
+                for obj in game_objects:
+                    if obj.get("instanceId") == instance_id:
+                        grp_id = obj.get("grpId")
+                        owner_seat = obj.get("ownerSeatId")
+                        card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
+                        power = obj.get("power", {}).get("value", "?")
+                        toughness = obj.get("toughness", {}).get("value", "?")
+
+                        player = "You" if owner_seat == self.game_state.player_seat_id else "Opponent"
+                        player_symbol = "⚔️" if owner_seat == self.game_state.player_seat_id else "🗡️"
+
+                        print(f"{player_symbol} {player:8} attacking with {card_name} ({power}/{toughness})")
+                        break
+
+    def _handle_blocker_declared(self, affected_ids: List[int], annotation: Dict[str, Any], game_objects: List[Dict[str, Any]]):
+        """Handle blocker declarations."""
+        if not affected_ids:
+            return
+
+        blocker_id = affected_ids[0]
+
+        # Try to find which attacker is being blocked
+        attacker_id = None
+        details = annotation.get("details", [])
+        for detail in details:
+            if detail.get("key") == "attacker_id" or detail.get("key") == "target":
+                attacker_id = detail.get("valueInt32", [None])[0]
+                break
+
+        # Find blocker and attacker names
+        blocker_name = "Unknown"
+        blocker_owner_seat = None
+        blocker_pt = "?/?"
+        attacker_name = "Unknown"
+        attacker_owner_seat = None
+
+        for obj in game_objects:
+            if obj.get("instanceId") == blocker_id:
+                grp_id = obj.get("grpId")
+                blocker_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
+                blocker_owner_seat = obj.get("ownerSeatId")
+                power = obj.get("power", {}).get("value", "?")
+                toughness = obj.get("toughness", {}).get("value", "?")
+                blocker_pt = f"{power}/{toughness}"
+            elif attacker_id and obj.get("instanceId") == attacker_id:
+                grp_id = obj.get("grpId")
+                attacker_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
+                attacker_owner_seat = obj.get("ownerSeatId")
+
+        if blocker_owner_seat is not None:
+            player = "You" if blocker_owner_seat == self.game_state.player_seat_id else "Opponent"
+            player_symbol = "🛡️"
+
+            if attacker_name != "Unknown":
+                print(f"{player_symbol} {player:8} blocking {attacker_name} with {blocker_name} ({blocker_pt})")
+            else:
+                print(f"{player_symbol} {player:8} blocking with {blocker_name} ({blocker_pt})")
+
+            if attacker_id:
+                self.game_state.blockers[blocker_id] = attacker_id
+
+    def _handle_damage(self, affected_ids: List[int], annotation: Dict[str, Any], game_objects: List[Dict[str, Any]]):
+        """Handle damage events."""
+        # Extract damage amount
+        details = annotation.get("details", [])
+        damage_amount = None
+        for detail in details:
+            if detail.get("key") == "damage" or detail.get("key") == "amount":
+                damage_amount = detail.get("valueInt32", [None])[0]
+                break
+
+        if damage_amount and affected_ids:
+            for instance_id in affected_ids:
+                for obj in game_objects:
+                    if obj.get("instanceId") == instance_id:
+                        grp_id = obj.get("grpId")
+                        owner_seat = obj.get("ownerSeatId")
+                        card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
+
+                        owner = "your" if owner_seat == self.game_state.player_seat_id else "opponent's"
+                        print(f"💢 {card_name} ({owner}) took {damage_amount} damage")
+                        break
+
+    def _print_game_summary(self):
+        """Print summary when game ends."""
+        print("\n" + "="*70)
+        print("🏁 GAME ENDED")
+        print("="*70)
+
+        # Calculate game time
+        if self.game_state.game_start_time and self.game_state.game_end_time:
+            duration = self.game_state.game_end_time - self.game_state.game_start_time
+            minutes = int(duration.total_seconds() // 60)
+            seconds = int(duration.total_seconds() % 60)
+            print(f"\n⏱️  Game Duration: {minutes}m {seconds}s")
+
+        # Winner
+        if self.game_state.player_life <= 0:
+            print(f"💀 You lost (0 life)")
+        elif self.game_state.opponent_life <= 0:
+            print(f"🎉 You won! (Opponent at 0 life)")
+        else:
+            print(f"\n   Final Life: You {self.game_state.player_life} - {self.game_state.opponent_life} Opponent")
+
+        # Starting hand
+        if self.game_state.starting_hand:
+            print(f"\n🎴 Starting Hand ({self.game_state.initial_hand_size} cards):")
+            if self.game_state.mulligan_count > 0:
+                print(f"   (After {self.game_state.mulligan_count} mulligan(s))")
+            for card in self.game_state.starting_hand:
+                print(f"   • {card}")
+
+        # Cards played
+        print(f"\n📊 Cards Played:")
+        print(f"   Your cards: {len(self.player_cards)}")
+        print(f"   Opponent cards: {len(self.opponent_cards)}")
+
+        if self.player_cards:
+            print(f"\n   🎯 Your Cards:")
+            card_counts = {}
+            for event in self.player_cards:
+                card_counts[event.card_name] = card_counts.get(event.card_name, 0) + 1
+
+            for card_name, count in sorted(card_counts.items()):
+                if count > 1:
+                    print(f"      • {card_name} x{count}")
+                else:
+                    print(f"      • {card_name}")
+
+        if self.opponent_cards:
+            print(f"\n   👤 Opponent's Cards:")
+            card_counts = {}
+            for event in self.opponent_cards:
+                card_counts[event.card_name] = card_counts.get(event.card_name, 0) + 1
+
+            for card_name, count in sorted(card_counts.items()):
+                if count > 1:
+                    print(f"      • {card_name} x{count}")
+                else:
+                    print(f"      • {card_name}")
+
+        print("\n" + "="*70)
+        print("Ready for next game...\n")
+
+        # Reset game state for next game
+        self.game_state.reset()
 
     def _print_summary(self):
         """Print a summary of tracked cards."""
