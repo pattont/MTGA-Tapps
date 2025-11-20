@@ -1,5 +1,90 @@
 # Changelog
 
+## v0.4.0 - Complete Game Tracking & Auto-Summary (2025-11-19)
+
+### Major Features
+
+**Starting Hand & Mulligan Tracking**
+- ✅ Shows your opening hand with card names
+- ✅ Detects mulligans automatically
+- ✅ Counts number of mulligans
+- ✅ Tracks hand size (7, 6, 5, etc.)
+- ✅ Displayed at start and in game summary
+
+**Combat Tracking**
+- ⚔️ Attacker declarations with power/toughness
+- 🛡️ Blocker declarations showing what blocks what
+- 💢 Combat damage tracking
+- 💥 Creature deaths in combat
+- Shows which player's creatures
+
+**Spell Targeting**
+- ✅ Shows what card/permanent was targeted
+- ✅ Shows ownership of target (your vs opponent's)
+- ✅ Example: "Lightning Bolt targeting Tarmogoyf (opponent's)"
+- Works with removal, auras, counters, etc.
+
+**Game Timer**
+- ⏱️  Tracks game duration from start to end
+- Shows minutes and seconds
+- Displayed in final summary
+
+**Auto Game Detection**
+- ✅ Detects game start automatically
+- ✅ Detects game end automatically
+- ✅ Shows summary when game ends (no manual stop needed)
+- ✅ Resets state for next game
+- ✅ Tracker runs continuously through multiple games
+
+**Improved Life Tracking**
+- ✅ Fixed: Now accurately tracks between turns
+- ✅ Only announces actual changes (not initial values)
+- ✅ Only shows changes after turn 1
+- ✅ Shows current life after change
+
+**Enhanced Game Summary**
+- 🏁 Automatic at game end
+- ⏱️  Game duration
+- 🎴 Starting hand displayed
+- 🎉/💀 Win/loss detection
+- 📊 All cards played by both players
+- Shows card counts
+
+### Game Flow Example
+
+```
+🎮 GAME STARTED
+
+🎴 Your Starting Hand (6 cards):
+   (After 1 mulligan)
+   • Lightning Bolt
+   • Mountain x2
+   • Goblin Guide
+   ...
+
+⚔️  Turn 1 - YOUR TURN
+
+🎯 You cast Lightning Bolt targeting Tarmogoyf (opponent's)
+💥 Tarmogoyf (opponent's) was destroyed
+
+⚔️ You attacking with Goblin Guide (2/2)
+🛡️ Opponent blocking with Wall (0/4)
+
+🏁 GAME ENDED
+⏱️  Game Duration: 8m 42s
+🎉 You won!
+```
+
+### Files Added
+- `docs/COMPLETE_GAME_TRACKING.md` - Complete feature documentation
+
+### Files Modified
+- `src/mtga_tracker/tracker.py` - Major expansion of tracking features
+- All new tracking systems implemented
+
+### Breaking Changes
+None - fully backwards compatible
+
 ## v0.3.0 - Instant Detection & Interaction Tracking (2025-11-19)
 
 ### Major Improvements
