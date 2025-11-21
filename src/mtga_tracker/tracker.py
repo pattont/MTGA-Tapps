@@ -131,41 +131,45 @@ class CardTracker:
         self.running = False
 
     def _detect_player_seat_from_log(self):
-        """Scan recent log history to detect player seat ID."""
+        """Scan recent log history to detect player seat ID.
+
+        Uses clientToGREMessage to find YOUR seat - these are YOUR actions
+        sent to the server, so the seat ID is definitively yours.
+        """
         try:
             with open(self.parser.log_path, 'r', encoding='utf-8', errors='ignore') as f:
                 # Read last 5000 lines to find seat assignment
                 lines = f.readlines()
                 recent_lines = lines[-5000:] if len(lines) > 5000 else lines
 
-                for line in recent_lines:
-                    # Look for matchGameRoomStateChangedEvent
-                    if "matchgameroomstatechangedevent" in line.lower():
-                        json_data = self.parser.parse_json_from_line(line)
-                        if json_data and "matchGameRoomStateChangedEvent" in json_data:
-                            event = json_data["matchGameRoomStateChangedEvent"]
-                            if "gameRoomInfo" in event and "gameRoomConfig" in event["gameRoomInfo"]:
-                                config = event["gameRoomInfo"]["gameRoomConfig"]
-                                if "reservedPlayers" in config and len(config["reservedPlayers"]) >= 2:
-                                    self.game_state.player_seat_id = config["reservedPlayers"][0].get("systemSeatId", 1)
-                                    self.game_state.opponent_seat_id = config["reservedPlayers"][1].get("systemSeatId", 2)
-                                    return
-
-                # Fallback: Look for game state messages
+                # BEST METHOD: Find YOUR seat from YOUR client messages
+                # Scan from most recent backwards to get latest game
                 for line in reversed(recent_lines):
                     if self.game_state.player_seat_id:
                         break
-                    json_data = self.parser.parse_json_from_line(line)
-                    if json_data and "greToClientEvent" in json_data:
-                        gre = json_data["greToClientEvent"]
-                        if "greToClientMessages" in gre:
-                            for msg in gre["greToClientMessages"]:
-                                if msg.get("type") == "GREMessageType_GameStateMessage":
-                                    game_state = msg.get("gameStateMessage", {})
-                                    if "players" in game_state and len(game_state["players"]) >= 2:
-                                        self.game_state.player_seat_id = game_state["players"][0].get("systemSeatNumber", 1)
-                                        self.game_state.opponent_seat_id = game_state["players"][1].get("systemSeatNumber", 2)
-                                        return
+
+                    line_lower = line.lower()
+                    if "clienttogremessage" in line_lower or "clienttomatchdoor" in line_lower:
+                        json_data = self.parser.parse_json_from_line(line)
+                        if json_data:
+                            seat_id = self._extract_seat_from_client_message(json_data)
+                            if seat_id:
+                                self.game_state.player_seat_id = seat_id
+                                self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
+                                return
+
+                # BACKUP: Look for mulligan responses (YOUR decision)
+                if self.game_state.player_seat_id is None:
+                    for line in reversed(recent_lines):
+                        if "mulliganresp" in line.lower():
+                            json_data = self.parser.parse_json_from_line(line)
+                            if json_data:
+                                seat_id = self._extract_seat_from_client_message(json_data)
+                                if seat_id:
+                                    self.game_state.player_seat_id = seat_id
+                                    self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
+                                    return
+
         except Exception as e:
             print(f"Warning: Could not scan log for seat detection: {e}")
 
@@ -200,37 +204,68 @@ class CardTracker:
     def _try_detect_player_seat(self, line: str):
         """Try to detect which seat ID belongs to the player.
 
+        The most reliable method is to look at clientToGREMessage - these are
+        YOUR actions sent from your client, so the seat ID is definitively yours.
+
         Args:
             line: A line from the MTGA log file.
         """
-        # Look for matchGameRoomStateChangedEvent
-        if "matchgameroomstatechangedevent" in line.lower():
+        # BEST METHOD: Look for YOUR client's messages to the server
+        # clientToGREMessage contains YOUR actions with YOUR seat ID
+        if "clienttogremessage" in line.lower() or "clienttomatchdoor" in line.lower():
             json_data = self.parser.parse_json_from_line(line)
-            if json_data and "matchGameRoomStateChangedEvent" in json_data:
-                event = json_data["matchGameRoomStateChangedEvent"]
-                if "gameRoomInfo" in event and "gameRoomConfig" in event["gameRoomInfo"]:
-                    config = event["gameRoomInfo"]["gameRoomConfig"]
-                    if "reservedPlayers" in config and len(config["reservedPlayers"]) >= 2:
-                        # First player is typically you
-                        self.game_state.player_seat_id = config["reservedPlayers"][0].get("systemSeatId", 1)
-                        self.game_state.opponent_seat_id = config["reservedPlayers"][1].get("systemSeatId", 2)
-                        print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id}")
+            if json_data:
+                seat_id = self._extract_seat_from_client_message(json_data)
+                if seat_id and self.game_state.player_seat_id is None:
+                    self.game_state.player_seat_id = seat_id
+                    # Opponent is the other seat (usually 1 or 2)
+                    self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
+                    print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id} (from your actions)")
+                    return
 
-        # Fallback: Look at game state to infer from priority/starting player
-        # The player who goes first in a game often has priority first
-        if self.game_state.player_seat_id is None:
+        # BACKUP: Look for mulligan response which is definitely YOUR decision
+        if "mulliganresp" in line.lower() and self.game_state.player_seat_id is None:
             json_data = self.parser.parse_json_from_line(line)
-            if json_data and "greToClientEvent" in json_data:
-                gre = json_data["greToClientEvent"]
-                if "greToClientMessages" in gre:
-                    for msg in gre["greToClientMessages"]:
-                        if msg.get("type") == "GREMessageType_GameStateMessage":
-                            game_state = msg.get("gameStateMessage", {})
-                            if "players" in game_state and len(game_state["players"]) >= 2:
-                                # Use first player as default
-                                self.game_state.player_seat_id = game_state["players"][0].get("systemSeatNumber", 1)
-                                self.game_state.opponent_seat_id = game_state["players"][1].get("systemSeatNumber", 2)
-                                print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id} (inferred)")
+            if json_data:
+                seat_id = self._extract_seat_from_client_message(json_data)
+                if seat_id:
+                    self.game_state.player_seat_id = seat_id
+                    self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
+                    print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id} (from mulligan)")
+                    return
+
+    def _extract_seat_from_client_message(self, data: Dict[str, Any]) -> Optional[int]:
+        """Recursively extract seat ID from a client message.
+
+        Args:
+            data: JSON data from a client message.
+
+        Returns:
+            Seat ID if found, None otherwise.
+        """
+        if isinstance(data, dict):
+            # Check common seat ID keys
+            for key in ["systemSeatId", "seatId", "playerSeatId", "systemSeatNumber"]:
+                if key in data:
+                    return data[key]
+
+            # Check in clientToGREMessage payload
+            if "clientToGREMessage" in data:
+                return self._extract_seat_from_client_message(data["clientToGREMessage"])
+
+            # Recurse into nested dicts
+            for value in data.values():
+                result = self._extract_seat_from_client_message(value)
+                if result is not None:
+                    return result
+
+        elif isinstance(data, list):
+            for item in data:
+                result = self._extract_seat_from_client_message(item)
+                if result is not None:
+                    return result
+
+        return None
 
     def _check_game_start(self, line: str):
         """Check if a game is starting."""
