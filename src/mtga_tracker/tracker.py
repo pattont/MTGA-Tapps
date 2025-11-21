@@ -13,6 +13,10 @@ from .card_database import CardDatabase
 class GameState:
     """Tracks the current game state."""
 
+    # Manual override - set this to force your seat ID (1 or 2)
+    # Set to None for auto-detection
+    MANUAL_PLAYER_SEAT: Optional[int] = None
+
     def __init__(self):
         self.player_life = 20
         self.opponent_life = 20
@@ -24,8 +28,14 @@ class GameState:
         self.match_complete = False
         self.seen_instance_ids: Set[int] = set()  # Track cards we've already announced
         self.last_turn_announced = 0
-        self.player_seat_id: Optional[int] = None  # Auto-detected player seat
-        self.opponent_seat_id: Optional[int] = None  # Auto-detected opponent seat
+
+        # Use manual override if set, otherwise auto-detect
+        if GameState.MANUAL_PLAYER_SEAT:
+            self.player_seat_id = GameState.MANUAL_PLAYER_SEAT
+            self.opponent_seat_id = 2 if GameState.MANUAL_PLAYER_SEAT == 1 else 1
+        else:
+            self.player_seat_id: Optional[int] = None  # Auto-detected player seat
+            self.opponent_seat_id: Optional[int] = None  # Auto-detected opponent seat
 
         # Starting hand tracking
         self.starting_hand: List[str] = []
@@ -89,6 +99,7 @@ class CardTracker:
         self.player_cards: List[CardEvent] = []
         self.opponent_cards: List[CardEvent] = []
         self.running = False
+        self.swap_players = False  # If True, swap player/opponent after detection
 
     def start(self):
         """Start tracking cards."""
@@ -217,10 +228,15 @@ class CardTracker:
             if json_data:
                 seat_id = self._extract_seat_from_client_message(json_data)
                 if seat_id and self.game_state.player_seat_id is None:
+                    # Apply swap if enabled
+                    if self.swap_players:
+                        seat_id = 2 if seat_id == 1 else 1
+
                     self.game_state.player_seat_id = seat_id
                     # Opponent is the other seat (usually 1 or 2)
                     self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
-                    print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id} (from your actions)")
+                    swap_note = " (swapped)" if self.swap_players else ""
+                    print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id}{swap_note} (from your actions)")
                     return
 
         # BACKUP: Look for mulligan response which is definitely YOUR decision
@@ -229,10 +245,68 @@ class CardTracker:
             if json_data:
                 seat_id = self._extract_seat_from_client_message(json_data)
                 if seat_id:
+                    if self.swap_players:
+                        seat_id = 2 if seat_id == 1 else 1
                     self.game_state.player_seat_id = seat_id
                     self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
-                    print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id} (from mulligan)")
+                    swap_note = " (swapped)" if self.swap_players else ""
+                    print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id}{swap_note} (from mulligan)")
                     return
+
+        # ALTERNATIVE: Detect from game state - YOUR hand shows card grpIds, opponent's doesn't
+        if self.game_state.player_seat_id is None:
+            event = self.parser.extract_card_events(line)
+            if event and event.get("type") == "game_state":
+                data = event.get("data", {})
+                seat_id = self._detect_seat_from_hand_visibility(data)
+                if seat_id:
+                    if self.swap_players:
+                        seat_id = 2 if seat_id == 1 else 1
+                    self.game_state.player_seat_id = seat_id
+                    self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
+                    swap_note = " (swapped)" if self.swap_players else ""
+                    print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id}{swap_note} (from hand visibility)")
+                    return
+
+    def _detect_seat_from_hand_visibility(self, game_state_data: Dict[str, Any]) -> Optional[int]:
+        """Detect your seat based on hand visibility.
+
+        Key insight: You can see the grpId (card identity) of cards in YOUR hand,
+        but opponent's hand cards have grpId=0 (hidden).
+
+        Args:
+            game_state_data: Game state message data.
+
+        Returns:
+            Your seat ID if detected, None otherwise.
+        """
+        zones = game_state_data.get("zones", [])
+        game_objects = game_state_data.get("gameObjects", [])
+
+        # Build a map of instance IDs to their grpIds
+        instance_to_grp = {}
+        for obj in game_objects:
+            instance_id = obj.get("instanceId")
+            grp_id = obj.get("grpId", 0)
+            if instance_id:
+                instance_to_grp[instance_id] = grp_id
+
+        # Check hand zones
+        for zone in zones:
+            zone_type = zone.get("type", "")
+            if "Hand" in zone_type:
+                owner_seat = zone.get("ownerSeatId")
+                obj_ids = zone.get("objectInstanceIds", [])
+
+                if obj_ids and owner_seat:
+                    # Count how many cards have visible grpIds (non-zero)
+                    visible_count = sum(1 for oid in obj_ids if instance_to_grp.get(oid, 0) > 0)
+
+                    # If most cards in this hand are visible, it's YOUR hand
+                    if visible_count > 0 and visible_count >= len(obj_ids) * 0.5:
+                        return owner_seat
+
+        return None
 
     def _extract_seat_from_client_message(self, data: Dict[str, Any]) -> Optional[int]:
         """Recursively extract seat ID from a client message.
