@@ -53,6 +53,12 @@ class GameState:
         # Match result
         self.winner_seat: Optional[int] = None
 
+        # Cumulative object tracking (for hand visibility detection)
+        # Maps instanceId -> grpId across all game state messages
+        self.instance_to_grp: Dict[int, int] = {}
+        # Maps instanceId -> ownerSeatId
+        self.instance_to_owner: Dict[int, int] = {}
+
     def reset(self):
         """Reset the game state for a new match."""
         player_seat = self.player_seat_id
@@ -144,8 +150,11 @@ class CardTracker:
     def _detect_player_seat_from_log(self):
         """Scan recent log history to detect player seat ID.
 
-        Uses clientToGREMessage to find YOUR seat - these are YOUR actions
-        sent to the server, so the seat ID is definitively yours.
+        PRIMARY: Hand visibility - YOUR hand shows grpIds, opponent's shows 0.
+        BACKUP: clientToGREMessage contains YOUR seat ID.
+
+        This method scans forward through the log to accumulate instanceId -> grpId
+        mappings, then checks hand visibility.
         """
         try:
             with open(self.parser.log_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -153,23 +162,46 @@ class CardTracker:
                 lines = f.readlines()
                 recent_lines = lines[-5000:] if len(lines) > 5000 else lines
 
-                # BEST METHOD: Find YOUR seat from YOUR client messages
-                # Scan from most recent backwards to get latest game
+                # FIRST PASS: Scan FORWARD to accumulate all game objects
+                # This builds the cumulative instance_to_grp map
+                for line in recent_lines:
+                    event = self.parser.extract_card_events(line)
+                    if event and event.get("type") == "game_state":
+                        data = event.get("data", {})
+                        self._accumulate_game_objects(data)
+
+                # SECOND PASS: Scan BACKWARD to find latest game's hands
+                # Now that we have accumulated the objects, check hand visibility
                 for line in reversed(recent_lines):
                     if self.game_state.player_seat_id:
                         break
 
-                    line_lower = line.lower()
-                    if "clienttogremessage" in line_lower or "clienttomatchdoor" in line_lower:
-                        json_data = self.parser.parse_json_from_line(line)
-                        if json_data:
-                            seat_id = self._extract_seat_from_client_message(json_data)
-                            if seat_id:
-                                self.game_state.player_seat_id = seat_id
-                                self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
-                                return
+                    event = self.parser.extract_card_events(line)
+                    if event and event.get("type") == "game_state":
+                        data = event.get("data", {})
+                        seat_id = self._detect_seat_from_hand_visibility(data)
+                        if seat_id:
+                            self.game_state.player_seat_id = seat_id
+                            self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
+                            return
 
-                # BACKUP: Look for mulligan responses (YOUR decision)
+                # BACKUP 1: Find YOUR seat from YOUR client messages
+                if self.game_state.player_seat_id is None:
+                    for line in reversed(recent_lines):
+                        if self.game_state.player_seat_id:
+                            break
+
+                        line_lower = line.lower()
+                        if "clienttogremessage" in line_lower or "clienttomatchdoor" in line_lower:
+                            json_data = self.parser.parse_json_from_line(line)
+                            if json_data:
+                                seat_id = self._extract_seat_from_client_message(json_data)
+                                if seat_id:
+                                    self.game_state.player_seat_id = seat_id
+                                    self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
+                                    return
+
+                # BACKUP 2: Look for mulligan responses (YOUR decision)
                 if self.game_state.player_seat_id is None:
                     for line in reversed(recent_lines):
                         if "mulliganresp" in line.lower():
@@ -215,13 +247,36 @@ class CardTracker:
     def _try_detect_player_seat(self, line: str):
         """Try to detect which seat ID belongs to the player.
 
-        The most reliable method is to look at clientToGREMessage - these are
-        YOUR actions sent from your client, so the seat ID is definitively yours.
+        PRIMARY METHOD: Hand visibility - YOUR hand shows grpIds, opponent's shows 0.
+        This is the most reliable method because it's based on what you can SEE.
+
+        BACKUP: clientToGREMessage contains YOUR actions with YOUR seat ID.
 
         Args:
             line: A line from the MTGA log file.
         """
-        # BEST METHOD: Look for YOUR client's messages to the server
+        # PRIMARY METHOD: Detect from game state - YOUR hand shows card grpIds, opponent's doesn't
+        # This runs on EVERY game state message to accumulate card data
+        event = self.parser.extract_card_events(line)
+        if event and event.get("type") == "game_state":
+            data = event.get("data", {})
+
+            # Always accumulate instanceId -> grpId map (for hand visibility detection)
+            self._accumulate_game_objects(data)
+
+            # Try to detect seat if not yet detected
+            if self.game_state.player_seat_id is None:
+                seat_id = self._detect_seat_from_hand_visibility(data)
+                if seat_id:
+                    if self.swap_players:
+                        seat_id = 2 if seat_id == 1 else 1
+                    self.game_state.player_seat_id = seat_id
+                    self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
+                    swap_note = " (swapped)" if self.swap_players else ""
+                    print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id}{swap_note} (from hand visibility)")
+                    return
+
+        # BACKUP 1: Look for YOUR client's messages to the server
         # clientToGREMessage contains YOUR actions with YOUR seat ID
         if "clienttogremessage" in line.lower() or "clienttomatchdoor" in line.lower():
             json_data = self.parser.parse_json_from_line(line)
@@ -239,7 +294,7 @@ class CardTracker:
                     print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id}{swap_note} (from your actions)")
                     return
 
-        # BACKUP: Look for mulligan response which is definitely YOUR decision
+        # BACKUP 2: Look for mulligan response which is definitely YOUR decision
         if "mulliganresp" in line.lower() and self.game_state.player_seat_id is None:
             json_data = self.parser.parse_json_from_line(line)
             if json_data:
@@ -253,26 +308,37 @@ class CardTracker:
                     print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id}{swap_note} (from mulligan)")
                     return
 
-        # ALTERNATIVE: Detect from game state - YOUR hand shows card grpIds, opponent's doesn't
-        if self.game_state.player_seat_id is None:
-            event = self.parser.extract_card_events(line)
-            if event and event.get("type") == "game_state":
-                data = event.get("data", {})
-                seat_id = self._detect_seat_from_hand_visibility(data)
-                if seat_id:
-                    if self.swap_players:
-                        seat_id = 2 if seat_id == 1 else 1
-                    self.game_state.player_seat_id = seat_id
-                    self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
-                    swap_note = " (swapped)" if self.swap_players else ""
-                    print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id}{swap_note} (from hand visibility)")
-                    return
+    def _accumulate_game_objects(self, game_state_data: Dict[str, Any]):
+        """Accumulate instanceId -> grpId mappings from game state.
+
+        MTGA sends differential updates, so we need to build a cumulative
+        map of all objects seen across multiple game state messages.
+
+        Args:
+            game_state_data: Game state message data.
+        """
+        game_objects = game_state_data.get("gameObjects", [])
+        for obj in game_objects:
+            instance_id = obj.get("instanceId")
+            grp_id = obj.get("grpId", 0)
+            owner_seat = obj.get("ownerSeatId")
+
+            if instance_id:
+                # Only update if we have a valid grpId (not 0)
+                if grp_id and grp_id > 0:
+                    self.game_state.instance_to_grp[instance_id] = grp_id
+                if owner_seat:
+                    self.game_state.instance_to_owner[instance_id] = owner_seat
 
     def _detect_seat_from_hand_visibility(self, game_state_data: Dict[str, Any]) -> Optional[int]:
         """Detect your seat based on hand visibility.
 
         Key insight: You can see the grpId (card identity) of cards in YOUR hand,
         but opponent's hand cards have grpId=0 (hidden).
+
+        IMPORTANT: Hand zones appear in SEPARATE messages, not together!
+        So we track hands by seat and look for ANY visible cards.
+        The seat with visible cards is YOUR seat.
 
         Args:
             game_state_data: Game state message data.
@@ -281,17 +347,11 @@ class CardTracker:
             Your seat ID if detected, None otherwise.
         """
         zones = game_state_data.get("zones", [])
-        game_objects = game_state_data.get("gameObjects", [])
 
-        # Build a map of instance IDs to their grpIds
-        instance_to_grp = {}
-        for obj in game_objects:
-            instance_id = obj.get("instanceId")
-            grp_id = obj.get("grpId", 0)
-            if instance_id:
-                instance_to_grp[instance_id] = grp_id
+        # Use the CUMULATIVE map (accumulated across all game state messages)
+        instance_to_grp = self.game_state.instance_to_grp
 
-        # Check hand zones
+        # Check hand zones in this message
         for zone in zones:
             zone_type = zone.get("type", "")
             if "Hand" in zone_type:
@@ -299,11 +359,13 @@ class CardTracker:
                 obj_ids = zone.get("objectInstanceIds", [])
 
                 if obj_ids and owner_seat:
-                    # Count how many cards have visible grpIds (non-zero)
-                    visible_count = sum(1 for oid in obj_ids if instance_to_grp.get(oid, 0) > 0)
+                    # Count visible cards (grpId > 0 in our accumulated map)
+                    visible_count = sum(1 for oid in obj_ids
+                                       if instance_to_grp.get(oid, 0) > 0)
 
-                    # If most cards in this hand are visible, it's YOUR hand
-                    if visible_count > 0 and visible_count >= len(obj_ids) * 0.5:
+                    # If this hand has ANY visible cards, it's YOUR hand
+                    # Because opponent's cards always have grpId=0 (hidden)
+                    if visible_count > 0:
                         return owner_seat
 
         return None
