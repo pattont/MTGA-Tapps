@@ -7,7 +7,9 @@
       "Bash(git commit:*)",
       "Bash(python -m py_compile:*)",
       "Bash(python debug_hand_visibility.py:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(tree /F \"C:\\Repo\\MTGA-Tapps\\src\")",
+      "Bash(del:*)"
     ],
     "deny": [],
     "ask": []

@@ -4,7 +4,7 @@ import sys
 import argparse
 from pathlib import Path
 
-from .tracker import CardTracker, GameState
+from .tracker import CardTracker
 from .log_parser import MTGALogParser
 
 
@@ -15,11 +15,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s                          # Auto-detect everything
-  %(prog)s --seat 1                 # Force your seat to 1
-  %(prog)s --seat 2                 # Force your seat to 2
-  %(prog)s --swap                   # Swap player/opponent if detection is wrong
-  %(prog)s --log-path /path/to/Player.log  # Use specific log file
+  %(prog)s                                   # Auto-detect everything
+  %(prog)s --log-path /path/to/Player.log    # Use specific log file
         """,
     )
 
@@ -30,36 +27,14 @@ Examples:
     )
 
     parser.add_argument(
-        "--seat",
-        type=int,
-        choices=[1, 2],
-        help="Force your seat ID (1 or 2) instead of auto-detecting",
-    )
-
-    parser.add_argument(
-        "--swap",
-        action="store_true",
-        help="Swap player/opponent if auto-detection is backwards",
-    )
-
-    parser.add_argument(
         "--version",
         action="version",
-        version="MTGA Tracker 0.4.0",
+        version="MTGA Tracker 0.5.0",
     )
 
     args = parser.parse_args()
 
     try:
-        # Handle seat override
-        if args.seat:
-            GameState.MANUAL_PLAYER_SEAT = args.seat
-            print(f"🎮 Manual seat override: You are Seat {args.seat}")
-        elif args.swap:
-            # Will swap after first detection
-            GameState.MANUAL_PLAYER_SEAT = None
-            print("🔄 Swap mode enabled - will swap player/opponent after detection")
-
         # Create log parser
         if args.log_path:
             log_path = Path(args.log_path)
@@ -72,13 +47,6 @@ Examples:
 
         # Create and start tracker
         tracker = CardTracker(log_parser)
-
-        # Handle swap mode
-        if args.swap:
-            tracker.swap_players = True
-        else:
-            tracker.swap_players = False
-
         tracker.start()
 
     except FileNotFoundError as e:

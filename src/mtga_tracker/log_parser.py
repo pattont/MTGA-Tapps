@@ -171,15 +171,32 @@ class MTGALogParser:
             return event_info
 
         # Check for GRE (Game Rules Engine) events
+        # IMPORTANT: A single log line can contain multiple gameStateMessages
+        # We need to merge them to get complete game state (including turnInfo)
         if "greToClientEvent" in data:
             gre_event = data["greToClientEvent"]
             if "greToClientMessages" in gre_event:
+                merged_game_state = {}
                 for message in gre_event["greToClientMessages"]:
                     msg_type = message.get("type", "")
                     if msg_type == "GREMessageType_GameStateMessage":
-                        event_info["type"] = "game_state"
-                        event_info["data"] = message.get("gameStateMessage", {})
-                        return event_info
+                        game_state = message.get("gameStateMessage", {})
+                        # Merge this game state into our accumulated state
+                        for key, value in game_state.items():
+                            if key not in merged_game_state:
+                                merged_game_state[key] = value
+                            elif isinstance(value, list) and isinstance(merged_game_state[key], list):
+                                # Extend lists (like annotations, gameObjects)
+                                merged_game_state[key].extend(value)
+                            elif isinstance(value, dict) and isinstance(merged_game_state[key], dict):
+                                # Merge dicts (like turnInfo)
+                                merged_game_state[key].update(value)
+                            # For other types, newer value overwrites
+
+                if merged_game_state:
+                    event_info["type"] = "game_state"
+                    event_info["data"] = merged_game_state
+                    return event_info
 
         return event_info if event_info else None
 
