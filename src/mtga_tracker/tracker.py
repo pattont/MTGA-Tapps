@@ -13,10 +13,6 @@ from .card_database import CardDatabase
 class GameState:
     """Tracks the current game state."""
 
-    # Manual override - set this to force your seat ID (1 or 2)
-    # Set to None for auto-detection
-    MANUAL_PLAYER_SEAT: Optional[int] = None
-
     def __init__(self):
         self.player_life = 20
         self.opponent_life = 20
@@ -29,13 +25,12 @@ class GameState:
         self.seen_instance_ids: Set[int] = set()  # Track cards we've already announced
         self.last_turn_announced = 0
 
-        # Use manual override if set, otherwise auto-detect
-        if GameState.MANUAL_PLAYER_SEAT:
-            self.player_seat_id = GameState.MANUAL_PLAYER_SEAT
-            self.opponent_seat_id = 2 if GameState.MANUAL_PLAYER_SEAT == 1 else 1
-        else:
-            self.player_seat_id: Optional[int] = None  # Auto-detected player seat
-            self.opponent_seat_id: Optional[int] = None  # Auto-detected opponent seat
+        # Auto-detected seat IDs
+        self.player_seat_id: Optional[int] = None
+        self.opponent_seat_id: Optional[int] = None
+
+        # Your account ID for matching against reservedPlayers
+        self.my_user_id: Optional[str] = None
 
         # Starting hand tracking
         self.starting_hand: List[str] = []
@@ -52,12 +47,6 @@ class GameState:
 
         # Match result
         self.winner_seat: Optional[int] = None
-
-        # Cumulative object tracking (for hand visibility detection)
-        # Maps instanceId -> grpId across all game state messages
-        self.instance_to_grp: Dict[int, int] = {}
-        # Maps instanceId -> ownerSeatId
-        self.instance_to_owner: Dict[int, int] = {}
 
     def reset(self):
         """Reset the game state for a new match."""
@@ -105,7 +94,6 @@ class CardTracker:
         self.player_cards: List[CardEvent] = []
         self.opponent_cards: List[CardEvent] = []
         self.running = False
-        self.swap_players = False  # If True, swap player/opponent after detection
 
     def start(self):
         """Start tracking cards."""
@@ -147,74 +135,58 @@ class CardTracker:
         """Stop tracking cards."""
         self.running = False
 
+    def _reset_game_state(self):
+        """Reset game state for a new game."""
+        self.game_state = GameState()
+        self.player_cards = []
+        self.opponent_cards = []
+
     def _detect_player_seat_from_log(self):
         """Scan recent log history to detect player seat ID.
 
-        PRIMARY: Hand visibility - YOUR hand shows grpIds, opponent's shows 0.
-        BACKUP: clientToGREMessage contains YOUR seat ID.
-
-        This method scans forward through the log to accumulate instanceId -> grpId
-        mappings, then checks hand visibility.
+        Strategy: YOUR client always lists YOU first in reservedPlayers.
+        Find the most recent reservedPlayers entry and use the first player as YOU.
         """
         try:
             with open(self.parser.log_path, 'r', encoding='utf-8', errors='ignore') as f:
-                # Read last 5000 lines to find seat assignment
                 lines = f.readlines()
-                recent_lines = lines[-5000:] if len(lines) > 5000 else lines
 
-                # FIRST PASS: Scan FORWARD to accumulate all game objects
-                # This builds the cumulative instance_to_grp map
-                for line in recent_lines:
-                    event = self.parser.extract_card_events(line)
-                    if event and event.get("type") == "game_state":
-                        data = event.get("data", {})
-                        self._accumulate_game_objects(data)
-
-                # SECOND PASS: Scan BACKWARD to find latest game's hands
-                # Now that we have accumulated the objects, check hand visibility
-                for line in reversed(recent_lines):
-                    if self.game_state.player_seat_id:
-                        break
-
-                    event = self.parser.extract_card_events(line)
-                    if event and event.get("type") == "game_state":
-                        data = event.get("data", {})
-                        seat_id = self._detect_seat_from_hand_visibility(data)
-                        if seat_id:
-                            self.game_state.player_seat_id = seat_id
-                            self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
-                            return
-
-                # BACKUP 1: Find YOUR seat from YOUR client messages
-                if self.game_state.player_seat_id is None:
-                    for line in reversed(recent_lines):
-                        if self.game_state.player_seat_id:
-                            break
-
-                        line_lower = line.lower()
-                        if "clienttogremessage" in line_lower or "clienttomatchdoor" in line_lower:
-                            json_data = self.parser.parse_json_from_line(line)
-                            if json_data:
-                                seat_id = self._extract_seat_from_client_message(json_data)
-                                if seat_id:
-                                    self.game_state.player_seat_id = seat_id
-                                    self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
-                                    return
-
-                # BACKUP 2: Look for mulligan responses (YOUR decision)
-                if self.game_state.player_seat_id is None:
-                    for line in reversed(recent_lines):
-                        if "mulliganresp" in line.lower():
-                            json_data = self.parser.parse_json_from_line(line)
-                            if json_data:
-                                seat_id = self._extract_seat_from_client_message(json_data)
-                                if seat_id:
-                                    self.game_state.player_seat_id = seat_id
-                                    self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
-                                    return
+            # Find the MOST RECENT reservedPlayers entry
+            # YOUR client lists YOU first, so first player = YOU
+            for line in reversed(lines):
+                if "reservedplayers" in line.lower():
+                    json_data = self.parser.parse_json_from_line(line)
+                    if json_data:
+                        reserved = self._find_nested(json_data, "reservedPlayers")
+                        if reserved and isinstance(reserved, list) and len(reserved) >= 2:
+                            # First player in the list is YOU
+                            my_player = reserved[0]
+                            seat_id = my_player.get("systemSeatId")
+                            if seat_id:
+                                self.game_state.player_seat_id = seat_id
+                                self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
+                                self.game_state.my_user_id = my_player.get("userId")
+                                print(f"Detected: You are Seat {seat_id}")
+                                return
 
         except Exception as e:
             print(f"Warning: Could not scan log for seat detection: {e}")
+
+    def _find_nested(self, data: Any, key: str) -> Any:
+        """Find a key in nested data structure."""
+        if isinstance(data, dict):
+            if key in data:
+                return data[key]
+            for value in data.values():
+                result = self._find_nested(value, key)
+                if result is not None:
+                    return result
+        elif isinstance(data, list):
+            for item in data:
+                result = self._find_nested(item, key)
+                if result is not None:
+                    return result
+        return None
 
     def _process_new_events(self):
         """Process new events from the log file."""
@@ -247,211 +219,96 @@ class CardTracker:
     def _try_detect_player_seat(self, line: str):
         """Try to detect which seat ID belongs to the player.
 
-        PRIMARY METHOD: Hand visibility - YOUR hand shows grpIds, opponent's shows 0.
-        This is the most reliable method because it's based on what you can SEE.
-
-        BACKUP: clientToGREMessage contains YOUR actions with YOUR seat ID.
+        YOUR client always lists YOU first in reservedPlayers.
+        When we see a new reservedPlayers, it means a new game started.
 
         Args:
             line: A line from the MTGA log file.
         """
-        # PRIMARY METHOD: Detect from game state - YOUR hand shows card grpIds, opponent's doesn't
-        # This runs on EVERY game state message to accumulate card data
+        line_lower = line.lower()
+
+        # Look for reservedPlayers in match config - this indicates a new game
+        if "reservedplayers" in line_lower:
+            json_data = self.parser.parse_json_from_line(line)
+            if json_data:
+                reserved = self._find_nested(json_data, "reservedPlayers")
+                if reserved and isinstance(reserved, list) and len(reserved) >= 2:
+                    # First player in the list is always YOU
+                    my_player = reserved[0]
+                    seat_id = my_player.get("systemSeatId")
+                    if seat_id:
+                        # Check if this is a NEW game (different seat or first detection)
+                        old_seat = self.game_state.player_seat_id
+                        new_user_id = my_player.get("userId")
+
+                        # Reset game state for new game
+                        if old_seat != seat_id or self.game_state.my_user_id != new_user_id:
+                            self._reset_game_state()
+
+                        self.game_state.player_seat_id = seat_id
+                        self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
+                        self.game_state.my_user_id = new_user_id
+                        print(f"Detected: You are Seat {seat_id}")
+
+    def _check_game_start(self, line: str):
+        """Check if a game is starting."""
+        # Look for game start indicators - mulligan phase means game is starting
+        line_lower = line.lower()
+        if "mulligantype" in line_lower or ("mulligan" in line_lower and "gretolient" in line_lower):
+            if not self.game_state.in_match:
+                self.game_state.game_start_time = datetime.now()
+                self.game_state.in_match = True
+                print("\n" + "="*70)
+                print("🎮 GAME STARTED")
+                print("="*70 + "\n")
+
+        # Check for opening hand
         event = self.parser.extract_card_events(line)
         if event and event.get("type") == "game_state":
             data = event.get("data", {})
 
-            # Always accumulate instanceId -> grpId map (for hand visibility detection)
-            self._accumulate_game_objects(data)
-
-            # Try to detect seat if not yet detected
-            if self.game_state.player_seat_id is None:
-                seat_id = self._detect_seat_from_hand_visibility(data)
-                if seat_id:
-                    if self.swap_players:
-                        seat_id = 2 if seat_id == 1 else 1
-                    self.game_state.player_seat_id = seat_id
-                    self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
-                    swap_note = " (swapped)" if self.swap_players else ""
-                    print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id}{swap_note} (from hand visibility)")
-                    return
-
-        # BACKUP 1: Look for YOUR client's messages to the server
-        # clientToGREMessage contains YOUR actions with YOUR seat ID
-        if "clienttogremessage" in line.lower() or "clienttomatchdoor" in line.lower():
-            json_data = self.parser.parse_json_from_line(line)
-            if json_data:
-                seat_id = self._extract_seat_from_client_message(json_data)
-                if seat_id and self.game_state.player_seat_id is None:
-                    # Apply swap if enabled
-                    if self.swap_players:
-                        seat_id = 2 if seat_id == 1 else 1
-
-                    self.game_state.player_seat_id = seat_id
-                    # Opponent is the other seat (usually 1 or 2)
-                    self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
-                    swap_note = " (swapped)" if self.swap_players else ""
-                    print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id}{swap_note} (from your actions)")
-                    return
-
-        # BACKUP 2: Look for mulligan response which is definitely YOUR decision
-        if "mulliganresp" in line.lower() and self.game_state.player_seat_id is None:
-            json_data = self.parser.parse_json_from_line(line)
-            if json_data:
-                seat_id = self._extract_seat_from_client_message(json_data)
-                if seat_id:
-                    if self.swap_players:
-                        seat_id = 2 if seat_id == 1 else 1
-                    self.game_state.player_seat_id = seat_id
-                    self.game_state.opponent_seat_id = 2 if seat_id == 1 else 1
-                    swap_note = " (swapped)" if self.swap_players else ""
-                    print(f"🎮 Detected: You are Seat {self.game_state.player_seat_id}{swap_note} (from mulligan)")
-                    return
-
-    def _accumulate_game_objects(self, game_state_data: Dict[str, Any]):
-        """Accumulate instanceId -> grpId mappings from game state.
-
-        MTGA sends differential updates, so we need to build a cumulative
-        map of all objects seen across multiple game state messages.
-
-        Args:
-            game_state_data: Game state message data.
-        """
-        game_objects = game_state_data.get("gameObjects", [])
-        for obj in game_objects:
-            instance_id = obj.get("instanceId")
-            grp_id = obj.get("grpId", 0)
-            owner_seat = obj.get("ownerSeatId")
-
-            if instance_id:
-                # Only update if we have a valid grpId (not 0)
-                if grp_id and grp_id > 0:
-                    self.game_state.instance_to_grp[instance_id] = grp_id
-                if owner_seat:
-                    self.game_state.instance_to_owner[instance_id] = owner_seat
-
-    def _detect_seat_from_hand_visibility(self, game_state_data: Dict[str, Any]) -> Optional[int]:
-        """Detect your seat based on hand visibility.
-
-        Key insight: You can see the grpId (card identity) of cards in YOUR hand,
-        but opponent's hand cards have grpId=0 (hidden).
-
-        IMPORTANT: Hand zones appear in SEPARATE messages, not together!
-        So we track hands by seat and look for ANY visible cards.
-        The seat with visible cards is YOUR seat.
-
-        Args:
-            game_state_data: Game state message data.
-
-        Returns:
-            Your seat ID if detected, None otherwise.
-        """
-        zones = game_state_data.get("zones", [])
-
-        # Use the CUMULATIVE map (accumulated across all game state messages)
-        instance_to_grp = self.game_state.instance_to_grp
-
-        # Check hand zones in this message
-        for zone in zones:
-            zone_type = zone.get("type", "")
-            if "Hand" in zone_type:
-                owner_seat = zone.get("ownerSeatId")
-                obj_ids = zone.get("objectInstanceIds", [])
-
-                if obj_ids and owner_seat:
-                    # Count visible cards (grpId > 0 in our accumulated map)
-                    visible_count = sum(1 for oid in obj_ids
-                                       if instance_to_grp.get(oid, 0) > 0)
-
-                    # If this hand has ANY visible cards, it's YOUR hand
-                    # Because opponent's cards always have grpId=0 (hidden)
-                    if visible_count > 0:
-                        return owner_seat
-
-        return None
-
-    def _extract_seat_from_client_message(self, data: Dict[str, Any]) -> Optional[int]:
-        """Recursively extract seat ID from a client message.
-
-        Args:
-            data: JSON data from a client message.
-
-        Returns:
-            Seat ID if found, None otherwise.
-        """
-        if isinstance(data, dict):
-            # Check common seat ID keys
-            for key in ["systemSeatId", "seatId", "playerSeatId", "systemSeatNumber"]:
-                if key in data:
-                    return data[key]
-
-            # Check in clientToGREMessage payload
-            if "clientToGREMessage" in data:
-                return self._extract_seat_from_client_message(data["clientToGREMessage"])
-
-            # Recurse into nested dicts
-            for value in data.values():
-                result = self._extract_seat_from_client_message(value)
-                if result is not None:
-                    return result
-
-        elif isinstance(data, list):
-            for item in data:
-                result = self._extract_seat_from_client_message(item)
-                if result is not None:
-                    return result
-
-        return None
-
-    def _check_game_start(self, line: str):
-        """Check if a game is starting."""
-        # Look for game start indicators
-        if "mulligantype" in line.lower() or "mulligan" in line.lower():
-            json_data = self.parser.parse_json_from_line(line)
-            if json_data:
-                # Game is starting - track mulligan
-                if not self.game_state.in_match:
+            # Detect game start from turnInfo (turn 1 means game started)
+            if "turnInfo" in data and not self.game_state.in_match:
+                turn_info = data["turnInfo"]
+                turn_num = turn_info.get("turnNumber", 0)
+                if turn_num >= 1:
                     self.game_state.game_start_time = datetime.now()
                     self.game_state.in_match = True
                     print("\n" + "="*70)
                     print("🎮 GAME STARTED")
                     print("="*70 + "\n")
 
-        # Check for opening hand
-        if "openinghand" in line.lower() or '"hand":' in line.lower():
-            event = self.parser.extract_card_events(line)
-            if event and event.get("type") == "game_state":
-                data = event.get("data", {})
-                if "zones" in data:
-                    for zone in data["zones"]:
-                        if zone.get("type") == "ZoneType_Hand":
-                            owner_seat = zone.get("ownerSeatId")
-                            if owner_seat == self.game_state.player_seat_id:
-                                # This is your hand
-                                obj_ids = zone.get("objectInstanceIds", [])
-                                if obj_ids and not self.game_state.starting_hand:
-                                    # Get card names
-                                    game_objects = data.get("gameObjects", [])
-                                    hand_cards = []
-                                    for obj in game_objects:
-                                        if obj.get("instanceId") in obj_ids:
-                                            grp_id = obj.get("grpId")
-                                            if grp_id:
-                                                card_name = self.card_db.get_card_name(grp_id)
-                                                hand_cards.append(card_name)
+            # Look for opening hand
+            if "zones" in data:
+                for zone in data["zones"]:
+                    if zone.get("type") == "ZoneType_Hand":
+                        owner_seat = zone.get("ownerSeatId")
+                        if owner_seat == self.game_state.player_seat_id:
+                            # This is your hand
+                            obj_ids = zone.get("objectInstanceIds", [])
+                            if obj_ids and not self.game_state.starting_hand:
+                                # Get card names
+                                game_objects = data.get("gameObjects", [])
+                                hand_cards = []
+                                for obj in game_objects:
+                                    if obj.get("instanceId") in obj_ids:
+                                        grp_id = obj.get("grpId")
+                                        if grp_id:
+                                            card_name = self.card_db.get_card_name(grp_id)
+                                            hand_cards.append(card_name)
 
-                                    if hand_cards and len(hand_cards) <= 7:
-                                        self.game_state.starting_hand = hand_cards
-                                        self.game_state.initial_hand_size = len(hand_cards)
+                                if hand_cards and len(hand_cards) <= 7:
+                                    self.game_state.starting_hand = hand_cards
+                                    self.game_state.initial_hand_size = len(hand_cards)
 
-                                        if len(hand_cards) < 7:
-                                            self.game_state.mulligan_count = 7 - len(hand_cards)
-                                            print(f"🔄 Mulligan to {len(hand_cards)} (mulligans: {self.game_state.mulligan_count})")
+                                    if len(hand_cards) < 7:
+                                        self.game_state.mulligan_count = 7 - len(hand_cards)
+                                        print(f"🔄 Mulligan to {len(hand_cards)} (mulligans: {self.game_state.mulligan_count})")
 
-                                        print(f"\n🎴 Your Starting Hand ({len(hand_cards)} cards):")
-                                        for card in hand_cards:
-                                            print(f"   • {card}")
-                                        print()
+                                    print(f"\n🎴 Your Starting Hand ({len(hand_cards)} cards):")
+                                    for card in hand_cards:
+                                        print(f"   • {card}")
+                                    print()
 
     def _check_game_end(self, line: str):
         """Check if the game has ended."""
@@ -499,24 +356,22 @@ class CardTracker:
                 if life is not None and seat_id is not None:
                     if seat_id == self.game_state.player_seat_id:
                         old_life = self.game_state.player_life
-                        # Only update if changed and we're tracking
                         if life != old_life:
+                            diff = life - old_life
                             self.game_state.player_life = life
-                            # Only announce if match started and not initial life set
-                            if self.game_state.turn_number > 0:
-                                diff = life - old_life
+                            # Announce life changes once game has started
+                            if self.game_state.in_match:
                                 if diff > 0:
                                     print(f"💚 You gained {diff} life (now {life})")
                                 elif diff < 0:
                                     print(f"💔 You lost {-diff} life (now {life})")
                     elif seat_id == self.game_state.opponent_seat_id:
                         old_life = self.game_state.opponent_life
-                        # Only update if changed and we're tracking
                         if life != old_life:
+                            diff = life - old_life
                             self.game_state.opponent_life = life
-                            # Only announce if match started and not initial life set
-                            if self.game_state.turn_number > 0:
-                                diff = life - old_life
+                            # Announce life changes once game has started
+                            if self.game_state.in_match:
                                 if diff > 0:
                                     print(f"   Opponent gained {diff} life (now {life})")
                                 elif diff < 0:
@@ -545,9 +400,6 @@ class CardTracker:
                     print(f"⚔️  Turn {turn_num} - {player_name} TURN")
                     print(f"   Life: You {self.game_state.player_life} - {self.game_state.opponent_life} Opponent")
                     print(f"{'='*70}\n")
-
-                    if not self.game_state.in_match:
-                        self.game_state.in_match = True
 
     def _process_game_events(self, data: Dict[str, Any]):
         """Process and display important game events."""
@@ -586,7 +438,7 @@ class CardTracker:
         elif "AnnotationType_BlockerDeclared" in ann_type:
             self._handle_blocker_declared(affected_ids, annotation, game_objects)
             return
-        elif "AnnotationType_Damage" in ann_type:
+        elif "AnnotationType_Damage" in ann_type or "AnnotationType_DamageDealt" in ann_type:
             self._handle_damage(affected_ids, annotation, game_objects)
             return
 
@@ -607,8 +459,8 @@ class CardTracker:
 
         # Handle different annotation types
         if "AnnotationType_ZoneTransfer" in ann_type:
-            # Casting spells - includes instants, sorceries, creatures, etc.
-            if category in ["CastSpell", "PlaySpell"] and instance_id not in self.game_state.seen_instance_ids:
+            # Casting spells and playing lands
+            if category in ["CastSpell", "PlayLand"] and instance_id not in self.game_state.seen_instance_ids:
                 self.game_state.seen_instance_ids.add(instance_id)
                 if card_obj:
                     grp_id = card_obj.get("grpId")
@@ -616,7 +468,7 @@ class CardTracker:
                     card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
 
                     player = "You" if owner_seat == self.game_state.player_seat_id else "Opponent"
-                    player_symbol = "🎯" if owner_seat == self.game_state.player_seat_id else "👤"
+                    player_symbol = ">" if owner_seat == self.game_state.player_seat_id else " "
 
                     # Get card type info
                     card_types = card_obj.get("cardTypes", [])
@@ -631,7 +483,10 @@ class CardTracker:
                         target_owner = "your" if target_owner_seat == self.game_state.player_seat_id else "opponent's"
                         target_str = f" targeting {target_name} ({target_owner})"
 
-                    if "CardType_Creature" in card_types:
+                    # Use appropriate verb based on card type
+                    if category == "PlayLand":
+                        print(f"{player_symbol} {player:8} played {card_name} ({type_str})")
+                    elif "CardType_Creature" in card_types:
                         power = card_obj.get("power", {}).get("value", "?")
                         toughness = card_obj.get("toughness", {}).get("value", "?")
                         print(f"{player_symbol} {player:8} cast {card_name} ({type_str} {power}/{toughness}){target_str}")

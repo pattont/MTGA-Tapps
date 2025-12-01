@@ -63,9 +63,14 @@ class CardDatabase:
         Returns:
             Card name, or "Unknown Card (ID: grp_id)" if not found.
         """
-        # Check cache first
+        # Check cache first - but retry if it was previously unknown
         if grp_id in self.cache:
-            return self.cache[grp_id]
+            cached = self.cache[grp_id]
+            # If we have a real name, return it
+            if not cached.startswith("Unknown Card") and not cached.startswith("Card #"):
+                return cached
+            # Don't retry during this session to avoid spamming API
+            return cached
 
         # Fetch from Scryfall API
         card_name = self._fetch_from_scryfall(grp_id)
@@ -75,10 +80,11 @@ class CardDatabase:
             self._save_cache()
             return card_name
 
-        # Return unknown if fetch failed
-        unknown = f"Unknown Card ({grp_id})"
-        self.cache[grp_id] = unknown  # Cache failures too
-        return unknown
+        # Return the grpId as the name if fetch failed
+        # Cache in memory only so it can be retried next session
+        fallback = f"Card #{grp_id}"
+        self.cache[grp_id] = fallback
+        return fallback
 
     def _fetch_from_scryfall(self, grp_id: int) -> Optional[str]:
         """Fetch card name from Scryfall API.
@@ -98,19 +104,24 @@ class CardDatabase:
         url = f"https://api.scryfall.com/cards/arena/{grp_id}"
 
         try:
-            with urllib.request.urlopen(url, timeout=5) as response:
+            # Create request with User-Agent header (Scryfall requests this)
+            req = urllib.request.Request(url)
+            req.add_header('User-Agent', 'MTGA-Tracker/1.0')
+            req.add_header('Accept', 'application/json')
+
+            with urllib.request.urlopen(req, timeout=10) as response:
                 self.last_api_call = time.time()
                 data = json.loads(response.read())
                 return data.get("name", None)
         except urllib.error.HTTPError as e:
             if e.code == 404:
-                # Card not found
+                # Card not found in Scryfall - might be a new or special card
                 return None
             else:
-                print(f"HTTP error fetching card {grp_id}: {e}")
+                # Don't print errors to avoid cluttering output
                 return None
-        except Exception as e:
-            print(f"Error fetching card {grp_id}: {e}")
+        except Exception:
+            # Network errors, timeouts, etc - fail silently
             return None
 
     def preload_cards(self, grp_ids: list[int]):
