@@ -67,10 +67,26 @@ class MTGALogParser:
         Yields:
             New lines from the log file.
         """
+        # #region agent log
+        import json as json_module
+        try:
+            with open('/Users/travispatton/Repo/MTGA-Tapps/.cursor/debug.log', 'a') as f:
+                f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"M","location":"log_parser.py:70","message":"read_new_lines called","data":{"log_path":self.log_path,"last_position":self.last_position},"timestamp":__import__('time').time()*1000})+'\n')
+        except: pass
+        # #endregion
         try:
             with open(self.log_path, "r", encoding="utf-8", errors="ignore") as f:
                 # Seek to last known position
                 f.seek(self.last_position)
+                # #region agent log
+                current_size = f.tell()
+                file_size = f.seek(0, 2)
+                f.seek(self.last_position)
+                try:
+                    with open('/Users/travispatton/Repo/MTGA-Tapps/.cursor/debug.log', 'a') as f2:
+                        f2.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"N","location":"log_parser.py:78","message":"File opened for reading","data":{"last_position":self.last_position,"current_size":current_size,"file_size":file_size,"bytes_available":file_size - self.last_position},"timestamp":__import__('time').time()*1000})+'\n')
+                except: pass
+                # #endregion
 
                 # Read new lines
                 # Handle case where JSON might be on next line after log prefix
