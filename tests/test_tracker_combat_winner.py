@@ -931,3 +931,74 @@ def test_capture_opening_hand_finalizes_keep_seven_on_turn_start():
 
     assert len(tracker.game_state.starting_hand) == 7
     assert tracker.game_state.mulligan_count == 0
+
+
+def test_capture_opening_hand_uses_snapshot_fallback_for_partial_diff():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.turn_number = 1
+    tracker.game_state.object_snapshots = {
+        101: {"instanceId": 101, "grpId": 3001},
+        102: {"instanceId": 102, "grpId": 3002},
+        103: {"instanceId": 103, "grpId": 3003},
+        104: {"instanceId": 104, "grpId": 3004},
+        105: {"instanceId": 105, "grpId": 3005},
+        106: {"instanceId": 106, "grpId": 3006},
+    }
+
+    # gameObjects diff only includes one hand object, but zone has all 6.
+    data = {
+        "turnInfo": {"turnNumber": 1, "activePlayer": 2},
+        "zones": [{"type": "ZoneType_Hand", "ownerSeatId": 1, "objectInstanceIds": [101, 102, 103, 104, 105, 106]}],
+        "gameObjects": [{"instanceId": 101, "grpId": 3001}],
+    }
+    tracker._capture_opening_hand(data)
+
+    assert len(tracker.game_state.starting_hand) == 6
+    assert tracker.game_state.mulligan_count == 1
+
+
+def test_capture_opening_hand_counts_one_london_mulligan_with_two_sevens_then_six():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+
+    first_seven = {
+        "zones": [{"type": "ZoneType_Hand", "ownerSeatId": 1, "objectInstanceIds": [1, 2, 3, 4, 5, 6, 7]}],
+        "gameObjects": [
+            {"instanceId": 1, "grpId": 4001}, {"instanceId": 2, "grpId": 4002}, {"instanceId": 3, "grpId": 4003},
+            {"instanceId": 4, "grpId": 4004}, {"instanceId": 5, "grpId": 4005}, {"instanceId": 6, "grpId": 4006},
+            {"instanceId": 7, "grpId": 4007},
+        ],
+    }
+    tracker._capture_opening_hand(first_seven)
+    assert tracker.game_state.mulligan_count == 0
+    assert tracker.game_state.starting_hand == []
+
+    second_seven = {
+        "zones": [{"type": "ZoneType_Hand", "ownerSeatId": 1, "objectInstanceIds": [11, 12, 13, 14, 15, 16, 17]}],
+        "gameObjects": [
+            {"instanceId": 11, "grpId": 4101}, {"instanceId": 12, "grpId": 4102}, {"instanceId": 13, "grpId": 4103},
+            {"instanceId": 14, "grpId": 4104}, {"instanceId": 15, "grpId": 4105}, {"instanceId": 16, "grpId": 4106},
+            {"instanceId": 17, "grpId": 4107},
+        ],
+    }
+    tracker._capture_opening_hand(second_seven)
+    assert tracker.game_state.mulligan_count == 1
+    assert tracker.game_state.starting_hand == []
+
+    keep_six = {
+        "turnInfo": {"turnNumber": 1, "activePlayer": 2},
+        "zones": [{"type": "ZoneType_Hand", "ownerSeatId": 1, "objectInstanceIds": [11, 12, 13, 14, 15, 16]}],
+        "gameObjects": [
+            {"instanceId": 11, "grpId": 4101}, {"instanceId": 12, "grpId": 4102}, {"instanceId": 13, "grpId": 4103},
+            {"instanceId": 14, "grpId": 4104}, {"instanceId": 15, "grpId": 4105}, {"instanceId": 16, "grpId": 4106},
+        ],
+    }
+    tracker._capture_opening_hand(keep_six)
+
+    assert len(tracker.game_state.starting_hand) == 6
+    assert tracker.game_state.mulligan_count == 1

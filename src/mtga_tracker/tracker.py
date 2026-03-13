@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Set
 from .log_parser import MTGALogParser
 from .card_database import CardDatabase
-from .paths import DEBUG_LOG_PATH_STR
 from .deck_llm import identify_deck, is_deck_llm_enabled, diagnose as deck_llm_diagnose
 
 
@@ -299,6 +298,8 @@ class CardTracker:
 
     def _snapshot_game_objects(self, game_objects: List[Dict[str, Any]]) -> None:
         """Persist latest known gameObject fields for later combat/summary lookups."""
+        max_snapshots = 4000
+        trim_batch = 200
         for obj in game_objects:
             if not isinstance(obj, dict):
                 continue
@@ -308,6 +309,10 @@ class CardTracker:
             snap = self.game_state.object_snapshots.get(instance_id, {}).copy()
             snap.update({k: v for k, v in obj.items() if v is not None})
             self.game_state.object_snapshots[instance_id] = snap
+        # Keep snapshot map bounded across long sessions.
+        if len(self.game_state.object_snapshots) > max_snapshots:
+            for old_id in list(self.game_state.object_snapshots.keys())[:trim_batch]:
+                self.game_state.object_snapshots.pop(old_id, None)
 
     def _lookup_object(self, instance_id: Optional[int], game_objects_by_id: Optional[Dict[int, Dict[str, Any]]] = None) -> Dict[str, Any]:
         """Get best-known object payload from current state + snapshot fallback."""
@@ -430,27 +435,11 @@ class CardTracker:
         self._backfill_recent_match_metadata()
 
         # Start from current end of file
-        # #region agent log
-        import json as json_module
-        try:
-            with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"K","location":"tracker.py:127","message":"Starting tracker loop","data":{"log_path":self.parser.log_path,"player_seat_id":self.game_state.player_seat_id},"timestamp":__import__('time').time()*1000})+'\n')
-        except: pass
-        # #endregion
         self.parser.reset_position()
         
         # Check if we're launching mid-game
         self._check_if_mid_game()
         
-        # #region agent log
-        try:
-            import os
-            log_exists = os.path.exists(self.parser.log_path)
-            log_size = os.path.getsize(self.parser.log_path) if log_exists else 0
-            with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"L","location":"tracker.py:132","message":"After reset_position","data":{"log_path":self.parser.log_path,"log_exists":log_exists,"log_size":log_size,"last_position":self.parser.last_position,"waiting_for_next_game":self.waiting_for_next_game},"timestamp":__import__('time').time()*1000})+'\n')
-        except: pass
-        # #endregion
         
         # Safety: If waiting_for_next_game is set, give it a timeout
         # After 5 minutes, assume we can start tracking
@@ -541,26 +530,6 @@ class CardTracker:
         self.game_state.winner_priority = priority
         self.game_state.winner_reason = reason
 
-        # #region agent log
-        import json as json_module
-        try:
-            with open(DEBUG_LOG_PATH_STR, "a") as f:
-                f.write(json_module.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "W",
-                    "location": "tracker.py:winner_update",
-                    "message": "Winner seat updated",
-                    "data": {
-                        "winner_seat": seat,
-                        "reason": reason,
-                        "priority": priority,
-                    },
-                    "timestamp": __import__("time").time() * 1000
-                }) + "\n")
-        except Exception:
-            pass
-        # #endregion
 
         return True
 
@@ -655,7 +624,6 @@ class CardTracker:
 
     def _check_if_mid_game(self):
         """Only set mid-game if the tail of the log shows an active game and no match-end (lobby = match already ended)."""
-        import json as json_module
         try:
             with open(self.parser.log_path, "r", encoding="utf-8", errors="ignore") as f:
                 lines = f.readlines()
@@ -706,31 +674,12 @@ class CardTracker:
 
     def _process_new_events(self):
         """Process new events from the log file."""
-        # #region agent log
-        import json as json_module
-        line_count = 0
-        # #endregion
         for line in self.parser.read_new_lines():
-            # #region agent log
-            line_count += 1
-            if line_count <= 5:  # Log first 5 lines
-                try:
-                    with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                        f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"G","location":"tracker.py:198","message":"Reading log line","data":{"line_count":line_count,"line_preview":line[:100] if line else None,"log_path":self.parser.log_path},"timestamp":__import__('time').time()*1000})+'\n')
-                except: pass
-            # #endregion
             self._process_line(line)
         # Defer game summary until after all lines processed (so ConcedeReq can set winner before we print)
         if self.game_state.match_complete and self._pending_game_summary:
             self._print_game_summary()
             self._pending_game_summary = False
-        # #region agent log
-        if line_count == 0:
-            try:
-                with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                    f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H","location":"tracker.py:207","message":"No new lines read","data":{"log_path":self.parser.log_path,"last_position":self.parser.last_position},"timestamp":__import__('time').time()*1000})+'\n')
-            except: pass
-        # #endregion
 
     def _process_line(self, line: str):
         """Process a single line from the log file.
@@ -747,13 +696,6 @@ class CardTracker:
             self._check_game_start(line)
             return
         
-        # #region agent log
-        import json as json_module
-        try:
-            with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"I","location":"tracker.py:222","message":"Processing line","data":{"line_length":len(line),"has_reservedplayers":"reservedplayers" in line.lower(),"has_gamestate":"gamestatemessage" in line.lower(),"player_seat_id":self.game_state.player_seat_id,"in_match":self.game_state.in_match},"timestamp":__import__('time').time()*1000})+'\n')
-        except: pass
-        # #endregion
         # Try to detect player seat if not yet detected
         if self.game_state.player_seat_id is None:
             self._try_detect_player_seat(line)
@@ -771,12 +713,6 @@ class CardTracker:
         # Look for card-related events
         event = self.parser.extract_card_events(line)
         if event:
-            # #region agent log
-            try:
-                with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                    f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"J","location":"tracker.py:241","message":"Event extracted","data":{"event_type":event.get("type") if event else None},"timestamp":__import__('time').time()*1000})+'\n')
-            except: pass
-            # #endregion
             self._handle_event(event)
 
     def _try_detect_player_seat(self, line: str):
@@ -1173,20 +1109,22 @@ class CardTracker:
             "Standard Best-of-3" if g.match_type == "best_of_3" else "Standard Best-of-1"
         )
         print(f"   Format: {format_display}")
-        # opponent_name_known = (
-        #     isinstance(g.opponent_display_name, str)
-        #     and g.opponent_display_name.strip()
-        #     and g.opponent_display_name.strip().lower() != "opponent"
-        # )
-        # if opponent_name_known:
-        #     player_label = g.player_display_name or "You"
-        #     print(f"   Players: {player_label} vs {g.opponent_display_name.strip()}")
+        opponent_name_known = (
+            isinstance(g.opponent_display_name, str)
+            and g.opponent_display_name.strip()
+            and g.opponent_display_name.strip().lower() != "opponent"
+        )
+        if opponent_name_known:
+            player_label = g.player_display_name or "You"
+            print(f"   Players: {player_label} vs {g.opponent_display_name.strip()}")
         if g.player_seat_id in (1, 2):
             print(f"   Seat: {g.player_seat_id}")
 
     def _capture_opening_hand(self, data: Dict[str, Any]) -> None:
         """Capture starting hand + mulligan count from early hand-zone snapshots."""
         if self.game_state.starting_hand:
+            return
+        if self.game_state.turn_number and self.game_state.turn_number > 1:
             return
 
         zones = data.get("zones", [])
@@ -1233,7 +1171,7 @@ class CardTracker:
             hand_cards: List[str] = []
             hand_grp_ids: List[int] = []
             for obj_id in obj_ids:
-                obj = objects_by_id.get(obj_id) or {}
+                obj = objects_by_id.get(obj_id) or self.game_state.object_snapshots.get(obj_id) or {}
                 grp_id = obj.get("grpId")
                 if grp_id:
                     hand_cards.append(self.card_db.get_card_name(grp_id))
@@ -1241,6 +1179,9 @@ class CardTracker:
 
             # Opponent hand is hidden (no grpIds), so a visible hand is ours.
             if not hand_grp_ids:
+                continue
+            # Partial gameState diffs can omit most hand objects; don't finalize from incomplete snapshots.
+            if len(hand_grp_ids) < len(obj_ids):
                 continue
 
             if self.game_state.player_seat_id is None:
@@ -1372,13 +1313,6 @@ class CardTracker:
             
         line_lower = line.lower()
         
-        # #region agent log
-        import json as json_module
-        try:
-            with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"U","location":"tracker.py:365","message":"Checking game start","data":{"line_preview":line[:100],"in_match":self.game_state.in_match,"mulligan_found":"mulligantype" in line_lower or ("mulligan" in line_lower and "gretolient" in line_lower)},"timestamp":__import__('time').time()*1000})+'\n')
-        except: pass
-        # #endregion
         
         # Look for game start indicators - mulligan phase means game is starting
         # More robust mulligan detection patterns
@@ -1404,12 +1338,6 @@ class CardTracker:
             self.game_state.player_deck_event_name = None
             self.game_state.player_deck_last_played = None
             self._backfill_recent_match_metadata(max_lines=1800, force=True)
-            # #region agent log
-            try:
-                with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                    f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"U","location":"tracker.py:375","message":"Game started via mulligan","data":{"reason":"mulligan","match_type":self.game_state.match_type,"game_number":self.game_state.game_number},"timestamp":__import__('time').time()*1000})+'\n')
-            except: pass
-            # #endregion
             format_display = "Standard Best-of-3" if self.game_state.match_type == "best_of_3" else "Standard Best-of-1"
             game_num_display = f" (Game {self.game_state.game_number})" if self.game_state.match_type == "best_of_3" else ""
             print("\n" + "="*75)
@@ -1448,12 +1376,6 @@ class CardTracker:
                     self.game_state.player_deck_event_name = None
                     self.game_state.player_deck_last_played = None
                     self._backfill_recent_match_metadata(max_lines=1800, force=True)
-                    # #region agent log
-                    try:
-                        with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                            f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"U","location":"tracker.py:395","message":"Game started via turn 1","data":{"turn_num":turn_num,"match_type":self.game_state.match_type,"game_number":self.game_state.game_number},"timestamp":__import__('time').time()*1000})+'\n')
-                    except: pass
-                    # #endregion
                     format_display = "Standard Best-of-3" if self.game_state.match_type == "best_of_3" else "Standard Best-of-1"
                     game_num_display = f" (Game {self.game_state.game_number})" if self.game_state.match_type == "best_of_3" else ""
                     print("\n" + "="*75)
@@ -1497,13 +1419,6 @@ class CardTracker:
                 winner_reason = "structured_game_over_json" if structured_match_complete else "json_winner_hint"
                 self._set_winner_seat(w, reason=winner_reason, priority=winner_priority)
         
-        # #region agent log
-        import json as json_module
-        try:
-            with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"X","location":"tracker.py:428","message":"Checking game end","data":{"line_preview":line[:150],"in_match":self.game_state.in_match,"match_complete":self.game_state.match_complete,"patterns_found":{"gamecompleted":any(x in line_lower for x in ["gamecompletedtype","matchcompleted","finalresults"]),"opponent_left":any(x in line_lower for x in ["opponentleft","concede","disconnect"]),"you_left":any(x in line_lower for x in ["playerleft","youleft","you left","i left"])}},"timestamp":__import__('time').time()*1000})+'\n')
-        except: pass
-        # #endregion
         
         # Check for concede requests - need to check WHO conceded
         # Process even when match_complete so we can set winner_seat before deferred summary
@@ -1517,24 +1432,12 @@ class CardTracker:
                         reason="concede_req:player_conceded",
                         priority=2,
                     )
-                    # #region agent log
-                    try:
-                        with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                            f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"X","location":"tracker.py:concede_req","message":"Player conceded","data":{"seat_id":seat_id,"player_seat_id":self.game_state.player_seat_id,"winner_seat":self.game_state.winner_seat},"timestamp":__import__('time').time()*1000})+'\n')
-                    except: pass
-                    # #endregion
                 elif seat_id == self.game_state.opponent_seat_id:
                     self._set_winner_seat(
                         self.game_state.player_seat_id,
                         reason="concede_req:opponent_conceded",
                         priority=2,
                     )
-                    # #region agent log
-                    try:
-                        with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                            f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"X","location":"tracker.py:concede_req","message":"Opponent conceded","data":{"seat_id":seat_id,"opponent_seat_id":self.game_state.opponent_seat_id,"winner_seat":self.game_state.winner_seat},"timestamp":__import__('time').time()*1000})+'\n')
-                    except: pass
-                    # #endregion
             if self.game_state.winner_seat is not None and not self.game_state.match_complete:
                 self.game_state.match_complete = True
                 self.game_state.game_end_time = datetime.now()
@@ -1566,12 +1469,6 @@ class CardTracker:
                 self.game_state.match_complete = True
                 self.game_state.game_end_time = datetime.now()
                 self._pending_game_summary = True
-            # #region agent log
-            try:
-                with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                    f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"X","location":"tracker.py:456","message":"You left/forfeited detected","data":{"winner_seat":self.game_state.winner_seat,"opponent_seat_id":self.game_state.opponent_seat_id,"line_preview":line[:150]},"timestamp":__import__('time').time()*1000})+'\n')
-            except: pass
-            # #endregion
             return
         
         # Check for match completion state changes - be very specific
@@ -1582,12 +1479,6 @@ class CardTracker:
                     self.game_state.match_complete = True
                     self.game_state.game_end_time = datetime.now()
                     self._pending_game_summary = True
-                    # #region agent log
-                    try:
-                        with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                            f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"X","location":"tracker.py:456","message":"Match completed state transition detected","data":{"line_preview":line[:150]},"timestamp":__import__('time').time()*1000})+'\n')
-                    except: pass
-                    # #endregion
                     return
         
         # Check for opponent leaving/conceding (you win). Always set winner_seat so we overwrite
@@ -1609,12 +1500,6 @@ class CardTracker:
                 self.game_state.match_complete = True
                 self.game_state.game_end_time = datetime.now()
                 self._pending_game_summary = True
-            # #region agent log
-            try:
-                with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                    f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"X","location":"tracker.py:467","message":"Opponent left detected","data":{"winner_seat":self.game_state.winner_seat,"player_seat_id":self.game_state.player_seat_id},"timestamp":__import__('time').time()*1000})+'\n')
-            except: pass
-            # #endregion
             return
         
         # Check for game completion messages (try to parse JSON)
@@ -1631,12 +1516,6 @@ class CardTracker:
                 if winner_team is not None and winner_team in (1, 2):
                     self._set_winner_seat(winner_team, reason="game_complete_pattern:winner_team", priority=4)
                 self._pending_game_summary = True
-                # #region agent log
-                try:
-                    with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                        f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"X","location":"tracker.py:475","message":"Game completion detected","data":{"winner_seat":self.game_state.winner_seat,"json_keys":list(json_data.keys()) if isinstance(json_data, dict) else None,"line_preview":line[:150]},"timestamp":__import__('time').time()*1000})+'\n')
-                except: pass
-                # #endregion
                 return
         
         # Check for state change FROM "Playing" TO "MatchCompleted" - this is the actual game end
@@ -1650,12 +1529,6 @@ class CardTracker:
                     if winner_team is not None and winner_team in (1, 2):
                         self._set_winner_seat(winner_team, reason="state_transition:winner_team", priority=4)
                 self._pending_game_summary = True
-                # #region agent log
-                try:
-                    with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                        f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"X","location":"tracker.py:state_transition","message":"MatchCompleted state transition detected (Playing -> MatchCompleted)","data":{"line_preview":line[:150],"winner_seat":self.game_state.winner_seat},"timestamp":__import__('time').time()*1000})+'\n')
-                except: pass
-                # #endregion
                 return
 
     def _handle_event(self, event: Dict[str, Any]):
@@ -1690,13 +1563,6 @@ class CardTracker:
             active_player = turn_info.get("activePlayer")
             phase = turn_info.get("phase", "")
             step = turn_info.get("step", "")
-            # #region agent log
-            import json as json_module
-            try:
-                with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                    f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"tracker.py:384","message":"TurnInfo received","data":{"turn_num":turn_num,"active_player":active_player,"player_seat_id":self.game_state.player_seat_id,"opponent_seat_id":self.game_state.opponent_seat_id,"current_turn":self.game_state.turn_number,"first_player_seat":self.game_state.first_player_seat},"timestamp":__import__('time').time()*1000})+'\n')
-            except: pass
-            # #endregion
 
             # Detect new turn - only announce if turn number increased AND active player changed
             # A turn only changes when the active player changes (not just when turn number increments)
@@ -1776,43 +1642,19 @@ class CardTracker:
                 }
             
             if turn_changed and seats_known:
-                # #region agent log
-                try:
-                    with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                        f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"V","location":"tracker.py:495","message":"New turn detected","data":{"old_turn":self.game_state.turn_number,"new_turn":turn_num,"old_active_player":self.game_state.active_player,"new_active_player":active_player,"player_seat_id":self.game_state.player_seat_id},"timestamp":__import__('time').time()*1000})+'\n')
-                except: pass
-                # #endregion
                 
                 # Detect who went first (on turn 1)
                 if turn_num == 1 and self.game_state.first_player_seat is None and active_player is not None:
                     self.game_state.first_player_seat = active_player
-                    # #region agent log
-                    try:
-                        with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                            f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"tracker.py:510","message":"Turn 1 detected - storing first player","data":{"first_player_seat":active_player,"player_seat_id":self.game_state.player_seat_id,"player_went_first":active_player==self.game_state.player_seat_id},"timestamp":__import__('time').time()*1000})+'\n')
-                    except: pass
-                    # #endregion
 
                 # Announce turn change
                 # Defer both turn headers until we see an action from that side or the next turn.
                 if turn_num == 1 and self.game_state.last_turn_announced < 1:
-                    # #region agent log
-                    try:
-                        with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                            f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"tracker.py:518","message":"Announcing turn 1","data":{"turn_num":turn_num,"active_player":active_player,"player_seat_id":self.game_state.player_seat_id,"comparison_result":active_player == self.game_state.player_seat_id},"timestamp":__import__('time').time()*1000})+'\n')
-                    except: pass
-                    # #endregion
                     if active_player == self.game_state.player_seat_id:
                         self.game_state.pending_player_turn_header = (turn_num, active_player)
                     else:
                         self.game_state.pending_opponent_turn_header = (turn_num, active_player)
                 elif turn_num > self.game_state.last_turn_announced:
-                    # #region agent log
-                    try:
-                        with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                            f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"tracker.py:518","message":"Announcing turn","data":{"turn_num":turn_num,"active_player":active_player,"player_seat_id":self.game_state.player_seat_id,"comparison_result":active_player == self.game_state.player_seat_id},"timestamp":__import__('time').time()*1000})+'\n')
-                    except: pass
-                    # #endregion
                     if active_player == self.game_state.player_seat_id:
                         self._flush_pending_opponent_turn_header()
                         self.game_state.pending_player_turn_header = (turn_num, active_player)
@@ -2209,16 +2051,6 @@ class CardTracker:
                                 card_name_from_log = potential_name
                                 break
                     
-                    # #region agent log
-                    import json as json_module
-                    in_cache = grp_id in self.card_db.cache if grp_id else False
-                    cached_value = self.card_db.cache.get(grp_id) if grp_id else None
-                    # Log available fields for debugging
-                    try:
-                        with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                            f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"CARD_FIELDS","location":"tracker.py:card_play","message":"Card object fields","data":{"grp_id":grp_id,"available_fields":list(card_obj.keys())[:20],"has_name":"name" in card_obj,"has_cardName":"cardName" in card_obj,"has_titleId":"titleId" in card_obj},"timestamp":__import__('time').time()*1000})+'\n')
-                    except: pass
-                    # #endregion
                     
                     # Try to get card name - use log name as fallback if API fails
                     card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
@@ -2270,18 +2102,6 @@ class CardTracker:
                                             self.card_db.log_cache[grp_id] = card_name
                                     break
                     
-                    # #region agent log
-                    try:
-                        with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                            f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"R","location":"tracker.py:580","message":"Card name lookup","data":{"grp_id":grp_id,"card_name":card_name,"in_cache":in_cache,"cached_value":cached_value,"cache_size":len(self.card_db.cache),"used_log_name":card_name == card_name_from_log if card_name_from_log else False},"timestamp":__import__('time').time()*1000})+'\n')
-                    except: pass
-                    # #endregion
-                    # #region agent log
-                    try:
-                        with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                            f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"O","location":"tracker.py:590","message":"Card play detected","data":{"card_name":card_name,"grp_id":grp_id,"owner_seat":owner_seat,"controller_seat":controller_seat,"determining_seat":determining_seat,"player_seat_id":self.game_state.player_seat_id,"opponent_seat_id":self.game_state.opponent_seat_id,"category":category,"owner_matches_player":owner_seat==self.game_state.player_seat_id,"controller_matches_player":controller_seat==self.game_state.player_seat_id if controller_seat else None,"determining_matches_player":determining_seat==self.game_state.player_seat_id},"timestamp":__import__('time').time()*1000})+'\n')
-                    except: pass
-                    # #endregion
 
                     player = self._seat_label(determining_seat)
                     self._flush_pending_turn_header_for_seat(determining_seat)
@@ -2377,10 +2197,6 @@ class CardTracker:
                             "cast",
                         )
                     
-                    # Small delay to make output more readable
-                    import time
-                    time.sleep(0.1)
-
                     # Track the event using same format as turn log: "Card Name (Type P/T)" or "Card Name (Type)"
                     if "CardType_Creature" in card_types:
                         power = card_obj.get("power", {}).get("value", "?")
@@ -2388,13 +2204,6 @@ class CardTracker:
                         track_name = f"{card_name} ({type_str} {power}/{toughness})"
                     else:
                         track_name = f"{card_name} ({type_str})"
-                    if card_name.isdigit() or card_name.startswith("Card #"):
-                        # #region agent log
-                        try:
-                            with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                                f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"UNKNOWN_CARD","location":"tracker.py:card_tracking","message":"Tracking unidentified card with fallback name","data":{"grp_id":grp_id,"card_name":card_name,"track_name":track_name},"timestamp":__import__('time').time()*1000})+'\n')
-                        except: pass
-                        # #endregion
                     type_category = self._get_card_type_category(card_types)
                     event = CardEvent(track_name, player.lower(), card_type_category=type_category)
                     if determining_seat == self.game_state.player_seat_id:
@@ -3006,13 +2815,6 @@ class CardTracker:
 
         # Winner - MAKE THIS VERY PROMINENT
         print("\n" + "="*75)
-        # #region agent log
-        import json as json_module
-        try:
-            with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"W","location":"tracker.py:900","message":"Printing game summary","data":{"winner_seat":self.game_state.winner_seat,"player_seat_id":self.game_state.player_seat_id,"opponent_seat_id":self.game_state.opponent_seat_id,"player_life":self.game_state.player_life,"opponent_life":self.game_state.opponent_life,"match_type":self.game_state.match_type,"game_number":self.game_state.game_number},"timestamp":__import__('time').time()*1000})+'\n')
-        except: pass
-        # #endregion
         
         outcome, reason = self._resolve_game_outcome()
         if outcome == "win":
@@ -3137,13 +2939,6 @@ class CardTracker:
 
         print(f"   Final Life: You {self.game_state.player_life} - {self.game_state.opponent_life} Opponent")
         print(f"   Turns Played: {self.game_state.turn_number}")
-        # #region agent log
-        import json as json_module
-        try:
-            with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"tracker.py:756","message":"Printing summary","data":{"first_player_seat":self.game_state.first_player_seat,"player_seat_id":self.game_state.player_seat_id,"turn_number":self.game_state.turn_number},"timestamp":__import__('time').time()*1000})+'\n')
-        except: pass
-        # #endregion
         if self.game_state.first_player_seat is not None:
             went_first = "You" if self.game_state.first_player_seat == self.game_state.player_seat_id else "Opponent"
             print(f"   Went First: {went_first}")
