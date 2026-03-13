@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 import urllib.request
 import urllib.error
-from .paths import DEBUG_LOG_PATH_STR, DATA_DIR, get_mtga_raw_card_db_folders
+from .paths import DATA_DIR, get_mtga_raw_card_db_folders
 
 try:
     import ijson
@@ -168,14 +168,6 @@ class CardDatabase:
         Returns:
             Card name, or "Unknown Card (ID: grp_id)" if not found.
         """
-        # #region agent log
-        import json as json_module
-        import os
-        try:
-            with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"S","location":"card_database.py:67","message":"get_card_name called","data":{"grp_id":grp_id,"in_cache":grp_id in self.cache},"timestamp":__import__('time').time()*1000})+'\n')
-        except: pass
-        # #endregion
         
         # Session cache: same deck/cards looked up many times in one run
         if grp_id in self.cache:
@@ -188,12 +180,6 @@ class CardDatabase:
             return card_name
 
         fallback = f"Card #{grp_id}"
-        # #region agent log
-        try:
-            with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"S","location":"card_database.py:97","message":"Card name fetch failed - all APIs failed, not caching","data":{"grp_id":grp_id,"fallback":fallback},"timestamp":__import__('time').time()*1000})+'\n')
-        except: pass
-        # #endregion
         return fallback
 
     def _fetch_from_scryfall(self, grp_id: int) -> Optional[str]:
@@ -213,14 +199,6 @@ class CardDatabase:
 
         url = f"https://api.scryfall.com/cards/arena/{grp_id}"
 
-        # #region agent log
-        import json as json_module
-        import os
-        try:
-            with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"Y","location":"card_database.py:115","message":"Fetching from Scryfall","data":{"grp_id":grp_id,"url":url},"timestamp":__import__('time').time()*1000})+'\n')
-        except: pass
-        # #endregion
 
         try:
             # Create request with User-Agent header (Scryfall requests this)
@@ -232,20 +210,8 @@ class CardDatabase:
                 self.last_api_call = time.time()
                 data = json.loads(response.read())
                 card_name = data.get("name", None)
-                # #region agent log
-                try:
-                    with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                        f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"Y","location":"card_database.py:130","message":"Scryfall API success","data":{"grp_id":grp_id,"card_name":card_name,"status_code":response.getcode()},"timestamp":__import__('time').time()*1000})+'\n')
-                except: pass
-                # #endregion
                 return card_name
         except urllib.error.HTTPError as e:
-            # #region agent log
-            try:
-                with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                    f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"Y","location":"card_database.py:137","message":"Scryfall API HTTP error","data":{"grp_id":grp_id,"status_code":e.code,"reason":e.reason},"timestamp":__import__('time').time()*1000})+'\n')
-            except: pass
-            # #endregion
             if e.code == 404:
                 # Card not found in Scryfall - might be a new or special card
                 return None
@@ -253,12 +219,6 @@ class CardDatabase:
                 # Don't print errors to avoid cluttering output
                 return None
         except Exception as e:
-            # #region agent log
-            try:
-                with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                    f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"Y","location":"card_database.py:147","message":"Scryfall API exception","data":{"grp_id":grp_id,"error_type":type(e).__name__,"error_message":str(e)},"timestamp":__import__('time').time()*1000})+'\n')
-            except: pass
-            # #endregion
             # Network errors, timeouts, etc - fail silently
             return None
 
@@ -282,14 +242,6 @@ class CardDatabase:
         # Search for cards with this arena ID
         url = f"https://api.scryfall.com/cards/search?q=arena%3A{grp_id}"
         
-        # #region agent log
-        import json as json_module
-        import os
-        try:
-            with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"Z","location":"card_database.py:190","message":"Trying Scryfall search as fallback","data":{"grp_id":grp_id,"url":url},"timestamp":__import__('time').time()*1000})+'\n')
-        except: pass
-        # #endregion
 
         try:
             req = urllib.request.Request(url)
@@ -303,29 +255,11 @@ class CardDatabase:
                 # Scryfall search returns a list of cards in 'data' field
                 if data.get("data") and len(data["data"]) > 0:
                     card_name = data["data"][0].get("name")
-                    # #region agent log
-                    try:
-                        with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                            f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"Z","location":"card_database.py:205","message":"Scryfall search success","data":{"grp_id":grp_id,"card_name":card_name},"timestamp":__import__('time').time()*1000})+'\n')
-                    except: pass
-                    # #endregion
                     return card_name
                 return None
         except urllib.error.HTTPError as e:
-            # #region agent log
-            try:
-                with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                    f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"Z","location":"card_database.py:214","message":"Scryfall search HTTP error","data":{"grp_id":grp_id,"status_code":e.code,"reason":e.reason},"timestamp":__import__('time').time()*1000})+'\n')
-            except: pass
-            # #endregion
             return None
         except Exception as e:
-            # #region agent log
-            try:
-                with open(DEBUG_LOG_PATH_STR, 'a') as f:
-                    f.write(json_module.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"Z","location":"card_database.py:222","message":"Scryfall search exception","data":{"grp_id":grp_id,"error_type":type(e).__name__,"error_message":str(e)},"timestamp":__import__('time').time()*1000})+'\n')
-            except: pass
-            # #endregion
             return None
 
     def preload_cards(self, grp_ids: list[int]):
