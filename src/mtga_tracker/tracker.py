@@ -44,6 +44,10 @@ class GameState:
         self.initial_hand_size = 7
         self._hand_before_mulligan: List[str] = []  # 7-card hand before mulligan (to show card thrown away)
         self._hand_before_mulligan_ids: List[int] = []
+        self.opening_hand_capture_closed = False  # Stop opening-hand inference once gameplay actions begin.
+        self.opening_mulligan_prompt_seen = False  # True when mulligan prompt markers are observed in the log.
+        self.instance_roots: Dict[int, int] = {}  # objectIdChanged lineage map (new_id -> canonical root id).
+        self.pending_spell_roots: Dict[int, Dict[str, Any]] = {}  # CastSpell seen, waiting for Resolve.
 
         # Combat tracking
         self.attackers: List[int] = []  # Instance IDs of attacking creatures
@@ -318,11 +322,42 @@ class CardTracker:
         """Get best-known object payload from current state + snapshot fallback."""
         if instance_id is None:
             return {}
+        canonical_id = self._canonical_instance_id(instance_id)
         current_obj = (game_objects_by_id or {}).get(instance_id) or {}
         snapshot_obj = self.game_state.object_snapshots.get(instance_id) or {}
-        merged = snapshot_obj.copy()
+        if canonical_id is not None and canonical_id != instance_id:
+            canonical_current = (game_objects_by_id or {}).get(canonical_id) or {}
+            canonical_snapshot = self.game_state.object_snapshots.get(canonical_id) or {}
+        else:
+            canonical_current = {}
+            canonical_snapshot = {}
+        merged = canonical_snapshot.copy()
+        merged.update(canonical_current)
+        merged.update(snapshot_obj)
         merged.update(current_obj)
         return merged
+
+    def _canonical_instance_id(self, instance_id: Optional[int]) -> Optional[int]:
+        """Resolve instance id to canonical root id across ObjectIdChanged events."""
+        if instance_id is None:
+            return None
+        current = int(instance_id)
+        seen: Set[int] = set()
+        while current in self.game_state.instance_roots and current not in seen:
+            seen.add(current)
+            parent = self.game_state.instance_roots.get(current)
+            if parent is None:
+                break
+            current = int(parent)
+        return current
+
+    def _record_object_id_change(self, orig_id: Optional[int], new_id: Optional[int]) -> None:
+        """Track object id remaps so cast/resolve stages can be deduped as one spell."""
+        if orig_id is None or new_id is None:
+            return
+        orig_root = self._canonical_instance_id(orig_id) or int(orig_id)
+        self.game_state.instance_roots[int(orig_id)] = orig_root
+        self.game_state.instance_roots[int(new_id)] = orig_root
 
     def _object_display_name(self, obj: Dict[str, Any], instance_id: Optional[int]) -> str:
         """Return best-effort card/permanent display name for a game object."""
@@ -1124,7 +1159,10 @@ class CardTracker:
         """Capture starting hand + mulligan count from early hand-zone snapshots."""
         if self.game_state.starting_hand:
             return
+        if self.game_state.opening_hand_capture_closed:
+            return
         if self.game_state.turn_number and self.game_state.turn_number > 1:
+            self.game_state.opening_hand_capture_closed = True
             return
 
         zones = data.get("zones", [])
@@ -1140,6 +1178,13 @@ class CardTracker:
             if isinstance(obj, dict) and obj.get("instanceId") is not None
         }
         turn_num = (data.get("turnInfo") or {}).get("turnNumber")
+        gameplay_annotations_present = self._has_gameplay_annotations(data)
+        mulligan_prompt_present = self._has_mulligan_prompt_in_state(data)
+
+        # Once real gameplay actions appear, stop trying to infer opening hand from shrinking hand size.
+        if gameplay_annotations_present:
+            self.game_state.opening_hand_capture_closed = True
+            return
 
         def finalize_starting_hand(hand_cards: List[str], hand_grp_ids: List[int]) -> None:
             self.game_state.starting_hand = hand_cards
@@ -1154,6 +1199,7 @@ class CardTracker:
                 print(f"🔄 Mulligan to {len(hand_cards)} (mulligans: {self.game_state.mulligan_count})")
             self.game_state._hand_before_mulligan = []
             self.game_state._hand_before_mulligan_ids = []
+            self.game_state.opening_hand_capture_closed = True
             n = len(self.game_state.starting_hand)
             print(f"\n🎴 Your Starting Hand ({n} cards):")
             for card in self.game_state.starting_hand:
@@ -1220,8 +1266,93 @@ class CardTracker:
                 continue
 
             # Final kept hand (typically < 7 after London bottoming) finalizes mulligan count.
+            can_finalize_short_hand = (
+                bool(self.game_state._hand_before_mulligan_ids)
+                or mulligan_prompt_present
+                or (turn_num in (None, 0, 1) and self.game_state.last_turn_announced == 0)
+            )
+            if not can_finalize_short_hand:
+                continue
             finalize_starting_hand(hand_cards, hand_grp_ids)
             return
+
+    @staticmethod
+    def _annotation_category(annotation: Dict[str, Any]) -> Optional[str]:
+        """Get zone-transfer category string from one annotation payload."""
+        details = annotation.get("details", [])
+        if not isinstance(details, list):
+            return None
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            if detail.get("key") != "category":
+                continue
+            value = detail.get("valueString", [])
+            if isinstance(value, list) and value:
+                first = value[0]
+                return str(first) if first is not None else None
+        return None
+
+    def _has_gameplay_annotations(self, data: Dict[str, Any]) -> bool:
+        """Return True when annotations indicate gameplay has started (not mulligan setup)."""
+        annotations = data.get("annotations", [])
+        if not isinstance(annotations, list):
+            return False
+        for annotation in annotations:
+            if not isinstance(annotation, dict):
+                continue
+            ann_types = annotation.get("type", [])
+            if not isinstance(ann_types, list):
+                ann_types = [ann_types] if ann_types else []
+            if any(
+                ann in ann_types
+                for ann in (
+                    "AnnotationType_AttackerDeclared",
+                    "AnnotationType_BlockerDeclared",
+                    "AnnotationType_Damage",
+                    "AnnotationType_DamageDealt",
+                )
+            ):
+                return True
+            if "AnnotationType_ZoneTransfer" in ann_types:
+                category = self._annotation_category(annotation)
+                if category in {
+                    "PlayLand",
+                    "CastSpell",
+                    "PlaySpell",
+                    "Resolve",
+                    "Draw",
+                    "Destroy",
+                    "Exile",
+                    "Countered",
+                    "Sacrifice",
+                    "Discard",
+                    "Mill",
+                }:
+                    return True
+        return False
+
+    def _has_mulligan_prompt_in_state(self, data: Dict[str, Any]) -> bool:
+        """Best-effort signal for mulligan/keep prompt presence in gameState payload."""
+        if self.game_state.opening_mulligan_prompt_seen:
+            return True
+        players = data.get("players", [])
+        if not isinstance(players, list):
+            return False
+        for player in players:
+            if not isinstance(player, dict):
+                continue
+            pending = (
+                player.get("pendingMessageType")
+                or player.get("pendingMessage")
+                or player.get("pendingDecisionType")
+            )
+            if pending is None:
+                continue
+            pending_text = str(pending).lower()
+            if "mulligan" in pending_text or "choosestartingplayer" in pending_text:
+                return True
+        return False
 
     def _check_game_start(self, line: str):
         """Check if a game is starting."""
@@ -1233,6 +1364,7 @@ class CardTracker:
             if ("mulligantype" in line_lower or 
                 ("mulligan" in line_lower and ("gretolient" in line_lower or "gretoclient" in line_lower)) or
                 "mulliganreq" in line_lower):
+                self.game_state.opening_mulligan_prompt_seen = True
                 self.waiting_for_next_game = False
                 print("\n" + "="*75)
                 print("✅ NEW GAME DETECTED - Starting to track!")
@@ -1329,6 +1461,8 @@ class CardTracker:
             self.game_state.game_start_time = datetime.now()
             self.game_state.in_match = True
             self.game_state.match_complete = False  # Reset match complete flag for new game
+            self.game_state.opening_hand_capture_closed = False
+            self.game_state.opening_mulligan_prompt_seen = True
             self.player_cards = []
             self.opponent_cards = []
             self._session_stats_recorded_this_game = False
@@ -1367,6 +1501,8 @@ class CardTracker:
                     self.game_state.game_start_time = datetime.now()
                     self.game_state.in_match = True
                     self.game_state.match_complete = False  # Reset match complete flag for new game
+                    self.game_state.opening_hand_capture_closed = False
+                    self.game_state.opening_mulligan_prompt_seen = False
                     self.player_cards = []
                     self.opponent_cards = []
                     self._session_stats_recorded_this_game = False
@@ -1551,11 +1687,97 @@ class CardTracker:
         # Then process annotations (card plays, etc.) so they appear under the turn header.
         self._process_game_events(event_data)
 
+    def _has_combat_or_damage_annotations(self, data: Dict[str, Any]) -> bool:
+        """Return True when this payload includes combat/damage annotations."""
+        annotations = data.get("annotations", [])
+        if not isinstance(annotations, list):
+            return False
+        for annotation in annotations:
+            if not isinstance(annotation, dict):
+                continue
+            ann_types = annotation.get("type", [])
+            if not isinstance(ann_types, list):
+                ann_types = [ann_types] if ann_types else []
+            if any(
+                ann in ann_types
+                for ann in (
+                    "AnnotationType_AttackerDeclared",
+                    "AnnotationType_BlockerDeclared",
+                    "AnnotationType_Damage",
+                    "AnnotationType_DamageDealt",
+                )
+            ):
+                return True
+        return False
+
+    def _has_new_turn_action_annotations(self, data: Dict[str, Any]) -> bool:
+        """Return True when payload likely contains real actions from the newly active turn."""
+        annotations = data.get("annotations", [])
+        if not isinstance(annotations, list):
+            return False
+        for annotation in annotations:
+            if not isinstance(annotation, dict):
+                continue
+            ann_types = annotation.get("type", [])
+            if not isinstance(ann_types, list):
+                ann_types = [ann_types] if ann_types else []
+            if "AnnotationType_ZoneTransfer" in ann_types:
+                category = self._annotation_category(annotation)
+                if category in {"PlayLand", "CastSpell", "PlaySpell", "Resolve", "Draw"}:
+                    return True
+        return False
+
+    def _emit_life_change(
+        self,
+        seat_id: int,
+        diff: int,
+        life: int,
+        turn_override: Optional[int] = None,
+    ) -> None:
+        """Print one life-change line with optional turn override for late-arriving events."""
+        if not self.game_state.in_match or diff == 0:
+            return
+        turn_for_display = self._event_turn_number(
+            seat_id,
+            turn_override if turn_override is not None else (
+                self.game_state.turn_number if self.game_state.turn_number > 0 else None
+            ),
+        )
+        late_life_event = (
+            self.game_state.turn_number > 0
+            and turn_for_display > 0
+            and turn_for_display < self.game_state.turn_number
+        )
+        if not late_life_event:
+            self._flush_pending_turn_header_for_seat(seat_id)
+        actor = self._seat_label(seat_id)
+        turn_prefix = self._turn_prefix_for_number(turn_for_display)
+        if diff > 0:
+            text = f"{turn_prefix}💚 {actor}: gained {diff} life (now {life})"
+            if late_life_event:
+                self._print_event(text, "life_gain")
+            else:
+                self._print_event(
+                    self._format_actor_event("💚", seat_id, f"gained {diff} life (now {life})", turn_override=turn_for_display),
+                    "life_gain",
+                )
+        elif diff < 0:
+            text = f"{turn_prefix}💔 {actor}: lost {-diff} life (now {life})"
+            if late_life_event:
+                self._print_event(text, "life_loss")
+            else:
+                self._print_event(
+                    self._format_actor_event("💔", seat_id, f"lost {-diff} life (now {life})", turn_override=turn_for_display),
+                    "life_loss",
+                )
+
     def _update_game_state(self, data: Dict[str, Any]):
         """Update the tracked game state from event data."""
         # Process turn info and print turn header FIRST so "Turn N - YOUR TURN" appears
         # before card plays and life changes from this same message.
         self._snapshot_game_objects(data.get("gameObjects", []))
+        turn_changed = False
+        exited_combat_this_update = False
         # Update turn info
         if "turnInfo" in data:
             turn_info = data["turnInfo"]
@@ -1566,7 +1788,6 @@ class CardTracker:
 
             # Detect new turn - only announce if turn number increased AND active player changed
             # A turn only changes when the active player changes (not just when turn number increments)
-            turn_changed = False
             seats_known = (
                 self.game_state.player_seat_id in (1, 2)
                 and self.game_state.opponent_seat_id in (1, 2)
@@ -1627,6 +1848,7 @@ class CardTracker:
             else:
                 # If we were in combat and now we're not, show combat summary
                 if self.game_state.combat_phase_active:
+                    exited_combat_this_update = True
                     self._display_combat_summary()
                     self.game_state.combat_phase_active = False
                     self.game_state.attackers = []
@@ -1662,6 +1884,15 @@ class CardTracker:
                         self._flush_pending_player_turn_header()
                         self.game_state.pending_opponent_turn_header = (turn_num, active_player)
 
+        late_life_turn_override: Optional[int] = None
+        if (
+            turn_changed
+            and self.game_state.turn_number > 1
+            and (exited_combat_this_update or self._has_combat_or_damage_annotations(data))
+            and not self._has_new_turn_action_annotations(data)
+        ):
+            late_life_turn_override = self.game_state.turn_number - 1
+
         # Update life totals (after turn header so header prints first)
         if "players" in data:
             for player in data["players"]:
@@ -1674,46 +1905,23 @@ class CardTracker:
                         if life != old_life:
                             diff = life - old_life
                             self.game_state.player_life = life
-                            # Announce life changes once game has started
-                            if self.game_state.in_match:
-                                self._flush_pending_turn_header_for_seat(seat_id)
-                                turn_for_display = self._event_turn_number(
-                                    seat_id,
-                                    self.game_state.turn_number if self.game_state.turn_number > 0 else None,
-                                )
-                                if diff > 0:
-                                    self._print_event(
-                                        self._format_actor_event("💚", seat_id, f"gained {diff} life (now {life})", turn_override=turn_for_display),
-                                        "life_gain",
-                                    )
-                                elif diff < 0:
-                                    self._print_event(
-                                        self._format_actor_event("💔", seat_id, f"lost {-diff} life (now {life})", turn_override=turn_for_display),
-                                        "life_loss",
-                                    )
+                            self._emit_life_change(
+                                seat_id,
+                                diff,
+                                life,
+                                turn_override=late_life_turn_override,
+                            )
                     elif seat_id == self.game_state.opponent_seat_id:
                         old_life = self.game_state.opponent_life
                         if life != old_life:
                             diff = life - old_life
                             self.game_state.opponent_life = life
-                            # Announce life changes once game has started
-                            if self.game_state.in_match:
-                                # Beginning-of-turn triggers should flush that side's deferred turn header.
-                                self._flush_pending_turn_header_for_seat(seat_id)
-                                turn_for_display = self._event_turn_number(
-                                    seat_id,
-                                    self.game_state.turn_number if self.game_state.turn_number > 0 else None,
-                                )
-                                if diff > 0:
-                                    self._print_event(
-                                        self._format_actor_event("💚", seat_id, f"gained {diff} life (now {life})", turn_override=turn_for_display),
-                                        "life_gain",
-                                    )
-                                elif diff < 0:
-                                    self._print_event(
-                                        self._format_actor_event("💔", seat_id, f"lost {-diff} life (now {life})", turn_override=turn_for_display),
-                                        "life_loss",
-                                    )
+                            self._emit_life_change(
+                                seat_id,
+                                diff,
+                                life,
+                                turn_override=late_life_turn_override,
+                            )
 
     def _flush_pending_opponent_turn_header(self) -> None:
         """Print and clear deferred 'Turn N - OPPONENT'S TURN' header if set.
@@ -1956,6 +2164,8 @@ class CardTracker:
         target_id = None
         target_ids = []  # For multiple targets
         source_id = None
+        orig_instance_id = None
+        new_instance_id = None
 
         for detail in details:
             key = detail.get("key", "")
@@ -1982,6 +2192,10 @@ class CardTracker:
                     source_id = source_vals[0]
                 elif isinstance(source_vals, int):
                     source_id = source_vals
+            elif key == "orig_id":
+                orig_instance_id = detail.get("valueInt32", [None])[0]
+            elif key == "new_id":
+                new_instance_id = detail.get("valueInt32", [None])[0]
 
         # Handle combat-specific annotations
         if "AnnotationType_AttackerDeclared" in ann_type:
@@ -2001,6 +2215,9 @@ class CardTracker:
         elif "AnnotationType_TriggeredAbility" in ann_type or "AnnotationType_Triggered" in ann_type:
             self._handle_triggered_ability(affected_ids, annotation, game_objects)
             return
+        elif "AnnotationType_ObjectIdChanged" in ann_type:
+            self._record_object_id_change(orig_instance_id, new_instance_id)
+            return
 
         # Only process if we have affected cards
         if not affected_ids:
@@ -2009,29 +2226,33 @@ class CardTracker:
         instance_id = affected_ids[0]
 
         # Find the card object for this instance
-        card_obj = None
-        target_obj = None
-        target_objs = []  # For multiple targets
-        
-        for obj in game_objects:
-            if obj.get("instanceId") == instance_id:
-                card_obj = obj
-            if target_id and obj.get("instanceId") == target_id:
-                target_obj = obj
-            # Also check for multiple targets
-            if target_ids and obj.get("instanceId") in target_ids:
-                target_objs.append(obj)
         game_objects_by_id = {
             obj.get("instanceId"): obj
             for obj in game_objects
             if isinstance(obj, dict) and obj.get("instanceId") is not None
         }
+        card_obj = self._lookup_object(instance_id, game_objects_by_id)
+        target_obj = self._lookup_object(target_id, game_objects_by_id) if target_id else None
+        target_objs = []  # For multiple targets
+        if target_ids:
+            seen_targets = set()
+            for tid in target_ids:
+                if tid in seen_targets:
+                    continue
+                seen_targets.add(tid)
+                t_obj = self._lookup_object(tid, game_objects_by_id)
+                if t_obj:
+                    target_objs.append(t_obj)
 
         # Handle different annotation types
         if "AnnotationType_ZoneTransfer" in ann_type:
+            canonical_instance_id = self._canonical_instance_id(instance_id) or int(instance_id)
             # Casting spells and playing lands
-            if category in ["CastSpell", "PlaySpell", "PlayLand"] and instance_id not in self.game_state.seen_instance_ids:
-                self.game_state.seen_instance_ids.add(instance_id)
+            if (
+                category in ["CastSpell", "PlaySpell", "PlayLand", "Resolve"]
+                and instance_id not in self.game_state.seen_instance_ids
+                and canonical_instance_id not in self.game_state.seen_instance_ids
+            ):
                 if card_obj:
                     grp_id = card_obj.get("grpId")
                     owner_seat = card_obj.get("ownerSeatId")
@@ -2109,6 +2330,15 @@ class CardTracker:
                     # Get card type info
                     card_types = card_obj.get("cardTypes", [])
                     type_str = self._format_card_type(card_types)
+                    if category in ["CastSpell", "PlaySpell"]:
+                        # Defer non-land spell display until Resolve so cancelled/countered casts
+                        # do not create duplicate or phantom cast lines.
+                        if "CardType_Land" not in card_types:
+                            self.game_state.pending_spell_roots[canonical_instance_id] = {
+                                "name": card_name,
+                                "seat": determining_seat,
+                            }
+                            return
 
                     # Format output based on card type - handle multiple targets
                     target_str = ""
@@ -2210,9 +2440,13 @@ class CardTracker:
                         self.player_cards.append(event)
                     else:
                         self.opponent_cards.append(event)
+                    self.game_state.seen_instance_ids.add(instance_id)
+                    self.game_state.seen_instance_ids.add(canonical_instance_id)
+                    self.game_state.pending_spell_roots.pop(canonical_instance_id, None)
 
             # Combat swap-related zone transfers (e.g. Ninjutsu-like patterns).
             elif category in ["Return", "Put"]:
+                self.game_state.pending_spell_roots.pop(canonical_instance_id, None)
                 if card_obj:
                     grp_id = card_obj.get("grpId")
                     owner_seat = card_obj.get("ownerSeatId")
@@ -2281,6 +2515,7 @@ class CardTracker:
 
             # Destruction and removal effects
             elif category in ["Destroy", "Exile", "Sacrifice", "Discard"]:
+                self.game_state.pending_spell_roots.pop(canonical_instance_id, None)
                 if card_obj:
                     grp_id = card_obj.get("grpId")
                     owner_seat = card_obj.get("ownerSeatId")
@@ -2306,9 +2541,10 @@ class CardTracker:
                     else:
                         icon = "💥"
                         action = category.lower()
+                    event_turn = self.game_state.turn_number if self.game_state.turn_number > 0 else None
 
                     self._print_event(
-                        self._format_actor_event(icon, owner_seat, f"[{card_name}] was {action}"),
+                        self._format_actor_event(icon, owner_seat, f"[{card_name}] was {action}", turn_override=event_turn),
                         "zone",
                     )
                     if category == "Exile":
@@ -2342,13 +2578,15 @@ class CardTracker:
 
             # Counter spells
             elif category == "Countered":
+                self.game_state.pending_spell_roots.pop(canonical_instance_id, None)
                 if card_obj:
                     grp_id = card_obj.get("grpId")
                     owner_seat = card_obj.get("ownerSeatId")
                     self._flush_pending_turn_header_for_seat(owner_seat)
                     card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
+                    event_turn = self.game_state.turn_number if self.game_state.turn_number > 0 else None
                     self._print_event(
-                        self._format_actor_event("🚫", owner_seat, f"[{card_name}] was countered"),
+                        self._format_actor_event("🚫", owner_seat, f"[{card_name}] was countered", turn_override=event_turn),
                         "counter",
                     )
 
@@ -2357,8 +2595,9 @@ class CardTracker:
                 if card_obj:
                     owner_seat = card_obj.get("ownerSeatId")
                     self._flush_pending_turn_header_for_seat(owner_seat)
+                    event_turn = self.game_state.turn_number if self.game_state.turn_number > 0 else None
                     self._print_event(
-                        self._format_actor_event("📥", owner_seat, "drew a card"),
+                        self._format_actor_event("📥", owner_seat, "drew a card", turn_override=event_turn),
                         "draw",
                     )
 
@@ -2369,8 +2608,9 @@ class CardTracker:
                     owner_seat = card_obj.get("ownerSeatId")
                     self._flush_pending_turn_header_for_seat(owner_seat)
                     card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
+                    event_turn = self.game_state.turn_number if self.game_state.turn_number > 0 else None
                     self._print_event(
-                        self._format_actor_event("🌊", owner_seat, f"milled [{card_name}]"),
+                        self._format_actor_event("🌊", owner_seat, f"milled [{card_name}]", turn_override=event_turn),
                         "zone",
                     )
 

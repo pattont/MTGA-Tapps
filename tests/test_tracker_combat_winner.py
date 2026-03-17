@@ -383,6 +383,211 @@ def test_put_before_first_turn_is_suppressed(capsys):
     assert out == ""
 
 
+def test_cast_spell_uses_snapshot_when_gameobjects_diff_omits_spell(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 5
+    tracker.game_state.active_player = 2
+    tracker.game_state.last_turn_announced = 5
+    tracker.game_state.last_opponent_turn_number = 5
+    tracker.game_state.object_snapshots[700] = {
+        "instanceId": 700,
+        "grpId": 1700,
+        "ownerSeatId": 2,
+        "controllerSeatId": 2,
+        "cardTypes": ["CardType_Instant"],
+    }
+
+    annotation = {
+        "type": ["AnnotationType_ZoneTransfer"],
+        "affectedIds": [700],
+        "details": [{"key": "category", "valueString": ["CastSpell"]}],
+    }
+    resolve_annotation = {
+        "type": ["AnnotationType_ZoneTransfer"],
+        "affectedIds": [700],
+        "details": [{"key": "category", "valueString": ["Resolve"]}],
+    }
+
+    tracker._process_annotation(annotation, [])
+    first = capsys.readouterr().out
+    assert first == ""
+
+    tracker._process_annotation(resolve_annotation, [])
+    out = capsys.readouterr().out
+    assert "[Turn 5] > Opponent: cast [Card1700 (Instant)]" in out
+    assert 700 in tracker.game_state.seen_instance_ids
+    assert len(tracker.opponent_cards) == 1
+
+
+def test_cast_spell_not_marked_seen_until_card_object_available(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 6
+    tracker.game_state.active_player = 2
+    tracker.game_state.last_turn_announced = 6
+    tracker.game_state.last_opponent_turn_number = 6
+
+    annotation = {
+        "type": ["AnnotationType_ZoneTransfer"],
+        "affectedIds": [701],
+        "details": [{"key": "category", "valueString": ["CastSpell"]}],
+    }
+    resolve_annotation = {
+        "type": ["AnnotationType_ZoneTransfer"],
+        "affectedIds": [701],
+        "details": [{"key": "category", "valueString": ["Resolve"]}],
+    }
+
+    tracker._process_annotation(annotation, [])
+    first = capsys.readouterr().out
+    assert first == ""
+    assert 701 not in tracker.game_state.seen_instance_ids
+
+    tracker._process_annotation(
+        resolve_annotation,
+        [
+            {
+                "instanceId": 701,
+                "grpId": 1701,
+                "ownerSeatId": 2,
+                "controllerSeatId": 2,
+                "cardTypes": ["CardType_Sorcery"],
+            }
+        ],
+    )
+    second = capsys.readouterr().out
+
+    assert "[Turn 6] > Opponent: cast [Card1701 (Sorcery)]" in second
+    assert 701 in tracker.game_state.seen_instance_ids
+    assert len(tracker.opponent_cards) == 1
+
+
+def test_resolve_zone_transfer_falls_back_to_cast_logging(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 7
+    tracker.game_state.active_player = 2
+    tracker.game_state.last_turn_announced = 7
+    tracker.game_state.last_opponent_turn_number = 7
+
+    annotation = {
+        "type": ["AnnotationType_ZoneTransfer"],
+        "affectedIds": [702],
+        "details": [{"key": "category", "valueString": ["Resolve"]}],
+    }
+    game_objects = [
+        {
+            "instanceId": 702,
+            "grpId": 1702,
+            "ownerSeatId": 2,
+            "controllerSeatId": 2,
+            "cardTypes": ["CardType_Instant"],
+        }
+    ]
+
+    tracker._process_annotation(annotation, game_objects)
+    out = capsys.readouterr().out
+
+    assert "[Turn 7] > Opponent: cast [Card1702 (Instant)]" in out
+    assert 702 in tracker.game_state.seen_instance_ids
+    assert len(tracker.opponent_cards) == 1
+
+
+def test_cast_and_resolve_with_object_id_change_logs_once(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 7
+    tracker.game_state.active_player = 1
+    tracker.game_state.last_turn_announced = 7
+    tracker.game_state.last_player_turn_number = 7
+
+    tracker._process_annotation(
+        {
+            "type": ["AnnotationType_ObjectIdChanged"],
+            "affectedIds": [802],
+            "details": [
+                {"key": "orig_id", "valueInt32": [801]},
+                {"key": "new_id", "valueInt32": [802]},
+            ],
+        },
+        [],
+    )
+    assert capsys.readouterr().out == ""
+
+    tracker._process_annotation(
+        {
+            "type": ["AnnotationType_ZoneTransfer"],
+            "affectedIds": [802],
+            "details": [{"key": "category", "valueString": ["CastSpell"]}],
+        },
+        [
+            {
+                "instanceId": 802,
+                "grpId": 1802,
+                "ownerSeatId": 1,
+                "controllerSeatId": 1,
+                "cardTypes": ["CardType_Sorcery"],
+            }
+        ],
+    )
+    assert capsys.readouterr().out == ""
+
+    tracker._process_annotation(
+        {
+            "type": ["AnnotationType_ZoneTransfer"],
+            "affectedIds": [801],
+            "details": [{"key": "category", "valueString": ["Resolve"]}],
+        },
+        [
+            {
+                "instanceId": 801,
+                "grpId": 1802,
+                "ownerSeatId": 1,
+                "controllerSeatId": 1,
+                "cardTypes": ["CardType_Sorcery"],
+            }
+        ],
+    )
+    out = capsys.readouterr().out
+
+    assert out.count("cast [Card1802 (Sorcery)]") == 1
+    assert 801 in tracker.game_state.seen_instance_ids
+
+
+def test_destroy_event_uses_current_turn_not_card_owner_last_turn(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 7
+    tracker.game_state.active_player = 1
+    tracker.game_state.last_player_turn_number = 7
+    tracker.game_state.last_opponent_turn_number = 6
+    tracker.game_state.last_turn_announced = 7
+
+    tracker._process_annotation(
+        {
+            "type": ["AnnotationType_ZoneTransfer"],
+            "affectedIds": [9001],
+            "details": [{"key": "category", "valueString": ["Destroy"]}],
+        },
+        [{"instanceId": 9001, "grpId": 1901, "ownerSeatId": 2, "controllerSeatId": 2}],
+    )
+    out = capsys.readouterr().out
+
+    assert "[Turn 7] 💥 Opponent: [Card1901] was destroyed" in out
+    assert "[Turn 6] 💥 Opponent" not in out
+
+
 def test_does_not_warn_when_first_observed_turn_is_two(capsys):
     tracker = make_tracker()
     tracker.game_state.player_seat_id = 1
@@ -477,6 +682,31 @@ def test_life_loss_on_opponent_turn_uses_current_turn(capsys):
 
     assert "[Turn 5] 💔 You: lost 1 life (now 19)" in out
     assert "[Turn 4] 💔 You" not in out
+
+
+def test_late_combat_life_change_on_turn_increment_stays_on_previous_turn(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 5
+    tracker.game_state.active_player = 1
+    tracker.game_state.last_turn_announced = 5
+    tracker.game_state.last_player_turn_number = 5
+    tracker.game_state.pending_opponent_turn_header = (6, 2)
+    tracker.game_state.opponent_life = 20
+
+    tracker._update_game_state(
+        {
+            "turnInfo": {"turnNumber": 6, "activePlayer": 2, "phase": "Phase_Main1"},
+            "annotations": [{"type": ["AnnotationType_Damage"], "affectedIds": [901], "details": []}],
+            "players": [{"systemSeatNumber": 2, "lifeTotal": 15}],
+        }
+    )
+    out = capsys.readouterr().out
+
+    assert "[Turn 5] 💔 Opponent: lost 5 life (now 15)" in out
+    assert "Turn 6 - OPPONENT'S TURN" not in out
 
 
 def test_opponent_life_trigger_flushes_pending_opponent_header(capsys):
@@ -1002,3 +1232,36 @@ def test_capture_opening_hand_counts_one_london_mulligan_with_two_sevens_then_si
 
     assert len(tracker.game_state.starting_hand) == 6
     assert tracker.game_state.mulligan_count == 1
+
+
+def test_capture_opening_hand_ignores_post_action_hand_six_without_mulligan_prompt():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+
+    post_land_data = {
+        "turnInfo": {"turnNumber": 1, "activePlayer": 1, "phase": "Phase_Main1"},
+        "zones": [{"type": "ZoneType_Hand", "ownerSeatId": 1, "objectInstanceIds": [71, 72, 73, 74, 75, 76]}],
+        "gameObjects": [
+            {"instanceId": 71, "grpId": 5001},
+            {"instanceId": 72, "grpId": 5002},
+            {"instanceId": 73, "grpId": 5003},
+            {"instanceId": 74, "grpId": 5004},
+            {"instanceId": 75, "grpId": 5005},
+            {"instanceId": 76, "grpId": 5006},
+        ],
+        "annotations": [
+            {
+                "type": ["AnnotationType_ZoneTransfer"],
+                "affectedIds": [999],
+                "details": [{"key": "category", "valueString": ["PlayLand"]}],
+            }
+        ],
+    }
+
+    tracker._capture_opening_hand(post_land_data)
+
+    assert tracker.game_state.starting_hand == []
+    assert tracker.game_state.mulligan_count == 0
+    assert tracker.game_state.opening_hand_capture_closed is True
