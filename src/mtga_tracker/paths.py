@@ -13,8 +13,11 @@ def get_mtga_raw_card_db_folders(override_dir: Optional[str] = None) -> List[Pat
     """Return folders to search for Raw_CardDatabase_*.mtga, in order of preference.
 
     Uses the current user's home (no hardcoded usernames). If override_dir or
-    MTGA_DATA_DIR env is set, that path is the only candidate. Otherwise on macOS
-    returns: Steam install first (most up to date), then Epic (com.wizards.mtga).
+    MTGA_DATA_DIR env is set, that path is the only candidate.
+
+    Platform defaults:
+    - macOS: Steam install first (most up to date), then Epic (com.wizards.mtga)
+    - Windows: common Steam/Wizards install locations under MTGA_Data/Downloads/Raw
 
     Returns:
         List of existing directory Paths to search; caller globs for Raw_CardDatabase_*.mtga.
@@ -39,6 +42,15 @@ def get_mtga_raw_card_db_folders(override_dir: Optional[str] = None) -> List[Pat
         epic = Path.home() / "Library" / "Application Support" / "com.wizards.mtga" / "Downloads" / "RAW"
         if epic.is_dir():
             out.append(epic)
+    elif platform.system() == "Windows":
+        windows_candidates = [
+            Path(r"C:\Program Files (x86)\Steam\steamapps\common\MTGA\MTGA_Data\Downloads\Raw"),
+            Path(r"C:\Program Files\Wizards of the Coast\MTGA\MTGA_Data\Downloads\Raw"),
+            Path(r"C:\Program Files (x86)\Wizards of the Coast\MTGA\MTGA_Data\Downloads\Raw"),
+        ]
+        for candidate in windows_candidates:
+            if candidate.is_dir():
+                out.append(candidate)
     return out
 
 
