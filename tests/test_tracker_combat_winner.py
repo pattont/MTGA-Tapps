@@ -52,6 +52,9 @@ def make_tracker() -> CardTracker:
     tracker.session_wins = 0
     tracker.session_losses = 0
     tracker.session_unknown = 0
+    tracker.session_player_cards_played = 0
+    tracker.session_opponent_cards_played = 0
+    tracker.session_total_mulligans = 0
     tracker._session_stats_recorded_this_game = False
     tracker._deck_candidates = {}
     tracker._metadata_backfilled = False
@@ -249,6 +252,35 @@ def test_session_stats_record_once_per_game():
     assert tracker.session_games_played == 2
     assert tracker.session_wins == 1
     assert tracker.session_losses == 1
+
+
+def test_print_summary_uses_session_totals_not_last_game_state(capsys):
+    tracker = make_tracker()
+    tracker.session_games_played = 6
+    tracker.session_wins = 3
+    tracker.session_losses = 3
+    tracker.session_player_cards_played = 42
+    tracker.session_opponent_cards_played = 37
+    tracker.session_total_mulligans = 5
+    tracker.game_state.player_life = 25
+    tracker.game_state.opponent_life = 25
+    tracker.game_state.turn_number = 1
+    tracker.game_state.first_player_seat = 2
+    tracker.game_state.player_seat_id = 1
+
+    tracker._print_summary()
+    out = capsys.readouterr().out
+
+    assert "Games Played: 6" in out
+    assert "Wins: 3" in out
+    assert "Losses: 3" in out
+    assert "Win Rate: 50.0%" in out
+    assert "Total Mulligans: 5" in out
+    assert "Total Cards Played: 42" in out
+    assert "Total Opponent Cards Played: 37" in out
+    assert "Final Life:" not in out
+    assert "Turns Played:" not in out
+    assert "Went First:" not in out
 
 
 def test_seatless_concede_req_does_not_override_structured_winner():
@@ -998,6 +1030,38 @@ def test_parse_match_metadata_uses_format_hint_to_pick_matching_deck():
     assert tracker.game_state.player_deck_id == "mwm-deck"
 
 
+def test_parse_match_metadata_sets_player_commander_from_command_zone():
+    tracker = make_tracker()
+    line = json.dumps(
+        {
+            "InventoryInfo": {
+                "Courses": [
+                    {
+                        "InternalEventName": "Historic_Brawl",
+                        "CurrentModule": "CreateMatch",
+                        "CourseDeckSummary": {
+                            "DeckId": "brawl-deck",
+                            "Name": "Brawl Deck",
+                            "Attributes": [{"name": "Format", "value": "HistoricBrawl"}],
+                        },
+                        "CourseDeck": {
+                            "MainDeck": [{"cardId": 2001, "quantity": 1}],
+                            "CommandZone": [{"cardId": 7777, "quantity": 1}],
+                        },
+                    }
+                ]
+            }
+        }
+    )
+
+    tracker._parse_match_metadata(line)
+    tracker.game_state.format_str = "Historic_Brawl"
+    tracker._resolve_player_deck_from_candidates()
+
+    assert tracker.game_state.player_deck_name == "Brawl Deck"
+    assert tracker.game_state.player_commanders == ["Card7777"]
+
+
 def test_match_started_block_hides_unknown_opponent_and_deck(capsys):
     tracker = make_tracker()
     tracker.game_state.game_start_time = datetime(2026, 3, 10, 21, 15, 0)
@@ -1012,6 +1076,17 @@ def test_match_started_block_hides_unknown_opponent_and_deck(capsys):
     assert "Deck Name:" not in out
 
 
+def test_match_started_block_omits_seat_line_when_unknown(capsys):
+    tracker = make_tracker()
+    tracker.game_state.game_start_time = datetime(2026, 3, 10, 21, 15, 0)
+    tracker.game_state.format_str = "Standard Best-of-1"
+
+    tracker._print_match_started_block()
+    out = capsys.readouterr().out
+
+    assert "Seat:" not in out
+
+
 def test_match_started_block_prints_players_when_opponent_known(capsys):
     tracker = make_tracker()
     tracker.game_state.game_start_time = datetime(2026, 3, 10, 21, 15, 0)
@@ -1023,6 +1098,20 @@ def test_match_started_block_prints_players_when_opponent_known(capsys):
     out = capsys.readouterr().out
 
     assert "Players: Tapps vs Rival123" in out
+
+
+def test_match_started_block_prints_commanders_when_known(capsys):
+    tracker = make_tracker()
+    tracker.game_state.game_start_time = datetime(2026, 3, 10, 21, 15, 0)
+    tracker.game_state.format_str = "Historic Brawl"
+    tracker.game_state.player_commanders = ["Card100471"]
+    tracker.game_state.opponent_commanders = ["Card100610"]
+
+    tracker._print_match_started_block()
+    out = capsys.readouterr().out
+
+    assert "Your Commander: Card100471" in out
+    assert "Opponent Commander: Card100610" in out
 
 
 def test_game_state_reset_clears_previous_deck_name():
@@ -1102,6 +1191,18 @@ def test_summary_includes_mulligan_and_exile_totals(capsys):
     assert "By Opponent: 2" in out
 
 
+def test_summary_includes_commanders(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_commanders = ["Card100471"]
+    tracker.game_state.opponent_commanders = ["Card100610"]
+
+    tracker._print_game_summary()
+    out = capsys.readouterr().out
+
+    assert "Your Commander: Card100471" in out
+    assert "Opponent Commander: Card100610" in out
+
+
 def test_capture_opening_hand_detects_mulligan_when_seat_unknown():
     tracker = make_tracker()
     tracker.game_state.in_match = True
@@ -1129,6 +1230,67 @@ def test_capture_opening_hand_detects_mulligan_when_seat_unknown():
     assert tracker.game_state.opponent_seat_id == 2
     assert tracker.game_state.mulligan_count == 1
     assert len(tracker.game_state.starting_hand) == 6
+
+
+def test_capture_opening_hand_prints_seat_line_when_detected(capsys):
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.game_start_time = datetime(2026, 3, 10, 21, 15, 0)
+
+    data = {
+        "turnInfo": {"turnNumber": 1, "activePlayer": 2},
+        "players": [{"systemSeatNumber": 1}, {"systemSeatNumber": 2}],
+        "zones": [
+            {"type": "ZoneType_Hand", "ownerSeatId": 1, "objectInstanceIds": [11, 12, 13, 14, 15, 16]},
+            {"type": "ZoneType_Hand", "ownerSeatId": 2, "objectInstanceIds": [21, 22, 23, 24, 25, 26, 27]},
+        ],
+        "gameObjects": [
+            {"instanceId": 11, "grpId": 1001},
+            {"instanceId": 12, "grpId": 1002},
+            {"instanceId": 13, "grpId": 1003},
+            {"instanceId": 14, "grpId": 1004},
+            {"instanceId": 15, "grpId": 1005},
+            {"instanceId": 16, "grpId": 1006},
+        ],
+    }
+
+    tracker._capture_opening_hand(data)
+    first = capsys.readouterr().out
+    tracker._capture_opening_hand(data)
+    second = capsys.readouterr().out
+
+    assert "Seat: 1" in first
+    assert "Seat: 1" not in second
+
+
+def test_update_game_state_detects_brawl_commanders_and_infers_seat(capsys):
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_commanders = ["Card100471"]
+    tracker.game_state.game_start_time = datetime(2026, 3, 10, 21, 15, 0)
+
+    tracker._update_game_state(
+        {
+            "gameInfo": {"variant": "GameVariant_Brawl"},
+            "deckConstraintInfo": {"minCommanderSize": 1},
+            "zones": [
+                {"type": "ZoneType_Command", "objectInstanceIds": [801, 802]},
+            ],
+            "gameObjects": [
+                {"instanceId": 801, "grpId": 100610, "ownerSeatId": 1},
+                {"instanceId": 802, "grpId": 100471, "ownerSeatId": 2},
+            ],
+        }
+    )
+    out = capsys.readouterr().out
+
+    assert tracker.game_state.format_str == "Brawl"
+    assert tracker.game_state.player_seat_id == 2
+    assert tracker.game_state.opponent_seat_id == 1
+    assert tracker.game_state.player_commanders == ["Card100471"]
+    assert tracker.game_state.opponent_commanders == ["Card100610"]
+    assert "Your Commander: Card100471" in out
+    assert "Opponent Commander: Card100610" in out
 
 
 def test_capture_opening_hand_finalizes_keep_seven_on_turn_start():
@@ -1232,6 +1394,7 @@ def test_capture_opening_hand_counts_one_london_mulligan_with_two_sevens_then_si
 
     assert len(tracker.game_state.starting_hand) == 6
     assert tracker.game_state.mulligan_count == 1
+    assert tracker.session_total_mulligans == 1
 
 
 def test_capture_opening_hand_ignores_post_action_hand_six_without_mulligan_prompt():

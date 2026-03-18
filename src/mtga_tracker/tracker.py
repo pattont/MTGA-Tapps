@@ -94,6 +94,11 @@ class GameState:
         self.opponent_cards_exiled = 0
         self.player_cards_exiled_by_opponent = 0
         self.opponent_cards_exiled_by_player = 0
+        self.commanders_by_seat: Dict[int, List[str]] = {}
+        self.player_commanders: List[str] = []
+        self.opponent_commanders: List[str] = []
+        self.player_commanders_announced = False
+        self.opponent_commanders_announced = False
 
     def reset(self):
         """Reset state for a new game while keeping only stable account-level metadata."""
@@ -158,6 +163,9 @@ class CardTracker:
         self.session_wins = 0
         self.session_losses = 0
         self.session_unknown = 0
+        self.session_player_cards_played = 0
+        self.session_opponent_cards_played = 0
+        self.session_total_mulligans = 0
         self._session_stats_recorded_this_game = False
         self._deck_candidates: Dict[str, Dict[str, Any]] = {}
         self._metadata_backfilled = False
@@ -430,6 +438,160 @@ class CardTracker:
             f"W:{self.session_wins} L:{self.session_losses}{unknown_part} | "
             f"Games:{self.session_games_played} | WR:{win_rate:.1f}% | Runtime:{self._session_runtime_str()}"
         )
+
+    @staticmethod
+    def _unique_names(names: List[str]) -> List[str]:
+        """Return ordered unique non-empty names."""
+        out: List[str] = []
+        seen: Set[str] = set()
+        for name in names:
+            if not isinstance(name, str):
+                continue
+            clean = name.strip()
+            if not clean or clean in seen:
+                continue
+            seen.add(clean)
+            out.append(clean)
+        return out
+
+    def _format_commander_names(self, names: List[str]) -> str:
+        """Format one or two commander names for display."""
+        unique = self._unique_names(names)
+        return " + ".join(unique) if unique else "Unknown"
+
+    def _set_player_commanders_from_ids(self, command_zone_ids: List[int]) -> None:
+        """Store player's commander names from deck metadata command zone ids."""
+        names = self._unique_names(
+            [self.card_db.get_card_name(int(card_id)) for card_id in command_zone_ids if card_id is not None]
+        )
+        if names:
+            self.game_state.player_commanders = names
+
+    def _sync_commander_views_from_seats(self) -> None:
+        """Sync player/opponent commander lists from seat-indexed commander map."""
+        g = self.game_state
+        if g.player_seat_id in g.commanders_by_seat:
+            g.player_commanders = self._unique_names(g.commanders_by_seat[g.player_seat_id])
+        if g.opponent_seat_id in g.commanders_by_seat:
+            g.opponent_commanders = self._unique_names(g.commanders_by_seat[g.opponent_seat_id])
+
+    def _best_brawl_format_label(self) -> str:
+        """Return best Brawl label based on known metadata."""
+        candidates = [self.game_state.format_str, self.game_state.player_deck_event_name]
+        for candidate in self._deck_candidates.values():
+            candidates.append(candidate.get("format_attr"))
+            candidates.append(candidate.get("internal_event_name"))
+        for raw in candidates:
+            text = self._normalize_match_text(raw)
+            if not text:
+                continue
+            if "historicbrawl" in text:
+                return "Historic Brawl"
+            if "brawl" in text:
+                return "Brawl"
+        return "Brawl"
+
+    def _update_format_from_game_state(self, data: Dict[str, Any]) -> None:
+        """Infer Brawl/Historic Brawl from live game state."""
+        game_info = data.get("gameInfo")
+        variant_text = ""
+        if isinstance(game_info, dict):
+            variant = game_info.get("variant")
+            if isinstance(variant, str):
+                variant_text = self._normalize_match_text(variant)
+        deck_constraint = data.get("deckConstraintInfo")
+        min_commander_size = None
+        if isinstance(deck_constraint, dict):
+            min_commander_size = deck_constraint.get("minCommanderSize")
+        zones = data.get("zones", [])
+        has_command_zone = any(
+            isinstance(zone, dict) and zone.get("type") == "ZoneType_Command"
+            for zone in zones
+        ) if isinstance(zones, list) else False
+
+        if "brawl" in variant_text or (isinstance(min_commander_size, int) and min_commander_size > 0) or has_command_zone:
+            self.game_state.format_str = self._best_brawl_format_label()
+
+    def _update_commanders_from_game_state(self, data: Dict[str, Any]) -> None:
+        """Capture visible commanders from the shared command zone."""
+        zones = data.get("zones", [])
+        if not isinstance(zones, list):
+            return
+
+        game_objects = data.get("gameObjects", [])
+        game_objects_by_id = {
+            obj.get("instanceId"): obj
+            for obj in game_objects
+            if isinstance(obj, dict) and obj.get("instanceId") is not None
+        }
+
+        command_by_seat: Dict[int, List[str]] = {}
+        for zone in zones:
+            if not isinstance(zone, dict) or zone.get("type") != "ZoneType_Command":
+                continue
+            for obj_id in zone.get("objectInstanceIds", []) or []:
+                obj = self._lookup_object(obj_id, game_objects_by_id)
+                owner_seat = obj.get("ownerSeatId")
+                grp_id = obj.get("grpId") or obj.get("overlayGrpId") or obj.get("objectSourceGrpId")
+                if owner_seat is None or grp_id is None:
+                    continue
+                command_by_seat.setdefault(int(owner_seat), []).append(self.card_db.get_card_name(int(grp_id)))
+
+        if not command_by_seat:
+            return
+
+        self.game_state.commanders_by_seat = {
+            seat: self._unique_names(names)
+            for seat, names in command_by_seat.items()
+            if self._unique_names(names)
+        }
+
+        if self.game_state.player_seat_id not in (1, 2) and self.game_state.player_commanders:
+            player_commander_names = set(self._unique_names(self.game_state.player_commanders))
+            matching_seats = [
+                seat for seat, names in self.game_state.commanders_by_seat.items()
+                if set(names) == player_commander_names
+            ]
+            if len(matching_seats) == 1:
+                self.game_state.player_seat_id = matching_seats[0]
+                other_seats = [seat for seat in self.game_state.commanders_by_seat.keys() if seat != matching_seats[0]]
+                if len(other_seats) == 1:
+                    self.game_state.opponent_seat_id = other_seats[0]
+
+        if self.game_state.player_seat_id in (1, 2) and self.game_state.opponent_seat_id not in (1, 2):
+            other_seats = [seat for seat in self.game_state.commanders_by_seat.keys() if seat != self.game_state.player_seat_id]
+            if len(other_seats) == 1:
+                self.game_state.opponent_seat_id = other_seats[0]
+
+        self._sync_commander_views_from_seats()
+        if self.game_state._reserved_players:
+            for r in self.game_state._reserved_players:
+                if r.get("seat") == self.game_state.player_seat_id and r.get("name"):
+                    self.game_state.player_display_name = self.game_state.player_display_name or r["name"]
+                elif r.get("seat") == self.game_state.opponent_seat_id and r.get("name"):
+                    self.game_state.opponent_display_name = r["name"]
+
+    def _maybe_print_pregame_commander_lines(self) -> None:
+        """Print commander lines after game start once discovered, before turn banners."""
+        if not self.game_state.in_match or self.game_state.last_turn_announced > 0:
+            return
+        if self.game_state.player_commanders and not self.game_state.player_commanders_announced:
+            print(f"   Your Commander: {self._format_commander_names(self.game_state.player_commanders)}")
+            self.game_state.player_commanders_announced = True
+        if self.game_state.opponent_commanders and not self.game_state.opponent_commanders_announced:
+            print(f"   Opponent Commander: {self._format_commander_names(self.game_state.opponent_commanders)}")
+            self.game_state.opponent_commanders_announced = True
+
+    def _maybe_print_seat_resolution(self) -> None:
+        """Print seat resolution once if it becomes known after the start block."""
+        if (
+            not self.game_state.in_match
+            or self.game_state.last_turn_announced > 0
+            or self.game_state.game_start_time is None
+        ):
+            return
+        if self.game_state.player_seat_id in (1, 2):
+            print(f"   Seat: {self.game_state.player_seat_id}")
 
     def _print_startup_legend(self) -> None:
         """Print a short event color legend."""
@@ -804,8 +966,9 @@ class CardTracker:
                     self.game_state.player_display_name = self.game_state.player_display_name or r["name"]
                 elif r.get("seat") == self.game_state.opponent_seat_id and r.get("name"):
                     self.game_state.opponent_display_name = r["name"]
-        if self.game_state.in_match and self.game_state.last_turn_announced == 0:
-            print(f"   Seat: {self.game_state.player_seat_id}")
+        self._maybe_print_seat_resolution()
+        self._sync_commander_views_from_seats()
+        self._maybe_print_pregame_commander_lines()
 
     def _get_name_from_dict(self, d: Dict[str, Any]) -> Optional[str]:
         """Get first non-empty string from dict using common name keys (any casing)."""
@@ -923,6 +1086,16 @@ class CardTracker:
                     if main_ids and candidate.get("main_deck_ids") != main_ids:
                         candidate["main_deck_ids"] = main_ids
                         updated = True
+                command_zone = course_deck.get("CommandZone")
+                if isinstance(command_zone, list):
+                    command_zone_ids = [
+                        int(entry.get("cardId"))
+                        for entry in command_zone
+                        if isinstance(entry, dict) and entry.get("cardId") is not None
+                    ]
+                    if command_zone_ids and candidate.get("command_zone_ids") != command_zone_ids:
+                        candidate["command_zone_ids"] = command_zone_ids
+                        updated = True
 
             if last_played is not None:
                 existing_last_played = candidate.get("last_played")
@@ -1017,6 +1190,9 @@ class CardTracker:
         self.game_state.player_deck_id = deck_id
         self.game_state.player_deck_event_name = candidate.get("internal_event_name")
         self.game_state.player_deck_last_played = candidate.get("last_played")
+        command_zone_ids = candidate.get("command_zone_ids")
+        if isinstance(command_zone_ids, list):
+            self._set_player_commanders_from_ids(command_zone_ids)
         return changed
 
     def _resolve_player_deck_from_hand_ids(self, hand_grp_ids: List[int]) -> bool:
@@ -1154,6 +1330,12 @@ class CardTracker:
             print(f"   Players: {player_label} vs {g.opponent_display_name.strip()}")
         if g.player_seat_id in (1, 2):
             print(f"   Seat: {g.player_seat_id}")
+        if g.player_commanders:
+            print(f"   Your Commander: {self._format_commander_names(g.player_commanders)}")
+            g.player_commanders_announced = True
+        if g.opponent_commanders:
+            print(f"   Opponent Commander: {self._format_commander_names(g.opponent_commanders)}")
+            g.opponent_commanders_announced = True
 
     def _capture_opening_hand(self, data: Dict[str, Any]) -> None:
         """Capture starting hand + mulligan count from early hand-zone snapshots."""
@@ -1190,6 +1372,7 @@ class CardTracker:
             self.game_state.starting_hand = hand_cards
             self.game_state.initial_hand_size = len(hand_cards)
             self.game_state.mulligan_count = max(self.game_state.mulligan_count, 7 - len(hand_cards))
+            self.session_total_mulligans += self.game_state.mulligan_count
             self._resolve_player_deck_from_hand_ids(hand_grp_ids)
             if self.game_state._hand_before_mulligan:
                 thrown = [c for c in self.game_state._hand_before_mulligan if c not in hand_cards]
@@ -1243,6 +1426,8 @@ class CardTracker:
                         if seat_id != owner_seat:
                             self.game_state.opponent_seat_id = seat_id
                             break
+                self._maybe_print_seat_resolution()
+                self._sync_commander_views_from_seats()
 
             if owner_seat != self.game_state.player_seat_id:
                 continue
@@ -1478,7 +1663,6 @@ class CardTracker:
             print(f"🎮 🎮 🎮 GAME STARTED 🎮 🎮 🎮")
             print("="*75)
             self._print_match_started_block()
-            print()
             return  # Don't process further - wait for turn info
 
         # Check for opening hand
@@ -1518,7 +1702,6 @@ class CardTracker:
                     print(f"🎮 GAME STARTED - {format_display}{game_num_display}")
                     print("="*75)
                     self._print_match_started_block()
-                    print()
                     return  # Don't process further - wait for hand info
 
             self._capture_opening_hand(data)
@@ -1776,6 +1959,10 @@ class CardTracker:
         # Process turn info and print turn header FIRST so "Turn N - YOUR TURN" appears
         # before card plays and life changes from this same message.
         self._snapshot_game_objects(data.get("gameObjects", []))
+        self._update_format_from_game_state(data)
+        self._update_commanders_from_game_state(data)
+        self._maybe_print_seat_resolution()
+        self._maybe_print_pregame_commander_lines()
         turn_changed = False
         exited_combat_this_update = False
         # Update turn info
@@ -2438,8 +2625,10 @@ class CardTracker:
                     event = CardEvent(track_name, player.lower(), card_type_category=type_category)
                     if determining_seat == self.game_state.player_seat_id:
                         self.player_cards.append(event)
+                        self.session_player_cards_played += 1
                     else:
                         self.opponent_cards.append(event)
+                        self.session_opponent_cards_played += 1
                     self.game_state.seen_instance_ids.add(instance_id)
                     self.game_state.seen_instance_ids.add(canonical_instance_id)
                     self.game_state.pending_spell_roots.pop(canonical_instance_id, None)
@@ -3099,6 +3288,10 @@ class CardTracker:
         if not self.game_state.player_deck_name:
             self._resolve_player_deck_from_candidates()
         print(f"   Your Deck: {self.game_state.player_deck_name or 'Unknown'}")
+        if self.game_state.player_commanders:
+            print(f"   Your Commander: {self._format_commander_names(self.game_state.player_commanders)}")
+        if self.game_state.opponent_commanders:
+            print(f"   Opponent Commander: {self._format_commander_names(self.game_state.opponent_commanders)}")
         print(f"   Mulligans: {self.game_state.mulligan_count}")
         print(f"   Your cards: {len(self.player_cards)}")
         print(f"   Opponent cards: {len(self.opponent_cards)}")
@@ -3170,22 +3363,31 @@ class CardTracker:
         print()
         print("📊 Session Summary")
         print("=" * 75)
-        self._print_event(f"   {self._session_stats_line()}", "turn")
+        known_results = self.session_wins + self.session_losses
+        win_rate = (self.session_wins / known_results * 100.0) if known_results > 0 else 0.0
 
-        if not self.game_state.in_match and not self.player_cards:
+        if (
+            not self.game_state.in_match
+            and not self.player_cards
+            and not self.opponent_cards
+            and self.session_games_played == 0
+            and self.session_player_cards_played == 0
+            and self.session_opponent_cards_played == 0
+        ):
             print("   No matches tracked this session.")
             print("   Make sure to start the tracker before playing a game!")
             return
 
-        print(f"   Final Life: You {self.game_state.player_life} - {self.game_state.opponent_life} Opponent")
-        print(f"   Turns Played: {self.game_state.turn_number}")
-        if self.game_state.first_player_seat is not None:
-            went_first = "You" if self.game_state.first_player_seat == self.game_state.player_seat_id else "Opponent"
-            print(f"   Went First: {went_first}")
-        else:
-            print(f"   Went First: Unknown (first_player_seat={self.game_state.first_player_seat}, player_seat_id={self.game_state.player_seat_id})")
-        print(f"   Your cards played: {len(self.player_cards)}")
-        print(f"   Opponent cards played: {len(self.opponent_cards)}")
+        print(f"   Games Played: {self.session_games_played}")
+        print(f"   Wins: {self.session_wins}")
+        print(f"   Losses: {self.session_losses}")
+        if self.session_unknown:
+            print(f"   Unknown Results: {self.session_unknown}")
+        print(f"   Win Rate: {win_rate:.1f}%")
+        print(f"   Runtime: {self._session_runtime_str()}")
+        print(f"   Total Mulligans: {self.session_total_mulligans}")
+        print(f"   Total Cards Played: {self.session_player_cards_played}")
+        print(f"   Total Opponent Cards Played: {self.session_opponent_cards_played}")
 
         if self.player_cards:
             print(f"\n   🎯 Your Cards This Game:")
