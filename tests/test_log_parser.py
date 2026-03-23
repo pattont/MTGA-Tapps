@@ -35,7 +35,7 @@ def test_extract_card_events():
     line = '[2024-01-01] GameStateMessage {"gameStateMessage": {"zones": []}}'
     result = parser.extract_card_events(line)
     assert result is not None
-    assert result["type"] == "zone_change"
+    assert result["type"] == "game_state"
 
     # Test line without card events
     line = "Some random log line"

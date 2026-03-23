@@ -60,6 +60,7 @@ class CardDatabase:
         # Local MTGA SQLite DB: path resolved on first lookup (no preload)
         self._mtga_db_path: Optional[Path] = None
         self._mtga_db_resolved: bool = False
+        self._ability_text_cache: Dict[int, Dict[int, str]] = {}
 
     _17LANDS_CSV_URL = "https://17lands-public.s3.amazonaws.com/analysis_data/cards/cards.csv"
 
@@ -158,6 +159,70 @@ class CardDatabase:
         except Exception:
             pass
         return None
+
+    @staticmethod
+    def _parse_ability_mapping(raw: Optional[str]) -> Dict[int, int]:
+        """Parse MTGA AbilityIds/HiddenAbilityIds text into {abilityGrpId: localizationId}."""
+        out: Dict[int, int] = {}
+        if not isinstance(raw, str) or not raw.strip():
+            return out
+        for part in raw.split(","):
+            if ":" not in part:
+                continue
+            left, right = part.split(":", 1)
+            try:
+                out[int(left.strip())] = int(right.strip())
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def _query_mtga_local_ability_texts(self, grp_id: int) -> Dict[int, str]:
+        """Look up ability text mappings for one card grpId from local MTGA SQLite."""
+        import sqlite3
+
+        if grp_id in self._ability_text_cache:
+            return self._ability_text_cache[grp_id]
+
+        db_path = self._resolve_mtga_db_path()
+        if not db_path:
+            self._ability_text_cache[grp_id] = {}
+            return {}
+
+        resolved: Dict[int, str] = {}
+        try:
+            conn = sqlite3.connect(str(db_path))
+            cur = conn.cursor()
+            cur.execute(
+                'SELECT "AbilityIds", "HiddenAbilityIds" FROM "Cards" WHERE "GrpId" = ?',
+                (grp_id,),
+            )
+            row = cur.fetchone()
+            if row:
+                ability_map = self._parse_ability_mapping(row[0])
+                hidden_map = self._parse_ability_mapping(row[1])
+                all_loc_ids = {**ability_map, **hidden_map}
+                for ability_grp_id, loc_id in all_loc_ids.items():
+                    cur.execute(
+                        'SELECT "Loc" FROM "Localizations_enUS" WHERE "LocId" = ?',
+                        (loc_id,),
+                    )
+                    loc_row = cur.fetchone()
+                    if loc_row and loc_row[0]:
+                        resolved[int(ability_grp_id)] = str(loc_row[0]).strip()
+            conn.close()
+        except Exception:
+            resolved = {}
+
+        self._ability_text_cache[grp_id] = resolved
+        return resolved
+
+    def get_card_ability_text(self, grp_id: int, ability_grp_id: int) -> Optional[str]:
+        """Return localized ability text for one card's abilityGrpId when available."""
+        if grp_id is None or ability_grp_id is None:
+            return None
+        ability_texts = self._query_mtga_local_ability_texts(int(grp_id))
+        text = ability_texts.get(int(ability_grp_id))
+        return text.strip() if isinstance(text, str) and text.strip() else None
 
     def get_card_name(self, grp_id: int) -> str:
         """Get the card name for a given MTGA grpId.
