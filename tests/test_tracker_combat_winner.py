@@ -19,6 +19,15 @@ class DummyParser:
             return None
         return json.loads(match.group(0))
 
+    @staticmethod
+    def extract_card_events(line: str):
+        data = DummyParser.parse_json_from_line(line)
+        if not isinstance(data, dict):
+            return None
+        if "gameStateMessage" in data and isinstance(data["gameStateMessage"], dict):
+            return {"type": "game_state", "data": data["gameStateMessage"]}
+        return None
+
 
 class DummyCardDB:
     """Simple card DB stub that returns deterministic names."""
@@ -26,13 +35,17 @@ class DummyCardDB:
     def __init__(self):
         self.cache = {}
         self.log_cache = {}
+        self.names = {}
+        self.ability_texts = {}
 
     def _save_cache(self):
         return None
 
-    @staticmethod
-    def get_card_name(grp_id: int) -> str:
-        return f"Card{grp_id}"
+    def get_card_name(self, grp_id: int) -> str:
+        return self.names.get(grp_id, f"Card{grp_id}")
+
+    def get_card_ability_text(self, grp_id: int, ability_grp_id: int):
+        return self.ability_texts.get((grp_id, ability_grp_id))
 
 
 def make_tracker() -> CardTracker:
@@ -58,6 +71,7 @@ def make_tracker() -> CardTracker:
     tracker._session_stats_recorded_this_game = False
     tracker._deck_candidates = {}
     tracker._metadata_backfilled = False
+    tracker._require_explicit_game_start = False
     tracker.use_colors = False
     tracker._ansi_styles = {}
     tracker._ansi_reset = ""
@@ -236,6 +250,150 @@ def test_declare_blockers_req_only_updates_snapshots_no_block_output(capsys):
     assert out == ""
     assert 30 in tracker.game_state.object_snapshots
     assert 40 in tracker.game_state.object_snapshots
+
+
+def test_user_action_taken_logs_db_backed_ability_text(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 8
+    tracker.game_state.active_player = 1
+    tracker.game_state.last_player_turn_number = 8
+    tracker.card_db.names[100546] = "Cool but Rude"
+    tracker.card_db.ability_texts[(100546, 143758)] = "{o1oR}: Level 2"
+
+    game_objects = [{"instanceId": 328, "grpId": 100546, "ownerSeatId": 1, "controllerSeatId": 1}]
+    create_annotation = {"affectorId": 328, "affectedIds": [337], "type": ["AnnotationType_AbilityInstanceCreated"]}
+    action_annotation = {
+        "affectorId": 1,
+        "affectedIds": [337],
+        "type": ["AnnotationType_UserActionTaken"],
+        "details": [
+            {"key": "actionType", "valueInt32": [4]},
+            {"key": "abilityGrpId", "valueInt32": [143758]},
+        ],
+    }
+
+    tracker._process_annotation(create_annotation, game_objects)
+    tracker._process_annotation(action_annotation, game_objects)
+    out = capsys.readouterr().out
+
+    assert "[Turn 8] 🔮 You: [Cool but Rude] - {1}{R}: Level 2" in out
+
+
+def test_resolution_start_logs_hidden_ability_text_for_source_card(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 8
+    tracker.game_state.active_player = 1
+    tracker.game_state.last_player_turn_number = 8
+    tracker.card_db.names[100546] = "Cool but Rude"
+    tracker.card_db.ability_texts[(100546, 203139)] = (
+        "Whenever you discard a card, this Class deals 2 damage to each opponent."
+    )
+
+    game_objects = [{"instanceId": 328, "grpId": 100546, "ownerSeatId": 1, "controllerSeatId": 1}]
+    create_annotation = {"affectorId": 328, "affectedIds": [337], "type": ["AnnotationType_AbilityInstanceCreated"]}
+    resolution_annotation = {
+        "affectorId": 337,
+        "affectedIds": [337],
+        "type": ["AnnotationType_ResolutionStart"],
+        "details": [{"key": "grpid", "valueInt32": [203139]}],
+    }
+
+    tracker._process_annotation(create_annotation, game_objects)
+    tracker._process_annotation(resolution_annotation, game_objects)
+    out = capsys.readouterr().out
+
+    assert "✨ You: [Cool but Rude] - Whenever you discard a card, this Class deals 2 damage to each opponent." in out
+
+
+def test_resolution_start_skips_duplicate_text_when_user_action_already_logged(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 10
+    tracker.game_state.active_player = 1
+    tracker.game_state.last_player_turn_number = 10
+    tracker.card_db.names[100546] = "Cool but Rude"
+    tracker.card_db.ability_texts[(100546, 143758)] = "{o1oR}: Level 2"
+
+    game_objects = [
+        {
+            "instanceId": 328,
+            "grpId": 100546,
+            "ownerSeatId": 1,
+            "controllerSeatId": 1,
+            "cardTypes": ["CardType_Enchantment"],
+        }
+    ]
+    tracker._process_annotation(
+        {"affectorId": 328, "affectedIds": [337], "type": ["AnnotationType_AbilityInstanceCreated"]},
+        game_objects,
+    )
+    tracker._process_annotation(
+        {
+            "affectorId": 1,
+            "affectedIds": [337],
+            "type": ["AnnotationType_UserActionTaken"],
+            "details": [{"key": "abilityGrpId", "valueInt32": [143758]}],
+        },
+        game_objects,
+    )
+    tracker._process_annotation(
+        {
+            "affectorId": 337,
+            "affectedIds": [337],
+            "type": ["AnnotationType_ResolutionStart"],
+            "details": [{"key": "grpid", "valueInt32": [143758]}],
+        },
+        game_objects,
+    )
+    out = capsys.readouterr().out
+
+    assert out.count("[Cool but Rude] - {1}{R}: Level 2") == 1
+
+
+def test_user_action_taken_skips_land_mana_ability_text(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 10
+    tracker.game_state.active_player = 1
+    tracker.game_state.last_player_turn_number = 10
+    tracker.card_db.names[9001] = "Blood Crypt"
+    tracker.card_db.ability_texts[(9001, 1001)] = "{oT}: Add {oB}."
+
+    game_objects = [
+        {
+            "instanceId": 77,
+            "grpId": 9001,
+            "ownerSeatId": 1,
+            "controllerSeatId": 1,
+            "cardTypes": ["CardType_Land"],
+        }
+    ]
+    tracker._process_annotation(
+        {"affectorId": 77, "affectedIds": [88], "type": ["AnnotationType_AbilityInstanceCreated"]},
+        game_objects,
+    )
+    tracker._process_annotation(
+        {
+            "affectorId": 1,
+            "affectedIds": [88],
+            "type": ["AnnotationType_UserActionTaken"],
+            "details": [{"key": "abilityGrpId", "valueInt32": [1001]}],
+        },
+        game_objects,
+    )
+    out = capsys.readouterr().out
+
+    assert "Blood Crypt" not in out
 
 
 def test_session_stats_record_once_per_game():
@@ -1118,10 +1276,12 @@ def test_game_state_reset_clears_previous_deck_name():
     state = GameState()
     state.player_deck_name = "MWM Landfall"
     state.player_deck_id = "old-id"
+    state.format_str = "Historic Brawl"
     state.reset()
 
     assert state.player_deck_name is None
     assert state.player_deck_id is None
+    assert state.format_str == "Unknown"
 
 
 def test_resolve_player_deck_fallback_uses_best_available_candidate():
@@ -1261,6 +1421,188 @@ def test_capture_opening_hand_prints_seat_line_when_detected(capsys):
 
     assert "Seat: 1" in first
     assert "Seat: 1" not in second
+
+
+def test_check_game_start_requires_fresh_turn_one_after_previous_summary():
+    tracker = make_tracker()
+    tracker._require_explicit_game_start = True
+
+    tracker._check_game_start(json.dumps({"gameStateMessage": {"turnInfo": {"turnNumber": 2, "activePlayer": 1}}}))
+
+    assert tracker.game_state.in_match is False
+
+
+def test_backfill_recent_match_metadata_ignores_lines_before_last_match_end(tmp_path):
+    tracker = make_tracker()
+    tracker.parser.log_path = str(tmp_path / "Player.log")
+    tracker.game_state.player_display_name = "Tapps"
+    tracker._metadata_backfilled = False
+
+    tracker.parser.log_path and (tmp_path / "Player.log").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "matchGameRoomStateChangedEvent": {
+                            "gameRoomInfo": {
+                                "gameRoomConfig": {
+                                    "eventType": "HistoricBrawl",
+                                    "reservedPlayers": [],
+                                }
+                            }
+                        }
+                    }
+                ),
+                json.dumps(
+                    {
+                        "Courses": [
+                            {
+                                "InternalEventName": "HistoricBrawl",
+                                "CurrentModule": "CreateMatch",
+                                "CourseDeckSummary": {
+                                    "DeckId": "old-brawl",
+                                    "Name": "achievement deck",
+                                    "Attributes": [{"name": "Format", "value": "HistoricBrawl"}],
+                                },
+                                "CourseDeck": {"CommandZone": [{"cardId": 7777}]},
+                            }
+                        ]
+                    }
+                ),
+                json.dumps({"gameInfo": {"matchState": "MatchState_GameComplete"}}),
+                json.dumps(
+                    {
+                        "matchGameRoomStateChangedEvent": {
+                            "gameRoomInfo": {
+                                "gameRoomConfig": {
+                                    "eventType": "Standard",
+                                    "reservedPlayers": [],
+                                }
+                            }
+                        }
+                    }
+                ),
+                json.dumps(
+                    {
+                        "Courses": [
+                            {
+                                "InternalEventName": "Play",
+                                "CurrentModule": "CreateMatch",
+                                "CourseDeckSummary": {
+                                    "DeckId": "std-1",
+                                    "Name": "Niv-Mizzet (Malone)",
+                                    "Attributes": [{"name": "Format", "value": "Standard"}],
+                                },
+                            }
+                        ]
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    tracker._backfill_recent_match_metadata(force=True)
+    tracker._resolve_player_deck_from_candidates()
+
+    assert tracker.game_state.format_str == "Standard"
+    assert tracker.game_state.player_deck_name == "Niv-Mizzet (Malone)"
+
+
+def test_parse_match_metadata_prefers_explicit_set_deck_event():
+    tracker = make_tracker()
+    tracker.game_state.player_commanders = ["Nahiri, Storm of Stone"]
+    tracker._parse_match_metadata(
+        '[UnityCrossThreadLogger]<== EventSetDeckV2 {"CourseId":"703c87ae","InternalEventName":"Play","CurrentModule":"CreateMatch","CourseDeckSummary":{"DeckId":"16225358-69d8-45c8-875a-726e19b02004","Name":"Niv-Mizzet (Malone)","Attributes":[{"name":"Format","value":"Standard"}]},"CourseDeck":{"MainDeck":[{"cardId":87237,"quantity":4},{"cardId":100546,"quantity":4}],"CommandZone":[]}}'
+    )
+
+    assert tracker.game_state.player_deck_name == "Niv-Mizzet (Malone)"
+    assert tracker.game_state.player_deck_id == "16225358-69d8-45c8-875a-726e19b02004"
+    assert tracker.game_state.player_commanders == []
+
+
+def test_game_summary_prints_match_stats_section(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.turn_number = 9
+    tracker.game_state.match_stats[1].update(
+        {
+            "attacks": 3,
+            "attacking_creatures": 5,
+            "attackers_lost": 1,
+            "blocking_creatures": 2,
+            "blockers_lost": 1,
+            "total_damage": 14,
+            "life_gain": 4,
+            "self_damage": 2,
+            "cards_drawn": 3,
+            "cards_discarded": 1,
+            "cards_exiled": 2,
+        }
+    )
+    tracker.game_state.match_stats[2].update(
+        {
+            "attacks": 2,
+            "attacking_creatures": 3,
+            "attackers_lost": 2,
+            "blocking_creatures": 1,
+            "blockers_lost": 1,
+            "total_damage": 9,
+            "life_gain": 1,
+            "self_damage": 0,
+            "cards_drawn": 2,
+            "cards_discarded": 2,
+            "cards_exiled": 1,
+        }
+    )
+
+    tracker._print_game_summary()
+    out = capsys.readouterr().out
+
+    assert "📈 Match Stats:" in out
+    assert "Total Turns: 9" in out
+    assert "Combat: 3 attack step(s), 5 attacking creature(s), 1 attacker(s) lost" in out
+    assert "Defense: 2 blocker(s), 1 blocker(s) lost" in out
+    assert "Damage/Life: 14 total damage, 2 self-damage, 4 life gained" in out
+    assert "Cards: 0 played, 3 drawn, 1 discarded, 2 exiled" in out
+
+
+def test_life_change_from_previous_attack_stays_on_previous_turn(capsys):
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.turn_number = 5
+    tracker.game_state.active_player = 1
+    tracker.game_state.last_turn_announced = 5
+    tracker.game_state.last_player_turn_number = 5
+    tracker.game_state.player_life = 20
+    tracker.game_state.opponent_life = 20
+    tracker.game_state.current_combat_attackers = {
+        901: {
+            "card_name": "Fear of Missing Out",
+            "power": 2,
+            "toughness": 3,
+            "owner_seat": 1,
+            "target": "opponent",
+            "target_id": 2,
+        }
+    }
+
+    tracker._update_game_state(
+        {
+            "turnInfo": {"turnNumber": 6, "activePlayer": 2},
+            "players": [
+                {"systemSeatNumber": 1, "lifeTotal": 20},
+                {"systemSeatNumber": 2, "lifeTotal": 18},
+            ],
+        }
+    )
+    out = capsys.readouterr().out
+
+    assert "[Turn 5] 💔 Opponent: lost 2 life (now 18)" in out
+    assert "Turn 6 - OPPONENT'S TURN" not in out
 
 
 def test_update_game_state_detects_brawl_commanders_and_infers_seat(capsys):
