@@ -81,6 +81,16 @@ MTGA writes detailed game logs to:
 
 This tracker monitors the log file in real-time and parses card play events.
 
+### Local card database (optional)
+
+The tracker loads card names from MTGA’s local SQLite file so it can resolve card IDs without the network. It looks for any file named **`Raw_CardDatabase_*.mtga`** (no hardcoded filenames) in these folders, in order:
+
+- **macOS (Steam):** `~/Library/Application Support/Steam/steamapps/common/MTGA/MTGA_Data/Downloads/Raw`
+- **macOS (Epic):** `~/Library/Application Support/com.wizards.mtga/Downloads/RAW`
+- **Override:** set `MTGA_DATA_DIR` in `config.py` or the `MTGA_DATA_DIR` env var to the folder that contains the file
+
+The Steam path is checked first (most up to date); the newest matching file is used.
+
 ## Future UI Considerations
 
 The project is designed to support a GUI in the future. Recommended options:

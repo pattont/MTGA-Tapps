@@ -107,6 +107,34 @@ To convert card IDs to names, you'll need a card database. Options:
 }
 ```
 
+## Identifying the Opponent
+
+**From the logs only**, you can get an **internal opponent identifier**, but not the human‑readable screen name.
+
+### What the logs contain
+
+The `matchGameRoomStateChangedEvent` (when a match/game room is set up) includes a `gameRoomInfo.gameRoomConfig.reservedPlayers` array. Each entry has:
+
+- **`userId`** — Internal account ID (numeric or UUID). This identifies the opponent in Wizards’ backend but is **not** the displayed Arena username (e.g. `Player#12345`).
+- **`systemSeatId`** — Seat index (1 or 2) used in game state (life, zones, `ownerSeatId`, etc.).
+- **`teamId`** — Team identifier.
+
+To know “which `userId` is the opponent,” you must first know which seat is yours (e.g. via hand visibility in game state) and then treat the other seat’s `userId` in `reservedPlayers` as the opponent’s internal ID.
+
+### What the logs do *not* contain
+
+The opponent’s **screen name** (the name shown in the Arena client) is **not** written to Player.log. Tools that show opponent names (e.g. MTG Arena Tool) get them by **reading game memory** (e.g. their `readMatchOpponentInfo` via the mtga-reader), which needs access to the MTGA process and is outside pure log parsing.
+
+### Summary
+
+| Data              | In Player.log? | Where it comes from          |
+|-------------------|-----------------|------------------------------|
+| Opponent `userId` | ✅ Yes          | `matchGameRoomStateChangedEvent` → `reservedPlayers` |
+| Opponent seat ID | ✅ Yes          | Same, or derived from game state |
+| Opponent screen name | ❌ No       | Game memory only (e.g. MTG Arena Tool) |
+
+So with **logs only**, you can identify the opponent by internal `userId` and by seat, but not by their displayed username.
+
 ## Future Improvements
 
 1. **Complete JSON parsing**: Implement full parsing of all event types
@@ -115,6 +143,7 @@ To convert card IDs to names, you'll need a card database. Options:
 4. **Match detection**: Detect match start/end events
 5. **Deck recognition**: Identify decks being played
 6. **Statistics**: Track win rates, card frequencies, etc.
+7. **Opponent ID**: Parse `reservedPlayers` from `matchGameRoomStateChangedEvent` to store opponent `userId` per match (internal ID only; screen name would require memory reading).
 
 ## Resources
 
