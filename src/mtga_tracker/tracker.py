@@ -127,6 +127,7 @@ class GameState:
         self.player_commanders_announced = False
         self.opponent_commanders_announced = False
         self.seat_line_announced = False
+        self.last_emitted_life_event: Optional[tuple] = None
 
     def reset(self):
         """Reset state for a new game while keeping only stable account-level metadata."""
@@ -194,6 +195,7 @@ class CardTracker:
         self.session_total_mulligans = 0
         self._session_stats_recorded_this_game = False
         self._deck_candidates: Dict[str, Dict[str, Any]] = {}
+        self._active_deck_candidate_key: Optional[str] = None
         self._metadata_backfilled = False
         self._require_explicit_game_start: bool = False
         self._ansi_reset = "\033[0m"
@@ -630,6 +632,19 @@ class CardTracker:
                 return True
         return False
 
+    def _is_brawl_format(self, format_text: Optional[str] = None) -> bool:
+        """Return True when the supplied/current format text clearly indicates Brawl."""
+        text = self._normalize_match_text(format_text if format_text is not None else self.game_state.format_str)
+        return "brawl" in text
+
+    def _clear_commander_state(self) -> None:
+        """Clear commander metadata when the current match is not a commander format."""
+        self.game_state.commanders_by_seat = {}
+        self.game_state.player_commanders = []
+        self.game_state.opponent_commanders = []
+        self.game_state.player_commanders_announced = False
+        self.game_state.opponent_commanders_announced = False
+
     def _update_format_from_game_state(self, data: Dict[str, Any]) -> None:
         """Infer Brawl/Historic Brawl from live game state."""
         game_info = data.get("gameInfo")
@@ -643,16 +658,23 @@ class CardTracker:
         if isinstance(deck_constraint, dict):
             min_commander_size = deck_constraint.get("minCommanderSize")
         zones = data.get("zones", [])
-        has_command_zone = any(
-            isinstance(zone, dict) and zone.get("type") == "ZoneType_Command"
+        has_populated_command_zone = any(
+            isinstance(zone, dict)
+            and zone.get("type") == "ZoneType_Command"
+            and bool(zone.get("objectInstanceIds"))
             for zone in zones
         ) if isinstance(zones, list) else False
 
-        if "brawl" in variant_text or (isinstance(min_commander_size, int) and min_commander_size > 0) or has_command_zone:
+        if "brawl" in variant_text or (isinstance(min_commander_size, int) and min_commander_size > 0) or has_populated_command_zone:
             self.game_state.format_str = self._best_brawl_format_label()
+        elif isinstance(min_commander_size, int) and min_commander_size == 0 and not self._is_brawl_format():
+            self._clear_commander_state()
 
     def _update_commanders_from_game_state(self, data: Dict[str, Any]) -> None:
         """Capture visible commanders from the shared command zone."""
+        if not self._is_brawl_format():
+            self._clear_commander_state()
+            return
         zones = data.get("zones", [])
         if not isinstance(zones, list):
             return
@@ -677,6 +699,8 @@ class CardTracker:
                 command_by_seat.setdefault(int(owner_seat), []).append(self.card_db.get_card_name(int(grp_id)))
 
         if not command_by_seat:
+            if not self.game_state.commanders_by_seat:
+                self._clear_commander_state()
             return
 
         self.game_state.commanders_by_seat = {
@@ -713,6 +737,8 @@ class CardTracker:
     def _maybe_print_pregame_commander_lines(self) -> None:
         """Print commander lines after game start once discovered, before turn banners."""
         if not self.game_state.in_match or self.game_state.last_turn_announced > 0:
+            return
+        if not self._is_brawl_format():
             return
         if self.game_state.player_commanders and not self.game_state.player_commanders_announced:
             print(f"   Your Commander: {self._format_commander_names(self.game_state.player_commanders)}")
@@ -1318,6 +1344,11 @@ class CardTracker:
         """Pick most likely active player deck from observed course metadata."""
         if not self._deck_candidates:
             return
+        if self._active_deck_candidate_key:
+            locked_candidate = self._deck_candidates.get(self._active_deck_candidate_key)
+            if isinstance(locked_candidate, dict):
+                self._set_active_deck_from_candidate(locked_candidate)
+                return
         format_hint = self.game_state.format_str if self.game_state.format_str != "Unknown" else ""
         if not format_hint:
             return
@@ -1351,12 +1382,28 @@ class CardTracker:
         self.game_state.player_deck_id = deck_id
         self.game_state.player_deck_event_name = candidate.get("internal_event_name")
         self.game_state.player_deck_last_played = candidate.get("last_played")
+        format_attr = candidate.get("format_attr")
+        if isinstance(format_attr, str) and format_attr:
+            if self.game_state.format_str == "Unknown" or candidate.get("trusted_active"):
+                self.game_state.format_str = format_attr
         command_zone_ids = candidate.get("command_zone_ids")
         if isinstance(command_zone_ids, list) and self._candidate_is_brawl(candidate):
             self._set_player_commanders_from_ids(command_zone_ids)
         elif not self.game_state.commanders_by_seat:
-            self.game_state.player_commanders = []
+            self._clear_commander_state()
         return changed
+
+    def _lock_active_deck_candidate(self, candidate_key: Optional[str]) -> None:
+        """Pin the current match to an explicit active deck candidate."""
+        if not candidate_key:
+            return
+        candidate = self._deck_candidates.get(candidate_key)
+        if not isinstance(candidate, dict):
+            return
+        candidate["trusted_active"] = True
+        self._deck_candidates[candidate_key] = candidate
+        self._active_deck_candidate_key = candidate_key
+        self._set_active_deck_from_candidate(candidate)
 
     def _resolve_player_deck_from_hand_ids(self, hand_grp_ids: List[int]) -> bool:
         """Resolve active deck by matching opening hand grpIds against known candidate main decks."""
@@ -1498,10 +1545,7 @@ class CardTracker:
                 deck_updated = True
             if any(marker in line_lower for marker in ("eventsetdeckv2", "deckupsertdeckv2")):
                 candidate_key = self._course_candidate_key(data)
-                trusted_candidate = self._deck_candidates.get(candidate_key) if candidate_key else None
-                if trusted_candidate:
-                    trusted_candidate["trusted_active"] = True
-                    self._set_active_deck_from_candidate(trusted_candidate)
+                self._lock_active_deck_candidate(candidate_key)
         if deck_updated or format_updated:
             self._resolve_player_deck_from_candidates()
 
@@ -1526,10 +1570,10 @@ class CardTracker:
         if g.player_seat_id in (1, 2):
             print(f"   Seat: {g.player_seat_id}")
             g.seat_line_announced = True
-        if g.player_commanders:
+        if self._is_brawl_format(g.format_str) and g.player_commanders:
             print(f"   Your Commander: {self._format_commander_names(g.player_commanders)}")
             g.player_commanders_announced = True
-        if g.opponent_commanders:
+        if self._is_brawl_format(g.format_str) and g.opponent_commanders:
             print(f"   Opponent Commander: {self._format_commander_names(g.opponent_commanders)}")
             g.opponent_commanders_announced = True
 
@@ -1821,6 +1865,7 @@ class CardTracker:
             self.player_cards = []
             self.opponent_cards = []
             self._session_stats_recorded_this_game = False
+            self._active_deck_candidate_key = None
             
         # Only check if we're not already in a match
         if self.game_state.in_match:
@@ -1847,6 +1892,7 @@ class CardTracker:
             self.opponent_cards = []
             self._session_stats_recorded_this_game = False
             self._deck_candidates = {}
+            self._active_deck_candidate_key = None
             self.game_state.player_deck_name = None
             self.game_state.player_deck_id = None
             self.game_state.player_deck_event_name = None
@@ -1889,6 +1935,7 @@ class CardTracker:
                     self.opponent_cards = []
                     self._session_stats_recorded_this_game = False
                     self._deck_candidates = {}
+                    self._active_deck_candidate_key = None
                     self.game_state.player_deck_name = None
                     self.game_state.player_deck_id = None
                     self.game_state.player_deck_event_name = None
@@ -2128,6 +2175,10 @@ class CardTracker:
                 self.game_state.turn_number if self.game_state.turn_number > 0 else None
             ),
         )
+        life_event_key = (seat_id, diff, life, turn_for_display)
+        if self.game_state.last_emitted_life_event == life_event_key:
+            return
+        self.game_state.last_emitted_life_event = life_event_key
         late_life_event = (
             self.game_state.turn_number > 0
             and turn_for_display > 0
@@ -3817,9 +3868,9 @@ class CardTracker:
         if not self.game_state.player_deck_name:
             self._resolve_player_deck_from_candidates()
         print(f"   Your Deck: {self.game_state.player_deck_name or 'Unknown'}")
-        if self.game_state.player_commanders:
+        if self._is_brawl_format() and self.game_state.player_commanders:
             print(f"   Your Commander: {self._format_commander_names(self.game_state.player_commanders)}")
-        if self.game_state.opponent_commanders:
+        if self._is_brawl_format() and self.game_state.opponent_commanders:
             print(f"   Opponent Commander: {self._format_commander_names(self.game_state.opponent_commanders)}")
         print(f"   Mulligans: {self.game_state.mulligan_count}")
         print(f"   Your cards: {len(self.player_cards)}")
@@ -3887,6 +3938,7 @@ class CardTracker:
 
         # Reset game state for next game
         self.game_state.reset()
+        self._active_deck_candidate_key = None
         self._require_explicit_game_start = True
 
     def _print_summary(self):
