@@ -70,6 +70,7 @@ def make_tracker() -> CardTracker:
     tracker.session_total_mulligans = 0
     tracker._session_stats_recorded_this_game = False
     tracker._deck_candidates = {}
+    tracker._active_deck_candidate_key = None
     tracker._metadata_backfilled = False
     tracker._require_explicit_game_start = False
     tracker.use_colors = False
@@ -1353,6 +1354,7 @@ def test_summary_includes_mulligan_and_exile_totals(capsys):
 
 def test_summary_includes_commanders(capsys):
     tracker = make_tracker()
+    tracker.game_state.format_str = "Historic Brawl"
     tracker.game_state.player_commanders = ["Card100471"]
     tracker.game_state.opponent_commanders = ["Card100610"]
 
@@ -1361,6 +1363,50 @@ def test_summary_includes_commanders(capsys):
 
     assert "Your Commander: Card100471" in out
     assert "Opponent Commander: Card100610" in out
+
+
+def test_match_started_block_hides_commanders_for_standard_even_if_stale(capsys):
+    tracker = make_tracker()
+    tracker.game_state.game_start_time = datetime(2026, 3, 10, 21, 15, 0)
+    tracker.game_state.format_str = "Standard Best-of-1"
+    tracker.game_state.player_commanders = ["Card2"]
+    tracker.game_state.opponent_commanders = ["Card2"]
+
+    tracker._print_match_started_block()
+    out = capsys.readouterr().out
+
+    assert "Your Commander:" not in out
+    assert "Opponent Commander:" not in out
+
+
+def test_summary_hides_commanders_for_standard_even_if_stale(capsys):
+    tracker = make_tracker()
+    tracker.game_state.format_str = "Standard Best-of-1"
+    tracker.game_state.player_commanders = ["Nahiri, Storm of Stone"]
+    tracker.game_state.opponent_commanders = ["Card2"]
+
+    tracker._print_game_summary()
+    out = capsys.readouterr().out
+
+    assert "Your Commander:" not in out
+    assert "Opponent Commander:" not in out
+
+
+def test_emit_life_change_suppresses_consecutive_duplicates(capsys):
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.turn_number = 4
+
+    tracker._emit_life_change(2, -2, 18)
+    tracker._emit_life_change(2, -2, 18)
+    tracker._emit_life_change(1, 4, 22)
+
+    out = capsys.readouterr().out
+
+    assert out.count("[Turn 4] 💔 Opponent: lost 2 life (now 18)") == 1
+    assert out.count("[Turn 4] 💚 You: gained 4 life (now 22)") == 1
 
 
 def test_capture_opening_hand_detects_mulligan_when_seat_unknown():
@@ -1521,6 +1567,82 @@ def test_parse_match_metadata_prefers_explicit_set_deck_event():
     assert tracker.game_state.player_commanders == []
 
 
+def test_explicit_active_standard_deck_is_not_overridden_by_stale_brawl_courses():
+    tracker = make_tracker()
+    tracker.game_state.player_commanders = ["Nahiri, Storm of Stone"]
+    tracker._parse_match_metadata(
+        '[UnityCrossThreadLogger]<== EventSetDeckV2 {"CourseId":"703c87ae","InternalEventName":"Play","CurrentModule":"CreateMatch","CourseDeckSummary":{"DeckId":"16225358-69d8-45c8-875a-726e19b02004","Name":"Niv-Mizzet (Malone)","Attributes":[{"name":"Format","value":"Standard"}]},"CourseDeck":{"MainDeck":[{"cardId":87237,"quantity":4},{"cardId":100546,"quantity":4}],"CommandZone":[]}}'
+    )
+    tracker._parse_match_metadata(
+        json.dumps(
+            {
+                "Courses": [
+                    {
+                        "InternalEventName": "Play_Brawl_Historic",
+                        "CurrentModule": "Complete",
+                        "CourseDeckSummary": {
+                            "DeckId": "156c02e3-3968-4d79-9fc7-a3ac28954542",
+                            "Name": "achievement deck",
+                            "Attributes": [{"name": "Format", "value": "HistoricBrawl"}],
+                        },
+                        "CourseDeck": {
+                            "MainDeck": [{"cardId": 82393, "quantity": 40}],
+                            "CommandZone": [{"cardId": 69684, "quantity": 1}],
+                        },
+                    }
+                ]
+            }
+        )
+    )
+
+    assert tracker.game_state.player_deck_name == "Niv-Mizzet (Malone)"
+    assert tracker.game_state.player_deck_id == "16225358-69d8-45c8-875a-726e19b02004"
+    assert tracker.game_state.format_str == "Standard"
+    assert tracker.game_state.player_commanders == []
+
+
+def test_game_start_clears_stale_locked_brawl_candidate():
+    tracker = make_tracker()
+    tracker._active_deck_candidate_key = "156c02e3-3968-4d79-9fc7-a3ac28954542"
+    tracker._process_line(json.dumps({"gameInfo": {"mulliganType": "MulliganType_London"}}))
+
+    tracker._process_line(
+        json.dumps(
+            {
+                "Courses": [
+                    {
+                        "InternalEventName": "Play_Brawl_Historic",
+                        "CurrentModule": "Complete",
+                        "CourseDeckSummary": {
+                            "DeckId": "156c02e3-3968-4d79-9fc7-a3ac28954542",
+                            "Name": "achievement deck",
+                            "Attributes": [{"name": "Format", "value": "HistoricBrawl"}],
+                        },
+                        "CourseDeck": {"CommandZone": [{"cardId": 69684, "quantity": 1}]},
+                    },
+                    {
+                        "InternalEventName": "Play",
+                        "CurrentModule": "Complete",
+                        "CourseDeckSummary": {
+                            "DeckId": "2750dcd2-4ca1-4731-ae79-3b394befe7f4",
+                            "Name": "Mono-Black Demons (TMNT Ash)",
+                            "Attributes": [
+                                {"name": "Format", "value": "TraditionalStandard"},
+                                {"name": "LastPlayed", "value": '"2026-03-23T23:28:24.034312-04:00"'},
+                            ],
+                        },
+                        "CourseDeck": {"CommandZone": []},
+                    },
+                ]
+            }
+        )
+    )
+
+    assert tracker._active_deck_candidate_key is None
+    assert tracker.game_state.player_deck_name is None
+    assert tracker.game_state.player_commanders == []
+
+
 def test_game_summary_prints_match_stats_section(capsys):
     tracker = make_tracker()
     tracker.game_state.player_seat_id = 1
@@ -1633,6 +1755,32 @@ def test_update_game_state_detects_brawl_commanders_and_infers_seat(capsys):
     assert tracker.game_state.opponent_commanders == ["Card100610"]
     assert "Your Commander: Card100471" in out
     assert "Opponent Commander: Card100610" in out
+
+
+def test_update_game_state_does_not_infer_brawl_from_empty_command_zone():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.game_start_time = datetime(2026, 3, 10, 21, 15, 0)
+    tracker.game_state.format_str = "Standard Best-of-1"
+    tracker.game_state.player_commanders = ["Card2"]
+    tracker.game_state.opponent_commanders = ["Card2"]
+
+    tracker._update_game_state(
+        {
+            "gameInfo": {
+                "variant": "GameVariant_Normal",
+                "deckConstraintInfo": {"minDeckSize": 60, "maxDeckSize": 250, "maxSideboardSize": 15},
+            },
+            "zones": [
+                {"type": "ZoneType_Command", "objectInstanceIds": []},
+            ],
+            "gameObjects": [],
+        }
+    )
+
+    assert tracker.game_state.format_str == "Standard Best-of-1"
+    assert tracker.game_state.player_commanders == []
+    assert tracker.game_state.opponent_commanders == []
 
 
 def test_capture_opening_hand_finalizes_keep_seven_on_turn_start():
