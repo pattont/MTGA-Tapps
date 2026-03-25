@@ -1,11 +1,14 @@
 """Main entry point for MTGA Tracker."""
 
+import os
 import sys
 import argparse
 from pathlib import Path
 
+
 from .tracker import CardTracker
 from .log_parser import MTGALogParser
+
 
 
 def main():
@@ -45,8 +48,19 @@ Examples:
         else:
             log_parser = MTGALogParser()
 
+        # Optional: MTGA data dir for local card DB (Raw_CardDatabase_*.mtga)
+        mtga_data_dir = os.getenv("MTGA_DATA_DIR")
+        if not mtga_data_dir:
+            try:
+                _root = Path(__file__).resolve().parent.parent
+                if str(_root) not in sys.path:
+                    sys.path.insert(0, str(_root))
+                import config as user_config  # type: ignore[import-not-found]
+                mtga_data_dir = getattr(user_config, "MTGA_DATA_DIR", None)
+            except ImportError:
+                pass
         # Create and start tracker
-        tracker = CardTracker(log_parser)
+        tracker = CardTracker(log_parser, mtga_data_dir=mtga_data_dir)
         tracker.start()
 
     except FileNotFoundError as e:

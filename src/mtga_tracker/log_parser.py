@@ -69,7 +69,10 @@ class MTGALogParser:
         """
         try:
             with open(self.log_path, "r", encoding="utf-8", errors="ignore") as f:
-                # Seek to last known position
+                # If file was truncated or rotated (e.g. new match, MTGA restart), start from beginning
+                file_size = f.seek(0, 2)
+                if file_size < self.last_position:
+                    self.last_position = 0
                 f.seek(self.last_position)
 
                 # Read new lines

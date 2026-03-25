@@ -6,6 +6,11 @@ Copy this to config.py and modify as needed.
 # MTGA log file path (leave as None for auto-detection)
 LOG_PATH = None
 
+# Folder containing Raw_CardDatabase_*.mtga (optional override).
+# Default on macOS: ~/Library/Application Support/com.wizards.mtga/Downloads/RAW
+# Set this to override, e.g. if the file lives elsewhere on your machine.
+MTGA_DATA_DIR = None
+
 # Polling interval in seconds (how often to check for new log entries)
 POLL_INTERVAL = 1.0
 
@@ -34,3 +39,16 @@ SAVE_HISTORY = True
 AUTO_DETECT_MATCH_START = True
 AUTO_DETECT_MATCH_END = True
 SAVE_MATCH_DATA = True
+
+# Deck LLM (identify opponent deck archetype at game end)
+# DECK_LLM_PROVIDER: Gemini | OpenAI | Claude (default: Gemini).
+DECK_LLM_ENABLED = True
+# Model per provider (optional; defaults: gemini-2.0-flash, gpt-4o-mini, claude-3-5-haiku)
+DECK_LLM_PROVIDER = 'Gemini'
+#DECK_LLM_OPENAI_MODEL = 'gpt-5-mini'
+DECK_LLM_GEMINI_MODEL = 'gemini-2.0-flash'   # or e.g. gemini-1.5-flash
+#DECK_LLM_CLAUDE_MODEL = 'claude-3-5-haiku-20241022'
+
+GEMINI_API_KEY = ''
+# CHATGPT_API_KEY = ''
+# CLAUDE_API_KEY = ''

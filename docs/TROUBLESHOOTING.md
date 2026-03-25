@@ -1,29 +1,18 @@
 # Troubleshooting Guide
 
-## Player vs Opponent Showing Backwards
+## Game Not Detected Until Restart
 
-**Symptoms:**
-- When you play a card, it shows as "Opponent"
-- When opponent plays a card, it shows as "You"
+**Symptoms:** You start the tracker in the lobby, then start a game in MTGA. The tracker never shows "Game started." After you restart the tracker (while the game is in progress), it then detects "Game in progress" or the next game.
 
-**Solution:**
-The tracker now auto-detects which seat ID you are. This should happen automatically at startup.
+**Cause:** When the tracker starts, it begins reading the log from the *current end* of the file. If MTGA truncates or rotates the log when you enter a match (e.g. new match, or client behavior), the log file can become shorter than the position the tracker was reading from. The tracker would then read nothing and miss the game-start events.
 
-To verify seat detection:
-```bash
-python debug_seats.py
-```
+**Fix (in code):** The tracker now detects when the log file is shorter than the last read position (truncation/rotation) and resets to the beginning of the file so new content is not missed. If you still see this behavior, ensure you are on a version that includes this fix.
 
-This will show:
-- Your detected seat ID
-- Opponent's seat ID
-- Player data from game state
-- Card play examples with seat info
+## Player vs Opponent
 
-**If detection fails:**
-1. Make sure you've played at least one match in MTGA since opening it
-2. Restart the tracker
-3. Start a new match (seat assignment happens at match start)
+**How it works:** The tracker defines seats only by hand visibility in the log. **Hand we can see (cards have grpId) = you. Hand we cannot see = opponent.** There is no pre-assignment or config swap.
+
+**If You/Opponent appear backwards:** The log on your client may expose card identities differently (e.g. revealed opponent cards have grpIds). Run `python debug_seats.py` during a match to inspect hand visibility and seat IDs. If detection consistently fails, see "Advanced: Manual Seat Configuration" below.
 
 ## Life Totals Not Tracking
 
@@ -147,7 +136,7 @@ rm data/card_cache.json
 
 ## Advanced: Manual Seat Configuration
 
-If auto-detection consistently fails, you can manually set your seat ID:
+If auto-detection consistently fails and swap doesn't help, you can manually set your seat ID:
 
 Edit `src/mtga_tracker/tracker.py` and find the `GameState.__init__()` method.
 Change:
