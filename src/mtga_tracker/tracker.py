@@ -1779,6 +1779,30 @@ class CardTracker:
                 return True
         return False
 
+    def _line_indicates_live_mulligan_start(self, line: str) -> bool:
+        """Return True when a mulligan marker line represents a live game start, not a game-over payload."""
+        line_lower = line.lower()
+        if not (
+            "mulligantype" in line_lower
+            or ("mulligan" in line_lower and ("gretolient" in line_lower or "gretoclient" in line_lower))
+            or "mulliganreq" in line_lower
+        ):
+            return False
+
+        json_data = self.parser.parse_json_from_line(line)
+        if isinstance(json_data, dict):
+            game_info = self._find_nested(json_data, "gameInfo")
+            if isinstance(game_info, dict):
+                stage = str(game_info.get("stage", ""))
+                match_state = str(game_info.get("matchState", ""))
+                if (
+                    "GameStage_GameOver" in stage
+                    or "MatchState_GameComplete" in match_state
+                    or "MatchState_MatchComplete" in match_state
+                ):
+                    return False
+        return True
+
     def _check_game_start(self, line: str):
         """Check if a game is starting."""
         line_lower = line.lower()
@@ -1788,9 +1812,7 @@ class CardTracker:
         if self.waiting_for_next_game:
             # Check if this is actually a new game start (mulligan or turn 1)
             # More robust mulligan detection
-            if ("mulligantype" in line_lower or 
-                ("mulligan" in line_lower and ("gretolient" in line_lower or "gretoclient" in line_lower)) or
-                "mulliganreq" in line_lower):
+            if self._line_indicates_live_mulligan_start(line):
                 self.game_state.opening_mulligan_prompt_seen = True
                 self.waiting_for_next_game = False
                 print("\n" + "="*75)
@@ -1873,9 +1895,7 @@ class CardTracker:
 
         # Look for game start indicators - mulligan phase means game is starting
         # More robust mulligan detection patterns
-        if ("mulligantype" in line_lower or 
-            ("mulligan" in line_lower and ("gretolient" in line_lower or "gretoclient" in line_lower)) or
-            "mulliganreq" in line_lower):
+        if self._line_indicates_live_mulligan_start(line):
             # Clear waiting flag if we were waiting for next game
             if self.waiting_for_next_game:
                 self.waiting_for_next_game = False
