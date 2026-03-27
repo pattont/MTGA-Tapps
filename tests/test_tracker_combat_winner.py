@@ -145,6 +145,64 @@ def test_check_game_end_infers_winner_from_pending_loss_status():
     assert tracker.game_state.match_complete is True
 
 
+def test_check_game_start_ignores_game_over_payload_with_mulligan_type(capsys):
+    tracker = make_tracker()
+
+    line = json.dumps(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "gameInfo": {
+                                "stage": "GameStage_GameOver",
+                                "matchState": "MatchState_GameComplete",
+                                "mulliganType": "MulliganType_London",
+                            }
+                        },
+                    }
+                ]
+            }
+        }
+    )
+
+    tracker._check_game_start(line)
+
+    assert tracker.game_state.in_match is False
+    assert capsys.readouterr().out == ""
+
+
+def test_check_game_start_waiting_for_next_game_ignores_game_over_mulligan_payload(capsys):
+    tracker = make_tracker()
+    tracker.waiting_for_next_game = True
+
+    line = json.dumps(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "gameInfo": {
+                                "stage": "GameStage_GameOver",
+                                "matchState": "MatchState_MatchComplete",
+                                "mulliganType": "MulliganType_London",
+                            }
+                        },
+                    }
+                ]
+            }
+        }
+    )
+
+    tracker._check_game_start(line)
+
+    assert tracker.waiting_for_next_game is True
+    assert tracker.game_state.in_match is False
+    assert capsys.readouterr().out == ""
+
+
 def test_attack_state_events_are_announced_once(capsys):
     tracker = make_tracker()
     tracker.game_state.player_seat_id = 1
