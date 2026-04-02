@@ -65,6 +65,9 @@ class GameState:
         self._hand_before_mulligan_ids: List[int] = []
         self.opening_hand_capture_closed = False  # Stop opening-hand inference once gameplay actions begin.
         self.opening_mulligan_prompt_seen = False  # True when mulligan prompt markers are observed in the log.
+        self.explicit_mulligan_count = 0  # Count actual ClientMessageType_MulliganResp "Mulligan" decisions.
+        self.opening_keep_confirmed = False  # True once ClientMessageType_MulliganResp accepts the opening hand.
+        self.opening_select_n_ids: List[int] = []  # Opening-hand selection ids from ClientMessageType_SelectNResp.
         self.instance_roots: Dict[int, int] = {}  # objectIdChanged lineage map (new_id -> canonical root id).
         self.pending_spell_roots: Dict[int, Dict[str, Any]] = {}  # CastSpell seen, waiting for Resolve.
         self.ability_instance_sources: Dict[int, int] = {}  # ability instance id -> source permanent instance id
@@ -83,6 +86,7 @@ class GameState:
         self.reported_attack_keys: Set[tuple] = set()  # (turn, attacker_instance_id, owner_seat)
         self.recent_combat_returns: List[Dict[str, Any]] = []  # recent "return to hand" records used for combat-swap inference
         self.object_snapshots: Dict[int, Dict[str, Any]] = {}  # last known gameObject payload by instanceId (for late/missing combat refs)
+        self.highest_creature_by_seat: Dict[int, Dict[str, Any]] = {}
         self.counted_attack_turns: Set[tuple] = set()  # (turn, owner_seat) counted as one attack step
         self.combat_loss_events_counted: Set[tuple] = set()  # (instance_id, category)
         self.match_stats = self._new_match_stats()
@@ -355,6 +359,54 @@ class CardTracker:
             for old_id in list(self.game_state.object_snapshots.keys())[:trim_batch]:
                 self.game_state.object_snapshots.pop(old_id, None)
 
+    def _remove_deleted_instances(self, deleted_instance_ids: Any) -> None:
+        """Purge deleted object ids from snapshot and combat caches."""
+        if not isinstance(deleted_instance_ids, list):
+            return
+        deleted_ids = {
+            int(instance_id)
+            for instance_id in deleted_instance_ids
+            if isinstance(instance_id, int)
+        }
+        if not deleted_ids:
+            return
+
+        for instance_id in deleted_ids:
+            self.game_state.object_snapshots.pop(instance_id, None)
+            self.game_state.current_combat_attackers.pop(instance_id, None)
+            self.game_state.current_combat_blockers.pop(instance_id, None)
+            self.game_state.ability_instance_sources.pop(instance_id, None)
+            self.game_state.ability_instance_action_texts.pop(instance_id, None)
+
+        self.game_state.attackers = [
+            instance_id for instance_id in self.game_state.attackers
+            if instance_id not in deleted_ids
+        ]
+        self.game_state.blockers = {
+            blocker_id: [attacker_id for attacker_id in attacker_ids if attacker_id not in deleted_ids]
+            for blocker_id, attacker_ids in self.game_state.blockers.items()
+            if blocker_id not in deleted_ids
+        }
+        self.game_state.reported_attack_keys = {
+            key for key in self.game_state.reported_attack_keys
+            if not (isinstance(key, tuple) and len(key) > 1 and key[1] in deleted_ids)
+        }
+        self.game_state.reported_block_pairs = {
+            key for key in self.game_state.reported_block_pairs
+            if not (
+                isinstance(key, tuple)
+                and (
+                    (len(key) > 1 and key[1] in deleted_ids)
+                    or (len(key) > 2 and key[2] in deleted_ids)
+                )
+            )
+        }
+        self.game_state.combat_loss_events_counted = {
+            key for key in self.game_state.combat_loss_events_counted
+            if not (isinstance(key, tuple) and key and key[0] in deleted_ids)
+        }
+        self.game_state.seen_instance_ids -= deleted_ids
+
     def _lookup_object(self, instance_id: Optional[int], game_objects_by_id: Optional[Dict[int, Dict[str, Any]]] = None) -> Dict[str, Any]:
         """Get best-known object payload from current state + snapshot fallback."""
         if instance_id is None:
@@ -400,7 +452,7 @@ class CardTracker:
         """Return best-effort card/permanent display name for a game object."""
         grp_id = obj.get("grpId") or obj.get("overlayGrpId") or obj.get("objectSourceGrpId")
         if grp_id:
-            name = self.card_db.get_card_name(grp_id)
+            name = self._refresh_fallback_name_text(self.card_db.get_card_name(grp_id))
             if name:
                 return name
         return f"ID {instance_id}" if instance_id is not None else "Unknown"
@@ -510,11 +562,20 @@ class CardTracker:
 
     def _highest_known_creature_snapshot(self, seat_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Return highest P/T creature snapshot seen this game (optionally filtered by owner seat)."""
+        if seat_id in (1, 2):
+            observed = self.game_state.highest_creature_by_seat.get(int(seat_id))
+            if isinstance(observed, dict):
+                return observed
         best: Optional[Dict[str, Any]] = None
         for instance_id, obj in self.game_state.object_snapshots.items():
             if not isinstance(obj, dict):
                 continue
             if seat_id in (1, 2) and obj.get("ownerSeatId") != seat_id:
+                continue
+            zone_id = obj.get("zoneId")
+            if zone_id is not None and zone_id != 28:
+                continue
+            if obj.get("isFacedown"):
                 continue
             card_types = obj.get("cardTypes")
             if isinstance(card_types, list):
@@ -538,6 +599,51 @@ class CardTracker:
                     "score": score,
                 }
         return best
+
+    def _observe_battlefield_creatures(self, data: Dict[str, Any]) -> None:
+        """Track highest observed live battlefield creature stats by seat."""
+        zones = data.get("zones", [])
+        if not isinstance(zones, list):
+            return
+        battlefield_zone_ids = {
+            zone.get("zoneId")
+            for zone in zones
+            if isinstance(zone, dict) and zone.get("type") == "ZoneType_Battlefield" and zone.get("zoneId") is not None
+        }
+        if not battlefield_zone_ids:
+            return
+
+        for obj in data.get("gameObjects", []) or []:
+            if not isinstance(obj, dict):
+                continue
+            if obj.get("zoneId") not in battlefield_zone_ids:
+                continue
+            if obj.get("isFacedown"):
+                continue
+            card_types = obj.get("cardTypes")
+            if not isinstance(card_types, list) or "CardType_Creature" not in card_types:
+                continue
+            owner_seat = self._normalize_seat_id(obj.get("ownerSeatId"))
+            if owner_seat not in (1, 2):
+                continue
+            power = self._extract_stat_value(obj.get("power"))
+            toughness = self._extract_stat_value(obj.get("toughness"))
+            if power is None or toughness is None:
+                continue
+
+            score = max(power, toughness)
+            instance_id = obj.get("instanceId")
+            candidate = {
+                "instance_id": instance_id,
+                "name": self._object_display_name(obj, instance_id),
+                "power": power,
+                "toughness": toughness,
+                "owner_seat": owner_seat,
+                "score": score,
+            }
+            best = self.game_state.highest_creature_by_seat.get(owner_seat)
+            if best is None or score > best.get("score", -1):
+                self.game_state.highest_creature_by_seat[owner_seat] = candidate
 
     @staticmethod
     def _format_duration(total_seconds: int) -> str:
@@ -578,10 +684,136 @@ class CardTracker:
             out.append(clean)
         return out
 
+    def _refresh_fallback_name_text(self, text: Optional[str]) -> str:
+        """Replace fallback ``Card #<id>`` tokens with local DB names when available."""
+        if not isinstance(text, str) or not text:
+            return text or ""
+
+        def _replace(match: re.Match[str]) -> str:
+            grp_id = int(match.group(1))
+            resolved = self.card_db.get_card_name(grp_id)
+            if isinstance(resolved, str) and resolved and not resolved.startswith("Card #"):
+                return resolved
+            return match.group(0)
+
+        return re.sub(r"Card #(\d+)", _replace, text)
+
     def _format_commander_names(self, names: List[str]) -> str:
         """Format one or two commander names for display."""
-        unique = self._unique_names(names)
+        unique = self._unique_names([self._refresh_fallback_name_text(name) for name in names])
         return " + ".join(unique) if unique else "Unknown"
+
+    def _extract_game_state_events(self, line: str) -> List[Dict[str, Any]]:
+        """Return ordered game-state events from one raw log line."""
+        extract_many = getattr(self.parser, "extract_game_state_events", None)
+        if callable(extract_many):
+            events = extract_many(line)
+            if isinstance(events, list):
+                return [event for event in events if isinstance(event, dict)]
+        single = self.parser.extract_card_events(line)
+        if isinstance(single, dict):
+            return [single]
+        return []
+
+    def _extract_client_gre_payloads(self, line: str) -> List[Dict[str, Any]]:
+        """Return ordered client-to-GRE payloads from one raw log line."""
+        extract_many = getattr(self.parser, "extract_client_gre_payloads", None)
+        if callable(extract_many):
+            payloads = extract_many(line)
+            if isinstance(payloads, list):
+                return [payload for payload in payloads if isinstance(payload, dict)]
+        data = self.parser.parse_json_from_line(line)
+        if not isinstance(data, dict):
+            return []
+        direct = data.get("clientToGreMessage")
+        if isinstance(direct, dict):
+            payload = direct.get("payload")
+            if isinstance(payload, dict):
+                return [{"type": "client_gre_message", "data": payload}]
+            if direct.get("type"):
+                return [{"type": "client_gre_message", "data": direct}]
+        if (
+            data.get("clientToMatchServiceMessageType") == "ClientToMatchServiceMessageType_ClientToGREMessage"
+            and isinstance(data.get("payload"), dict)
+        ):
+            return [{"type": "client_gre_message", "data": data["payload"]}]
+        return []
+
+    def _handle_client_gre_payload(self, payload_event: Dict[str, Any]) -> None:
+        """Handle client-to-GRE responses that improve mulligan/opening-hand tracking."""
+        payload = payload_event.get("data", {})
+        if not isinstance(payload, dict):
+            return
+        payload_type = str(payload.get("type", ""))
+
+        if payload_type == "ClientMessageType_MulliganResp":
+            decision = str((payload.get("mulliganResp") or {}).get("decision", ""))
+            self.game_state.opening_mulligan_prompt_seen = True
+            if decision == "MulliganOption_Mulligan":
+                self.game_state.explicit_mulligan_count += 1
+                self.game_state.opening_keep_confirmed = False
+                self.game_state.opening_select_n_ids = []
+            elif decision == "MulliganOption_AcceptHand":
+                self.game_state.opening_keep_confirmed = True
+            return
+
+        if payload_type != "ClientMessageType_SelectNResp":
+            return
+        if self.game_state.opening_hand_capture_closed:
+            return
+        if self.game_state.last_turn_announced > 0:
+            return
+        if not (self.game_state.opening_keep_confirmed or self.game_state.explicit_mulligan_count > 0):
+            return
+        select_resp = payload.get("selectNResp") or {}
+        ids = select_resp.get("ids")
+        if not isinstance(ids, list):
+            return
+        parsed_ids: List[int] = []
+        for value in ids:
+            try:
+                parsed_ids.append(int(value))
+            except (TypeError, ValueError):
+                continue
+        if parsed_ids:
+            self.game_state.opening_select_n_ids = parsed_ids
+
+    def _friendly_format_label(self, raw_format: Optional[str] = None) -> str:
+        """Convert raw queue/format identifiers into user-facing labels."""
+        raw = raw_format if raw_format is not None else self.game_state.format_str
+        if not isinstance(raw, str) or not raw.strip() or raw == "Unknown":
+            if self._is_brawl_format():
+                return self._best_brawl_format_label()
+            return "Standard Best-of-3" if self.game_state.match_type == "best_of_3" else "Standard Best-of-1"
+
+        normalized = self._normalize_match_text(raw)
+        if "historicbrawl" in normalized:
+            return "Historic Brawl"
+        if "brawl" in normalized:
+            return "Brawl"
+        if normalized in {"traditionalstandard", "constructedbestof3", "bestof3", "traditional_ladder"}:
+            return "Standard Best-of-3"
+        if normalized in {"standard", "ladder", "play", "constructedbestof1", "bestof1"}:
+            return "Standard Best-of-1"
+        if normalized == "historicplay" or normalized == "historic":
+            return "Historic"
+        if normalized == "explorerplay" or normalized == "explorer":
+            return "Explorer"
+        if normalized == "timelessplay" or normalized == "timeless":
+            return "Timeless"
+        if normalized == "alchemy":
+            return "Alchemy"
+        if "traditionalstandard" in normalized:
+            return "Standard Best-of-3"
+        if "historic" in normalized and "brawl" not in normalized:
+            return "Historic"
+        if "explorer" in normalized:
+            return "Explorer"
+        if "timeless" in normalized:
+            return "Timeless"
+        if "standard" in normalized:
+            return "Standard Best-of-3" if "traditional" in normalized or "bestof3" in normalized else "Standard Best-of-1"
+        return raw
 
     def _seat_stats(self, seat_id: Optional[int]) -> Optional[Dict[str, int]]:
         """Return mutable per-seat stats dict when seat is known."""
@@ -692,6 +924,8 @@ class CardTracker:
                 continue
             for obj_id in zone.get("objectInstanceIds", []) or []:
                 obj = self._lookup_object(obj_id, game_objects_by_id)
+                if not isinstance(obj, dict) or obj.get("type") != "GameObjectType_Card":
+                    continue
                 owner_seat = obj.get("ownerSeatId")
                 grp_id = obj.get("grpId") or obj.get("overlayGrpId") or obj.get("objectSourceGrpId")
                 if owner_seat is None or grp_id is None:
@@ -1005,26 +1239,13 @@ class CardTracker:
 
             # No match-end in tail; check for active game state (turn > 0 or zones with cards)
             for line in reversed(tail):
-                event = self.parser.extract_card_events(line)
-                if not event or event.get("type") != "game_state":
-                    continue
-                data = event.get("data", {})
-                if "turnInfo" in data:
-                    turn_num = (data.get("turnInfo") or {}).get("turnNumber", 0)
-                    if turn_num and turn_num > 0:
-                        self.waiting_for_next_game = True
-                        print("\n" + "="*75)
-                        print("⚠️  DETECTED GAME IN PROGRESS")
-                        print("="*75)
-                        print("   Tracker launched mid-game.")
-                        print("   Will start tracking at the beginning of the next game.")
-                        print("="*75 + "\n")
-                        return
-                if "zones" in data:
-                    for zone in (data.get("zones") or []):
-                        ztype = (zone.get("type") or "")
-                        objs = zone.get("objectInstanceIds", [])
-                        if objs and ("Battlefield" in ztype or "Hand" in ztype):
+                for event in self._extract_game_state_events(line):
+                    if event.get("type") != "game_state":
+                        continue
+                    data = event.get("data", {})
+                    if "turnInfo" in data:
+                        turn_num = (data.get("turnInfo") or {}).get("turnNumber", 0)
+                        if turn_num and turn_num > 0:
                             self.waiting_for_next_game = True
                             print("\n" + "="*75)
                             print("⚠️  DETECTED GAME IN PROGRESS")
@@ -1033,6 +1254,19 @@ class CardTracker:
                             print("   Will start tracking at the beginning of the next game.")
                             print("="*75 + "\n")
                             return
+                    if "zones" in data:
+                        for zone in (data.get("zones") or []):
+                            ztype = (zone.get("type") or "")
+                            objs = zone.get("objectInstanceIds", [])
+                            if objs and ("Battlefield" in ztype or "Hand" in ztype):
+                                self.waiting_for_next_game = True
+                                print("\n" + "="*75)
+                                print("⚠️  DETECTED GAME IN PROGRESS")
+                                print("="*75)
+                                print("   Tracker launched mid-game.")
+                                print("   Will start tracking at the beginning of the next game.")
+                                print("="*75 + "\n")
+                                return
         except Exception:
             pass
 
@@ -1053,6 +1287,8 @@ class CardTracker:
         """
         # Always try to pick up match metadata (format, player name) from any line
         self._parse_match_metadata(line)
+        for payload in self._extract_client_gre_payloads(line):
+            self._handle_client_gre_payload(payload)
 
         # Skip processing if we're waiting for the next game (launched mid-game)
         if self.waiting_for_next_game:
@@ -1074,68 +1310,68 @@ class CardTracker:
             # Recent MTGA logs include DeclareBlockersReq; use it for snapshots only (not definitive block output).
             self._process_blocker_requests_from_line(line)
 
-        # Look for card-related events
-        event = self.parser.extract_card_events(line)
-        if event:
+        # Look for card-related events in GRE message order.
+        for event in self._extract_game_state_events(line):
             self._handle_event(event)
 
     def _try_detect_player_seat(self, line: str):
         """Set player/opponent by hand visibility only: we can see our cards (grpId known), we cannot see opponent's."""
-        event = self.parser.extract_card_events(line)
-        if not event or event.get("type") != "game_state":
-            return
-        data = event.get("data", {})
-        zones = data.get("zones", [])
-        game_objects = data.get("gameObjects", [])
-
-        instance_to_grp = {}
-        for obj in game_objects:
-            iid, gid = obj.get("instanceId"), obj.get("grpId", 0)
-            if iid and gid and gid > 0:
-                instance_to_grp[iid] = gid
-
-        hands = []
-        for zone in zones:
-            if "Hand" not in (zone.get("type") or ""):
+        for event in self._extract_game_state_events(line):
+            if event.get("type") != "game_state":
                 continue
-            owner_seat = zone.get("ownerSeatId")
-            obj_ids = zone.get("objectInstanceIds", [])
-            if not obj_ids or not owner_seat:
+            data = event.get("data", {})
+            zones = data.get("zones", [])
+            game_objects = data.get("gameObjects", [])
+
+            instance_to_grp = {}
+            for obj in game_objects:
+                iid, gid = obj.get("instanceId"), obj.get("grpId", 0)
+                if iid and gid and gid > 0:
+                    instance_to_grp[iid] = gid
+
+            hands = []
+            for zone in zones:
+                if "Hand" not in (zone.get("type") or ""):
+                    continue
+                owner_seat = zone.get("ownerSeatId")
+                obj_ids = zone.get("objectInstanceIds", [])
+                if not obj_ids or not owner_seat:
+                    continue
+                visible = sum(1 for oid in obj_ids if instance_to_grp.get(oid, 0) > 0)
+                hands.append({"seat": owner_seat, "visible": visible, "total": len(obj_ids)})
+
+            if len(hands) != 2 or hands[0]["total"] == 0 or hands[1]["total"] == 0:
                 continue
-            visible = sum(1 for oid in obj_ids if instance_to_grp.get(oid, 0) > 0)
-            hands.append({"seat": owner_seat, "visible": visible, "total": len(obj_ids)})
 
-        if len(hands) != 2 or hands[0]["total"] == 0 or hands[1]["total"] == 0:
-            return
-
-        h1, h2 = hands[0], hands[1]
-        # Hand we can see (visible > 0) = me. Hand we cannot see (visible == 0) = opponent.
-        if h1["visible"] > 0 and h2["visible"] == 0:
-            self.game_state.player_seat_id = h1["seat"]
-            self.game_state.opponent_seat_id = h2["seat"]
-        elif h2["visible"] > 0 and h1["visible"] == 0:
-            self.game_state.player_seat_id = h2["seat"]
-            self.game_state.opponent_seat_id = h1["seat"]
-        elif h1["visible"] != h2["visible"]:
-            # One hand we see more of = that seat is us
-            if h1["visible"] > h2["visible"]:
+            h1, h2 = hands[0], hands[1]
+            # Hand we can see (visible > 0) = me. Hand we cannot see (visible == 0) = opponent.
+            if h1["visible"] > 0 and h2["visible"] == 0:
                 self.game_state.player_seat_id = h1["seat"]
                 self.game_state.opponent_seat_id = h2["seat"]
-            else:
+            elif h2["visible"] > 0 and h1["visible"] == 0:
                 self.game_state.player_seat_id = h2["seat"]
                 self.game_state.opponent_seat_id = h1["seat"]
-        else:
+            elif h1["visible"] != h2["visible"]:
+                # One hand we see more of = that seat is us
+                if h1["visible"] > h2["visible"]:
+                    self.game_state.player_seat_id = h1["seat"]
+                    self.game_state.opponent_seat_id = h2["seat"]
+                else:
+                    self.game_state.player_seat_id = h2["seat"]
+                    self.game_state.opponent_seat_id = h1["seat"]
+            else:
+                continue
+            # Resolve player/opponent names from reservedPlayers if we have them (match room may have been parsed earlier)
+            if self.game_state._reserved_players:
+                for r in self.game_state._reserved_players:
+                    if r.get("seat") == self.game_state.player_seat_id and r.get("name"):
+                        self.game_state.player_display_name = self.game_state.player_display_name or r["name"]
+                    elif r.get("seat") == self.game_state.opponent_seat_id and r.get("name"):
+                        self.game_state.opponent_display_name = r["name"]
+            self._maybe_print_seat_resolution()
+            self._sync_commander_views_from_seats()
+            self._maybe_print_pregame_commander_lines()
             return
-        # Resolve player/opponent names from reservedPlayers if we have them (match room may have been parsed earlier)
-        if self.game_state._reserved_players:
-            for r in self.game_state._reserved_players:
-                if r.get("seat") == self.game_state.player_seat_id and r.get("name"):
-                    self.game_state.player_display_name = self.game_state.player_display_name or r["name"]
-                elif r.get("seat") == self.game_state.opponent_seat_id and r.get("name"):
-                    self.game_state.opponent_display_name = r["name"]
-        self._maybe_print_seat_resolution()
-        self._sync_commander_views_from_seats()
-        self._maybe_print_pregame_commander_lines()
 
     def _get_name_from_dict(self, d: Dict[str, Any]) -> Optional[str]:
         """Get first non-empty string from dict using common name keys (any casing)."""
@@ -1554,10 +1790,7 @@ class CardTracker:
         g = self.game_state
         time_str = g.game_start_time.strftime("%I:%M %p") if g.game_start_time else "?"
         print(f"   Match started: {time_str}")
-        # Use match_type when format not in log: "Standard Best-of-1" / "Standard Best-of-3"
-        format_display = g.format_str if g.format_str != "Unknown" else (
-            "Standard Best-of-3" if g.match_type == "best_of_3" else "Standard Best-of-1"
-        )
+        format_display = self._friendly_format_label(g.format_str)
         print(f"   Format: {format_display}")
         opponent_name_known = (
             isinstance(g.opponent_display_name, str)
@@ -1611,7 +1844,11 @@ class CardTracker:
         def finalize_starting_hand(hand_cards: List[str], hand_grp_ids: List[int]) -> None:
             self.game_state.starting_hand = hand_cards
             self.game_state.initial_hand_size = len(hand_cards)
-            self.game_state.mulligan_count = max(self.game_state.mulligan_count, 7 - len(hand_cards))
+            self.game_state.mulligan_count = max(
+                self.game_state.mulligan_count,
+                self.game_state.explicit_mulligan_count,
+                7 - len(hand_cards),
+            )
             self.session_total_mulligans += self.game_state.mulligan_count
             self._resolve_player_deck_from_hand_ids(hand_grp_ids)
             if self.game_state._hand_before_mulligan:
@@ -1623,6 +1860,8 @@ class CardTracker:
             self.game_state._hand_before_mulligan = []
             self.game_state._hand_before_mulligan_ids = []
             self.game_state.opening_hand_capture_closed = True
+            self.game_state.opening_keep_confirmed = False
+            self.game_state.opening_select_n_ids = []
             n = len(self.game_state.starting_hand)
             print(f"\n🎴 Your Starting Hand ({n} cards):")
             for card in self.game_state.starting_hand:
@@ -1781,6 +2020,10 @@ class CardTracker:
 
     def _line_indicates_live_mulligan_start(self, line: str) -> bool:
         """Return True when a mulligan marker line represents a live game start, not a game-over payload."""
+        for payload in self._extract_client_gre_payloads(line):
+            data = payload.get("data", {})
+            if isinstance(data, dict) and data.get("type") == "ClientMessageType_MulliganResp":
+                return True
         line_lower = line.lower()
         if not (
             "mulligantype" in line_lower
@@ -1820,8 +2063,9 @@ class CardTracker:
                 print("="*75 + "\n")
             else:
                 # Check for turn 1 in game state
-                event = self.parser.extract_card_events(line)
-                if event and event.get("type") == "game_state":
+                for event in self._extract_game_state_events(line):
+                    if event.get("type") != "game_state":
+                        continue
                     data = event.get("data", {})
                     if "turnInfo" in data:
                         turn_info = data.get("turnInfo", {})
@@ -1831,6 +2075,7 @@ class CardTracker:
                             print("\n" + "="*75)
                             print("✅ NEW GAME DETECTED - Starting to track!")
                             print("="*75 + "\n")
+                            break
                     # Also check for zones with cards (indicates new game)
                     elif "zones" in data:
                         zones = data.get("zones", [])
@@ -1842,6 +2087,8 @@ class CardTracker:
                                 print("✅ NEW GAME DETECTED - Starting to track!")
                                 print("="*75 + "\n")
                                 break
+                    if not self.waiting_for_next_game:
+                        break
         
         # If we're waiting for next game, don't process game start yet
         if self.waiting_for_next_game:
@@ -1918,6 +2165,13 @@ class CardTracker:
             self.game_state.player_deck_event_name = None
             self.game_state.player_deck_last_played = None
             self._backfill_recent_match_metadata(max_lines=1800, force=True)
+            for state_event in self._extract_game_state_events(line):
+                event_data = state_event.get("data", {})
+                if isinstance(event_data, dict):
+                    self._update_format_from_game_state(event_data)
+                    self._remove_deleted_instances(event_data.get("diffDeletedInstanceIds"))
+                    self._snapshot_game_objects(event_data.get("gameObjects", []))
+                    self._update_commanders_from_game_state(event_data)
             self._require_explicit_game_start = False
             format_display = "Standard Best-of-3" if self.game_state.match_type == "best_of_3" else "Standard Best-of-1"
             game_num_display = f" (Game {self.game_state.game_number})" if self.game_state.match_type == "best_of_3" else ""
@@ -1927,9 +2181,10 @@ class CardTracker:
             self._print_match_started_block()
             return  # Don't process further - wait for turn info
 
-        # Check for opening hand
-        event = self.parser.extract_card_events(line)
-        if event and event.get("type") == "game_state":
+        # Check for opening hand / first turn on any ordered game-state packet in this line.
+        for event in self._extract_game_state_events(line):
+            if event.get("type") != "game_state":
+                continue
             data = event.get("data", {})
 
             # Detect game start from turnInfo (turn 1 means game started)
@@ -1971,7 +2226,7 @@ class CardTracker:
                     return  # Don't process further - wait for hand info
 
             if explicit_start_required:
-                return
+                break
 
             self._capture_opening_hand(data)
 
@@ -1990,17 +2245,9 @@ class CardTracker:
             if isinstance(game_info, dict):
                 stage = str(game_info.get("stage", ""))
                 match_state = str(game_info.get("matchState", ""))
-                if (
-                    "GameStage_GameOver" in stage
-                    or "MatchState_GameComplete" in match_state
-                    or "MatchState_MatchComplete" in match_state
-                ):
+                if "GameStage_GameOver" in stage and "MatchState_GameComplete" in match_state:
                     structured_match_complete = True
             state_type = self._find_nested(json_data, "stateType")
-            if isinstance(state_type, str) and "MatchCompleted" in state_type:
-                structured_match_complete = True
-            if isinstance(self._find_nested(json_data, "intermissionReq"), dict):
-                structured_match_complete = True
             w = self._try_parse_winner_from_json(json_data)
             if w is not None:
                 winner_priority = 4 if structured_match_complete else 2
@@ -2234,7 +2481,9 @@ class CardTracker:
         """Update the tracked game state from event data."""
         # Process turn info and print turn header FIRST so "Turn N - YOUR TURN" appears
         # before card plays and life changes from this same message.
+        self._remove_deleted_instances(data.get("diffDeletedInstanceIds"))
         self._snapshot_game_objects(data.get("gameObjects", []))
+        self._observe_battlefield_creatures(data)
         self._update_format_from_game_state(data)
         self._update_commanders_from_game_state(data)
         self._maybe_print_seat_resolution()
@@ -3881,7 +4130,7 @@ class CardTracker:
             if self.game_state.mulligan_count > 0:
                 print(f"   (After {self.game_state.mulligan_count} mulligan(s))")
             for card in self.game_state.starting_hand:
-                print(f"   • {card}")
+                print(f"   • {self._refresh_fallback_name_text(card)}")
 
         # Cards played
         print(f"\n📊 Cards Played:")
@@ -3918,7 +4167,8 @@ class CardTracker:
             print(f"      {self._format_type_breakdown(self.player_cards)}")
             card_counts = {}
             for event in self.player_cards:
-                card_counts[event.card_name] = card_counts.get(event.card_name, 0) + 1
+                display_name = self._refresh_fallback_name_text(event.card_name)
+                card_counts[display_name] = card_counts.get(display_name, 0) + 1
 
             for card_name, count in sorted(card_counts.items(), key=lambda x: (str(x[0]), x[1])):
                 card_name_str = str(card_name)  # Same format as turn log: "Card Name (Type P/T)"
@@ -3938,7 +4188,8 @@ class CardTracker:
             print(f"      {self._format_type_breakdown(self.opponent_cards)}")
             card_counts = {}
             for event in self.opponent_cards:
-                card_counts[event.card_name] = card_counts.get(event.card_name, 0) + 1
+                display_name = self._refresh_fallback_name_text(event.card_name)
+                card_counts[display_name] = card_counts.get(display_name, 0) + 1
 
             for card_name, count in sorted(card_counts.items(), key=lambda x: (str(x[0]), x[1])):
                 card_name_str = str(card_name)  # Same format as turn log: "Card Name (Type P/T)"

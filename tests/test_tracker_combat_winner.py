@@ -4,7 +4,7 @@ import json
 import re
 from datetime import datetime
 
-from mtga_tracker.tracker import CardTracker, GameState
+from mtga_tracker.tracker import CardEvent, CardTracker, GameState
 
 
 class DummyParser:
@@ -20,13 +20,48 @@ class DummyParser:
         return json.loads(match.group(0))
 
     @staticmethod
-    def extract_card_events(line: str):
+    def extract_game_state_events(line: str):
         data = DummyParser.parse_json_from_line(line)
         if not isinstance(data, dict):
-            return None
+            return []
         if "gameStateMessage" in data and isinstance(data["gameStateMessage"], dict):
-            return {"type": "game_state", "data": data["gameStateMessage"]}
-        return None
+            return [{"type": "game_state", "data": data["gameStateMessage"]}]
+        if "greToClientEvent" in data and isinstance(data["greToClientEvent"], dict):
+            out = []
+            for message in data["greToClientEvent"].get("greToClientMessages", []) or []:
+                if not isinstance(message, dict):
+                    continue
+                if message.get("type") != "GREMessageType_GameStateMessage":
+                    continue
+                game_state = message.get("gameStateMessage")
+                if isinstance(game_state, dict):
+                    out.append({"type": "game_state", "data": game_state})
+            return out
+        return []
+
+    @staticmethod
+    def extract_client_gre_payloads(line: str):
+        data = DummyParser.parse_json_from_line(line)
+        if not isinstance(data, dict):
+            return []
+        direct = data.get("clientToGreMessage")
+        if isinstance(direct, dict):
+            payload = direct.get("payload")
+            if isinstance(payload, dict):
+                return [{"type": "client_gre_message", "data": payload}]
+            if direct.get("type"):
+                return [{"type": "client_gre_message", "data": direct}]
+        if (
+            data.get("clientToMatchServiceMessageType") == "ClientToMatchServiceMessageType_ClientToGREMessage"
+            and isinstance(data.get("payload"), dict)
+        ):
+            return [{"type": "client_gre_message", "data": data["payload"]}]
+        return []
+
+    @staticmethod
+    def extract_card_events(line: str):
+        events = DummyParser.extract_game_state_events(line)
+        return events[0] if events else None
 
 
 class DummyCardDB:
@@ -118,6 +153,75 @@ def test_check_game_end_parses_structured_result_winner():
     assert tracker._pending_game_summary is True
 
 
+def test_process_line_records_explicit_mulligan_response():
+    tracker = make_tracker()
+
+    tracker._process_line(
+        json.dumps(
+            {
+                "clientToMatchServiceMessageType": "ClientToMatchServiceMessageType_ClientToGREMessage",
+                "payload": {
+                    "type": "ClientMessageType_MulliganResp",
+                    "mulliganResp": {"decision": "MulliganOption_Mulligan"},
+                },
+            }
+        )
+    )
+
+    assert tracker.game_state.explicit_mulligan_count == 1
+    assert tracker.game_state.opening_mulligan_prompt_seen is True
+
+
+def test_capture_opening_hand_uses_explicit_mulligan_response_count():
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.explicit_mulligan_count = 1
+    tracker.game_state.opening_mulligan_prompt_seen = True
+
+    data = {
+        "zones": [
+            {
+                "type": "ZoneType_Hand",
+                "ownerSeatId": 1,
+                "objectInstanceIds": [11, 12, 13, 14, 15, 16],
+            }
+        ],
+        "gameObjects": [
+            {"instanceId": 11, "grpId": 101},
+            {"instanceId": 12, "grpId": 102},
+            {"instanceId": 13, "grpId": 103},
+            {"instanceId": 14, "grpId": 104},
+            {"instanceId": 15, "grpId": 105},
+            {"instanceId": 16, "grpId": 106},
+        ],
+        "turnInfo": {"turnNumber": 1},
+    }
+
+    tracker._capture_opening_hand(data)
+
+    assert tracker.game_state.mulligan_count == 1
+    assert len(tracker.game_state.starting_hand) == 6
+
+
+def test_process_line_records_opening_selectn_response():
+    tracker = make_tracker()
+    tracker.game_state.opening_keep_confirmed = True
+
+    tracker._process_line(
+        json.dumps(
+            {
+                "clientToMatchServiceMessageType": "ClientToMatchServiceMessageType_ClientToGREMessage",
+                "payload": {
+                    "type": "ClientMessageType_SelectNResp",
+                    "selectNResp": {"ids": [444, 445]},
+                },
+            }
+        )
+    )
+
+    assert tracker.game_state.opening_select_n_ids == [444, 445]
+
+
 def test_check_game_end_infers_winner_from_pending_loss_status():
     tracker = make_tracker()
     tracker.game_state.in_match = True
@@ -143,6 +247,45 @@ def test_check_game_end_infers_winner_from_pending_loss_status():
 
     assert tracker.game_state.winner_seat == 1
     assert tracker.game_state.match_complete is True
+
+
+def test_check_game_end_ignores_match_complete_without_game_complete():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+
+    line = json.dumps(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "gameInfo": {
+                                "stage": "GameStage_GameOver",
+                                "matchState": "MatchState_MatchComplete",
+                                "results": [
+                                    {
+                                        "scope": "MatchScope_Match",
+                                        "result": "ResultType_WinLoss",
+                                        "winningTeamId": 2,
+                                        "reason": "ResultReason_Concede",
+                                    }
+                                ],
+                            }
+                        },
+                    }
+                ]
+            }
+        }
+    )
+
+    tracker._check_game_end(line)
+
+    assert tracker.game_state.winner_seat == 2
+    assert tracker.game_state.match_complete is False
+    assert tracker._pending_game_summary is False
 
 
 def test_check_game_start_ignores_game_over_payload_with_mulligan_type(capsys):
@@ -1331,6 +1474,17 @@ def test_match_started_block_prints_commanders_when_known(capsys):
     assert "Opponent Commander: Card100610" in out
 
 
+def test_match_started_block_formats_historic_brawl_label(capsys):
+    tracker = make_tracker()
+    tracker.game_state.game_start_time = datetime(2026, 3, 10, 21, 15, 0)
+    tracker.game_state.format_str = "HistoricBrawl"
+
+    tracker._print_match_started_block()
+    out = capsys.readouterr().out
+
+    assert "Format: Historic Brawl" in out
+
+
 def test_game_state_reset_clears_previous_deck_name():
     state = GameState()
     state.player_deck_name = "MWM Landfall"
@@ -1423,6 +1577,50 @@ def test_summary_includes_commanders(capsys):
     assert "Opponent Commander: Card100610" in out
 
 
+def test_summary_refreshes_fallback_card_ids_from_local_db(capsys):
+    tracker = make_tracker()
+    tracker.game_state.format_str = "Historic Brawl"
+    tracker.game_state.player_deck_name = "Tifa - MWM"
+    tracker.game_state.player_seat_id = 2
+    tracker.game_state.opponent_seat_id = 1
+    tracker.game_state.player_commanders = ["Card #96074"]
+    tracker.game_state.opponent_commanders = ["Card #93935"]
+    tracker.card_db.names.update(
+        {
+            82394: "Forest",
+            54163: "Elvish Mystic",
+            93935: "Ghalta, Primal Hunger",
+            96074: "Tifa Lockhart",
+        }
+    )
+    tracker.player_cards = [
+        CardEvent("Card #82394 (Land)", "you", card_type_category="lands"),
+        CardEvent("Card #54163 (Creature 1/1)", "you", card_type_category="creatures"),
+    ]
+    tracker.opponent_cards = [
+        CardEvent("Card #93935 (Creature 12/12)", "opponent", card_type_category="creatures"),
+    ]
+    tracker.game_state.object_snapshots = {
+        9001: {
+            "instanceId": 9001,
+            "grpId": 93935,
+            "cardTypes": ["CardType_Creature"],
+            "power": {"value": 12},
+            "toughness": {"value": 12},
+            "ownerSeatId": 1,
+        }
+    }
+
+    tracker._print_game_summary()
+    out = capsys.readouterr().out
+
+    assert "Your Commander: Tifa Lockhart" in out
+    assert "Opponent Commander: Ghalta, Primal Hunger" in out
+    assert "• [Forest (Land)]" in out
+    assert "• [Elvish Mystic (Creature 1/1)]" in out
+    assert "Highest observed creature: [Ghalta, Primal Hunger] reached 12/12" in out
+
+
 def test_match_started_block_hides_commanders_for_standard_even_if_stale(capsys):
     tracker = make_tracker()
     tracker.game_state.game_start_time = datetime(2026, 3, 10, 21, 15, 0)
@@ -1435,6 +1633,56 @@ def test_match_started_block_hides_commanders_for_standard_even_if_stale(capsys)
 
     assert "Your Commander:" not in out
     assert "Opponent Commander:" not in out
+
+
+def test_highest_observed_creature_uses_battlefield_stats_not_library_printed_stats():
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+
+    tracker._update_game_state(
+        {
+            "zones": [
+                {
+                    "zoneId": 28,
+                    "type": "ZoneType_Battlefield",
+                    "objectInstanceIds": [373],
+                },
+                {
+                    "zoneId": 32,
+                    "type": "ZoneType_Library",
+                    "ownerSeatId": 1,
+                    "objectInstanceIds": [240],
+                },
+            ],
+            "gameObjects": [
+                {
+                    "instanceId": 240,
+                    "grpId": 98430,
+                    "zoneId": 32,
+                    "ownerSeatId": 1,
+                    "cardTypes": ["CardType_Creature"],
+                    "power": {"value": 7},
+                    "toughness": {"value": 7},
+                },
+                {
+                    "instanceId": 373,
+                    "grpId": 98430,
+                    "zoneId": 28,
+                    "ownerSeatId": 1,
+                    "cardTypes": ["CardType_Creature"],
+                    "power": {"value": 3},
+                    "toughness": {"value": 3},
+                },
+            ],
+        }
+    )
+
+    best = tracker._highest_known_creature_snapshot(1)
+
+    assert best is not None
+    assert best["name"] == "Card98430"
+    assert best["power"] == 3
+    assert best["toughness"] == 3
 
 
 def test_summary_hides_commanders_for_standard_even_if_stale(capsys):
@@ -1799,8 +2047,8 @@ def test_update_game_state_detects_brawl_commanders_and_infers_seat(capsys):
                 {"type": "ZoneType_Command", "objectInstanceIds": [801, 802]},
             ],
             "gameObjects": [
-                {"instanceId": 801, "grpId": 100610, "ownerSeatId": 1},
-                {"instanceId": 802, "grpId": 100471, "ownerSeatId": 2},
+                {"instanceId": 801, "grpId": 100610, "type": "GameObjectType_Card", "ownerSeatId": 1},
+                {"instanceId": 802, "grpId": 100471, "type": "GameObjectType_Card", "ownerSeatId": 2},
             ],
         }
     )
@@ -1813,6 +2061,128 @@ def test_update_game_state_detects_brawl_commanders_and_infers_seat(capsys):
     assert tracker.game_state.opponent_commanders == ["Card100610"]
     assert "Your Commander: Card100471" in out
     assert "Opponent Commander: Card100610" in out
+
+
+def test_update_game_state_removes_deleted_instances_from_snapshots():
+    tracker = make_tracker()
+    tracker.game_state.object_snapshots = {
+        100: {"instanceId": 100, "grpId": 500},
+        101: {"instanceId": 101, "grpId": 501},
+    }
+    tracker.game_state.current_combat_attackers = {100: {"card_name": "Old"}}
+    tracker.game_state.attackers = [100, 101]
+
+    tracker._update_game_state(
+        {
+            "diffDeletedInstanceIds": [100],
+            "gameObjects": [],
+        }
+    )
+
+    assert 100 not in tracker.game_state.object_snapshots
+    assert 100 not in tracker.game_state.current_combat_attackers
+    assert 100 not in tracker.game_state.attackers
+
+
+def test_process_line_handles_later_gre_turn_message_in_same_line(capsys):
+    tracker = make_tracker()
+
+    line = json.dumps(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "gameStateId": 7,
+                            "gameInfo": {
+                                "stage": "GameStage_GameOver",
+                                "matchState": "MatchState_MatchComplete",
+                            },
+                        },
+                    },
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "gameStateId": 8,
+                            "turnInfo": {"turnNumber": 1, "activePlayer": 1},
+                        },
+                    },
+                ]
+            }
+        }
+    )
+
+    tracker._check_game_start(line)
+
+    assert tracker.game_state.in_match is True
+    assert tracker.game_state.game_start_time is not None
+
+
+def test_update_game_state_ignores_command_zone_emblems(capsys):
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.game_start_time = datetime(2026, 3, 10, 21, 15, 0)
+    tracker.game_state.format_str = "Historic Brawl"
+    tracker.game_state.player_seat_id = 2
+    tracker.game_state.opponent_seat_id = 1
+    tracker.card_db.names.update(
+        {
+            95526: "Elspeth, Sun's Champion",
+            96074: "Tifa Lockhart",
+        }
+    )
+
+    tracker._update_game_state(
+        {
+            "gameInfo": {"variant": "GameVariant_Brawl"},
+            "deckConstraintInfo": {"minCommanderSize": 1},
+            "zones": [
+                {"type": "ZoneType_Command", "objectInstanceIds": [237, 238, 239, 240]},
+            ],
+            "gameObjects": [
+                {
+                    "instanceId": 237,
+                    "grpId": 2,
+                    "type": "GameObjectType_Emblem",
+                    "ownerSeatId": 1,
+                    "controllerSeatId": 1,
+                    "objectSourceGrpId": 106961,
+                    "overlayGrpId": 2,
+                },
+                {
+                    "instanceId": 238,
+                    "grpId": 95526,
+                    "type": "GameObjectType_Card",
+                    "ownerSeatId": 1,
+                    "controllerSeatId": 1,
+                },
+                {
+                    "instanceId": 239,
+                    "grpId": 2,
+                    "type": "GameObjectType_Emblem",
+                    "ownerSeatId": 2,
+                    "controllerSeatId": 2,
+                    "objectSourceGrpId": 106961,
+                    "overlayGrpId": 2,
+                },
+                {
+                    "instanceId": 240,
+                    "grpId": 96074,
+                    "type": "GameObjectType_Card",
+                    "ownerSeatId": 2,
+                    "controllerSeatId": 2,
+                },
+            ],
+        }
+    )
+    out = capsys.readouterr().out
+
+    assert tracker.game_state.player_commanders == ["Tifa Lockhart"]
+    assert tracker.game_state.opponent_commanders == ["Elspeth, Sun's Champion"]
+    assert "Card #2" not in out
+    assert "Your Commander: Tifa Lockhart" in out
+    assert "Opponent Commander: Elspeth, Sun's Champion" in out
 
 
 def test_update_game_state_does_not_infer_brawl_from_empty_command_zone():
