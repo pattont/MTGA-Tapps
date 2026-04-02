@@ -43,6 +43,70 @@ def test_extract_card_events():
     assert result is None
 
 
+def test_extract_game_state_events_preserves_gre_message_order():
+    """Each GRE game-state message should be surfaced separately and in order."""
+    parser = MTGALogParser.__new__(MTGALogParser)
+
+    line = (
+        '{"greToClientEvent":{"greToClientMessages":['
+        '{"type":"GREMessageType_GameStateMessage","gameStateMessage":{"gameStateId":7,"gameInfo":{"matchState":"MatchState_GameComplete"}}},'
+        '{"type":"GREMessageType_GameStateMessage","gameStateMessage":{"gameStateId":8,"gameInfo":{"matchState":"MatchState_MatchComplete"}}},'
+        '{"type":"GREMessageType_GameStateMessage","gameStateMessage":{"gameStateId":9,"turnInfo":{"turnNumber":1,"activePlayer":1}}}'
+        ']}}'
+    )
+
+    events = parser.extract_game_state_events(line)
+
+    assert [event["data"]["gameStateId"] for event in events] == [7, 8, 9]
+    assert events[2]["data"]["turnInfo"]["turnNumber"] == 1
+
+
+def test_read_new_lines_reconstructs_multiline_client_to_gre_message(tmp_path: Path):
+    """Multiline ClientToGREMessage blocks should be yielded as one parseable line."""
+    log_path = tmp_path / "Player.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                "[UnityCrossThreadLogger] to Match: ClientToGremessage",
+                "{",
+                '  "clientToMatchServiceMessageType": "ClientToMatchServiceMessageType_ClientToGREMessage",',
+                '  "payload": {',
+                '    "type": "ClientMessageType_MulliganResp",',
+                '    "mulliganResp": {',
+                '      "decision": "MulliganOption_Mulligan"',
+                "    }",
+                "  }",
+                "}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    parser = MTGALogParser(str(log_path))
+
+    lines = list(parser.read_new_lines())
+
+    assert len(lines) == 1
+    payloads = parser.extract_client_gre_payloads(lines[0])
+    assert payloads[0]["data"]["type"] == "ClientMessageType_MulliganResp"
+    assert payloads[0]["data"]["mulliganResp"]["decision"] == "MulliganOption_Mulligan"
+
+
+def test_extract_client_gre_payloads_from_service_message():
+    """ClientToMatchServiceMessageType_ClientToGREMessage payloads should be extracted."""
+    parser = MTGALogParser.__new__(MTGALogParser)
+    line = (
+        '{"clientToMatchServiceMessageType":"ClientToMatchServiceMessageType_ClientToGREMessage",'
+        '"payload":{"type":"ClientMessageType_SelectNResp","selectNResp":{"ids":[444]}}}'
+    )
+
+    payloads = parser.extract_client_gre_payloads(line)
+
+    assert len(payloads) == 1
+    assert payloads[0]["data"]["type"] == "ClientMessageType_SelectNResp"
+    assert payloads[0]["data"]["selectNResp"]["ids"] == [444]
+
+
 def test_find_log_path_error_handling():
     """Test that finding log path handles errors gracefully."""
     # This test just ensures the method doesn't crash

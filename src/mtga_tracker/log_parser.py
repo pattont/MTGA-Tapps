@@ -8,7 +8,7 @@ import os
 import platform
 import re
 from pathlib import Path
-from typing import Optional, Generator, Dict, Any
+from typing import Optional, Generator, Dict, Any, List, Tuple
 
 
 class MTGALogParser:
@@ -75,30 +75,59 @@ class MTGALogParser:
                     self.last_position = 0
                 f.seek(self.last_position)
 
-                # Read new lines
-                # Handle case where JSON might be on next line after log prefix
-                prev_line = None
-                for line in f:
-                    line = line.rstrip()
-                    
-                    # If current line is JSON and previous had a pattern, combine
-                    if line.startswith("{") and prev_line:
-                        if any(pattern in prev_line.lower() for pattern in ["gretoclientevent", "gamestatemessage", "greto"]):
-                            # Combine previous line with JSON
-                            combined = prev_line + " " + line
-                            yield combined
-                            prev_line = None
-                            continue
-                    
-                    # If we had a previous line, yield it
-                    if prev_line:
-                        yield prev_line
-                    
-                    prev_line = line
+                pending_prefix: Optional[str] = None
+                json_lines: List[str] = []
+                for raw_line in f:
+                    line = raw_line.rstrip("\n")
+                    stripped = line.strip()
 
-                # Yield any remaining line
-                if prev_line:
-                    yield prev_line
+                    if json_lines:
+                        json_lines.append(line)
+                        parsed, compact = self._try_parse_json_blob(json_lines)
+                        if parsed is None or compact is None:
+                            continue
+                        if pending_prefix:
+                            yield f"{pending_prefix} {compact}"
+                        else:
+                            yield compact
+                        pending_prefix = None
+                        json_lines = []
+                        continue
+
+                    if stripped.startswith("{"):
+                        if pending_prefix is not None:
+                            json_lines = [line]
+                            parsed, compact = self._try_parse_json_blob(json_lines)
+                            if parsed is not None and compact is not None:
+                                yield f"{pending_prefix} {compact}"
+                                pending_prefix = None
+                                json_lines = []
+                            continue
+                        json_lines = [line]
+                        parsed, compact = self._try_parse_json_blob(json_lines)
+                        if parsed is not None and compact is not None:
+                            yield compact
+                            json_lines = []
+                        continue
+
+                    if pending_prefix is not None:
+                        yield pending_prefix
+                        pending_prefix = None
+
+                    if self._looks_like_json_prefix(line):
+                        pending_prefix = line
+                        continue
+
+                    yield line
+
+                if json_lines:
+                    combined = "\n".join(json_lines)
+                    if pending_prefix:
+                        yield f"{pending_prefix} {combined}"
+                    else:
+                        yield combined
+                elif pending_prefix is not None:
+                    yield pending_prefix
 
                 # Update position
                 self.last_position = f.tell()
@@ -106,6 +135,34 @@ class MTGALogParser:
             print(f"Warning: Log file not found at {self.log_path}")
         except Exception as e:
             print(f"Error reading log file: {e}")
+
+    @staticmethod
+    def _try_parse_json_blob(lines: List[str]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """Return parsed JSON object and compact string when buffered lines form valid JSON."""
+        blob = "\n".join(lines).strip()
+        if not blob:
+            return None, None
+        try:
+            data = json.loads(blob)
+        except json.JSONDecodeError:
+            return None, None
+        if not isinstance(data, dict):
+            return None, None
+        return data, json.dumps(data, separators=(",", ":"))
+
+    @staticmethod
+    def _looks_like_json_prefix(line: str) -> bool:
+        """Return True when a non-JSON line is a prefix for a following JSON block."""
+        lower = line.lower()
+        return any(
+            token in lower
+            for token in (
+                "gretoclientevent",
+                "clienttogremessage",
+                "clienttogreuimessage",
+                "gamestatemessage",
+            )
+        )
 
     def parse_json_from_line(self, line: str) -> Optional[Dict[str, Any]]:
         """Extract and parse JSON data from a log line.
@@ -130,14 +187,14 @@ class MTGALogParser:
 
         return None
 
-    def extract_card_events(self, line: str) -> Optional[Dict[str, Any]]:
-        """Extract card-related events from a log line.
+    def extract_game_state_events(self, line: str) -> List[Dict[str, Any]]:
+        """Extract ordered game-state events from one log line.
 
         Args:
             line: A line from the log file.
 
         Returns:
-            Dictionary with event data if a card event is found, None otherwise.
+            Ordered event dictionaries, one per game-state payload found in the line.
         """
         # Look for common card event indicators in MTGA logs (case-insensitive)
         line_lower = line.lower()
@@ -156,52 +213,84 @@ class MTGALogParser:
         is_json_line = line_stripped.startswith("{") and line_stripped.endswith("}")
 
         if not has_pattern and not is_json_line:
-            return None
+            return []
 
         # Parse JSON from line
         data = self.parse_json_from_line(line)
         if not data:
-            return None
-
-        # Extract card play information
-        event_info = {}
+            return []
+        events: List[Dict[str, Any]] = []
 
         # Check for game state messages
         if "gameStateMessage" in data:
             game_state = data["gameStateMessage"]
-            event_info["type"] = "game_state"
-            event_info["data"] = game_state
-            return event_info
+            if isinstance(game_state, dict):
+                events.append({"type": "game_state", "data": game_state})
+            return events
 
-        # Check for GRE (Game Rules Engine) events
-        # IMPORTANT: A single log line can contain multiple gameStateMessages
-        # We need to merge them to get complete game state (including turnInfo)
+        # Check for GRE (Game Rules Engine) events. Preserve per-message ordering.
         if "greToClientEvent" in data:
             gre_event = data["greToClientEvent"]
             if "greToClientMessages" in gre_event:
-                merged_game_state = {}
                 for message in gre_event["greToClientMessages"]:
                     msg_type = message.get("type", "")
-                    if msg_type == "GREMessageType_GameStateMessage":
-                        game_state = message.get("gameStateMessage", {})
-                        # Merge this game state into our accumulated state
-                        for key, value in game_state.items():
-                            if key not in merged_game_state:
-                                merged_game_state[key] = value
-                            elif isinstance(value, list) and isinstance(merged_game_state[key], list):
-                                # Extend lists (like annotations, gameObjects)
-                                merged_game_state[key].extend(value)
-                            elif isinstance(value, dict) and isinstance(merged_game_state[key], dict):
-                                # Merge dicts (like turnInfo)
-                                merged_game_state[key].update(value)
-                            # For other types, newer value overwrites
+                    if msg_type not in ("GREMessageType_GameStateMessage", "GREMessageType_QueuedGameStateMessage"):
+                        continue
+                    game_state = (
+                        message.get("gameStateMessage")
+                        or message.get("queuedGameStateMessage")
+                        or {}
+                    )
+                    if isinstance(game_state, dict) and game_state:
+                        events.append(
+                            {
+                                "type": "game_state",
+                                "data": game_state,
+                                "message_type": msg_type,
+                            }
+                        )
 
-                if merged_game_state:
-                    event_info["type"] = "game_state"
-                    event_info["data"] = merged_game_state
-                    return event_info
+        return events
 
-        return event_info if event_info else None
+    def extract_client_gre_payloads(self, line: str) -> List[Dict[str, Any]]:
+        """Extract ordered client-to-GRE payloads from one log line."""
+        line_lower = line.lower()
+        if not any(token in line_lower for token in ("clienttogremessage", "clienttogreuimessage")):
+            data = self.parse_json_from_line(line)
+        else:
+            data = self.parse_json_from_line(line)
+        if not isinstance(data, dict):
+            return []
+
+        payloads: List[Dict[str, Any]] = []
+        direct = data.get("clientToGreMessage")
+        if isinstance(direct, dict):
+            direct_payload = direct.get("payload")
+            if isinstance(direct_payload, dict):
+                payloads.append({"type": "client_gre_message", "data": direct_payload})
+            elif direct.get("type"):
+                payloads.append({"type": "client_gre_message", "data": direct})
+
+        service_type = data.get("clientToMatchServiceMessageType")
+        payload = data.get("payload")
+        if (
+            service_type == "ClientToMatchServiceMessageType_ClientToGREMessage"
+            and isinstance(payload, dict)
+        ):
+            payloads.append(
+                {
+                    "type": "client_gre_message",
+                    "data": payload,
+                    "service_type": service_type,
+                }
+            )
+
+        return payloads
+
+    def extract_card_events(self, line: str) -> Optional[Dict[str, Any]]:
+        """Backward-compatible first game-state event extractor."""
+        events = self.extract_game_state_events(line)
+        return events[0] if events else None
 
     def reset_position(self):
         """Reset the read position to the end of the file.
