@@ -28,6 +28,7 @@ class GameState:
             "blocking_creatures": 0,
             "blockers_lost": 0,
             "total_damage": 0,
+            "life_lost": 0,
             "life_gain": 0,
             "self_damage": 0,
             "cards_drawn": 0,
@@ -132,6 +133,9 @@ class GameState:
         self.opponent_commanders_announced = False
         self.seat_line_announced = False
         self.last_emitted_life_event: Optional[tuple] = None
+        self.pending_damage_to_seat: Dict[int, int] = {}
+        self.last_hand_size_by_seat: Dict[int, int] = {}
+        self.recent_attack_sources_by_target: Dict[int, Set[int]] = {}
 
     def reset(self):
         """Reset state for a new game while keeping only stable account-level metadata."""
@@ -820,6 +824,238 @@ class CardTracker:
         if seat_id not in (1, 2):
             return None
         return self.game_state.match_stats[int(seat_id)]
+
+    def _record_damage_dealt(
+        self,
+        amount: int,
+        source_seat: Optional[int],
+        target_seat: Optional[int] = None,
+        queue_life_reconciliation: bool = True,
+    ) -> None:
+        """Accumulate dealt/self-damage stats and queue player-life reconciliation."""
+        if amount <= 0:
+            return
+        stats = self._seat_stats(source_seat)
+        if stats is not None:
+            stats["total_damage"] += int(amount)
+            if source_seat == target_seat:
+                stats["self_damage"] += int(amount)
+        if (
+            queue_life_reconciliation
+            and target_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
+        ):
+            self.game_state.pending_damage_to_seat[int(target_seat)] = (
+                self.game_state.pending_damage_to_seat.get(int(target_seat), 0) + int(amount)
+            )
+
+    def _infer_life_loss_source_seat(
+        self,
+        target_seat: Optional[int],
+        turn_override: Optional[int] = None,
+    ) -> Optional[int]:
+        """Best-effort source seat for unmatched player life loss."""
+        if target_seat not in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+            return None
+
+        attacking_seats = {
+            info.get("owner_seat")
+            for info in self.game_state.current_combat_attackers.values()
+            if isinstance(info, dict) and info.get("target_id") == target_seat
+        }
+        attacking_seats.discard(None)
+        if len(attacking_seats) == 1:
+            return next(iter(attacking_seats))
+
+        recent_attackers = set(self.game_state.recent_attack_sources_by_target.get(int(target_seat), set()))
+        recent_attackers.discard(None)
+        if len(recent_attackers) == 1:
+            return next(iter(recent_attackers))
+
+        if self.game_state.active_player in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+            return self.game_state.active_player
+        return None
+
+    @staticmethod
+    def _zone_index(data: Dict[str, Any]) -> Dict[int, Dict[str, Any]]:
+        """Map zone id to zone payload for the current update."""
+        zones = data.get("zones", [])
+        if not isinstance(zones, list):
+            return {}
+        return {
+            int(zone.get("zoneId")): zone
+            for zone in zones
+            if isinstance(zone, dict) and zone.get("zoneId") is not None
+        }
+
+    def _extract_hand_sizes(self, data: Dict[str, Any]) -> Dict[int, int]:
+        """Return visible hand sizes by seat from the current state packet."""
+        sizes: Dict[int, int] = {}
+        zones = data.get("zones", [])
+        if not isinstance(zones, list):
+            return sizes
+        for zone in zones:
+            if not isinstance(zone, dict) or zone.get("type") != "ZoneType_Hand":
+                continue
+            owner_seat = self._normalize_seat_id(zone.get("ownerSeatId"))
+            obj_ids = zone.get("objectInstanceIds", [])
+            if owner_seat not in (1, 2) or not isinstance(obj_ids, list):
+                continue
+            sizes[int(owner_seat)] = len(obj_ids)
+        return sizes
+
+    def _resolve_zone_transfer_seat(
+        self,
+        *,
+        card_obj: Optional[Dict[str, Any]] = None,
+        annotation: Optional[Dict[str, Any]] = None,
+        game_objects_by_id: Optional[Dict[int, Dict[str, Any]]] = None,
+        zone_src: Optional[int] = None,
+        zone_dest: Optional[int] = None,
+        zones_by_id: Optional[Dict[int, Dict[str, Any]]] = None,
+        prefer_controller: bool = False,
+    ) -> Optional[int]:
+        """Infer which seat owns/controls a zone transfer event."""
+        if isinstance(card_obj, dict):
+            if prefer_controller:
+                controller_seat = card_obj.get("controllerSeatId")
+                if controller_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+                    return controller_seat
+            owner_seat = card_obj.get("ownerSeatId")
+            if owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+                return owner_seat
+
+        for zone_id in (zone_src, zone_dest):
+            zone = (zones_by_id or {}).get(int(zone_id)) if zone_id is not None else None
+            if not isinstance(zone, dict):
+                continue
+            owner_seat = zone.get("ownerSeatId")
+            if owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+                return owner_seat
+
+        if annotation is not None:
+            return self._annotation_actor_seat(annotation, game_objects_by_id or {})
+        return None
+
+    def _known_hand_delta_by_seat(
+        self,
+        data: Dict[str, Any],
+        game_objects_by_id: Dict[int, Dict[str, Any]],
+        zones_by_id: Dict[int, Dict[str, Any]],
+    ) -> Dict[int, int]:
+        """Return hand-size delta already explained by explicit annotations in this packet."""
+        deltas: Dict[int, int] = {}
+        counted_departures: Set[int] = set()
+        annotations = data.get("annotations", [])
+        if not isinstance(annotations, list):
+            return deltas
+
+        for annotation in annotations:
+            if not isinstance(annotation, dict):
+                continue
+            ann_type = annotation.get("type", [])
+            if not isinstance(ann_type, list):
+                ann_type = [ann_type] if ann_type else []
+            if "AnnotationType_ZoneTransfer" not in ann_type:
+                continue
+
+            details = annotation.get("details", [])
+            if not isinstance(details, list):
+                continue
+
+            category = self._annotation_category(annotation)
+            zone_src = None
+            zone_dest = None
+            for detail in details:
+                if not isinstance(detail, dict):
+                    continue
+                key = detail.get("key", "")
+                if key == "zone_src":
+                    zone_src = detail.get("valueInt32", [None])[0]
+                elif key == "zone_dest":
+                    zone_dest = detail.get("valueInt32", [None])[0]
+
+            affected_ids = annotation.get("affectedIds", [])
+            instance_id = affected_ids[0] if isinstance(affected_ids, list) and affected_ids else None
+            canonical_id = self._canonical_instance_id(instance_id) if instance_id is not None else None
+            card_obj = self._lookup_object(instance_id, game_objects_by_id) if instance_id is not None else {}
+            seat_id = self._resolve_zone_transfer_seat(
+                card_obj=card_obj,
+                annotation=annotation,
+                game_objects_by_id=game_objects_by_id,
+                zone_src=zone_src,
+                zone_dest=zone_dest,
+                zones_by_id=zones_by_id,
+                prefer_controller=category in ("PlayLand", "CastSpell", "PlaySpell", "Resolve"),
+            )
+            if seat_id not in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+                continue
+
+            if category in ("Draw", "Return"):
+                deltas[int(seat_id)] = deltas.get(int(seat_id), 0) + 1
+                continue
+            if category == "Discard":
+                deltas[int(seat_id)] = deltas.get(int(seat_id), 0) - 1
+                continue
+
+            if category == "PlayLand":
+                if canonical_id is None and instance_id is None:
+                    continue
+                key = int(canonical_id if canonical_id is not None else instance_id)
+                if key not in counted_departures:
+                    counted_departures.add(key)
+                    deltas[int(seat_id)] = deltas.get(int(seat_id), 0) - 1
+                continue
+
+            if category in ("CastSpell", "PlaySpell", "Resolve"):
+                src_zone = (zones_by_id or {}).get(int(zone_src)) if zone_src is not None else None
+                src_type = src_zone.get("type") if isinstance(src_zone, dict) else None
+                if src_type not in (None, "ZoneType_Hand"):
+                    continue
+                if canonical_id is None and instance_id is None:
+                    continue
+                key = int(canonical_id if canonical_id is not None else instance_id)
+                if key not in counted_departures:
+                    counted_departures.add(key)
+                    deltas[int(seat_id)] = deltas.get(int(seat_id), 0) - 1
+                continue
+
+            if category == "Exile":
+                src_zone = (zones_by_id or {}).get(int(zone_src)) if zone_src is not None else None
+                if isinstance(src_zone, dict) and src_zone.get("type") == "ZoneType_Hand":
+                    deltas[int(seat_id)] = deltas.get(int(seat_id), 0) - 1
+
+        return deltas
+
+    def _reconcile_hidden_hand_changes(
+        self,
+        data: Dict[str, Any],
+        game_objects_by_id: Dict[int, Dict[str, Any]],
+        zones_by_id: Dict[int, Dict[str, Any]],
+    ) -> None:
+        """Infer hidden hand draws from zone-count deltas when MTGA omits draw annotations."""
+        current_hand_sizes = self._extract_hand_sizes(data)
+        if not current_hand_sizes:
+            return
+
+        previous_hand_sizes = dict(self.game_state.last_hand_size_by_seat)
+        self.game_state.last_hand_size_by_seat = current_hand_sizes
+
+        if not previous_hand_sizes:
+            return
+        if not self.game_state.opening_hand_capture_closed and self.game_state.turn_number <= 1:
+            return
+
+        known_delta = self._known_hand_delta_by_seat(data, game_objects_by_id, zones_by_id)
+        for seat_id, current_size in current_hand_sizes.items():
+            previous_size = previous_hand_sizes.get(int(seat_id))
+            if previous_size is None:
+                continue
+            residual = int(current_size) - int(previous_size) - int(known_delta.get(int(seat_id), 0))
+            if residual <= 0:
+                continue
+            stats = self._seat_stats(seat_id)
+            if stats is not None:
+                stats["cards_drawn"] += residual
 
     def _set_player_commanders_from_ids(self, command_zone_ids: List[int]) -> None:
         """Store player's commander names from deck metadata command zone ids."""
@@ -2468,6 +2704,29 @@ class CardTracker:
                     "life_gain",
                 )
         elif diff < 0:
+            lost_life = -diff
+            stats = self._seat_stats(seat_id)
+            if stats is not None:
+                stats["life_lost"] += lost_life
+            matched_damage = min(
+                lost_life,
+                self.game_state.pending_damage_to_seat.get(int(seat_id), 0),
+            )
+            if matched_damage:
+                remaining = self.game_state.pending_damage_to_seat.get(int(seat_id), 0) - matched_damage
+                if remaining > 0:
+                    self.game_state.pending_damage_to_seat[int(seat_id)] = remaining
+                else:
+                    self.game_state.pending_damage_to_seat.pop(int(seat_id), None)
+            unmatched_life_loss = lost_life - matched_damage
+            if unmatched_life_loss > 0:
+                source_seat = self._infer_life_loss_source_seat(seat_id, turn_override=turn_for_display)
+                self._record_damage_dealt(
+                    unmatched_life_loss,
+                    source_seat,
+                    seat_id,
+                    queue_life_reconciliation=False,
+                )
             text = f"{turn_prefix}💔 {actor}: lost {-diff} life (now {life})"
             if late_life_event:
                 self._print_event(text, "life_loss")
@@ -2495,6 +2754,17 @@ class CardTracker:
             for info in self.game_state.current_combat_attackers.values()
             if isinstance(info, dict) and info.get("target_id") in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
         }
+        previous_attack_sources_by_target: Dict[int, Set[int]] = {}
+        for info in self.game_state.current_combat_attackers.values():
+            if not isinstance(info, dict):
+                continue
+            target_id = info.get("target_id")
+            owner_seat = info.get("owner_seat")
+            if (
+                target_id in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
+                and owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
+            ):
+                previous_attack_sources_by_target.setdefault(int(target_id), set()).add(int(owner_seat))
         # Update turn info
         if "turnInfo" in data:
             turn_info = data["turnInfo"]
@@ -2637,6 +2907,8 @@ class CardTracker:
         ):
             late_life_turn_override = self.game_state.turn_number - 1
 
+        self.game_state.recent_attack_sources_by_target = previous_attack_sources_by_target
+
         # Update life totals (after turn header so header prints first)
         for seat_id, diff, life in life_updates:
             if seat_id == self.game_state.player_seat_id:
@@ -2700,6 +2972,7 @@ class CardTracker:
             for obj in game_objects
             if isinstance(obj, dict) and obj.get("instanceId") is not None
         }
+        zones_by_id = self._zone_index(data)
 
         # Newer MTGA logs often represent attackers via gameObjects.attackState
         # instead of AnnotationType_AttackerDeclared.
@@ -2721,7 +2994,9 @@ class CardTracker:
                     )
                 )
             for annotation in annotations:
-                self._process_annotation(annotation, game_objects)
+                self._process_annotation(annotation, game_objects, zones_by_id=zones_by_id)
+
+        self._reconcile_hidden_hand_changes(data, game_objects_by_id, zones_by_id)
 
     def _resolve_target_label(self, target_id: Optional[int], game_objects_by_id: Dict[int, Dict[str, Any]]) -> Optional[str]:
         """Return display text for attack targets (player or permanent)."""
@@ -2950,7 +3225,12 @@ class CardTracker:
                 if attacker_id not in blocker_targets:
                     blocker_targets.append(attacker_id)
 
-    def _process_annotation(self, annotation: Dict[str, Any], game_objects: List[Dict[str, Any]]):
+    def _process_annotation(
+        self,
+        annotation: Dict[str, Any],
+        game_objects: List[Dict[str, Any]],
+        zones_by_id: Optional[Dict[int, Dict[str, Any]]] = None,
+    ):
         """Process a single annotation (game event)."""
         ann_type = annotation.get("type", [])
         affected_ids = annotation.get("affectedIds", [])
@@ -3401,11 +3681,18 @@ class CardTracker:
             # Destruction and removal effects
             elif category in ["Destroy", "Exile", "Sacrifice", "Discard"]:
                 self.game_state.pending_spell_roots.pop(canonical_instance_id, None)
-                if card_obj:
-                    grp_id = card_obj.get("grpId")
-                    owner_seat = card_obj.get("ownerSeatId")
+                owner_seat = self._resolve_zone_transfer_seat(
+                    card_obj=card_obj,
+                    annotation=annotation,
+                    game_objects_by_id=game_objects_by_id,
+                    zone_src=zone_src,
+                    zone_dest=zone_dest,
+                    zones_by_id=zones_by_id,
+                )
+                if card_obj or owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+                    grp_id = card_obj.get("grpId") if card_obj else None
                     card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
-                    card_types = card_obj.get("cardTypes") or []
+                    card_types = (card_obj or {}).get("cardTypes") or []
 
                     # Determine who owned the destroyed card
                     owner = "your" if owner_seat == self.game_state.player_seat_id else "opponent's"
@@ -3495,8 +3782,15 @@ class CardTracker:
 
             # Draw cards
             elif category == "Draw":
-                if card_obj:
-                    owner_seat = card_obj.get("ownerSeatId")
+                owner_seat = self._resolve_zone_transfer_seat(
+                    card_obj=card_obj,
+                    annotation=annotation,
+                    game_objects_by_id=game_objects_by_id,
+                    zone_src=zone_src,
+                    zone_dest=zone_dest,
+                    zones_by_id=zones_by_id,
+                )
+                if owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
                     self._flush_pending_turn_header_for_seat(owner_seat)
                     event_turn = self.game_state.turn_number if self.game_state.turn_number > 0 else None
                     self._print_event(
@@ -3798,11 +4092,7 @@ class CardTracker:
                     if source_seat is None:
                         source_seat = source_obj.get("ownerSeatId")
                 if instance_id in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
-                    stats = self._seat_stats(source_seat)
-                    if stats is not None:
-                        stats["total_damage"] += int(damage_amount)
-                        if source_seat == instance_id:
-                            stats["self_damage"] += int(damage_amount)
+                    self._record_damage_dealt(int(damage_amount), source_seat, instance_id)
                     continue
                 for obj in game_objects:
                     if obj.get("instanceId") == instance_id:
@@ -3824,11 +4114,12 @@ class CardTracker:
                                     if source_seat is None:
                                         source_seat = source_obj.get("ownerSeatId")
                                     break
-                        stats = self._seat_stats(source_seat)
-                        if stats is not None:
-                            stats["total_damage"] += int(damage_amount)
-                            if source_seat == owner_seat:
-                                stats["self_damage"] += int(damage_amount)
+                        self._record_damage_dealt(
+                            int(damage_amount),
+                            source_seat,
+                            owner_seat if owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id) else None,
+                            queue_life_reconciliation=False,
+                        )
 
                         if is_combat_damage:
                             # Store for combat summary
@@ -3994,8 +4285,8 @@ class CardTracker:
                 f"      Defense: {stats['blocking_creatures']} blocker(s), {stats['blockers_lost']} blocker(s) lost"
             )
             print(
-                f"      Damage/Life: {stats['total_damage']} total damage, {stats['self_damage']} self-damage, "
-                f"{stats['life_gain']} life gained"
+                f"      Damage/Life: {stats['total_damage']} damage dealt, {stats['life_lost']} life lost, "
+                f"{stats['self_damage']} self-damage, {stats['life_gain']} life gained"
             )
             print(
                 f"      Cards: {cards_played} played, {stats['cards_drawn']} drawn, "

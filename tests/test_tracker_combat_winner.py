@@ -1101,6 +1101,39 @@ def test_late_combat_life_change_on_turn_increment_stays_on_previous_turn(capsys
     assert "Turn 6 - OPPONENT'S TURN" not in out
 
 
+def test_late_combat_life_loss_updates_damage_stats_without_damage_annotation(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 5
+    tracker.game_state.active_player = 1
+    tracker.game_state.last_turn_announced = 5
+    tracker.game_state.last_player_turn_number = 5
+    tracker.game_state.current_combat_attackers = {
+        901: {
+            "card_name": "Card901",
+            "power": 4,
+            "toughness": 4,
+            "owner_seat": 1,
+            "target": "opponent",
+            "target_id": 2,
+        }
+    }
+    tracker.game_state.opponent_life = 20
+
+    tracker._update_game_state(
+        {
+            "turnInfo": {"turnNumber": 6, "activePlayer": 2, "phase": "Phase_Main1"},
+            "players": [{"systemSeatNumber": 2, "lifeTotal": 16}],
+        }
+    )
+    capsys.readouterr()
+
+    assert tracker.game_state.match_stats[1]["total_damage"] == 4
+    assert tracker.game_state.match_stats[2]["life_lost"] == 4
+
+
 def test_opponent_life_trigger_flushes_pending_opponent_header(capsys):
     tracker = make_tracker()
     tracker.game_state.player_seat_id = 1
@@ -1159,6 +1192,62 @@ def test_first_event_can_emit_missing_turn_one_banner(capsys):
 
     assert "Turn 1 - OPPONENT'S TURN" in out
     assert "[Turn 1] ⛰️ Opponent: ⏪ played [Card999 (Land)]" in out
+
+
+def test_process_annotation_counts_hidden_discard_from_zone_owner(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+
+    annotation = {
+        "type": ["AnnotationType_ZoneTransfer"],
+        "affectedIds": [901],
+        "details": [
+            {"key": "category", "valueString": ["Discard"]},
+            {"key": "zone_src", "valueInt32": [11]},
+            {"key": "zone_dest", "valueInt32": [12]},
+        ],
+    }
+    zones_by_id = {
+        11: {"zoneId": 11, "type": "ZoneType_Hand", "ownerSeatId": 2},
+        12: {"zoneId": 12, "type": "ZoneType_Graveyard", "ownerSeatId": 2},
+    }
+
+    tracker._process_annotation(annotation, [], zones_by_id=zones_by_id)
+    capsys.readouterr()
+
+    assert tracker.game_state.match_stats[2]["cards_discarded"] == 1
+
+
+def test_reconcile_hidden_turn_draw_from_hand_size_after_play():
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 3
+    tracker.game_state.opening_hand_capture_closed = True
+    tracker.game_state.last_hand_size_by_seat = {2: 3}
+
+    tracker._process_game_events(
+        {
+            "zones": [
+                {"zoneId": 21, "type": "ZoneType_Hand", "ownerSeatId": 2, "objectInstanceIds": [201, 202, 203]},
+            ],
+            "gameObjects": [
+                {"instanceId": 777, "grpId": 777, "ownerSeatId": 2, "controllerSeatId": 2, "cardTypes": ["CardType_Land"]},
+            ],
+            "annotations": [
+                {
+                    "type": ["AnnotationType_ZoneTransfer"],
+                    "affectedIds": [777],
+                    "details": [{"key": "category", "valueString": ["PlayLand"]}],
+                }
+            ],
+        }
+    )
+
+    assert tracker.game_state.match_stats[2]["cards_drawn"] == 1
 
 
 def test_first_event_without_turninfo_uses_turn_one_banner(capsys):
@@ -1962,6 +2051,7 @@ def test_game_summary_prints_match_stats_section(capsys):
             "blocking_creatures": 2,
             "blockers_lost": 1,
             "total_damage": 14,
+            "life_lost": 9,
             "life_gain": 4,
             "self_damage": 2,
             "cards_drawn": 3,
@@ -1977,6 +2067,7 @@ def test_game_summary_prints_match_stats_section(capsys):
             "blocking_creatures": 1,
             "blockers_lost": 1,
             "total_damage": 9,
+            "life_lost": 14,
             "life_gain": 1,
             "self_damage": 0,
             "cards_drawn": 2,
@@ -1992,7 +2083,7 @@ def test_game_summary_prints_match_stats_section(capsys):
     assert "Total Turns: 9" in out
     assert "Combat: 3 attack step(s), 5 attacking creature(s), 1 attacker(s) lost" in out
     assert "Defense: 2 blocker(s), 1 blocker(s) lost" in out
-    assert "Damage/Life: 14 total damage, 2 self-damage, 4 life gained" in out
+    assert "Damage/Life: 14 damage dealt, 9 life lost, 2 self-damage, 4 life gained" in out
     assert "Cards: 0 played, 3 drawn, 1 discarded, 2 exiled" in out
 
 
