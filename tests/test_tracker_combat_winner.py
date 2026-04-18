@@ -481,7 +481,7 @@ def test_user_action_taken_logs_db_backed_ability_text(capsys):
     tracker._process_annotation(action_annotation, game_objects)
     out = capsys.readouterr().out
 
-    assert "[Turn 8] 🔮 You: [Cool but Rude] - {1}{R}: Level 2" in out
+    assert "[0:00] You: [Cool but Rude] - {1}{R}: Level 2" in out
 
 
 def test_resolution_start_logs_hidden_ability_text_for_source_card(capsys):
@@ -510,7 +510,7 @@ def test_resolution_start_logs_hidden_ability_text_for_source_card(capsys):
     tracker._process_annotation(resolution_annotation, game_objects)
     out = capsys.readouterr().out
 
-    assert "✨ You: [Cool but Rude] - Whenever you discard a card, this Class deals 2 damage to each opponent." in out
+    assert "You: [Cool but Rude] - Whenever you discard a card, this Class deals 2 damage to each opponent." in out
 
 
 def test_resolution_start_skips_duplicate_text_when_user_action_already_logged(capsys):
@@ -705,7 +705,7 @@ def test_format_actor_event_has_consistent_prefix():
     tracker.game_state.last_turn_announced = 18
 
     line = tracker._format_actor_event("📥", 1, "drew a card")
-    assert line == "[Turn 18] 📥 You: drew a card"
+    assert line == "[0:00] You: drew a card"
 
 
 def test_return_then_put_attacking_reports_combat_swap(capsys):
@@ -745,7 +745,7 @@ def test_return_then_put_attacking_reports_combat_swap(capsys):
     tracker._process_annotation(put_annotation, put_objects)
 
     out = capsys.readouterr().out
-    assert "[Turn 6] ↩️ You: returned [Card111] to hand" in out
+    assert "[0:00] You: returned [Card111] to hand" in out
     assert "Combat swap: returned [Card111] and put [Card222] onto battlefield attacking" in out
     assert "possible Ninjutsu/Sneak" in out
 
@@ -809,7 +809,7 @@ def test_cast_spell_uses_snapshot_when_gameobjects_diff_omits_spell(capsys):
 
     tracker._process_annotation(resolve_annotation, [])
     out = capsys.readouterr().out
-    assert "[Turn 5] > Opponent: cast [Card1700 (Instant)]" in out
+    assert "[0:00] Opponent: cast [Card1700 (Instant)]" in out
     assert 700 in tracker.game_state.seen_instance_ids
     assert len(tracker.opponent_cards) == 1
 
@@ -854,7 +854,7 @@ def test_cast_spell_not_marked_seen_until_card_object_available(capsys):
     )
     second = capsys.readouterr().out
 
-    assert "[Turn 6] > Opponent: cast [Card1701 (Sorcery)]" in second
+    assert "[0:00] Opponent: cast [Card1701 (Sorcery)]" in second
     assert 701 in tracker.game_state.seen_instance_ids
     assert len(tracker.opponent_cards) == 1
 
@@ -887,7 +887,7 @@ def test_resolve_zone_transfer_falls_back_to_cast_logging(capsys):
     tracker._process_annotation(annotation, game_objects)
     out = capsys.readouterr().out
 
-    assert "[Turn 7] > Opponent: cast [Card1702 (Instant)]" in out
+    assert "[0:00] Opponent: cast [Card1702 (Instant)]" in out
     assert 702 in tracker.game_state.seen_instance_ids
     assert len(tracker.opponent_cards) == 1
 
@@ -976,8 +976,8 @@ def test_destroy_event_uses_current_turn_not_card_owner_last_turn(capsys):
     )
     out = capsys.readouterr().out
 
-    assert "[Turn 7] 💥 Opponent: [Card1901] was destroyed" in out
-    assert "[Turn 6] 💥 Opponent" not in out
+    assert "[0:00] Opponent: [Card1901] was destroyed" in out
+    assert "[Turn " not in out
 
 
 def test_does_not_warn_when_first_observed_turn_is_two(capsys):
@@ -1026,7 +1026,7 @@ def test_player_turn_header_flushes_on_first_player_event(capsys):
     out = capsys.readouterr().out
 
     assert "Turn 2 - YOUR TURN" in out
-    assert "[Turn 2] 📥 You: drew a card" in out
+    assert "[0:00] You: drew a card" in out
 
 
 def test_off_turn_land_is_assigned_to_previous_turn(capsys):
@@ -1056,7 +1056,7 @@ def test_off_turn_land_is_assigned_to_previous_turn(capsys):
 
     tracker._process_annotation(annotation, game_objects)
     out = capsys.readouterr().out
-    assert "[Turn 1] ⛰️ Opponent: ⏪ played [Card999 (Land)]" in out
+    assert "[0:00] Opponent: played [Card999 (Land)]" in out
 
 
 def test_life_loss_on_opponent_turn_uses_current_turn(capsys):
@@ -1072,8 +1072,8 @@ def test_life_loss_on_opponent_turn_uses_current_turn(capsys):
     tracker._update_game_state({"players": [{"systemSeatNumber": 1, "lifeTotal": 19}]})
     out = capsys.readouterr().out
 
-    assert "[Turn 5] 💔 You: lost 1 life (now 19)" in out
-    assert "[Turn 4] 💔 You" not in out
+    assert "[0:00] You: lost 1 life (now 19)" in out
+    assert "[Turn " not in out
 
 
 def test_late_combat_life_change_on_turn_increment_stays_on_previous_turn(capsys):
@@ -1097,7 +1097,7 @@ def test_late_combat_life_change_on_turn_increment_stays_on_previous_turn(capsys
     )
     out = capsys.readouterr().out
 
-    assert "[Turn 5] 💔 Opponent: lost 5 life (now 15)" in out
+    assert "[0:00] Opponent: lost 5 life (now 15)" in out
     assert "Turn 6 - OPPONENT'S TURN" not in out
 
 
@@ -1147,10 +1147,10 @@ def test_opponent_life_trigger_flushes_pending_opponent_header(capsys):
     out = capsys.readouterr().out
 
     assert "Turn 7 - OPPONENT'S TURN" in out
-    assert "[Turn 7] 💚 Opponent: gained 1 life (now 21)" in out
+    assert "[0:00] Opponent: gained 1 life (now 21)" in out
 
 
-def test_turn_header_life_line_includes_heart_icon(capsys):
+def test_turn_header_life_line_aligns_without_icon(capsys):
     tracker = make_tracker()
     tracker.game_state.player_seat_id = 1
     tracker.game_state.opponent_seat_id = 2
@@ -1159,7 +1159,7 @@ def test_turn_header_life_line_includes_heart_icon(capsys):
     tracker._flush_pending_player_turn_header()
     out = capsys.readouterr().out
 
-    assert "❤️ Life: You 20 - 20 Opponent" in out
+    assert "Life: You 20 - 20 Opponent" in out
 
 
 def test_first_event_can_emit_missing_turn_one_banner(capsys):
@@ -1191,7 +1191,7 @@ def test_first_event_can_emit_missing_turn_one_banner(capsys):
     out = capsys.readouterr().out
 
     assert "Turn 1 - OPPONENT'S TURN" in out
-    assert "[Turn 1] ⛰️ Opponent: ⏪ played [Card999 (Land)]" in out
+    assert "[0:00] Opponent: played [Card999 (Land)]" in out
 
 
 def test_process_annotation_counts_hidden_discard_from_zone_owner(capsys):
@@ -1218,6 +1218,32 @@ def test_process_annotation_counts_hidden_discard_from_zone_owner(capsys):
     capsys.readouterr()
 
     assert tracker.game_state.match_stats[2]["cards_discarded"] == 1
+
+
+def test_process_annotation_counts_hidden_mill_from_zone_owner(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+
+    annotation = {
+        "type": ["AnnotationType_ZoneTransfer"],
+        "affectedIds": [902],
+        "details": [
+            {"key": "category", "valueString": ["Mill"]},
+            {"key": "zone_src", "valueInt32": [21]},
+            {"key": "zone_dest", "valueInt32": [22]},
+        ],
+    }
+    zones_by_id = {
+        21: {"zoneId": 21, "type": "ZoneType_Library", "ownerSeatId": 2},
+        22: {"zoneId": 22, "type": "ZoneType_Graveyard", "ownerSeatId": 2},
+    }
+
+    tracker._process_annotation(annotation, [], zones_by_id=zones_by_id)
+    capsys.readouterr()
+
+    assert tracker.game_state.match_stats[2]["cards_milled"] == 1
 
 
 def test_reconcile_hidden_turn_draw_from_hand_size_after_play():
@@ -1278,7 +1304,7 @@ def test_first_event_without_turninfo_uses_turn_one_banner(capsys):
     out = capsys.readouterr().out
 
     assert "Turn 1 - YOUR TURN" in out
-    assert "[Turn 1] ⛰️ You: played [Card1010 (Land)]" in out
+    assert "[0:00] You: played [Card1010 (Land)]" in out
 
 
 def test_turn_headers_wait_until_seats_known(capsys):
@@ -1509,6 +1535,27 @@ def test_parse_match_metadata_sets_player_commander_from_command_zone():
 
     assert tracker.game_state.player_deck_name == "Brawl Deck"
     assert tracker.game_state.player_commanders == ["Card7777"]
+    assert tracker.game_state.player_deck_total_cards == 2
+
+
+def test_update_game_state_captures_observed_starting_deck_totals():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+
+    tracker._update_game_state(
+        {
+            "zones": [
+                {"type": "ZoneType_Hand", "ownerSeatId": 1, "objectInstanceIds": list(range(1, 8))},
+                {"type": "ZoneType_Library", "ownerSeatId": 1, "objectInstanceIds": list(range(100, 153))},
+                {"type": "ZoneType_Hand", "ownerSeatId": 2, "objectInstanceIds": list(range(200, 207))},
+                {"type": "ZoneType_Library", "ownerSeatId": 2, "objectInstanceIds": list(range(300, 353))},
+            ],
+        }
+    )
+
+    assert tracker.game_state.observed_starting_deck_total_by_seat == {1: 60, 2: 60}
 
 
 def test_match_started_block_hides_unknown_opponent_and_deck(capsys):
@@ -1648,7 +1695,7 @@ def test_summary_includes_mulligan_and_exile_totals(capsys):
 
     assert "Your Deck: Izzet Artifacts (Carlo TMNT)" in out
     assert "Mulligans: 2" in out
-    assert "Cards Exiled:" in out
+    assert "CARDS EXILED" in out
     assert "By Me: 4" in out
     assert "By Opponent: 2" in out
 
@@ -1800,8 +1847,8 @@ def test_emit_life_change_suppresses_consecutive_duplicates(capsys):
 
     out = capsys.readouterr().out
 
-    assert out.count("[Turn 4] 💔 Opponent: lost 2 life (now 18)") == 1
-    assert out.count("[Turn 4] 💚 You: gained 4 life (now 22)") == 1
+    assert out.count("[0:00] Opponent: lost 2 life (now 18)") == 1
+    assert out.count("[0:00] You: gained 4 life (now 22)") == 1
 
 
 def test_capture_opening_hand_detects_mulligan_when_seat_unknown():
@@ -2043,6 +2090,8 @@ def test_game_summary_prints_match_stats_section(capsys):
     tracker.game_state.player_seat_id = 1
     tracker.game_state.opponent_seat_id = 2
     tracker.game_state.turn_number = 9
+    tracker.game_state.player_deck_total_cards = 60
+    tracker.game_state.observed_starting_deck_total_by_seat = {1: 60, 2: 60}
     tracker.game_state.match_stats[1].update(
         {
             "attacks": 3,
@@ -2056,6 +2105,7 @@ def test_game_summary_prints_match_stats_section(capsys):
             "self_damage": 2,
             "cards_drawn": 3,
             "cards_discarded": 1,
+            "cards_milled": 4,
             "cards_exiled": 2,
         }
     )
@@ -2072,6 +2122,7 @@ def test_game_summary_prints_match_stats_section(capsys):
             "self_damage": 0,
             "cards_drawn": 2,
             "cards_discarded": 2,
+            "cards_milled": 6,
             "cards_exiled": 1,
         }
     )
@@ -2079,12 +2130,14 @@ def test_game_summary_prints_match_stats_section(capsys):
     tracker._print_game_summary()
     out = capsys.readouterr().out
 
-    assert "📈 Match Stats:" in out
+    assert "MATCH STATS" in out
     assert "Total Turns: 9" in out
+    assert "Your deck total: 60" in out
+    assert "Opponent deck total (estimated): 60" in out
     assert "Combat: 3 attack step(s), 5 attacking creature(s), 1 attacker(s) lost" in out
     assert "Defense: 2 blocker(s), 1 blocker(s) lost" in out
     assert "Damage/Life: 14 damage dealt, 9 life lost, 2 self-damage, 4 life gained" in out
-    assert "Cards: 0 played, 3 drawn, 1 discarded, 2 exiled" in out
+    assert "Cards: 0 played, 3 drawn, 1 discarded, 4 milled, 2 exiled" in out
 
 
 def test_life_change_from_previous_attack_stays_on_previous_turn(capsys):
@@ -2120,7 +2173,7 @@ def test_life_change_from_previous_attack_stays_on_previous_turn(capsys):
     )
     out = capsys.readouterr().out
 
-    assert "[Turn 5] 💔 Opponent: lost 2 life (now 18)" in out
+    assert "[0:00] Opponent: lost 2 life (now 18)" in out
     assert "Turn 6 - OPPONENT'S TURN" not in out
 
 
