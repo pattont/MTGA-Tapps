@@ -33,6 +33,7 @@ class GameState:
             "self_damage": 0,
             "cards_drawn": 0,
             "cards_discarded": 0,
+            "cards_milled": 0,
             "cards_exiled": 0,
         }
         return {1: base.copy(), 2: base.copy()}
@@ -121,6 +122,8 @@ class GameState:
         self.player_deck_id: Optional[str] = None  # Deck UUID
         self.player_deck_event_name: Optional[str] = None  # Internal event/queue identifier
         self.player_deck_last_played: Optional[datetime] = None  # LastPlayed attribute (if present)
+        self.player_deck_total_cards: Optional[int] = None  # Exact deck size from deck metadata when available.
+        self.observed_starting_deck_total_by_seat: Dict[int, int] = {}  # Best-effort early hand+library+command counts.
         self._reserved_players: List[Dict[str, Any]] = []  # reservedPlayers from match room (seat -> name)
         self.player_cards_exiled = 0
         self.opponent_cards_exiled = 0
@@ -250,12 +253,16 @@ class CardTracker:
         """Print an event line with optional style."""
         print(self._style(text, style))
 
-    @staticmethod
-    def _turn_prefix_for_number(turn_num: Optional[int]) -> str:
-        """Return '[Turn N] ' when turn number is known."""
-        if turn_num and int(turn_num) > 0:
-            return f"[Turn {int(turn_num)}] "
-        return ""
+    def _print_summary_heading(self, text: str, style: str = "turn") -> None:
+        """Print a more prominent summary heading."""
+        print(self._style(text.upper(), style))
+
+    def _turn_prefix_for_number(self, turn_num: Optional[int]) -> str:
+        """Return elapsed match time prefix for event lines."""
+        if self.game_state.game_start_time is None:
+            return "[0:00] "
+        elapsed = max(0, int((datetime.now() - self.game_state.game_start_time).total_seconds()))
+        return f"[{self._format_duration(elapsed)}] "
 
     def _seat_label(self, seat_id: Optional[int]) -> str:
         """Map seat id to display actor label."""
@@ -300,7 +307,7 @@ class CardTracker:
         turn_num = self._event_turn_number(seat_id, turn_override)
         self._ensure_turn_header_for_event(seat_id, turn_num)
         turn_prefix = self._turn_prefix_for_number(turn_num)
-        return f"{turn_prefix}{icon} {self._seat_label(seat_id)}: {text}"
+        return f"{turn_prefix}{self._seat_label(seat_id)}: {text}"
 
     def _ensure_turn_header_for_event(self, seat_id: Optional[int], turn_num: Optional[int]) -> None:
         """Ensure first missing turn header appears when the first stamped event arrives."""
@@ -1065,6 +1072,38 @@ class CardTracker:
         if names:
             self.game_state.player_commanders = names
 
+    def _capture_starting_deck_totals(self, data: Dict[str, Any]) -> None:
+        """Capture best-effort starting deck totals from early hand/library/command zone sizes."""
+        if self.game_state.opening_hand_capture_closed:
+            return
+        if self.game_state.turn_number and self.game_state.turn_number > 1:
+            return
+        if self._has_gameplay_annotations(data):
+            return
+
+        zones = data.get("zones", [])
+        if not isinstance(zones, list):
+            return
+
+        seat_totals: Dict[int, int] = {}
+        for zone in zones:
+            if not isinstance(zone, dict):
+                continue
+            if zone.get("type") not in {"ZoneType_Hand", "ZoneType_Library", "ZoneType_Command"}:
+                continue
+            owner_seat = self._normalize_seat_id(zone.get("ownerSeatId"))
+            obj_ids = zone.get("objectInstanceIds", [])
+            if owner_seat not in (1, 2) or not isinstance(obj_ids, list):
+                continue
+            seat_totals[int(owner_seat)] = seat_totals.get(int(owner_seat), 0) + len(obj_ids)
+
+        for seat_id, total in seat_totals.items():
+            if total <= 0:
+                continue
+            previous = self.game_state.observed_starting_deck_total_by_seat.get(int(seat_id), 0)
+            if total > previous:
+                self.game_state.observed_starting_deck_total_by_seat[int(seat_id)] = total
+
     def _sync_commander_views_from_seats(self) -> None:
         """Sync player/opponent commander lists from seat-indexed commander map."""
         g = self.game_state
@@ -1233,12 +1272,12 @@ class CardTracker:
     def _print_startup_legend(self) -> None:
         """Print a short event color legend."""
         print("   Event Colors:")
-        self._print_event("     ⚔️ Attack / Combat Damage", "attack")
-        self._print_event("     🛡️ Block", "block")
-        self._print_event("     > / cast", "cast")
-        self._print_event("     ⛰️ Land", "land")
-        self._print_event("     🔮/✨ Ability", "ability")
-        self._print_event("     💚/💔 Life Change", "life_gain")
+        self._print_event("     Attack / Combat Damage", "attack")
+        self._print_event("     Block", "block")
+        self._print_event("     Cast", "cast")
+        self._print_event("     Land", "land")
+        self._print_event("     Ability", "ability")
+        self._print_event("     Life Change", "life_gain")
         if not self.use_colors:
             print("     (Color is off; set MTGA_TRACKER_COLOR=1 to force)")
 
@@ -1258,7 +1297,7 @@ class CardTracker:
         # Player seat will be detected automatically when a game starts
         print("⏳ Seat will be detected automatically")
         self._print_startup_legend()
-        self._print_event(f"📈 Session: {self._session_stats_line()}", "turn")
+        self._print_event(f"Session: {self._session_stats_line()}", "turn")
 
         # print("\n   Waiting for game events...")
         print("\n   Play a game in MTGA to see cards tracked in real-time!")
@@ -1743,6 +1782,14 @@ class CardTracker:
                     if main_ids and candidate.get("main_deck_ids") != main_ids:
                         candidate["main_deck_ids"] = main_ids
                         updated = True
+                    main_total = sum(
+                        int(entry.get("quantity", 0))
+                        for entry in main_deck
+                        if isinstance(entry, dict) and entry.get("cardId") is not None
+                    )
+                    if main_total and candidate.get("main_deck_total") != main_total:
+                        candidate["main_deck_total"] = main_total
+                        updated = True
                 command_zone = course_deck.get("CommandZone")
                 if isinstance(command_zone, list):
                     command_zone_ids = [
@@ -1752,6 +1799,14 @@ class CardTracker:
                     ]
                     if command_zone_ids and candidate.get("command_zone_ids") != command_zone_ids:
                         candidate["command_zone_ids"] = command_zone_ids
+                        updated = True
+                    command_total = sum(
+                        int(entry.get("quantity", 0))
+                        for entry in command_zone
+                        if isinstance(entry, dict) and entry.get("cardId") is not None
+                    )
+                    if candidate.get("command_zone_total") != command_total:
+                        candidate["command_zone_total"] = command_total
                         updated = True
 
             if last_played is not None:
@@ -1854,6 +1909,13 @@ class CardTracker:
         self.game_state.player_deck_id = deck_id
         self.game_state.player_deck_event_name = candidate.get("internal_event_name")
         self.game_state.player_deck_last_played = candidate.get("last_played")
+        main_total = candidate.get("main_deck_total")
+        command_total = candidate.get("command_zone_total")
+        self.game_state.player_deck_total_cards = (
+            int(main_total) + int(command_total if isinstance(command_total, int) else 0)
+            if isinstance(main_total, int)
+            else None
+        )
         format_attr = candidate.get("format_attr")
         if isinstance(format_attr, str) and format_attr:
             if self.game_state.format_str == "Unknown" or candidate.get("trusted_active"):
@@ -2695,7 +2757,7 @@ class CardTracker:
             stats = self._seat_stats(seat_id)
             if stats is not None:
                 stats["life_gain"] += diff
-            text = f"{turn_prefix}💚 {actor}: gained {diff} life (now {life})"
+            text = f"{turn_prefix}{actor}: gained {diff} life (now {life})"
             if late_life_event:
                 self._print_event(text, "life_gain")
             else:
@@ -2727,7 +2789,7 @@ class CardTracker:
                     seat_id,
                     queue_life_reconciliation=False,
                 )
-            text = f"{turn_prefix}💔 {actor}: lost {-diff} life (now {life})"
+            text = f"{turn_prefix}{actor}: lost {-diff} life (now {life})"
             if late_life_event:
                 self._print_event(text, "life_loss")
             else:
@@ -2743,6 +2805,7 @@ class CardTracker:
         self._remove_deleted_instances(data.get("diffDeletedInstanceIds"))
         self._snapshot_game_objects(data.get("gameObjects", []))
         self._observe_battlefield_creatures(data)
+        self._capture_starting_deck_totals(data)
         self._update_format_from_game_state(data)
         self._update_commanders_from_game_state(data)
         self._maybe_print_seat_resolution()
@@ -2938,8 +3001,8 @@ class CardTracker:
         if active_player == self.game_state.opponent_seat_id:
             self.game_state.last_opponent_turn_number = turn_num
         print(f"\n{'='*75}")
-        self._print_event(f"⚔️  Turn {turn_num} - OPPONENT'S TURN", "turn")
-        print(f"   ❤️ Life: You {self.game_state.player_life} - {self.game_state.opponent_life} Opponent")
+        self._print_event(f"Turn {turn_num} - OPPONENT'S TURN", "turn")
+        print(f"Life: You {self.game_state.player_life} - {self.game_state.opponent_life} Opponent")
         print(f"{'='*75}\n")
 
     def _flush_pending_player_turn_header(self) -> None:
@@ -2953,8 +3016,8 @@ class CardTracker:
         if active_player == self.game_state.player_seat_id:
             self.game_state.last_player_turn_number = turn_num
         print(f"\n{'='*75}")
-        self._print_event(f"⚔️  Turn {turn_num} - YOUR TURN", "turn")
-        print(f"   ❤️ Life: You {self.game_state.player_life} - {self.game_state.opponent_life} Opponent")
+        self._print_event(f"Turn {turn_num} - YOUR TURN", "turn")
+        print(f"Life: You {self.game_state.player_life} - {self.game_state.opponent_life} Opponent")
         print(f"{'='*75}\n")
 
     def _flush_pending_turn_header_for_seat(self, seat_id: Optional[int]) -> None:
@@ -3106,7 +3169,6 @@ class CardTracker:
 
             self._flush_pending_turn_header_for_seat(owner_seat)
             player = "You" if owner_seat == self.game_state.player_seat_id else "Opponent"
-            player_symbol = "⚔️" if owner_seat == self.game_state.player_seat_id else "🗡️"
             turn_for_display = (
                 self.game_state.turn_number
                 if owner_seat == self.game_state.active_player and self.game_state.turn_number > 0
@@ -3127,12 +3189,12 @@ class CardTracker:
 
             if target_label:
                 self._print_event(
-                    f"{turn_prefix}{player_symbol} {player:8} attacking [{target_label}] with [{card_name} ({power}/{toughness})]",
+                    f"{turn_prefix}{player} attacking [{target_label}] with [{card_name} ({power}/{toughness})]",
                     "attack",
                 )
             else:
                 self._print_event(
-                    f"{turn_prefix}{player_symbol} {player:8} attacking with [{card_name} ({power}/{toughness})]",
+                    f"{turn_prefix}{player} attacking with [{card_name} ({power}/{toughness})]",
                     "attack",
                 )
 
@@ -3193,7 +3255,6 @@ class CardTracker:
                 player = "Opponent"
             else:
                 player = "Unknown"
-            player_symbol = "🛡️"
             inferred_turn = self.game_state.turn_number if self.game_state.turn_number > 0 else self._turn_for_seat(blocker_owner_seat)
             for attacker_id in attacker_ids:
                 if attacker_id is None:
@@ -3220,7 +3281,11 @@ class CardTracker:
                 if not attacker_name:
                     attacker_name = f"ID {attacker_id}"
 
-                self._print_event(f"{player_symbol} {player:8} blocking [{attacker_name}] with [{blocker_name} ({blocker_pt})]", "block")
+                turn_prefix = self._turn_prefix_for_number(inferred_turn)
+                self._print_event(
+                    f"\t{turn_prefix}{player} blocking [{attacker_name}] with [{blocker_name} ({blocker_pt})]",
+                    "block",
+                )
 
                 if attacker_id not in blocker_targets:
                     blocker_targets.append(attacker_id)
@@ -3555,7 +3620,7 @@ class CardTracker:
                         and turn_for_display > 0
                         and turn_for_display < self.game_state.turn_number
                     )
-                    late_marker = "⏪ " if is_late_event else ""
+                    late_marker = ""
 
                     if category == "PlayLand":
                         self._print_event(
@@ -3803,16 +3868,31 @@ class CardTracker:
 
             # Mill effects
             elif category == "Mill":
-                if card_obj:
-                    grp_id = card_obj.get("grpId")
-                    owner_seat = card_obj.get("ownerSeatId")
+                owner_seat = self._resolve_zone_transfer_seat(
+                    card_obj=card_obj,
+                    annotation=annotation,
+                    game_objects_by_id=game_objects_by_id,
+                    zone_src=zone_src,
+                    zone_dest=zone_dest,
+                    zones_by_id=zones_by_id,
+                )
+                if owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+                    grp_id = card_obj.get("grpId") if isinstance(card_obj, dict) else None
                     self._flush_pending_turn_header_for_seat(owner_seat)
                     card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
                     event_turn = self.game_state.turn_number if self.game_state.turn_number > 0 else None
                     self._print_event(
-                        self._format_actor_event("🌊", owner_seat, f"milled [{card_name}]", turn_override=event_turn),
+                        self._format_actor_event(
+                            "🌊",
+                            owner_seat,
+                            f"milled [{card_name}]" if grp_id else "milled a card",
+                            turn_override=event_turn,
+                        ),
                         "zone",
                     )
+                    stats = self._seat_stats(owner_seat)
+                    if stats is not None:
+                        stats["cards_milled"] += 1
 
         # Handle resolution annotations
         elif "AnnotationType_ResolutionStart" in ann_type:
@@ -3941,7 +4021,6 @@ class CardTracker:
 
                         self._flush_pending_turn_header_for_seat(owner_seat)
                         player = "You" if owner_seat == self.game_state.player_seat_id else "Opponent"
-                        player_symbol = "⚔️" if owner_seat == self.game_state.player_seat_id else "🗡️"
                         turn_for_display = (
                             self.game_state.turn_number
                             if owner_seat == self.game_state.active_player and self.game_state.turn_number > 0
@@ -3961,12 +4040,12 @@ class CardTracker:
 
                         if target_label:
                             self._print_event(
-                                f"{turn_prefix}{player_symbol} {player:8} attacking [{target_label}] with [{card_name} ({power}/{toughness})]",
+                                f"{turn_prefix}{player} attacking [{target_label}] with [{card_name} ({power}/{toughness})]",
                                 "attack",
                             )
                         else:
                             self._print_event(
-                                f"{turn_prefix}{player_symbol} {player:8} attacking with [{card_name} ({power}/{toughness})]",
+                                f"{turn_prefix}{player} attacking with [{card_name} ({power}/{toughness})]",
                                 "attack",
                             )
                         break
@@ -4028,7 +4107,6 @@ class CardTracker:
                 player = "Opponent"
             else:
                 player = "Unknown"
-            player_symbol = "🛡️"
             inferred_turn = self.game_state.turn_number if self.game_state.turn_number > 0 else self._turn_for_seat(blocker_owner_seat)
             for attacker_id in attacker_ids:
                 if attacker_id is None:
@@ -4051,12 +4129,12 @@ class CardTracker:
                 attacker_name = attackers_by_id.get(attacker_id) if attacker_id is not None else None
                 if attacker_name:
                     self._print_event(
-                        f"{turn_prefix}{player_symbol} {player:8} blocking [{attacker_name}] with [{blocker_name} ({blocker_pt})]",
+                        f"\t{turn_prefix}{player} blocking [{attacker_name}] with [{blocker_name} ({blocker_pt})]",
                         "block",
                     )
                 else:
                     self._print_event(
-                        f"{turn_prefix}{player_symbol} {player:8} blocking with [{blocker_name} ({blocker_pt})]",
+                        f"\t{turn_prefix}{player} blocking with [{blocker_name} ({blocker_pt})]",
                         "block",
                     )
 
@@ -4130,12 +4208,31 @@ class CardTracker:
                                 "amount": damage_amount
                             })
                             
+                            event_seat = source_seat if source_seat in (
+                                self.game_state.player_seat_id,
+                                self.game_state.opponent_seat_id,
+                            ) else owner_seat
+                            turn_prefix = self._turn_prefix_for_number(self._event_turn_number(event_seat))
                             if source_name:
-                                self._print_event(f"⚔️ Combat: [{source_name}] dealt {damage_amount} damage to [{card_name}] ({owner})", "combat_damage")
+                                self._print_event(
+                                    f"\t{turn_prefix}Combat: [{source_name}] dealt {damage_amount} damage to [{card_name}] ({owner})",
+                                    "combat_damage",
+                                )
                             else:
-                                self._print_event(f"⚔️ Combat: [{card_name}] ({owner}) took {damage_amount} damage", "combat_damage")
+                                self._print_event(
+                                    f"\t{turn_prefix}Combat: [{card_name}] ({owner}) took {damage_amount} damage",
+                                    "combat_damage",
+                                )
                         else:
-                            self._print_event(f"💢 [{card_name}] ({owner}) took {damage_amount} damage", "damage")
+                            event_seat = source_seat if source_seat in (
+                                self.game_state.player_seat_id,
+                                self.game_state.opponent_seat_id,
+                            ) else owner_seat
+                            turn_prefix = self._turn_prefix_for_number(self._event_turn_number(event_seat))
+                            self._print_event(
+                                f"{turn_prefix}[{card_name}] ({owner}) took {damage_amount} damage",
+                                "damage",
+                            )
                         break
 
     def _handle_ability_activated(self, affected_ids: List[int], annotation: Dict[str, Any], game_objects: List[Dict[str, Any]]):
@@ -4218,7 +4315,10 @@ class CardTracker:
             elif ability_text:
                 return
             else:
-                self._print_event(f"🔮 {self._seat_label(owner_seat):8} activated ability: [{card_name}]{target_str}", "ability")
+                self._print_event(
+                    self._format_actor_event("🔮", owner_seat, f"activated ability: [{card_name}]{target_str}"),
+                    "ability",
+                )
 
     def _handle_triggered_ability(self, affected_ids: List[int], annotation: Dict[str, Any], game_objects: List[Dict[str, Any]]):
         """Handle triggered ability events."""
@@ -4248,12 +4348,12 @@ class CardTracker:
             owner_seat = source_obj.get("ownerSeatId")
             self._flush_pending_turn_header_for_seat(owner_seat)
             card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
-            
-            player = "You" if owner_seat == self.game_state.player_seat_id else "Opponent"
-            player_symbol = "✨"
-            
             trigger_desc = trigger_type if trigger_type else "triggered"
-            self._print_event(f"{player_symbol} Triggered: [{card_name}] ({'your' if owner_seat == self.game_state.player_seat_id else 'opponent\'s'}) - {trigger_desc}", "ability")
+            owner = "your" if owner_seat == self.game_state.player_seat_id else "opponent's"
+            self._print_event(
+                self._format_actor_event("", owner_seat, f"Triggered: [{card_name}] ({owner}) - {trigger_desc}"),
+                "ability",
+            )
 
     def _turns_completed(self) -> int:
         """Return best-effort total turn count for the finished game."""
@@ -4266,7 +4366,8 @@ class CardTracker:
 
     def _print_match_stats_section(self) -> None:
         """Print per-player match stats block."""
-        print(f"\n📈 Match Stats:")
+        print()
+        self._print_summary_heading("Match Stats", "turn")
         print(f"   Total Turns: {self._turns_completed()}")
         for seat_id, label in (
             (self.game_state.player_seat_id, "You"),
@@ -4290,7 +4391,7 @@ class CardTracker:
             )
             print(
                 f"      Cards: {cards_played} played, {stats['cards_drawn']} drawn, "
-                f"{stats['cards_discarded']} discarded, {stats['cards_exiled']} exiled"
+                f"{stats['cards_discarded']} discarded, {stats['cards_milled']} milled, {stats['cards_exiled']} exiled"
             )
 
     def _display_combat_summary(self):
@@ -4372,7 +4473,7 @@ class CardTracker:
         game_num_display = f" (Game {self.game_state.game_number})" if self.game_state.match_type == "best_of_3" else ""
         
         print("\n" + "="*75)
-        print(f"🏁 🏁 🏁 GAME ENDED 🏁 🏁 🏁")
+        self._print_summary_heading("Game Ended", "turn")
         print("="*75)
 
         # Calculate game time
@@ -4380,31 +4481,31 @@ class CardTracker:
             duration = self.game_state.game_end_time - self.game_state.game_start_time
             minutes = int(duration.total_seconds() // 60)
             seconds = int(duration.total_seconds() % 60)
-            print(f"\n⏱️  Game Duration: {minutes}m {seconds}s")
+            print(f"\nGame Duration: {minutes}m {seconds}s")
 
         # Winner - MAKE THIS VERY PROMINENT
         print("\n" + "="*75)
         
         outcome, reason = self._resolve_game_outcome()
         if outcome == "win":
-            print("🎉🎉🎉 YOU WON THIS GAME! 🎉🎉🎉")
+            self._print_summary_heading("You Won This Game", "land")
             print(f"   ({reason})")
         elif outcome == "loss":
-            print("💀💀💀 YOU LOST THIS GAME 💀💀💀")
+            self._print_summary_heading("You Lost This Game", "damage")
             print(f"   ({reason})")
         else:
-            print("🏁 Game ended")
+            self._print_summary_heading("Game Ended", "turn")
             print(f"   ({reason})")
             if self.game_state.winner_seat is None:
                 print("   (Result unclear — possible concede or disconnect)")
 
         self._record_session_outcome(outcome)
-        self._print_event(f"📈 Session: {self._session_stats_line()}", "turn")
+        self._print_event(f"Session: {self._session_stats_line()}", "turn")
         
         # Show best-of-3 match status if applicable
         if self.game_state.match_type == "best_of_3":
             print("\n" + "="*75)
-            print(f"📊 Best-of-3 Match Status:")
+            self._print_summary_heading("Best-of-3 Match Status", "turn")
             print(f"   Game {self.game_state.game_number} of 3")
             if self.match_games:
                 print(f"   Previous games:")
@@ -4417,17 +4518,26 @@ class CardTracker:
 
         # Starting hand
         if self.game_state.starting_hand:
-            print(f"\n🎴 Starting Hand ({self.game_state.initial_hand_size} cards):")
+            print()
+            self._print_summary_heading(f"Starting Hand ({self.game_state.initial_hand_size} cards)", "ability")
             if self.game_state.mulligan_count > 0:
                 print(f"   (After {self.game_state.mulligan_count} mulligan(s))")
             for card in self.game_state.starting_hand:
                 print(f"   • {self._refresh_fallback_name_text(card)}")
 
         # Cards played
-        print(f"\n📊 Cards Played:")
+        print()
+        self._print_summary_heading("Cards Played", "cast")
         if not self.game_state.player_deck_name:
             self._resolve_player_deck_from_candidates()
         print(f"   Your Deck: {self.game_state.player_deck_name or 'Unknown'}")
+        if self.game_state.player_deck_total_cards:
+            print(f"   Your deck total: {self.game_state.player_deck_total_cards}")
+        elif self.game_state.player_seat_id in self.game_state.observed_starting_deck_total_by_seat:
+            print(
+                f"   Your deck total (estimated): "
+                f"{self.game_state.observed_starting_deck_total_by_seat[self.game_state.player_seat_id]}"
+            )
         if self._is_brawl_format() and self.game_state.player_commanders:
             print(f"   Your Commander: {self._format_commander_names(self.game_state.player_commanders)}")
         if self._is_brawl_format() and self.game_state.opponent_commanders:
@@ -4435,6 +4545,11 @@ class CardTracker:
         print(f"   Mulligans: {self.game_state.mulligan_count}")
         print(f"   Your cards: {len(self.player_cards)}")
         print(f"   Opponent cards: {len(self.opponent_cards)}")
+        if self.game_state.opponent_seat_id in self.game_state.observed_starting_deck_total_by_seat:
+            print(
+                f"   Opponent deck total (estimated): "
+                f"{self.game_state.observed_starting_deck_total_by_seat[self.game_state.opponent_seat_id]}"
+            )
         if is_deck_llm_enabled() and self.opponent_cards:
             card_names = [e.card_name for e in self.opponent_cards]
             archetype = identify_deck(card_names)
@@ -4448,13 +4563,15 @@ class CardTracker:
                 else:
                     print(f"   Opponent deck: (LLM: request failed — check key/network)")
 
-        print(f"\n📤 Cards Exiled:")
+        print()
+        self._print_summary_heading("Cards Exiled", "zone")
         print(f"   By Me: {self.game_state.opponent_cards_exiled_by_player}")
         print(f"   By Opponent: {self.game_state.player_cards_exiled_by_opponent}")
         self._print_match_stats_section()
 
         if self.player_cards:
-            print(f"\n   🎯 Your Cards:")
+            print()
+            self._print_summary_heading("Your Cards", "cast")
             print(f"      {self._format_type_breakdown(self.player_cards)}")
             card_counts = {}
             for event in self.player_cards:
@@ -4470,12 +4587,13 @@ class CardTracker:
             top_player_creature = self._highest_known_creature_snapshot(self.game_state.player_seat_id)
             if top_player_creature:
                 print(
-                    f"      💪 Highest observed creature: [{top_player_creature['name']}] "
+                    f"      Highest observed creature: [{top_player_creature['name']}] "
                     f"reached {top_player_creature['power']}/{top_player_creature['toughness']}"
                 )
 
         if self.opponent_cards:
-            print(f"\n   👤 Opponent's Cards:")
+            print()
+            self._print_summary_heading("Opponent's Cards", "cast")
             print(f"      {self._format_type_breakdown(self.opponent_cards)}")
             card_counts = {}
             for event in self.opponent_cards:
@@ -4491,7 +4609,7 @@ class CardTracker:
             top_opponent_creature = self._highest_known_creature_snapshot(self.game_state.opponent_seat_id)
             if top_opponent_creature:
                 print(
-                    f"      💪 Highest observed creature: [{top_opponent_creature['name']}] "
+                    f"      Highest observed creature: [{top_opponent_creature['name']}] "
                     f"reached {top_opponent_creature['power']}/{top_opponent_creature['toughness']}"
                 )
 
@@ -4506,7 +4624,7 @@ class CardTracker:
     def _print_summary(self):
         """Print a summary of tracked cards."""
         print()
-        print("📊 Session Summary")
+        self._print_summary_heading("Session Summary", "turn")
         print("=" * 75)
         known_results = self.session_wins + self.session_losses
         win_rate = (self.session_wins / known_results * 100.0) if known_results > 0 else 0.0
@@ -4535,7 +4653,8 @@ class CardTracker:
         print(f"   Total Opponent Cards Played: {self.session_opponent_cards_played}")
 
         if self.player_cards:
-            print(f"\n   🎯 Your Cards This Game:")
+            print()
+            self._print_summary_heading("Your Cards This Game", "cast")
             print(f"      {self._format_type_breakdown(self.player_cards)}")
             # Count duplicates
             card_counts = {}
@@ -4550,7 +4669,8 @@ class CardTracker:
                     print(f"      • [{card_name_str}]")
 
         if self.opponent_cards:
-            print(f"\n   👤 Opponent's Cards This Game:")
+            print()
+            self._print_summary_heading("Opponent's Cards This Game", "cast")
             print(f"      {self._format_type_breakdown(self.opponent_cards)}")
             # Count duplicates
             card_counts = {}
