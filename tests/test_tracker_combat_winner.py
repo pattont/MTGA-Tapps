@@ -684,7 +684,7 @@ def test_seatless_concede_req_does_not_override_structured_winner():
     assert tracker.game_state.winner_seat == 1
 
 
-def test_seatless_concede_req_does_not_assume_player_loss():
+def test_seatless_concede_req_counts_as_local_player_loss():
     tracker = make_tracker()
     tracker.game_state.in_match = True
     tracker.game_state.player_seat_id = 1
@@ -693,8 +693,22 @@ def test_seatless_concede_req_does_not_assume_player_loss():
     seatless_concede_line = json.dumps({"clientToGreMessage": {"type": "ClientMessageType_ConcedeReq"}})
     tracker._check_game_end(seatless_concede_line)
 
-    assert tracker.game_state.winner_seat is None
-    assert tracker.game_state.match_complete is False
+    assert tracker.game_state.winner_seat == 2
+    assert tracker.game_state.winner_reason == "concede_req:local_player_conceded"
+    assert tracker.game_state.match_complete is True
+
+
+def test_opponent_disconnect_text_does_not_override_local_concede():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+
+    tracker._check_game_end(json.dumps({"clientToGreMessage": {"type": "ClientMessageType_ConcedeReq"}}))
+    tracker._check_game_end("Opponent disconnected from match service")
+
+    assert tracker.game_state.winner_seat == 2
+    assert tracker.game_state.winner_reason == "concede_req:local_player_conceded"
 
 
 def test_format_actor_event_has_consistent_prefix():
@@ -890,6 +904,67 @@ def test_resolve_zone_transfer_falls_back_to_cast_logging(capsys):
     assert "[0:00] Opponent: cast [Card1702 (Instant)]" in out
     assert 702 in tracker.game_state.seen_instance_ids
     assert len(tracker.opponent_cards) == 1
+
+
+def test_pending_instant_cast_flushes_before_noncombat_damage_during_combat(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 12
+    tracker.game_state.active_player = 2
+    tracker.game_state.last_turn_announced = 12
+    tracker.game_state.last_player_turn_number = 11
+    tracker.game_state.last_opponent_turn_number = 12
+    tracker.game_state.combat_phase_active = True
+    tracker.game_state.object_snapshots[9100] = {
+        "instanceId": 9100,
+        "grpId": 2000,
+        "ownerSeatId": 1,
+        "controllerSeatId": 1,
+        "cardTypes": ["CardType_Instant"],
+    }
+
+    cast_annotation = {
+        "type": ["AnnotationType_ZoneTransfer"],
+        "affectedIds": [9100],
+        "details": [{"key": "category", "valueString": ["CastSpell"]}],
+    }
+    damage_annotation = {
+        "type": ["AnnotationType_Damage"],
+        "affectedIds": [9200],
+        "details": [
+            {"key": "amount", "valueInt32": [2]},
+            {"key": "source", "valueInt32": [9100]},
+        ],
+    }
+    game_objects = [
+        {
+            "instanceId": 9100,
+            "grpId": 2000,
+            "ownerSeatId": 1,
+            "controllerSeatId": 1,
+            "cardTypes": ["CardType_Instant"],
+        },
+        {
+            "instanceId": 9200,
+            "grpId": 3000,
+            "ownerSeatId": 2,
+            "controllerSeatId": 2,
+            "cardTypes": ["CardType_Creature"],
+        },
+    ]
+
+    tracker._process_annotation(cast_annotation, game_objects)
+    assert capsys.readouterr().out == ""
+
+    tracker._process_annotation(damage_annotation, game_objects)
+    out = capsys.readouterr().out
+
+    cast_idx = out.index("[0:00] You: cast [Card2000 (Instant)]")
+    damage_idx = out.index("[0:00] [Card3000] (opponent's) took 2 damage")
+    assert cast_idx < damage_idx
+    assert "Combat:" not in out
 
 
 def test_cast_and_resolve_with_object_id_change_logs_once(capsys):
