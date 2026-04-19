@@ -437,6 +437,74 @@ class CardTracker:
         merged.update(current_obj)
         return merged
 
+    def _flush_pending_spell_cast(
+        self,
+        source_id: Optional[int],
+        game_objects_by_id: Optional[Dict[int, Dict[str, Any]]] = None,
+    ) -> bool:
+        """Emit a deferred cast line before downstream spell effects log."""
+        if source_id is None:
+            return False
+        canonical_source_id = self._canonical_instance_id(source_id) or int(source_id)
+        if canonical_source_id in self.game_state.seen_instance_ids:
+            return False
+        pending = self.game_state.pending_spell_roots.get(canonical_source_id)
+        if not isinstance(pending, dict):
+            return False
+
+        source_obj = self._lookup_object(source_id, game_objects_by_id)
+        if not isinstance(source_obj, dict) or not source_obj:
+            return False
+
+        owner_seat = source_obj.get("ownerSeatId")
+        controller_seat = source_obj.get("controllerSeatId")
+        determining_seat = controller_seat if controller_seat is not None else owner_seat
+        if determining_seat not in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+            determining_seat = pending.get("seat")
+        if determining_seat not in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+            return False
+
+        grp_id = source_obj.get("grpId")
+        card_name = pending.get("name")
+        if not card_name:
+            card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
+        card_types = source_obj.get("cardTypes", [])
+        type_str = self._format_card_type(card_types)
+        self._flush_pending_turn_header_for_seat(determining_seat)
+
+        turn_for_display = (
+            self.game_state.last_player_turn_number
+            if determining_seat == self.game_state.player_seat_id
+            else (self.game_state.last_opponent_turn_number or self.game_state.last_turn_announced)
+        )
+        turn_for_display = self._event_turn_number(determining_seat, turn_for_display)
+
+        if "CardType_Creature" in card_types:
+            power = source_obj.get("power", {}).get("value", "?")
+            toughness = source_obj.get("toughness", {}).get("value", "?")
+            text = f"cast [{card_name} ({type_str} {power}/{toughness})]"
+        else:
+            text = f"cast [{card_name} ({type_str})]"
+        self._print_event(
+            self._format_actor_event(">", determining_seat, text, turn_override=turn_for_display),
+            "cast",
+        )
+
+        player = self._seat_label(determining_seat).lower()
+        track_name = text.removeprefix("cast [").removesuffix("]")
+        type_category = self._get_card_type_category(card_types)
+        event = CardEvent(track_name, player, card_type_category=type_category)
+        if determining_seat == self.game_state.player_seat_id:
+            self.player_cards.append(event)
+            self.session_player_cards_played += 1
+        else:
+            self.opponent_cards.append(event)
+            self.session_opponent_cards_played += 1
+        self.game_state.seen_instance_ids.add(int(source_id))
+        self.game_state.seen_instance_ids.add(canonical_source_id)
+        self.game_state.pending_spell_roots.pop(canonical_source_id, None)
+        return True
+
     def _canonical_instance_id(self, instance_id: Optional[int]) -> Optional[int]:
         """Resolve instance id to canonical root id across ObjectIdChanged events."""
         if instance_id is None:
@@ -1381,6 +1449,7 @@ class CardTracker:
 
         Priority guide:
           4: Structured game-over JSON (authoritative)
+          3: Local client concede request
           2: Seat-specific concede / generic JSON hints
           1: Text heuristics (left/disconnect/concede phrases)
         """
@@ -2571,6 +2640,13 @@ class CardTracker:
                         reason="concede_req:opponent_conceded",
                         priority=2,
                     )
+            elif "clienttogremessage" in line_lower or "clientmessagetype_concedereq" in line_lower:
+                # This log stream is from the local client, so an outgoing concede request is ours.
+                self._set_winner_seat(
+                    self.game_state.opponent_seat_id,
+                    reason="concede_req:local_player_conceded",
+                    priority=3,
+                )
             if self.game_state.winner_seat is not None and not self.game_state.match_complete:
                 self.game_state.match_complete = True
                 self.game_state.game_end_time = datetime.now()
@@ -2613,27 +2689,6 @@ class CardTracker:
                     self.game_state.game_end_time = datetime.now()
                     self._pending_game_summary = True
                     return
-        
-        # Check for opponent leaving/conceding (you win). Always set winner_seat so we overwrite
-        # any wrong winner from an earlier generic completion line.
-        # Match many phrasings: "opponent left", "opponent has left", "the opponent left", etc.
-        opponent_leave_patterns = [
-            "opponentleft", "opponent left", "opponent quit", "opponent conceded", "opponent concede",
-            "opponent disconnected", "opponent has left", "opponent has conceded", "opponent has disconnected",
-            "opponent has quit", "the opponent left", "the opponent concede", "your opponent left",
-            "opponent left the", "opponent conceded the", "opponent disconnected from",
-        ]
-        if any(pattern in line_lower for pattern in opponent_leave_patterns):
-            self._set_winner_seat(
-                self.game_state.player_seat_id,
-                reason="text:opponent_left_or_forfeited",
-                priority=1,
-            )
-            if not self.game_state.match_complete:
-                self.game_state.match_complete = True
-                self.game_state.game_end_time = datetime.now()
-                self._pending_game_summary = True
-            return
         
         # Check for game completion messages (try to parse JSON)
         # Structured winner here is authoritative and may override weaker hints.
@@ -3745,6 +3800,7 @@ class CardTracker:
 
             # Destruction and removal effects
             elif category in ["Destroy", "Exile", "Sacrifice", "Discard"]:
+                self._flush_pending_spell_cast(source_id, game_objects_by_id)
                 self.game_state.pending_spell_roots.pop(canonical_instance_id, None)
                 owner_seat = self._resolve_zone_transfer_seat(
                     card_obj=card_obj,
@@ -3868,6 +3924,7 @@ class CardTracker:
 
             # Mill effects
             elif category == "Mill":
+                self._flush_pending_spell_cast(source_id, game_objects_by_id)
                 owner_seat = self._resolve_zone_transfer_seat(
                     card_obj=card_obj,
                     annotation=annotation,
@@ -4148,6 +4205,11 @@ class CardTracker:
         damage_amount = None
         source_id = None
         is_combat_damage = False
+        game_objects_by_id = {
+            obj.get("instanceId"): obj
+            for obj in game_objects
+            if isinstance(obj, dict) and obj.get("instanceId") is not None
+        }
         
         for detail in details:
             if detail.get("key") == "damage" or detail.get("key") == "amount":
@@ -4157,15 +4219,28 @@ class CardTracker:
             elif detail.get("key") == "combat" or detail.get("key") == "is_combat":
                 is_combat_damage = detail.get("valueBool", [False])[0] or detail.get("valueInt32", [0])[0] == 1
 
-        # Check if we're in combat phase
-        if self.game_state.combat_phase_active:
-            is_combat_damage = True
+        source_obj = self._lookup_object(source_id, game_objects_by_id) if source_id is not None else {}
+        canonical_source_id = self._canonical_instance_id(source_id) if source_id is not None else None
+        source_card_types = source_obj.get("cardTypes") or []
+
+        # Spells can deal damage during combat, but that is not combat damage.
+        if self.game_state.combat_phase_active and not is_combat_damage:
+            if source_id is None:
+                is_combat_damage = True
+            elif canonical_source_id in self.game_state.current_combat_attackers or source_id in self.game_state.current_combat_attackers:
+                is_combat_damage = True
+            elif canonical_source_id in self.game_state.current_combat_blockers or source_id in self.game_state.current_combat_blockers:
+                is_combat_damage = True
+            elif "CardType_Creature" in source_card_types and bool(source_obj.get("attackInfo")):
+                is_combat_damage = True
+
+        # If a spell's effect arrives before its Resolve annotation, emit the cast line first.
+        self._flush_pending_spell_cast(source_id, game_objects_by_id)
 
         if damage_amount and affected_ids:
             for instance_id in affected_ids:
                 source_seat = None
                 if source_id is not None:
-                    source_obj = self._lookup_object(source_id, game_objects_by_id={obj.get("instanceId"): obj for obj in game_objects if isinstance(obj, dict) and obj.get("instanceId") is not None})
                     source_seat = source_obj.get("controllerSeatId")
                     if source_seat is None:
                         source_seat = source_obj.get("ownerSeatId")
@@ -4443,23 +4518,13 @@ class CardTracker:
 
     def _print_game_summary(self):
         """Print summary when game ends."""
-        # Last-chance: if we still don't know winner, scan recent log for opponent-left or winner in JSON
+        # Last-chance: if we still don't know winner, scan recent log for winner in JSON only.
         if self.game_state.winner_seat is None:
             try:
                 with open(self.parser.log_path, "r", encoding="utf-8", errors="ignore") as f:
                     lines = f.readlines()
                 tail = lines[-100:] if len(lines) > 100 else lines
                 for ln in reversed(tail):
-                    ln_lower = ln.lower()
-                    if "opponent" in ln_lower and any(x in ln_lower for x in ("left", "concede", "disconnect", "quit")):
-                        self._set_winner_seat(
-                            self.game_state.player_seat_id,
-                            reason="summary_tail:opponent_left_text",
-                            priority=1,
-                        )
-                        break
-                    if self.game_state.winner_seat is not None:
-                        break
                     data = self.parser.parse_json_from_line(ln)
                     if data:
                         w = self._try_parse_winner_from_json(data)
