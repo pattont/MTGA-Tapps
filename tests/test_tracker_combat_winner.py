@@ -2,6 +2,7 @@
 
 import json
 import re
+import sqlite3
 from datetime import datetime
 
 from mtga_tracker.tracker import CardEvent, CardTracker, GameState
@@ -103,6 +104,7 @@ def make_tracker() -> CardTracker:
     tracker.session_player_cards_played = 0
     tracker.session_opponent_cards_played = 0
     tracker.session_total_mulligans = 0
+    tracker.session_id = "test-session"
     tracker._session_stats_recorded_this_game = False
     tracker._deck_candidates = {}
     tracker._active_deck_candidate_key = None
@@ -111,6 +113,8 @@ def make_tracker() -> CardTracker:
     tracker.use_colors = False
     tracker._ansi_styles = {}
     tracker._ansi_reset = ""
+    tracker._console_db_path = None
+    tracker._diagnostic_text_path = None
     return tracker
 
 
@@ -967,6 +971,59 @@ def test_pending_instant_cast_flushes_before_noncombat_damage_during_combat(caps
     assert "Combat:" not in out
 
 
+def test_destroy_from_spell_affector_flushes_pending_cast_first(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 5
+    tracker.game_state.active_player = 1
+    tracker.game_state.last_player_turn_number = 5
+    tracker.game_state.last_turn_announced = 5
+
+    game_objects = [
+        {
+            "instanceId": 9100,
+            "grpId": 2000,
+            "ownerSeatId": 1,
+            "controllerSeatId": 1,
+            "cardTypes": ["CardType_Instant"],
+        },
+        {
+            "instanceId": 9200,
+            "grpId": 3000,
+            "ownerSeatId": 2,
+            "controllerSeatId": 2,
+            "cardTypes": ["CardType_Creature"],
+        },
+    ]
+
+    tracker._process_annotation(
+        {
+            "type": ["AnnotationType_ZoneTransfer"],
+            "affectedIds": [9100],
+            "details": [{"key": "category", "valueString": ["CastSpell"]}],
+        },
+        game_objects,
+    )
+    assert capsys.readouterr().out == ""
+
+    tracker._process_annotation(
+        {
+            "type": ["AnnotationType_ZoneTransfer"],
+            "affectorId": 9100,
+            "affectedIds": [9200],
+            "details": [{"key": "category", "valueString": ["Destroy"]}],
+        },
+        game_objects,
+    )
+    out = capsys.readouterr().out
+
+    cast_idx = out.index("[0:00] You: cast [Card2000 (Instant)]")
+    destroy_idx = out.index("[0:00] Opponent: [Card3000] was destroyed")
+    assert cast_idx < destroy_idx
+
+
 def test_cast_and_resolve_with_object_id_change_logs_once(capsys):
     tracker = make_tracker()
     tracker.game_state.player_seat_id = 1
@@ -1053,6 +1110,42 @@ def test_destroy_event_uses_current_turn_not_card_owner_last_turn(capsys):
 
     assert "[0:00] Opponent: [Card1901] was destroyed" in out
     assert "[Turn " not in out
+
+
+def test_state_based_zero_toughness_prints_zone_event(capsys, tmp_path):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 7
+    tracker.game_state.active_player = 1
+    tracker.game_state.last_turn_announced = 7
+    tracker._diagnostic_text_path = tmp_path / "unhandled.log"
+
+    tracker._process_annotation(
+        {
+            "type": ["AnnotationType_ZoneTransfer"],
+            "affectedIds": [9001],
+            "details": [
+                {"key": "zone_src", "valueInt32": [28]},
+                {"key": "zone_dest", "valueInt32": [37]},
+                {"key": "category", "valueString": ["SBA_ZeroToughness"]},
+            ],
+        },
+        [
+            {
+                "instanceId": 9001,
+                "grpId": 1901,
+                "ownerSeatId": 2,
+                "controllerSeatId": 2,
+                "cardTypes": ["CardType_Creature"],
+            }
+        ],
+    )
+    out = capsys.readouterr().out
+
+    assert "[0:00] Opponent: [Card1901] was put into graveyard (0 toughness)" in out
+    assert not tracker._diagnostic_text_path.exists()
 
 
 def test_does_not_warn_when_first_observed_turn_is_two(capsys):
@@ -1321,6 +1414,90 @@ def test_process_annotation_counts_hidden_mill_from_zone_owner(capsys):
     assert tracker.game_state.match_stats[2]["cards_milled"] == 1
 
 
+def test_console_output_is_persisted_to_sqlite(capsys, tmp_path):
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "console.sqlite3"
+    tracker.game_state.game_start_time = datetime.now()
+    tracker.game_state.turn_number = 4
+    tracker.game_state.active_player = 1
+    tracker.game_state.player_life = 18
+    tracker.game_state.opponent_life = 10
+
+    tracker._print_event("[1:23] You: cast [Likeness Looter (Creature 1/1)]", "cast")
+    out = capsys.readouterr().out
+
+    assert "[1:23] You: cast [Likeness Looter (Creature 1/1)]" in out
+    with sqlite3.connect(tracker._console_db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT session_id, turn_number, active_player, style, text, player_life, opponent_life
+            FROM console_logs
+            """
+        ).fetchall()
+
+    assert rows == [
+        (
+            "test-session",
+            4,
+            1,
+            "cast",
+            "[1:23] You: cast [Likeness Looter (Creature 1/1)]",
+            18,
+            10,
+        )
+    ]
+
+
+def test_unhandled_zone_transfer_category_logs_once_to_text(capsys, tmp_path):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker._diagnostic_text_path = tmp_path / "unhandled.log"
+
+    annotation = {
+        "type": ["AnnotationType_ZoneTransfer"],
+        "affectedIds": [903],
+        "details": [{"key": "category", "valueString": ["Prepare"]}],
+    }
+    game_objects = [{"instanceId": 903, "grpId": 7001, "ownerSeatId": 1, "controllerSeatId": 1}]
+
+    tracker._process_annotation(annotation, game_objects)
+    first = capsys.readouterr().out
+    tracker._process_annotation(annotation, game_objects)
+    second = capsys.readouterr().out
+
+    assert first == ""
+    assert second == ""
+
+    text = tracker._diagnostic_text_path.read_text()
+    assert text.count("Tracker: unhandled annotation") == 1
+    assert "AnnotationType_ZoneTransfer | category=Prepare | keys=category | affected=[Card7001]" in text
+    assert '"valueString": ["Prepare"]' in text
+
+
+def test_routine_annotations_do_not_write_unhandled_diagnostics(capsys, tmp_path):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker._diagnostic_text_path = tmp_path / "unhandled.log"
+
+    tracker._process_annotation(
+        {
+            "type": ["AnnotationType_ManaPaid"],
+            "affectedIds": [1001],
+            "details": [
+                {"key": "id", "valueInt32": [1]},
+                {"key": "color", "valueInt32": [3]},
+            ],
+        },
+        [{"instanceId": 1001, "grpId": 1001, "ownerSeatId": 1, "controllerSeatId": 1}],
+    )
+    out = capsys.readouterr().out
+
+    assert out == ""
+    assert not tracker._diagnostic_text_path.exists()
+
+
 def test_reconcile_hidden_turn_draw_from_hand_size_after_play():
     tracker = make_tracker()
     tracker.game_state.player_seat_id = 1
@@ -1349,6 +1526,39 @@ def test_reconcile_hidden_turn_draw_from_hand_size_after_play():
     )
 
     assert tracker.game_state.match_stats[2]["cards_drawn"] == 1
+
+
+def test_known_hand_delta_ignores_unresolved_seat_when_opponent_unknown():
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = None
+
+    deltas = tracker._known_hand_delta_by_seat(
+        {
+            "zones": [
+                {"zoneId": 10, "type": "ZoneType_Hand", "objectInstanceIds": [101, 102]},
+                {"zoneId": 11, "type": "ZoneType_Battlefield", "objectInstanceIds": [777]},
+            ],
+            "annotations": [
+                {
+                    "type": ["AnnotationType_ZoneTransfer"],
+                    "affectedIds": [777],
+                    "details": [
+                        {"key": "category", "valueString": ["CastSpell"]},
+                        {"key": "zone_src", "valueInt32": [10]},
+                        {"key": "zone_dest", "valueInt32": [11]},
+                    ],
+                }
+            ],
+        },
+        {777: {"instanceId": 777, "grpId": 777, "ownerSeatId": None, "controllerSeatId": None}},
+        {
+            10: {"zoneId": 10, "type": "ZoneType_Hand", "ownerSeatId": None},
+            11: {"zoneId": 11, "type": "ZoneType_Battlefield", "ownerSeatId": None},
+        },
+    )
+
+    assert deltas == {}
 
 
 def test_first_event_without_turninfo_uses_turn_one_banner(capsys):
@@ -1447,6 +1657,47 @@ def test_blockers_request_uses_object_snapshot_fallback(capsys):
     )
     out = capsys.readouterr().out
     assert "blocking [Card404] with [Card303 (2/2)]" in out
+
+
+def test_snapshot_logs_identity_change_for_copy_state(capsys):
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.last_turn_announced = 5
+    tracker.game_state.last_player_turn_number = 5
+    tracker.card_db.names.update(
+        {
+            6001: "Likeness Looter",
+            6002: "Abhorrent Oculus",
+        }
+    )
+    tracker.game_state.object_snapshots[55] = {
+        "instanceId": 55,
+        "grpId": 6001,
+        "ownerSeatId": 1,
+        "controllerSeatId": 1,
+        "cardTypes": ["CardType_Artifact", "CardType_Creature"],
+        "power": {"value": 1},
+        "toughness": {"value": 1},
+    }
+
+    tracker._snapshot_game_objects(
+        [
+            {
+                "instanceId": 55,
+                "grpId": 6002,
+                "ownerSeatId": 1,
+                "controllerSeatId": 1,
+                "cardTypes": ["CardType_Creature"],
+                "power": {"value": 5},
+                "toughness": {"value": 5},
+            }
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert "[0:00] You: [Likeness Looter] became [Abhorrent Oculus] (5/5)" in out
 
 
 def test_highest_known_creature_snapshot_reads_large_stats():
@@ -2213,6 +2464,103 @@ def test_game_summary_prints_match_stats_section(capsys):
     assert "Defense: 2 blocker(s), 1 blocker(s) lost" in out
     assert "Damage/Life: 14 damage dealt, 9 life lost, 2 self-damage, 4 life gained" in out
     assert "Cards: 0 played, 3 drawn, 1 discarded, 4 milled, 2 exiled" in out
+
+
+def test_game_summary_persists_normalized_sqlite_analytics(capsys, tmp_path):
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "analytics.sqlite3"
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.first_player_seat = 1
+    tracker.game_state.turn_number = 8
+    tracker.game_state.player_life = 12
+    tracker.game_state.opponent_life = 0
+    tracker.game_state.game_start_time = datetime(2026, 4, 22, 12, 0, 0)
+    tracker.game_state.game_end_time = datetime(2026, 4, 22, 12, 7, 30)
+    tracker.game_state.winner_seat = 1
+    tracker.game_state.player_display_name = "Tester"
+    tracker.game_state.opponent_display_name = "Arena Opponent"
+    tracker.game_state.player_deck_name = "Dimir Tests"
+    tracker.game_state.player_deck_id = "deck-123"
+    tracker.game_state.player_deck_total_cards = 60
+    tracker.game_state.observed_starting_deck_total_by_seat = {1: 60, 2: 60}
+    tracker.game_state.match_stats[1].update(
+        {
+            "attacks": 2,
+            "attacking_creatures": 5,
+            "total_damage": 20,
+            "cards_drawn": 4,
+            "cards_discarded": 1,
+            "cards_milled": 0,
+        }
+    )
+    tracker.game_state.match_stats[2].update(
+        {
+            "life_lost": 20,
+            "life_gain": 6,
+            "cards_drawn": 8,
+            "cards_discarded": 2,
+            "cards_milled": 8,
+        }
+    )
+    tracker.player_cards = [
+        CardEvent("Restless Reef (Land)", "player", card_type_category="Land"),
+        CardEvent("Restless Reef (Land)", "player", card_type_category="Land"),
+        CardEvent("Likeness Looter (Creature 1/1)", "player", card_type_category="Creature"),
+    ]
+    tracker.opponent_cards = [
+        CardEvent("Dreadwing Scavenger (Creature 2/2)", "opponent", card_type_category="Creature")
+    ]
+
+    tracker._print_game_summary()
+    capsys.readouterr()
+
+    with sqlite3.connect(tracker._console_db_path) as conn:
+        game = conn.execute(
+            "SELECT outcome, outcome_reason, duration_seconds, total_turns FROM games"
+        ).fetchone()
+        participants = {
+            row[0]: row[1:]
+            for row in conn.execute(
+                """
+                SELECT role, display_name, deck_name, deck_size, deck_size_source, ending_life, went_first
+                FROM participants
+                """
+            ).fetchall()
+        }
+        stats = {
+            row[0]: row[1:]
+            for row in conn.execute(
+                """
+                SELECT p.role, s.damage_dealt, s.damage_taken, s.life_gained, s.cards_played,
+                       s.cards_drawn, s.cards_discarded, s.cards_milled
+                FROM game_participant_stats s
+                JOIN participants p ON p.id = s.participant_id
+                """
+            ).fetchall()
+        }
+        cards = {
+            row[0]: row[1]
+            for row in conn.execute(
+                "SELECT display_name, played_count FROM game_card_summary"
+            ).fetchall()
+        }
+        session = conn.execute(
+            "SELECT games_played, wins, losses FROM tracker_sessions WHERE id = ?",
+            ("test-session",),
+        ).fetchone()
+        console_rows = conn.execute("SELECT COUNT(*) FROM console_logs").fetchone()[0]
+
+    assert game == ("win", "Opponent reached 0 life", 450, 8)
+    assert participants["player"] == ("Tester", "Dimir Tests", 60, "metadata", 12, 1)
+    assert participants["opponent"] == ("Arena Opponent", None, 60, "observed", 0, 0)
+    assert stats["player"] == (20, 0, 0, 3, 4, 1, 0)
+    assert stats["opponent"] == (0, 20, 6, 1, 8, 2, 8)
+    assert cards["Restless Reef (Land)"] == 2
+    assert cards["Likeness Looter (Creature 1/1)"] == 1
+    assert cards["Dreadwing Scavenger (Creature 2/2)"] == 1
+    assert session == (1, 1, 0)
+    assert console_rows > 0
 
 
 def test_life_change_from_previous_attack_stays_on_previous_turn(capsys):
