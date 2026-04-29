@@ -41,6 +41,17 @@ class GameState:
         }
         return {1: base.copy(), 2: base.copy()}
 
+    @staticmethod
+    def _new_stack_stats() -> Dict[int, Dict[str, int]]:
+        """Return zeroed per-seat stack lifecycle stats."""
+        base = {
+            "put_on_stack": 0,
+            "resolved": 0,
+            "countered": 0,
+            "fizzled": 0,
+        }
+        return {1: base.copy(), 2: base.copy()}
+
     def __init__(self):
         self.player_life = 20
         self.opponent_life = 20
@@ -64,6 +75,7 @@ class GameState:
 
         # Starting hand tracking
         self.starting_hand: List[str] = []
+        self.starting_hand_events: List["CardEvent"] = []
         self.mulligan_count = 0
         self.initial_hand_size = 7
         self._hand_before_mulligan: List[str] = []  # 7-card hand before mulligan (to show card thrown away)
@@ -75,6 +87,7 @@ class GameState:
         self.opening_select_n_ids: List[int] = []  # Opening-hand selection ids from ClientMessageType_SelectNResp.
         self.instance_roots: Dict[int, int] = {}  # objectIdChanged lineage map (new_id -> canonical root id).
         self.pending_spell_roots: Dict[int, Dict[str, Any]] = {}  # CastSpell seen, waiting for Resolve.
+        self.stack_items: Dict[int, Dict[str, Any]] = {}  # stack object/ability id -> lifecycle metadata.
         self.ability_instance_sources: Dict[int, int] = {}  # ability instance id -> source permanent instance id
         self.logged_ability_actions: Set[tuple] = set()  # (ability_instance_id, ability_grp_id, source_instance_id)
         self.logged_ability_resolutions: Set[tuple] = set()  # (ability_instance_id, ability_grp_id, source_instance_id)
@@ -97,6 +110,7 @@ class GameState:
         self.counted_attack_turns: Set[tuple] = set()  # (turn, owner_seat) counted as one attack step
         self.combat_loss_events_counted: Set[tuple] = set()  # (instance_id, category)
         self.match_stats = self._new_match_stats()
+        self.stack_stats = self._new_stack_stats()
 
         # Game timing
         self.game_start_time: Optional[datetime] = None
@@ -217,19 +231,22 @@ class CardTracker:
         self._require_explicit_game_start: bool = False
         self._ansi_reset = "\033[0m"
         self._ansi_styles: Dict[str, str] = {
-            "turn": "\033[1;36m",          # bright cyan
-            "cast": "\033[0;36m",          # cyan
-            "land": "\033[0;32m",          # green
-            "attack": "\033[1;31m",        # bright red
-            "block": "\033[1;35m",         # bright magenta
-            "combat_damage": "\033[0;31m", # red
-            "damage": "\033[0;33m",        # yellow
-            "ability": "\033[0;34m",       # blue
-            "zone": "\033[0;35m",          # magenta
-            "counter": "\033[1;33m",       # bright yellow
-            "draw": "\033[0;37m",          # white
-            "life_gain": "\033[0;32m",     # green
-            "life_loss": "\033[0;31m",     # red
+            "turn": "\033[1;38;5;39m",          # bright sky blue
+            "cast": "\033[38;5;45m",            # aqua
+            "land": "\033[38;5;34m",            # forest green
+            "attack": "\033[1;38;5;196m",       # signal red
+            "block": "\033[1;38;5;201m",        # hot pink
+            "combat_damage": "\033[38;5;160m",  # deep red
+            "damage": "\033[38;5;208m",         # orange
+            "ability": "\033[38;5;141m",        # lavender
+            "stack": "\033[38;5;81m",           # pale cyan
+            "stack_resolve": "\033[38;5;118m",  # lime
+            "stack_fail": "\033[1;38;5;214m",   # amber
+            "zone": "\033[38;5;171m",           # purple
+            "counter": "\033[1;38;5;220m",      # gold
+            "draw": "\033[38;5;250m",           # light gray
+            "life_gain": "\033[1;38;5;46m",     # bright green
+            "life_loss": "\033[1;38;5;124m",    # crimson
         }
         self.use_colors = self._should_use_colors()
         self._console_db_path = DATA_DIR / "mtga_tracker.sqlite3"
@@ -256,6 +273,22 @@ class CardTracker:
         if not prefix:
             return text
         return f"{prefix}{text}{self._ansi_reset}"
+
+    @staticmethod
+    def _display_path_without_username(path_value: Any) -> str:
+        """Return a display path with the user's home directory shortened to ~/."""
+        if path_value is None:
+            return "not found"
+        try:
+            path = Path(path_value).resolve()
+            home = Path.home().resolve()
+            if path == home:
+                return "~"
+            if path.is_relative_to(home):
+                return "~/" + str(path.relative_to(home))
+            return str(path).replace(str(home), "~")
+        except Exception:
+            return str(path_value).replace(str(Path.home()), "~")
 
     def _record_console_log(self, text: str, style: Optional[str] = None) -> None:
         """Best-effort persistent storage for terminal output."""
@@ -383,6 +416,8 @@ class CardTracker:
                 deck_archetype TEXT,
                 deck_size INTEGER,
                 deck_size_source TEXT,
+                opening_hand_size INTEGER,
+                mulligans INTEGER,
                 starting_life INTEGER,
                 ending_life INTEGER,
                 went_first INTEGER,
@@ -423,6 +458,21 @@ class CardTracker:
                 milled_count INTEGER NOT NULL DEFAULT 0,
                 exiled_count INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(game_id, participant_id, display_name),
+                FOREIGN KEY(game_id) REFERENCES games(id),
+                FOREIGN KEY(participant_id) REFERENCES participants(id),
+                FOREIGN KEY(card_id) REFERENCES cards(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS game_opening_hand_cards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id TEXT NOT NULL,
+                participant_id TEXT NOT NULL,
+                card_id INTEGER,
+                display_name TEXT NOT NULL,
+                type_category TEXT,
+                hand_position INTEGER NOT NULL,
+                copy_number INTEGER NOT NULL DEFAULT 1,
+                UNIQUE(game_id, participant_id, hand_position),
                 FOREIGN KEY(game_id) REFERENCES games(id),
                 FOREIGN KEY(participant_id) REFERENCES participants(id),
                 FOREIGN KEY(card_id) REFERENCES cards(id)
@@ -537,6 +587,12 @@ class CardTracker:
             CREATE INDEX IF NOT EXISTS idx_game_card_summary_game_participant
             ON game_card_summary(game_id, participant_id);
 
+            CREATE INDEX IF NOT EXISTS idx_opening_hand_game_participant
+            ON game_opening_hand_cards(game_id, participant_id);
+
+            CREATE INDEX IF NOT EXISTS idx_opening_hand_card
+            ON game_opening_hand_cards(display_name);
+
             CREATE INDEX IF NOT EXISTS idx_game_events_session_time
             ON game_events(session_id, event_time);
 
@@ -549,6 +605,8 @@ class CardTracker:
         )
         self._ensure_table_column(conn, "game_events", "player_life", "INTEGER")
         self._ensure_table_column(conn, "game_events", "opponent_life", "INTEGER")
+        self._ensure_table_column(conn, "participants", "opening_hand_size", "INTEGER")
+        self._ensure_table_column(conn, "participants", "mulligans", "INTEGER")
 
     @staticmethod
     def _ensure_table_column(conn: sqlite3.Connection, table_name: str, column_name: str, column_type: str) -> None:
@@ -692,6 +750,8 @@ class CardTracker:
             "deck_archetype": None,
             "deck_size": deck_size,
             "deck_size_source": deck_size_source,
+            "opening_hand_size": len(self.game_state.starting_hand) if is_player and self.game_state.starting_hand else None,
+            "mulligans": self.game_state.mulligan_count if is_player else None,
             "starting_life": 20,
             "ending_life": self.game_state.player_life if is_player else self.game_state.opponent_life,
             "went_first": 1 if seat_id is not None and self.game_state.first_player_seat == seat_id else 0,
@@ -815,6 +875,55 @@ class CardTracker:
                     display_name,
                     type_category,
                     int(data["played_count"]),
+                ),
+            )
+
+    def _persist_opening_hand(
+        self,
+        conn: sqlite3.Connection,
+        game_id: str,
+        participant_id: str,
+    ) -> None:
+        """Persist the player's kept opening hand as one row per card slot."""
+        conn.execute(
+            "DELETE FROM game_opening_hand_cards WHERE game_id = ? AND participant_id = ?",
+            (game_id, participant_id),
+        )
+        copy_counts: Dict[str, int] = {}
+        source_events = self.game_state.starting_hand_events
+        if not source_events and self.game_state.starting_hand:
+            source_events = [
+                CardEvent(card, "player", card_type_category=None)
+                for card in self.game_state.starting_hand
+            ]
+        for index, event in enumerate(source_events, start=1):
+            display_name = self._refresh_fallback_name_text(event.card_name)
+            if not display_name:
+                continue
+            copy_counts[display_name] = copy_counts.get(display_name, 0) + 1
+            type_category = event.card_type_category
+            card_id = self._upsert_card(conn, display_name, type_category)
+            conn.execute(
+                """
+                INSERT INTO game_opening_hand_cards (
+                    game_id,
+                    participant_id,
+                    card_id,
+                    display_name,
+                    type_category,
+                    hand_position,
+                    copy_number
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    game_id,
+                    participant_id,
+                    card_id,
+                    display_name,
+                    type_category,
+                    index,
+                    copy_counts[display_name],
                 ),
             )
 
@@ -1081,11 +1190,13 @@ class CardTracker:
                             deck_archetype,
                             deck_size,
                             deck_size_source,
+                            opening_hand_size,
+                            mulligans,
                             starting_life,
                             ending_life,
                             went_first
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(id) DO UPDATE SET
                             seat_id = excluded.seat_id,
                             display_name = excluded.display_name,
@@ -1094,6 +1205,8 @@ class CardTracker:
                             deck_archetype = excluded.deck_archetype,
                             deck_size = excluded.deck_size,
                             deck_size_source = excluded.deck_size_source,
+                            opening_hand_size = excluded.opening_hand_size,
+                            mulligans = excluded.mulligans,
                             starting_life = excluded.starting_life,
                             ending_life = excluded.ending_life,
                             went_first = excluded.went_first
@@ -1109,6 +1222,8 @@ class CardTracker:
                             participant["deck_archetype"],
                             participant["deck_size"],
                             participant["deck_size_source"],
+                            participant["opening_hand_size"],
+                            participant["mulligans"],
                             participant["starting_life"],
                             participant["ending_life"],
                             participant["went_first"],
@@ -1131,6 +1246,7 @@ class CardTracker:
                 )
                 self._persist_card_summary(conn, game_id, player_participant_id, self.player_cards)
                 self._persist_card_summary(conn, game_id, opponent_participant_id, self.opponent_cards)
+                self._persist_opening_hand(conn, game_id, player_participant_id)
                 self._persist_commanders(conn, player_participant_id, self.game_state.player_commanders)
                 self._persist_commanders(conn, opponent_participant_id, self.game_state.opponent_commanders)
                 self._refresh_session_participant_stats(conn)
@@ -1357,8 +1473,6 @@ class CardTracker:
             self.game_state.object_snapshots.pop(instance_id, None)
             self.game_state.current_combat_attackers.pop(instance_id, None)
             self.game_state.current_combat_blockers.pop(instance_id, None)
-            self.game_state.ability_instance_sources.pop(instance_id, None)
-            self.game_state.ability_instance_action_texts.pop(instance_id, None)
 
         self.game_state.attackers = [
             instance_id for instance_id in self.game_state.attackers
@@ -1388,6 +1502,134 @@ class CardTracker:
             if not (isinstance(key, tuple) and key and key[0] in deleted_ids)
         }
         self.game_state.seen_instance_ids -= deleted_ids
+
+    def _seat_stack_stats(self, seat_id: Optional[int]) -> Optional[Dict[str, int]]:
+        """Return mutable per-seat stack stats dict when seat is known."""
+        if seat_id not in (1, 2):
+            return None
+        return self.game_state.stack_stats[int(seat_id)]
+
+    def _stack_key(self, instance_id: Optional[int]) -> Optional[int]:
+        """Return canonical key for a stack object or ability instance."""
+        if instance_id is None:
+            return None
+        try:
+            return self._canonical_instance_id(int(instance_id)) or int(instance_id)
+        except (TypeError, ValueError):
+            return None
+
+    def _register_stack_item(
+        self,
+        instance_id: Optional[int],
+        *,
+        seat_id: Optional[int],
+        label: str,
+        kind: str,
+        turn_override: Optional[int] = None,
+    ) -> Optional[int]:
+        """Record one spell/ability as currently pending on the stack."""
+        stack_key = self._stack_key(instance_id)
+        if stack_key is None:
+            return None
+        pending_keys = [
+            key
+            for key, existing in self.game_state.stack_items.items()
+            if key != stack_key and isinstance(existing, dict) and existing.get("status") == "pending"
+        ]
+        for key in pending_keys:
+            self.game_state.stack_items[key]["show_lifecycle"] = True
+        item = self.game_state.stack_items.get(stack_key)
+        if not isinstance(item, dict) or item.get("status") not in {"pending", "resolved", "countered", "fizzled"}:
+            stats = self._seat_stack_stats(seat_id)
+            if stats is not None:
+                stats["put_on_stack"] += 1
+        self.game_state.stack_items[stack_key] = {
+            "seat": seat_id,
+            "label": label,
+            "kind": kind,
+            "turn": self._event_turn_number(seat_id, turn_override),
+            "status": "pending",
+            "show_lifecycle": bool(pending_keys) or (isinstance(item, dict) and bool(item.get("show_lifecycle"))),
+        }
+        return stack_key
+
+    def _emit_stack_item_status(
+        self,
+        instance_id: Optional[int],
+        status: str,
+        *,
+        resolution_label: Optional[str] = None,
+    ) -> bool:
+        """Emit an indented stack lifecycle line for a tracked spell/ability."""
+        stack_key = self._stack_key(instance_id)
+        if stack_key is None:
+            return False
+        item = self.game_state.stack_items.get(stack_key)
+        if not isinstance(item, dict) or item.get("status") != "pending":
+            return False
+
+        seat_id = item.get("seat")
+        label = resolution_label or item.get("label") or "stack item"
+        if status == "resolved":
+            status_text = "[resolved]"
+            style = "stack_resolve"
+            stat_key = "resolved"
+        elif status == "countered":
+            status_text = "[countered]"
+            style = "stack_fail"
+            stat_key = "countered"
+        elif status == "fizzled":
+            status_text = "[left stack without resolving - inferred]"
+            style = "stack_fail"
+            stat_key = "fizzled"
+        else:
+            return False
+
+        item["status"] = status
+        stats = self._seat_stack_stats(seat_id)
+        if stats is not None:
+            stats[stat_key] += 1
+        if status == "resolved" and not item.get("show_lifecycle"):
+            return True
+        turn_prefix = self._turn_prefix_for_number(self._event_turn_number(seat_id, item.get("turn")))
+        self._print_event(f"\t{turn_prefix}Stack: {label} {status_text}", style)
+        return True
+
+    def _record_played_card_once(
+        self,
+        *,
+        instance_id: int,
+        canonical_instance_id: int,
+        seat_id: Optional[int],
+        track_name: str,
+        card_types: List[str],
+    ) -> None:
+        """Count a card as played/cast exactly once, even if it later fails to resolve."""
+        if instance_id in self.game_state.seen_instance_ids or canonical_instance_id in self.game_state.seen_instance_ids:
+            return
+        player = self._seat_label(seat_id).lower()
+        type_category = self._get_card_type_category(card_types)
+        event = CardEvent(track_name, player, card_type_category=type_category)
+        if seat_id == self.game_state.player_seat_id:
+            self.player_cards.append(event)
+            self.session_player_cards_played += 1
+        else:
+            self.opponent_cards.append(event)
+            self.session_opponent_cards_played += 1
+        self.game_state.seen_instance_ids.add(int(instance_id))
+        self.game_state.seen_instance_ids.add(int(canonical_instance_id))
+
+    def _reconcile_deleted_stack_items(self, deleted_instance_ids: Any) -> None:
+        """Infer unresolved stack exits after the payload's annotations have had a chance to resolve them."""
+        if not isinstance(deleted_instance_ids, list):
+            return
+        for instance_id in deleted_instance_ids:
+            stack_key = self._stack_key(instance_id)
+            if stack_key is None:
+                continue
+            item = self.game_state.stack_items.get(stack_key)
+            if isinstance(item, dict) and item.get("status") == "pending":
+                self._emit_stack_item_status(stack_key, "fizzled")
 
     def _lookup_object(self, instance_id: Optional[int], game_objects_by_id: Optional[Dict[int, Dict[str, Any]]] = None) -> Dict[str, Any]:
         """Get best-known object payload from current state + snapshot fallback."""
@@ -1453,26 +1695,29 @@ class CardTracker:
         if "CardType_Creature" in card_types:
             power = source_obj.get("power", {}).get("value", "?")
             toughness = source_obj.get("toughness", {}).get("value", "?")
-            text = f"cast [{card_name} ({type_str} {power}/{toughness})]"
+            track_name = f"{card_name} ({type_str} {power}/{toughness})"
         else:
-            text = f"cast [{card_name} ({type_str})]"
+            track_name = f"{card_name} ({type_str})"
+        text = f"cast [{track_name}]"
         self._print_event(
             self._format_actor_event(">", determining_seat, text, turn_override=turn_for_display),
             "cast",
         )
+        self._register_stack_item(
+            canonical_source_id,
+            seat_id=determining_seat,
+            label=f"[{track_name}]",
+            kind="spell",
+            turn_override=turn_for_display,
+        )
 
-        player = self._seat_label(determining_seat).lower()
-        track_name = text.removeprefix("cast [").removesuffix("]")
-        type_category = self._get_card_type_category(card_types)
-        event = CardEvent(track_name, player, card_type_category=type_category)
-        if determining_seat == self.game_state.player_seat_id:
-            self.player_cards.append(event)
-            self.session_player_cards_played += 1
-        else:
-            self.opponent_cards.append(event)
-            self.session_opponent_cards_played += 1
-        self.game_state.seen_instance_ids.add(int(source_id))
-        self.game_state.seen_instance_ids.add(canonical_source_id)
+        self._record_played_card_once(
+            instance_id=int(source_id),
+            canonical_instance_id=canonical_source_id,
+            seat_id=determining_seat,
+            track_name=track_name,
+            card_types=card_types,
+        )
         self.game_state.pending_spell_roots.pop(canonical_source_id, None)
         return True
 
@@ -2456,13 +2701,21 @@ class CardTracker:
 
     def _print_startup_legend(self) -> None:
         """Print a short event color legend."""
-        self._print_line("   Event Colors:")
-        self._print_event("     Attack / Combat Damage", "attack")
-        self._print_event("     Block", "block")
-        self._print_event("     Cast", "cast")
-        self._print_event("     Land", "land")
-        self._print_event("     Ability", "ability")
-        self._print_event("     Life Change", "life_gain")
+        self._print_line(" Card Event Colors:")
+        self._print_line("  Turn / Session Header", "turn")
+        self._print_line("  Cast / Spell Played", "cast")
+        self._print_line("  Land Played", "land")
+        self._print_line("  Ability / Trigger", "ability")
+        self._print_line("  Stack Resolved", "stack_resolve")
+        self._print_line("  Stack Countered / Unresolved", "stack_fail")
+        self._print_line("  Attack", "attack")
+        self._print_line("  Block", "block")
+        self._print_line("  Combat Damage", "combat_damage")
+        self._print_line("  Damage", "damage")
+        self._print_line("  Life Gained", "life_gain")
+        self._print_line("  Life Lost", "life_loss")
+        self._print_line("  Draw", "draw")
+        self._print_line("  Card Movement", "zone")
         if not self.use_colors:
             self._print_line("     (Color is off; set MTGA_TRACKER_COLOR=1 to force)")
 
@@ -2471,22 +2724,21 @@ class CardTracker:
         self._print_line("\n" + "=" * 75)
         self._print_line("🟡 🔵 ⚫ 🔴 🟢 MTGA Card Tracker - Real-time Match Analyzer 🟡 🔵 ⚫ 🔴 🟢")
         self._print_line("=" * 75)
-        # Show log path with ~ instead of actual username when under home dir
-        try:
-            log_path = Path(self.parser.log_path).resolve()
-            display_path = ("~/" + str(log_path.relative_to(Path.home()))) if log_path.is_relative_to(Path.home()) else str(log_path)
-        except Exception:
-            display_path = self.parser.log_path
-        self._print_line(f"📂 Monitoring: {display_path}")
+        self._print_line(f" Monitoring: {self._display_path_without_username(self.parser.log_path)}")
+        card_db_path = None
+        resolve_db_path = getattr(self.card_db, "_resolve_mtga_db_path", None)
+        if callable(resolve_db_path):
+            card_db_path = resolve_db_path()
+        self._print_line(f" Local Card DB: {self._display_path_without_username(card_db_path)}")
+        self._print_line(f" Log DB: {self._display_path_without_username(self._console_db_path)}")
+        self._print_line("\n")
 
-        # Player seat will be detected automatically when a game starts
-        self._print_line("⏳ Seat will be detected automatically")
         self._print_startup_legend()
-        self._print_event(f"Session: {self._session_stats_line()}", "turn")
+        #self._print_event(f"Session: {self._session_stats_line()}", "turn")
 
         # self._print_line("\n   Waiting for game events...")
-        self._print_line("\n   Play a game in MTGA to see cards tracked in real-time!")
-        self._print_line("\n   Press Ctrl+C to stop")
+        self._print_line("\n Now reaady to track games in MTGA!")
+        self._print_line("\n Press Ctrl+C to stop")
         self._print_line("=" * 75 + "\n")
 
         # Deck metadata is often logged before startup; backfill from recent lines once.
@@ -3325,8 +3577,13 @@ class CardTracker:
             self.game_state.opening_hand_capture_closed = True
             return
 
-        def finalize_starting_hand(hand_cards: List[str], hand_grp_ids: List[int]) -> None:
+        def finalize_starting_hand(
+            hand_cards: List[str],
+            hand_grp_ids: List[int],
+            hand_events: List[CardEvent],
+        ) -> None:
             self.game_state.starting_hand = hand_cards
+            self.game_state.starting_hand_events = hand_events
             self.game_state.initial_hand_size = len(hand_cards)
             self.game_state.mulligan_count = max(
                 self.game_state.mulligan_count,
@@ -3362,12 +3619,17 @@ class CardTracker:
 
             hand_cards: List[str] = []
             hand_grp_ids: List[int] = []
+            hand_events: List[CardEvent] = []
             for obj_id in obj_ids:
                 obj = objects_by_id.get(obj_id) or self.game_state.object_snapshots.get(obj_id) or {}
                 grp_id = obj.get("grpId")
                 if grp_id:
-                    hand_cards.append(self.card_db.get_card_name(grp_id))
+                    card_name = self.card_db.get_card_name(grp_id)
+                    card_types = obj.get("cardTypes", []) if isinstance(obj, dict) else []
+                    type_category = self._get_card_type_category(card_types)
+                    hand_cards.append(card_name)
                     hand_grp_ids.append(int(grp_id))
+                    hand_events.append(CardEvent(card_name, "player", card_type_category=type_category))
 
             # Opponent hand is hidden (no grpIds), so a visible hand is ours.
             if not hand_grp_ids:
@@ -3405,7 +3667,7 @@ class CardTracker:
                     self.game_state._hand_before_mulligan = hand_cards
                     self.game_state._hand_before_mulligan_ids = hand_grp_ids
                 elif current_sig == previous_sig and turn_num and turn_num >= 1:
-                    finalize_starting_hand(hand_cards, hand_grp_ids)
+                    finalize_starting_hand(hand_cards, hand_grp_ids, hand_events)
                     return
                 elif current_sig != previous_sig:
                     self.game_state.mulligan_count += 1
@@ -3421,7 +3683,7 @@ class CardTracker:
             )
             if not can_finalize_short_hand:
                 continue
-            finalize_starting_hand(hand_cards, hand_grp_ids)
+            finalize_starting_hand(hand_cards, hand_grp_ids, hand_events)
             return
 
     @staticmethod
@@ -3932,6 +4194,7 @@ class CardTracker:
         diff: int,
         life: int,
         turn_override: Optional[int] = None,
+        source_seat_override: Optional[int] = None,
     ) -> None:
         """Print one life-change line with optional turn override for late-arriving events."""
         if not self.game_state.in_match or diff == 0:
@@ -3984,7 +4247,11 @@ class CardTracker:
                     self.game_state.pending_damage_to_seat.pop(int(seat_id), None)
             unmatched_life_loss = lost_life - matched_damage
             if unmatched_life_loss > 0:
-                source_seat = self._infer_life_loss_source_seat(seat_id, turn_override=turn_for_display)
+                source_seat = (
+                    source_seat_override
+                    if source_seat_override in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
+                    else self._infer_life_loss_source_seat(seat_id, turn_override=turn_for_display)
+                )
                 self._record_damage_dealt(
                     unmatched_life_loss,
                     source_seat,
@@ -4229,6 +4496,31 @@ class CardTracker:
         elif seat_id == self.game_state.opponent_seat_id:
             self._flush_pending_opponent_turn_header()
 
+    def _annotation_processing_priority(
+        self,
+        annotation: Dict[str, Any],
+        user_action_instance_ids: Optional[Set[int]] = None,
+    ) -> int:
+        """Keep activation lines ahead of cost/result zone transfers emitted in the same payload."""
+        ann_types = annotation.get("type", [])
+        if not isinstance(ann_types, list):
+            ann_types = [ann_types] if ann_types else []
+        if "AnnotationType_ObjectIdChanged" in ann_types:
+            return 0
+        if "AnnotationType_AbilityInstanceCreated" in ann_types:
+            return 0
+        if "AnnotationType_UserActionTaken" in ann_types:
+            return 1
+        affector_id = annotation.get("affectorId")
+        if (
+            "AnnotationType_ZoneTransfer" in ann_types
+            and self._annotation_category(annotation) in {"Discard", "Sacrifice", "Exile"}
+            and affector_id is not None
+            and int(affector_id) in (user_action_instance_ids or set())
+        ):
+            return 2
+        return 10
+
     def _process_game_events(self, data: Dict[str, Any]):
         """Process and display important game events."""
         game_objects = data.get("gameObjects", [])
@@ -4252,15 +4544,45 @@ class CardTracker:
                 pending_seat = self.game_state.player_seat_id
             elif self.game_state.pending_opponent_turn_header:
                 pending_seat = self.game_state.opponent_seat_id
-            if pending_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
-                annotations.sort(
-                    key=lambda annotation: (
-                        self._annotation_actor_seat(annotation, game_objects_by_id) == pending_seat,
-                    )
+            players = data.get("players", [])
+            if not isinstance(players, list):
+                players = []
+            user_action_instance_ids = {
+                int(annotation["affectedIds"][0])
+                for annotation in annotations
+                if isinstance(annotation, dict)
+                and "AnnotationType_UserActionTaken" in (annotation.get("type", []) or [])
+                and isinstance(annotation.get("affectedIds"), list)
+                and annotation.get("affectedIds")
+                and annotation.get("affectedIds")[0] is not None
+            }
+            life_total_seats_in_payload = {
+                int(player.get("systemSeatNumber"))
+                for player in players
+                if isinstance(player, dict)
+                and player.get("systemSeatNumber") is not None
+                and player.get("lifeTotal") is not None
+            }
+            annotations.sort(
+                key=lambda annotation: (
+                    (
+                        self._annotation_actor_seat(annotation, game_objects_by_id) == pending_seat
+                        if pending_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
+                        else False
+                    ),
+                    self._annotation_processing_priority(annotation, user_action_instance_ids),
                 )
+            )
             for annotation in annotations:
-                self._process_annotation(annotation, game_objects, zones_by_id=zones_by_id)
+                self._process_annotation(
+                    annotation,
+                    game_objects,
+                    zones_by_id=zones_by_id,
+                    life_total_seats_in_payload=life_total_seats_in_payload,
+                    user_action_instance_ids=user_action_instance_ids,
+                )
 
+        self._reconcile_deleted_stack_items(data.get("diffDeletedInstanceIds"))
         self._reconcile_hidden_hand_changes(data, game_objects_by_id, zones_by_id)
 
     def _resolve_target_label(self, target_id: Optional[int], game_objects_by_id: Dict[int, Dict[str, Any]]) -> Optional[str]:
@@ -4497,6 +4819,8 @@ class CardTracker:
         annotation: Dict[str, Any],
         game_objects: List[Dict[str, Any]],
         zones_by_id: Optional[Dict[int, Dict[str, Any]]] = None,
+        life_total_seats_in_payload: Optional[Set[int]] = None,
+        user_action_instance_ids: Optional[Set[int]] = None,
     ):
         """Process a single annotation (game event)."""
         ann_type = annotation.get("type", [])
@@ -4565,7 +4889,51 @@ class CardTracker:
 
         if "AnnotationType_AbilityInstanceCreated" in ann_type:
             if affected_ids and affector_id is not None:
-                self.game_state.ability_instance_sources[int(affected_ids[0])] = int(affector_id)
+                ability_instance_id = int(affected_ids[0])
+                self.game_state.ability_instance_sources[ability_instance_id] = int(affector_id)
+                if ability_instance_id not in (user_action_instance_ids or set()):
+                    ability_obj = self._lookup_object(ability_instance_id, game_objects_by_id)
+                    source_obj = self._lookup_object(int(affector_id), game_objects_by_id)
+                    source_grp_id = source_obj.get("grpId") or ability_obj.get("objectSourceGrpId")
+                    owner_seat = (
+                        ability_obj.get("controllerSeatId")
+                        or ability_obj.get("ownerSeatId")
+                        or source_obj.get("controllerSeatId")
+                        or source_obj.get("ownerSeatId")
+                    )
+                    ability_grp_id = ability_obj.get("grpId")
+                    ability_text = (
+                        self.card_db.get_card_ability_text(int(source_grp_id), int(ability_grp_id))
+                        if source_grp_id is not None and ability_grp_id is not None
+                        else None
+                    )
+                    if (
+                        source_grp_id is not None
+                        and owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
+                        and self._should_log_ability_text(source_obj, ability_text)
+                    ):
+                        card_name = self.card_db.get_card_name(int(source_grp_id))
+                        normalized_ability_text = self._normalize_ability_text(ability_text)
+                        self.game_state.ability_instance_action_texts[ability_instance_id] = normalized_ability_text
+                        turn_override = self._ability_turn_override(owner_seat)
+                        label = f"[{card_name}] - {normalized_ability_text}"
+                        self._flush_pending_turn_header_for_seat(owner_seat)
+                        self._print_event(
+                            self._format_actor_event(
+                                "",
+                                owner_seat,
+                                label,
+                                turn_override=turn_override,
+                            ),
+                            "ability",
+                        )
+                        self._register_stack_item(
+                            ability_instance_id,
+                            seat_id=owner_seat,
+                            label=label,
+                            kind="ability",
+                            turn_override=turn_override,
+                        )
             return
         elif "AnnotationType_AbilityInstanceDeleted" in ann_type:
             if affected_ids:
@@ -4635,13 +5003,23 @@ class CardTracker:
                                 target_names.append(f"ID {t_id}")
                     if target_names:
                         target_str = f" targeting {', '.join(target_names)}"
-                self._emit_ability_event(
-                    "🔮",
-                    owner_seat,
-                    card_name,
-                    ability_text,
-                    target_text=target_str,
-                    turn_override=self._ability_turn_override(owner_seat),
+                turn_override = self._ability_turn_override(owner_seat)
+                label = f"[{card_name}] - {normalized_ability_text}{target_str}"
+                self._print_event(
+                    self._format_actor_event(
+                        "",
+                        owner_seat,
+                        label,
+                        turn_override=turn_override,
+                    ),
+                    "ability",
+                )
+                self._register_stack_item(
+                    ability_instance_id,
+                    seat_id=owner_seat,
+                    label=label,
+                    kind="ability",
+                    turn_override=turn_override,
                 )
             return
 
@@ -4656,6 +5034,14 @@ class CardTracker:
             self._record_object_id_change(orig_instance_id, new_instance_id)
             return
         elif "AnnotationType_PhaseOrStepModified" in ann_type:
+            return
+        elif "AnnotationType_ModifiedLife" in ann_type:
+            self._handle_modified_life(
+                affected_ids,
+                annotation,
+                game_objects_by_id,
+                life_total_seats_in_payload=life_total_seats_in_payload or set(),
+            )
             return
         elif self._is_ignored_diagnostic_annotation(ann_type):
             return
@@ -4772,13 +5158,42 @@ class CardTracker:
                     card_types = card_obj.get("cardTypes", [])
                     type_str = self._format_card_type(card_types)
                     if category in ["CastSpell", "PlaySpell"]:
-                        # Defer non-land spell display until Resolve so cancelled/countered casts
-                        # do not create duplicate or phantom cast lines.
                         if "CardType_Land" not in card_types:
-                            self.game_state.pending_spell_roots[canonical_instance_id] = {
-                                "name": card_name,
-                                "seat": determining_seat,
-                            }
+                            turn_for_display = (
+                                self.game_state.last_player_turn_number
+                                if determining_seat == self.game_state.player_seat_id
+                                else (self.game_state.last_opponent_turn_number or self.game_state.last_turn_announced)
+                            )
+                            turn_for_display = self._event_turn_number(determining_seat, turn_for_display)
+                            if "CardType_Creature" in card_types:
+                                power = card_obj.get("power", {}).get("value", "?")
+                                toughness = card_obj.get("toughness", {}).get("value", "?")
+                                track_name = f"{card_name} ({type_str} {power}/{toughness})"
+                            else:
+                                track_name = f"{card_name} ({type_str})"
+                            self._print_event(
+                                self._format_actor_event(
+                                    ">",
+                                    determining_seat,
+                                    f"cast [{track_name}]",
+                                    turn_override=turn_for_display,
+                                ),
+                                "cast",
+                            )
+                            self._register_stack_item(
+                                canonical_instance_id,
+                                seat_id=determining_seat,
+                                label=f"[{track_name}]",
+                                kind="spell",
+                                turn_override=turn_for_display,
+                            )
+                            self._record_played_card_once(
+                                instance_id=int(instance_id),
+                                canonical_instance_id=int(canonical_instance_id),
+                                seat_id=determining_seat,
+                                track_name=track_name,
+                                card_types=card_types,
+                            )
                             return
 
                     # Format output based on card type - handle multiple targets
@@ -4994,9 +5409,26 @@ class CardTracker:
                         icon = "💥"
                         action = category.lower()
                     event_turn = self.game_state.turn_number if self.game_state.turn_number > 0 else None
+                    is_stack_cost = (
+                        category in {"Discard", "Sacrifice", "Exile"}
+                        and affector_id is not None
+                        and isinstance(self.game_state.stack_items.get(self._stack_key(affector_id)), dict)
+                        and self.game_state.stack_items.get(self._stack_key(affector_id), {}).get("status") == "pending"
+                    )
+                    action_text = f"[{card_name}] was {action}"
+                    if is_stack_cost:
+                        action_text += " as cost"
 
+                    formatted_event = self._format_actor_event(
+                        icon,
+                        owner_seat,
+                        action_text,
+                        turn_override=event_turn,
+                    )
+                    if is_stack_cost:
+                        formatted_event = "\t" + formatted_event
                     self._print_event(
-                        self._format_actor_event(icon, owner_seat, f"[{card_name}] was {action}", turn_override=event_turn),
+                        formatted_event,
                         "zone",
                     )
                     if "CardType_Creature" in card_types and owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
@@ -5047,17 +5479,18 @@ class CardTracker:
 
             # Counter spells
             elif category == "Countered":
-                self.game_state.pending_spell_roots.pop(canonical_instance_id, None)
                 if card_obj:
                     grp_id = card_obj.get("grpId")
                     owner_seat = card_obj.get("ownerSeatId")
-                    self._flush_pending_turn_header_for_seat(owner_seat)
                     card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
-                    event_turn = self.game_state.turn_number if self.game_state.turn_number > 0 else None
-                    self._print_event(
-                        self._format_actor_event("🚫", owner_seat, f"[{card_name}] was countered", turn_override=event_turn),
-                        "counter",
-                    )
+                    if not self._emit_stack_item_status(canonical_instance_id, "countered"):
+                        self._flush_pending_turn_header_for_seat(owner_seat)
+                        event_turn = self.game_state.turn_number if self.game_state.turn_number > 0 else None
+                        self._print_event(
+                            self._format_actor_event("🚫", owner_seat, f"[{card_name}] was countered", turn_override=event_turn),
+                            "counter",
+                        )
+                self.game_state.pending_spell_roots.pop(canonical_instance_id, None)
 
             # Draw cards
             elif category == "Draw":
@@ -5129,6 +5562,11 @@ class CardTracker:
                     resolution_grp_id = detail.get("valueInt32", [None])[0]
                     break
             ability_instance_id = int(affected_ids[0]) if affected_ids else None
+            if ability_instance_id is not None:
+                stack_item = self.game_state.stack_items.get(self._stack_key(ability_instance_id))
+                if isinstance(stack_item, dict) and stack_item.get("kind") == "spell":
+                    self._emit_stack_item_status(ability_instance_id, "resolved")
+                    return
             source_instance_id = (
                 self.game_state.ability_instance_sources.get(ability_instance_id)
                 if ability_instance_id is not None
@@ -5148,8 +5586,16 @@ class CardTracker:
                     and self._should_log_ability_text(source_obj, ability_text)
                 ):
                     dedupe_key = (ability_instance_id, int(resolution_grp_id), int(source_instance_id))
+                    normalized_ability_text = self._normalize_ability_text(ability_text)
+                    resolution_label = f"[{self.card_db.get_card_name(int(source_grp_id))}] - {normalized_ability_text}"
+                    if self._emit_stack_item_status(
+                        ability_instance_id,
+                        "resolved",
+                        resolution_label=resolution_label,
+                    ):
+                        self.game_state.logged_ability_resolutions.add(dedupe_key)
+                        return
                     if dedupe_key not in self.game_state.logged_ability_resolutions:
-                        normalized_ability_text = self._normalize_ability_text(ability_text)
                         prior_text = self.game_state.ability_instance_action_texts.get(ability_instance_id)
                         if prior_text == normalized_ability_text:
                             self.game_state.logged_ability_resolutions.add(dedupe_key)
@@ -5195,6 +5641,64 @@ class CardTracker:
             return
 
         self._log_unhandled_annotation(annotation, game_objects_by_id=game_objects_by_id)
+
+    def _handle_modified_life(
+        self,
+        affected_ids: List[int],
+        annotation: Dict[str, Any],
+        game_objects_by_id: Dict[int, Dict[str, Any]],
+        *,
+        life_total_seats_in_payload: Set[int],
+    ) -> None:
+        """Handle life deltas when the payload does not include that player's new life total."""
+        details = annotation.get("details", [])
+        diff = None
+        for detail in details if isinstance(details, list) else []:
+            if detail.get("key") in ("life", "amount"):
+                values = detail.get("valueInt32", [])
+                if isinstance(values, list) and values:
+                    diff = values[0]
+                elif isinstance(values, int):
+                    diff = values
+                break
+        if diff is None:
+            return
+
+        affector_id = annotation.get("affectorId")
+        source_instance_id = (
+            self.game_state.ability_instance_sources.get(int(affector_id))
+            if affector_id is not None
+            else None
+        )
+        source_obj = self._lookup_object(source_instance_id, game_objects_by_id) if source_instance_id is not None else {}
+        if not source_obj and affector_id is not None:
+            source_obj = self._lookup_object(int(affector_id), game_objects_by_id)
+        source_seat = source_obj.get("controllerSeatId")
+        if source_seat is None:
+            source_seat = source_obj.get("ownerSeatId")
+
+        for raw_seat_id in affected_ids:
+            seat_id = self._normalize_seat_id(raw_seat_id)
+            if seat_id not in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+                continue
+            if seat_id in life_total_seats_in_payload:
+                continue
+            old_life = (
+                self.game_state.player_life
+                if seat_id == self.game_state.player_seat_id
+                else self.game_state.opponent_life
+            )
+            new_life = int(old_life) + int(diff)
+            if seat_id == self.game_state.player_seat_id:
+                self.game_state.player_life = new_life
+            else:
+                self.game_state.opponent_life = new_life
+            self._emit_life_change(
+                int(seat_id),
+                int(diff),
+                new_life,
+                source_seat_override=source_seat,
+            )
 
     def _format_card_type(self, card_types: List[str]) -> str:
         """Format card types for display."""
@@ -5661,6 +6165,23 @@ class CardTracker:
                 f"      Cards: {cards_played} played, {stats['cards_drawn']} drawn, "
                 f"{stats['cards_discarded']} discarded, {stats['cards_milled']} milled, {stats['cards_exiled']} exiled"
             )
+            stack_stats = self.game_state.stack_stats[int(seat_id)]
+            self._print_line(
+                f"      Stack: {stack_stats['put_on_stack']} put on stack, {stack_stats['resolved']} resolved, "
+                f"{stack_stats['countered']} countered, {stack_stats['fizzled']} left unresolved"
+            )
+
+    def _starting_hand_heading(self) -> str:
+        """Return the end-summary heading for the kept opening hand."""
+        if not self.game_state.starting_hand:
+            return "Starting Hand (Not Captured)"
+        card_count = len(self.game_state.starting_hand)
+        card_word = "Card" if card_count == 1 else "Cards"
+        heading = f"Starting Hand ({card_count} {card_word}"
+        if self.game_state.mulligan_count > 0:
+            heading += f" - After {self.game_state.mulligan_count} mulligan(s)"
+        heading += ")"
+        return heading
 
     def _display_combat_summary(self):
         """Display a summary of combat after it ends."""
@@ -5727,42 +6248,39 @@ class CardTracker:
             except Exception:
                 pass
 
-        match_type_display = "Best-of-3" if self.game_state.match_type == "best_of_3" else "Best-of-1"
-        game_num_display = f" (Game {self.game_state.game_number})" if self.game_state.match_type == "best_of_3" else ""
-        
-        self._print_line("\n" + "="*75)
-        self._print_summary_heading("Game Ended", "turn")
-        self._print_line("="*75)
-
         # Calculate game time
+        duration_display = "Unknown"
         if self.game_state.game_start_time and self.game_state.game_end_time:
             duration = self.game_state.game_end_time - self.game_state.game_start_time
             minutes = int(duration.total_seconds() // 60)
             seconds = int(duration.total_seconds() % 60)
-            self._print_line(f"\nGame Duration: {minutes}m {seconds}s")
-
-        # Winner - MAKE THIS VERY PROMINENT
-        self._print_line("\n" + "="*75)
+            duration_display = f"{minutes}m {seconds}s"
         
         outcome, reason = self._resolve_game_outcome()
-        if outcome == "win":
-            self._print_summary_heading("You Won This Game", "land")
-            self._print_line(f"   ({reason})")
-        elif outcome == "loss":
-            self._print_summary_heading("You Lost This Game", "damage")
-            self._print_line(f"   ({reason})")
-        else:
-            self._print_summary_heading("Game Ended", "turn")
-            self._print_line(f"   ({reason})")
-            if self.game_state.winner_seat is None:
-                self._print_line("   (Result unclear — possible concede or disconnect)")
-
         self._record_session_outcome(outcome)
-        self._print_event(f"Session: {self._session_stats_line()}", "turn")
-        
+
+        if outcome == "win":
+            result_line = "GAME ENDED - YOU WON"
+            result_style = "land"
+        elif outcome == "loss":
+            result_line = "GAME ENDED - YOU LOST"
+            result_style = "damage"
+        else:
+            result_line = "GAME ENDED - RESULT UNKNOWN"
+            result_style = "turn"
+
+        self._print_line("\n" + "="*75)
+        self._print_line(result_line, result_style)
+        self._print_line(f"Win / Loss Reason: {reason}")
+        if outcome == "unknown" and self.game_state.winner_seat is None:
+            self._print_line("Result Note: Result unclear — possible concede or disconnect")
+        self._print_line(f"Duration: {duration_display}")
+        self._print_line(f"Session Stats: {self._session_stats_line()}")
+        self._print_line("="*75)
+
         # Show best-of-3 match status if applicable
         if self.game_state.match_type == "best_of_3":
-            self._print_line("\n" + "="*75)
+            self._print_line()
             self._print_summary_heading("Best-of-3 Match Status", "turn")
             self._print_line(f"   Game {self.game_state.game_number} of 3")
             if self.match_games:
@@ -5770,25 +6288,23 @@ class CardTracker:
                 for game in self.match_games:
                     game_winner = "You" if game["winner"] == self.game_state.player_seat_id else "Opponent"
                     self._print_line(f"      Game {game['game_number']}: {game_winner} won")
-            self._print_line("="*75)
-        
-        self._print_line("="*75)
 
-        # Starting hand
+        self._print_line()
+        self._print_summary_heading(self._starting_hand_heading(), "ability")
         if self.game_state.starting_hand:
-            self._print_line()
-            self._print_summary_heading(f"Starting Hand ({self.game_state.initial_hand_size} cards)", "ability")
-            if self.game_state.mulligan_count > 0:
-                self._print_line(f"   (After {self.game_state.mulligan_count} mulligan(s))")
             for card in self.game_state.starting_hand:
-                self._print_line(f"   • {self._refresh_fallback_name_text(card)}")
+                self._print_line(f"   • [{self._refresh_fallback_name_text(card)}]")
+        else:
+            self._print_line("   Not captured. Start the tracker before the mulligan/keep screen to record this.")
 
         # Cards played
         self._print_line()
         self._print_summary_heading("Cards Played", "cast")
         if not self.game_state.player_deck_name:
             self._resolve_player_deck_from_candidates()
-        self._print_line(f"   Your Deck: {self.game_state.player_deck_name or 'Unknown'}")
+        self._print_line(
+            f"   Your Deck: {self.game_state.player_deck_name or 'Unknown (not found in Arena metadata)'}"
+        )
         if self.game_state.player_deck_total_cards:
             self._print_line(f"   Your deck total: {self.game_state.player_deck_total_cards}")
         elif self.game_state.player_seat_id in self.game_state.observed_starting_deck_total_by_seat:

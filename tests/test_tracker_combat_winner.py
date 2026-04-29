@@ -517,6 +517,107 @@ def test_resolution_start_logs_hidden_ability_text_for_source_card(capsys):
     assert "You: [Cool but Rude] - Whenever you discard a card, this Class deals 2 damage to each opponent." in out
 
 
+def test_process_game_events_orders_activated_ability_before_discard_cost(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 10
+    tracker.game_state.active_player = 2
+    tracker.game_state.last_player_turn_number = 9
+    tracker.card_db.names[1001] = "Iron-Shield Elf"
+    tracker.card_db.names[1002] = "Watery Grave"
+    tracker.card_db.ability_texts[(1001, 152701)] = (
+        "Discard a card: This creature gains indestructible until end of turn. Tap it."
+    )
+
+    data = {
+        "gameObjects": [
+            {"instanceId": 332, "grpId": 1001, "ownerSeatId": 1, "controllerSeatId": 1},
+            {"instanceId": 362, "grpId": 1002, "ownerSeatId": 1, "controllerSeatId": 1},
+        ],
+        "annotations": [
+            {
+                "affectorId": 361,
+                "affectedIds": [362],
+                "type": ["AnnotationType_ZoneTransfer"],
+                "details": [{"key": "category", "valueString": ["Discard"]}],
+            },
+            {"affectorId": 332, "affectedIds": [361], "type": ["AnnotationType_AbilityInstanceCreated"]},
+            {
+                "affectorId": 1,
+                "affectedIds": [361],
+                "type": ["AnnotationType_UserActionTaken"],
+                "details": [{"key": "abilityGrpId", "valueInt32": [152701]}],
+            },
+        ],
+    }
+
+    tracker._process_game_events(data)
+    out = capsys.readouterr().out
+
+    ability_idx = out.index("[Iron-Shield Elf] - Discard a card")
+    discard_idx = out.index("[Watery Grave] was discarded")
+    assert ability_idx < discard_idx
+
+
+def test_game_over_modified_life_annotation_records_final_life_loss(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.player_life = 14
+    tracker.game_state.opponent_life = 3
+    tracker.game_state.turn_number = 10
+    tracker.game_state.active_player = 2
+    tracker.game_state.last_player_turn_number = 9
+    tracker.card_db.names[95039] = "Monument to Endurance"
+    tracker.card_db.ability_texts[(95039, 176655)] = "Each opponent loses 3 life."
+    tracker.game_state.object_snapshots[304] = {
+        "instanceId": 304,
+        "grpId": 95039,
+        "ownerSeatId": 1,
+        "controllerSeatId": 1,
+        "cardTypes": ["CardType_Artifact"],
+    }
+    tracker.game_state.ability_instance_sources[365] = 304
+
+    tracker._handle_event(
+        {
+            "type": "game_state",
+            "data": {
+                "players": [
+                    {"systemSeatNumber": 1, "lifeTotal": 14},
+                    {"systemSeatNumber": 2, "status": "PlayerStatus_PendingLoss"},
+                ],
+                "diffDeletedInstanceIds": [365],
+                "annotations": [
+                    {
+                        "affectorId": 365,
+                        "affectedIds": [365],
+                        "type": ["AnnotationType_ResolutionStart"],
+                        "details": [{"key": "grpid", "valueInt32": [176655]}],
+                    },
+                    {
+                        "affectorId": 365,
+                        "affectedIds": [2],
+                        "type": ["AnnotationType_ModifiedLife"],
+                        "details": [{"key": "life", "valueInt32": [-3]}],
+                    },
+                    {"affectorId": 304, "affectedIds": [365], "type": ["AnnotationType_AbilityInstanceDeleted"]},
+                ],
+            },
+        }
+    )
+    out = capsys.readouterr().out
+
+    assert "You: [Monument to Endurance] - Each opponent loses 3 life." in out
+    assert "Opponent: lost 3 life (now 0)" in out
+    assert tracker.game_state.opponent_life == 0
+    assert tracker.game_state.match_stats[1]["total_damage"] == 3
+    assert tracker._resolve_game_outcome() == ("win", "Opponent reached 0 life")
+
+
 def test_resolution_start_skips_duplicate_text_when_user_action_already_logged(capsys):
     tracker = make_tracker()
     tracker.game_state.player_seat_id = 1
@@ -561,7 +662,8 @@ def test_resolution_start_skips_duplicate_text_when_user_action_already_logged(c
     )
     out = capsys.readouterr().out
 
-    assert out.count("[Cool but Rude] - {1}{R}: Level 2") == 1
+    assert "[Cool but Rude] - {1}{R}: Level 2" in out
+    assert "Stack: [Cool but Rude] - {1}{R}: Level 2 [resolved]" not in out
 
 
 def test_user_action_taken_skips_land_mana_ability_text(capsys):
@@ -823,11 +925,11 @@ def test_cast_spell_uses_snapshot_when_gameobjects_diff_omits_spell(capsys):
 
     tracker._process_annotation(annotation, [])
     first = capsys.readouterr().out
-    assert first == ""
+    assert "[0:00] Opponent: cast [Card1700 (Instant)]" in first
 
     tracker._process_annotation(resolve_annotation, [])
     out = capsys.readouterr().out
-    assert "[0:00] Opponent: cast [Card1700 (Instant)]" in out
+    assert "cast [Card1700 (Instant)]" not in out
     assert 700 in tracker.game_state.seen_instance_ids
     assert len(tracker.opponent_cards) == 1
 
@@ -960,14 +1062,14 @@ def test_pending_instant_cast_flushes_before_noncombat_damage_during_combat(caps
     ]
 
     tracker._process_annotation(cast_annotation, game_objects)
-    assert capsys.readouterr().out == ""
+    cast_out = capsys.readouterr().out
+    assert "[0:00] You: cast [Card2000 (Instant)]" in cast_out
 
     tracker._process_annotation(damage_annotation, game_objects)
     out = capsys.readouterr().out
 
-    cast_idx = out.index("[0:00] You: cast [Card2000 (Instant)]")
-    damage_idx = out.index("[0:00] [Card3000] (opponent's) took 2 damage")
-    assert cast_idx < damage_idx
+    assert "cast [Card2000 (Instant)]" not in out
+    assert "[0:00] [Card3000] (opponent's) took 2 damage" in out
     assert "Combat:" not in out
 
 
@@ -1006,7 +1108,8 @@ def test_destroy_from_spell_affector_flushes_pending_cast_first(capsys):
         },
         game_objects,
     )
-    assert capsys.readouterr().out == ""
+    cast_out = capsys.readouterr().out
+    assert "[0:00] You: cast [Card2000 (Instant)]" in cast_out
 
     tracker._process_annotation(
         {
@@ -1019,9 +1122,8 @@ def test_destroy_from_spell_affector_flushes_pending_cast_first(capsys):
     )
     out = capsys.readouterr().out
 
-    cast_idx = out.index("[0:00] You: cast [Card2000 (Instant)]")
-    destroy_idx = out.index("[0:00] Opponent: [Card3000] was destroyed")
-    assert cast_idx < destroy_idx
+    assert "cast [Card2000 (Instant)]" not in out
+    assert "[0:00] Opponent: [Card3000] was destroyed" in out
 
 
 def test_cast_and_resolve_with_object_id_change_logs_once(capsys):
@@ -1063,13 +1165,14 @@ def test_cast_and_resolve_with_object_id_change_logs_once(capsys):
             }
         ],
     )
-    assert capsys.readouterr().out == ""
+    cast_out = capsys.readouterr().out
+    assert cast_out.count("cast [Card1802 (Sorcery)]") == 1
 
     tracker._process_annotation(
         {
-            "type": ["AnnotationType_ZoneTransfer"],
+            "type": ["AnnotationType_ResolutionStart"],
             "affectedIds": [801],
-            "details": [{"key": "category", "valueString": ["Resolve"]}],
+            "details": [{"key": "grpid", "valueInt32": [1802]}],
         },
         [
             {
@@ -1083,8 +1186,111 @@ def test_cast_and_resolve_with_object_id_change_logs_once(capsys):
     )
     out = capsys.readouterr().out
 
-    assert out.count("cast [Card1802 (Sorcery)]") == 1
+    assert "Stack: [Card1802 (Sorcery)] [resolved]" not in out
     assert 801 in tracker.game_state.seen_instance_ids
+
+
+def test_countered_spell_marks_stack_item_countered(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 7
+    tracker.game_state.active_player = 1
+    tracker.game_state.last_turn_announced = 7
+    tracker.game_state.last_player_turn_number = 7
+
+    game_objects = [
+        {
+            "instanceId": 810,
+            "grpId": 1810,
+            "ownerSeatId": 1,
+            "controllerSeatId": 1,
+            "cardTypes": ["CardType_Instant"],
+        }
+    ]
+
+    tracker._process_annotation(
+        {
+            "type": ["AnnotationType_ZoneTransfer"],
+            "affectedIds": [810],
+            "details": [{"key": "category", "valueString": ["CastSpell"]}],
+        },
+        game_objects,
+    )
+    capsys.readouterr()
+
+    tracker._process_annotation(
+        {
+            "type": ["AnnotationType_ZoneTransfer"],
+            "affectedIds": [810],
+            "details": [{"key": "category", "valueString": ["Countered"]}],
+        },
+        game_objects,
+    )
+    out = capsys.readouterr().out
+
+    assert "\t[0:00] Stack: [Card1810 (Instant)] [countered]" in out
+    assert tracker.game_state.stack_stats[1]["put_on_stack"] == 1
+    assert tracker.game_state.stack_stats[1]["countered"] == 1
+
+
+def test_nested_stack_item_prints_bracketed_resolved_status(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 7
+    tracker.game_state.active_player = 1
+    tracker.game_state.last_turn_announced = 7
+    tracker.game_state.last_player_turn_number = 7
+
+    tracker._register_stack_item(
+        811,
+        seat_id=1,
+        label="[Original Spell]",
+        kind="spell",
+        turn_override=7,
+    )
+    tracker._register_stack_item(
+        812,
+        seat_id=2,
+        label="[Response Spell]",
+        kind="spell",
+        turn_override=7,
+    )
+    capsys.readouterr()
+
+    tracker._emit_stack_item_status(812, "resolved")
+    out = capsys.readouterr().out
+
+    assert "\t[0:00] Stack: [Response Spell] [resolved]" in out
+    assert tracker.game_state.stack_stats[2]["resolved"] == 1
+
+
+def test_deleted_pending_stack_item_is_reported_as_unresolved(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 7
+    tracker.game_state.active_player = 1
+    tracker.game_state.last_turn_announced = 7
+    tracker.game_state.last_player_turn_number = 7
+
+    tracker._register_stack_item(
+        811,
+        seat_id=1,
+        label="[Card1811 (Instant)]",
+        kind="spell",
+        turn_override=7,
+    )
+
+    tracker._reconcile_deleted_stack_items([811])
+    out = capsys.readouterr().out
+
+    assert "\t[0:00] Stack: [Card1811 (Instant)] [left stack without resolving - inferred]" in out
+    assert tracker.game_state.stack_stats[1]["fizzled"] == 1
 
 
 def test_destroy_event_uses_current_turn_not_card_owner_last_turn(capsys):
@@ -2012,6 +2218,14 @@ def test_summary_includes_mulligan_and_exile_totals(capsys):
     tracker.game_state.format_str = "Standard Best-of-1"
     tracker.game_state.player_deck_name = "Izzet Artifacts (Carlo TMNT)"
     tracker.game_state.mulligan_count = 2
+    tracker.game_state.starting_hand = ["Island", "Mountain", "Lightning Strike", "Steam Vents", "Opt"]
+    tracker.game_state.starting_hand_events = [
+        CardEvent("Island", "player", card_type_category="Land"),
+        CardEvent("Mountain", "player", card_type_category="Land"),
+        CardEvent("Lightning Strike", "player", card_type_category="Instant"),
+        CardEvent("Steam Vents", "player", card_type_category="Land"),
+        CardEvent("Opt", "player", card_type_category="Instant"),
+    ]
     tracker.game_state.player_cards_exiled = 3
     tracker.game_state.player_cards_exiled_by_opponent = 2
     tracker.game_state.opponent_cards_exiled_by_player = 4
@@ -2019,6 +2233,8 @@ def test_summary_includes_mulligan_and_exile_totals(capsys):
     tracker._print_game_summary()
     out = capsys.readouterr().out
 
+    assert "STARTING HAND (5 CARDS - AFTER 2 MULLIGAN(S))" in out
+    assert "• [Lightning Strike]" in out
     assert "Your Deck: Izzet Artifacts (Carlo TMNT)" in out
     assert "Mulligans: 2" in out
     assert "CARDS EXILED" in out
@@ -2483,6 +2699,24 @@ def test_game_summary_persists_normalized_sqlite_analytics(capsys, tmp_path):
     tracker.game_state.player_deck_name = "Dimir Tests"
     tracker.game_state.player_deck_id = "deck-123"
     tracker.game_state.player_deck_total_cards = 60
+    tracker.game_state.starting_hand = [
+        "Restless Reef",
+        "Likeness Looter",
+        "Darkslick Shores",
+        "Swamp",
+        "Torch the Tower",
+        "Island",
+        "Island",
+    ]
+    tracker.game_state.starting_hand_events = [
+        CardEvent("Restless Reef", "player", card_type_category="Land"),
+        CardEvent("Likeness Looter", "player", card_type_category="Creature"),
+        CardEvent("Darkslick Shores", "player", card_type_category="Land"),
+        CardEvent("Swamp", "player", card_type_category="Land"),
+        CardEvent("Torch the Tower", "player", card_type_category="Instant"),
+        CardEvent("Island", "player", card_type_category="Land"),
+        CardEvent("Island", "player", card_type_category="Land"),
+    ]
     tracker.game_state.observed_starting_deck_total_by_seat = {1: 60, 2: 60}
     tracker.game_state.match_stats[1].update(
         {
@@ -2545,6 +2779,20 @@ def test_game_summary_persists_normalized_sqlite_analytics(capsys, tmp_path):
                 "SELECT display_name, played_count FROM game_card_summary"
             ).fetchall()
         }
+        opening_hand = conn.execute(
+            """
+            SELECT display_name, hand_position, copy_number
+            FROM game_opening_hand_cards
+            ORDER BY hand_position
+            """
+        ).fetchall()
+        opening_meta = conn.execute(
+            """
+            SELECT opening_hand_size, mulligans
+            FROM participants
+            WHERE role = 'player'
+            """
+        ).fetchone()
         session = conn.execute(
             "SELECT games_played, wins, losses FROM tracker_sessions WHERE id = ?",
             ("test-session",),
@@ -2559,6 +2807,9 @@ def test_game_summary_persists_normalized_sqlite_analytics(capsys, tmp_path):
     assert cards["Restless Reef (Land)"] == 2
     assert cards["Likeness Looter (Creature 1/1)"] == 1
     assert cards["Dreadwing Scavenger (Creature 2/2)"] == 1
+    assert opening_meta == (7, 0)
+    assert opening_hand[0] == ("Restless Reef", 1, 1)
+    assert opening_hand[-1] == ("Island", 7, 2)
     assert session == (1, 1, 0)
     assert console_rows > 0
 
