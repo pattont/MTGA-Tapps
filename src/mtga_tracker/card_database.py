@@ -224,6 +224,37 @@ class CardDatabase:
         text = ability_texts.get(int(ability_grp_id))
         return text.strip() if isinstance(text, str) and text.strip() else None
 
+    def get_ability_text(self, ability_grp_id: int) -> Optional[str]:
+        """Return localized ability text by abilityGrpId, independent of source card."""
+        import sqlite3
+
+        if ability_grp_id is None:
+            return None
+        db_path = self._resolve_mtga_db_path()
+        if not db_path:
+            return None
+        try:
+            conn = sqlite3.connect(str(db_path))
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT l."Loc"
+                FROM "Abilities" a
+                JOIN "Localizations_enUS" l ON a."TextId" = l."LocId"
+                WHERE a."Id" = ?
+                ORDER BY l."Formatted" DESC
+                LIMIT 1
+                """,
+                (int(ability_grp_id),),
+            )
+            row = cur.fetchone()
+            conn.close()
+            if row and row[0]:
+                return str(row[0]).strip()
+        except Exception:
+            return None
+        return None
+
     def get_card_name(self, grp_id: int) -> str:
         """Get the card name for a given MTGA grpId.
 
