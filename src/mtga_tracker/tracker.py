@@ -3,8 +3,8 @@
 Tracks cards played by the player and opponents.
 """
 
-import re
 import json
+import re
 import sqlite3
 import sys
 import time
@@ -16,7 +16,13 @@ from .card_database import CardDatabase
 from .deck_llm import identify_deck, is_deck_llm_enabled, diagnose as deck_llm_diagnose
 from .paths import DATA_DIR
 from .analytics import AnalyticsStore, SessionSnapshot
+from .analytics_persistence import persist_card_summary, persist_commanders, persist_opening_hand
 from .annotations import AnnotationDetails
+from .opening_hand import (
+    game_objects_by_instance,
+    state_has_opening_hand_zone,
+    visible_opening_hand_snapshots,
+)
 from .rendering import ANSI_RESET, ANSI_STYLES, apply_style, display_path_without_username, should_use_colors
 from .state import CardEvent, GameState
 
@@ -228,45 +234,6 @@ class CardTracker:
             self.game_state.opponent_seat_id,
         )
 
-    @staticmethod
-    def _analytics_card_base_name(display_name: str) -> str:
-        """Strip display-only type/P-T suffixes from summary card names."""
-        return re.sub(r"\s+\([^()]*\)$", "", str(display_name or "")).strip()
-
-    @staticmethod
-    def _analytics_card_power_toughness(display_name: str) -> tuple:
-        """Best-effort parse of creature power/toughness from display names."""
-        match = re.search(r"\((?:[^()]*)\s+(-?\d+|\*)/(-?\d+|\*)\)$", str(display_name or ""))
-        if not match:
-            return None, None
-        return match.group(1), match.group(2)
-
-    def _upsert_card(
-        self,
-        conn: sqlite3.Connection,
-        display_name: str,
-        type_category: Optional[str] = None,
-    ) -> Optional[int]:
-        """Upsert a card dimension row and return its id."""
-        base_name = self._analytics_card_base_name(display_name)
-        if not base_name:
-            return None
-        power, toughness = self._analytics_card_power_toughness(display_name)
-        now = datetime.now().isoformat()
-        conn.execute(
-            """
-            INSERT INTO cards (name, primary_type, power, toughness, first_seen_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(name) DO UPDATE SET
-                primary_type = COALESCE(excluded.primary_type, cards.primary_type),
-                power = COALESCE(excluded.power, cards.power),
-                toughness = COALESCE(excluded.toughness, cards.toughness)
-            """,
-            (base_name, type_category, power, toughness, now),
-        )
-        row = conn.execute("SELECT id FROM cards WHERE name = ?", (base_name,)).fetchone()
-        return int(row[0]) if row else None
-
     def _participant_snapshot(self, game_id: str, role: str, seat_id: Optional[int]) -> Dict[str, Any]:
         """Return current participant metadata for summary persistence."""
         is_player = role == "player"
@@ -365,119 +332,6 @@ class CardTracker:
                 )
         except sqlite3.Error:
             return
-
-    def _persist_card_summary(
-        self,
-        conn: sqlite3.Connection,
-        game_id: str,
-        participant_id: str,
-        events: List[CardEvent],
-    ) -> None:
-        """Persist played-card counts by participant."""
-        counts: Dict[str, Dict[str, Any]] = {}
-        for event in events:
-            display_name = self._refresh_fallback_name_text(event.card_name)
-            if display_name not in counts:
-                counts[display_name] = {
-                    "played_count": 0,
-                    "type_category": event.card_type_category,
-                }
-            counts[display_name]["played_count"] += 1
-            if event.card_type_category and event.card_type_category != "Other":
-                counts[display_name]["type_category"] = event.card_type_category
-
-        for display_name, data in counts.items():
-            type_category = data.get("type_category")
-            card_id = self._upsert_card(conn, display_name, type_category)
-            conn.execute(
-                """
-                INSERT INTO game_card_summary (
-                    game_id,
-                    participant_id,
-                    card_id,
-                    display_name,
-                    type_category,
-                    played_count
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(game_id, participant_id, display_name) DO UPDATE SET
-                    card_id = excluded.card_id,
-                    type_category = excluded.type_category,
-                    played_count = excluded.played_count
-                """,
-                (
-                    game_id,
-                    participant_id,
-                    card_id,
-                    display_name,
-                    type_category,
-                    int(data["played_count"]),
-                ),
-            )
-
-    def _persist_opening_hand(
-        self,
-        conn: sqlite3.Connection,
-        game_id: str,
-        participant_id: str,
-    ) -> None:
-        """Persist the player's kept opening hand as one row per card slot."""
-        conn.execute(
-            "DELETE FROM game_opening_hand_cards WHERE game_id = ? AND participant_id = ?",
-            (game_id, participant_id),
-        )
-        copy_counts: Dict[str, int] = {}
-        source_events = self.game_state.starting_hand_events
-        if not source_events and self.game_state.starting_hand:
-            source_events = [
-                CardEvent(card, "player", card_type_category=None)
-                for card in self.game_state.starting_hand
-            ]
-        for index, event in enumerate(source_events, start=1):
-            display_name = self._refresh_fallback_name_text(event.card_name)
-            if not display_name:
-                continue
-            copy_counts[display_name] = copy_counts.get(display_name, 0) + 1
-            type_category = event.card_type_category
-            card_id = self._upsert_card(conn, display_name, type_category)
-            conn.execute(
-                """
-                INSERT INTO game_opening_hand_cards (
-                    game_id,
-                    participant_id,
-                    card_id,
-                    display_name,
-                    type_category,
-                    hand_position,
-                    copy_number
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    game_id,
-                    participant_id,
-                    card_id,
-                    display_name,
-                    type_category,
-                    index,
-                    copy_counts[display_name],
-                ),
-            )
-
-    def _persist_commanders(self, conn: sqlite3.Connection, participant_id: str, names: List[str]) -> None:
-        """Persist commander/card-role data when available."""
-        for name in names:
-            display_name = self._refresh_fallback_name_text(name)
-            card_id = self._upsert_card(conn, display_name)
-            conn.execute(
-                """
-                INSERT INTO participant_commanders (participant_id, card_id, card_name)
-                VALUES (?, ?, ?)
-                ON CONFLICT(participant_id, card_name) DO UPDATE SET
-                    card_id = excluded.card_id
-                """,
-                (participant_id, card_id, display_name),
-            )
 
     def _persist_participant_stats(
         self,
@@ -787,11 +641,40 @@ class CardTracker:
             self.game_state.opponent_seat_id,
             len(self.opponent_cards),
         )
-        self._persist_card_summary(conn, game_id, player_participant_id, self.player_cards)
-        self._persist_card_summary(conn, game_id, opponent_participant_id, self.opponent_cards)
-        self._persist_opening_hand(conn, game_id, player_participant_id)
-        self._persist_commanders(conn, player_participant_id, self.game_state.player_commanders)
-        self._persist_commanders(conn, opponent_participant_id, self.game_state.opponent_commanders)
+        persist_card_summary(
+            conn,
+            game_id,
+            player_participant_id,
+            self.player_cards,
+            refresh_display_name=self._refresh_fallback_name_text,
+        )
+        persist_card_summary(
+            conn,
+            game_id,
+            opponent_participant_id,
+            self.opponent_cards,
+            refresh_display_name=self._refresh_fallback_name_text,
+        )
+        persist_opening_hand(
+            conn,
+            game_id,
+            player_participant_id,
+            starting_hand_events=self.game_state.starting_hand_events,
+            starting_hand=self.game_state.starting_hand,
+            refresh_display_name=self._refresh_fallback_name_text,
+        )
+        persist_commanders(
+            conn,
+            player_participant_id,
+            self.game_state.player_commanders,
+            refresh_display_name=self._refresh_fallback_name_text,
+        )
+        persist_commanders(
+            conn,
+            opponent_participant_id,
+            self.game_state.opponent_commanders,
+            refresh_display_name=self._refresh_fallback_name_text,
+        )
         self._refresh_session_participant_stats(conn)
 
     def _persist_game_analytics(self, outcome: str, reason: str) -> None:
@@ -1734,7 +1617,7 @@ class CardTracker:
         unknown_part = f", ?:{self.session_unknown}" if self.session_unknown else ""
         return (
             f"W:{self.session_wins} L:{self.session_losses}{unknown_part} | "
-            f"Games:{self.session_games_played} | WR:{win_rate:.1f}% | Runtime:{self._session_runtime_str()}"
+            f"Games:{self.session_games_played} | WR:{win_rate:.1f}% | Play Time:{self._session_runtime_str()}"
         )
 
     @staticmethod
@@ -3334,17 +3217,6 @@ class CardTracker:
             return True
         return False
 
-    @staticmethod
-    def _game_objects_by_instance(game_objects: Any) -> Optional[Dict[int, Dict[str, Any]]]:
-        """Index game objects by instance id, or return None for invalid payloads."""
-        if not isinstance(game_objects, list):
-            return None
-        return {
-            obj.get("instanceId"): obj
-            for obj in game_objects
-            if isinstance(obj, dict) and obj.get("instanceId") is not None
-        }
-
     def _finalize_starting_hand(
         self,
         hand_cards: List[str],
@@ -3424,50 +3296,13 @@ class CardTracker:
         objects_by_id: Dict[int, Dict[str, Any]],
     ) -> tuple[List[Dict[str, Any]], List[int]]:
         """Return fully visible hand snapshots and their owner seats."""
-        visible_hands: List[Dict[str, Any]] = []
-        hand_zone_owners: List[int] = []
-
-        zones = data.get("zones", [])
-        if not isinstance(zones, list) or not zones:
-            return visible_hands, hand_zone_owners
-        for zone in zones:
-            if not isinstance(zone, dict) or zone.get("type") != "ZoneType_Hand":
-                continue
-            owner_seat = zone.get("ownerSeatId")
-            obj_ids = zone.get("objectInstanceIds", [])
-            if owner_seat is None or not obj_ids:
-                continue
-            hand_zone_owners.append(owner_seat)
-
-            hand_cards: List[str] = []
-            hand_grp_ids: List[int] = []
-            hand_events: List[CardEvent] = []
-            for obj_id in obj_ids:
-                obj = objects_by_id.get(obj_id) or self.game_state.object_snapshots.get(obj_id) or {}
-                grp_id = obj.get("grpId")
-                if grp_id:
-                    card_name = self.card_db.get_card_name(grp_id)
-                    card_types = obj.get("cardTypes", []) if isinstance(obj, dict) else []
-                    type_category = self._get_card_type_category(card_types)
-                    hand_cards.append(card_name)
-                    hand_grp_ids.append(int(grp_id))
-                    hand_events.append(CardEvent(card_name, "player", card_type_category=type_category))
-
-            if not hand_grp_ids:
-                continue
-            # Partial gameState diffs can omit most hand objects; don't finalize from incomplete snapshots.
-            if len(hand_grp_ids) < len(obj_ids):
-                continue
-
-            visible_hands.append(
-                {
-                    "owner_seat": owner_seat,
-                    "hand_cards": hand_cards,
-                    "hand_grp_ids": hand_grp_ids,
-                    "hand_events": hand_events,
-                }
-            )
-        return visible_hands, hand_zone_owners
+        return visible_opening_hand_snapshots(
+            data,
+            objects_by_id,
+            object_snapshots=self.game_state.object_snapshots,
+            card_name_for_grp_id=self.card_db.get_card_name,
+            type_category_for_card_types=self._get_card_type_category,
+        )
 
     def _choose_visible_opening_hand(self, visible_hands: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Select the player hand from fully visible opening hand snapshots."""
@@ -3562,7 +3397,7 @@ class CardTracker:
         if self._opening_hand_capture_blocked():
             return
 
-        objects_by_id = self._game_objects_by_instance(data.get("gameObjects", []))
+        objects_by_id = game_objects_by_instance(data.get("gameObjects", []))
         if objects_by_id is None:
             return
         if self._has_gameplay_annotations(data):
@@ -3731,20 +3566,7 @@ class CardTracker:
                 turn_info = data.get("turnInfo", {})
                 if turn_info.get("turnNumber", 0) == 1:
                     return True
-            if self._state_has_opening_hand_zone(data):
-                return True
-        return False
-
-    @staticmethod
-    def _state_has_opening_hand_zone(data: Dict[str, Any]) -> bool:
-        """Return True when a state payload includes a non-empty hand zone."""
-        zones = data.get("zones", [])
-        if not isinstance(zones, list):
-            return False
-        for zone in zones:
-            if not isinstance(zone, dict):
-                continue
-            if zone.get("type") == "ZoneType_Hand" and zone.get("objectInstanceIds"):
+            if state_has_opening_hand_zone(data):
                 return True
         return False
 
@@ -3891,7 +3713,7 @@ class CardTracker:
             if explicit_start_required:
                 break
 
-            if self._state_has_opening_hand_zone(data) and not self.game_state.in_match:
+            if state_has_opening_hand_zone(data) and not self.game_state.in_match:
                 if self.waiting_for_next_game:
                     self.waiting_for_next_game = False
                     self._print_new_game_detected()
@@ -6682,7 +6504,7 @@ class CardTracker:
         if self.session_unknown:
             self._print_line(f"   Unknown Results: {self.session_unknown}")
         self._print_line(f"   Win Rate: {win_rate:.1f}%")
-        self._print_line(f"   Runtime: {self._session_runtime_str()}")
+        self._print_line(f"   Play Time: {self._session_runtime_str()}")
         self._print_line(f"   Total Mulligans: {self.session_total_mulligans}")
         self._print_line(f"   Total Cards Played: {self.session_player_cards_played}")
         self._print_line(f"   Total Opponent Cards Played: {self.session_opponent_cards_played}")
