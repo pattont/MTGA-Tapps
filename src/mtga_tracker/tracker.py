@@ -54,6 +54,7 @@ class CardTracker:
         self.session_player_cards_played = 0
         self.session_opponent_cards_played = 0
         self.session_total_mulligans = 0
+        self.session_game_runtime_seconds = 0
         self.session_id = datetime.now().strftime("%Y%m%dT%H%M%S%f")
         self._session_stats_recorded_this_game = False
         self._deck_candidates: Dict[str, Dict[str, Any]] = {}
@@ -95,6 +96,7 @@ class CardTracker:
             wins=self.session_wins,
             losses=self.session_losses,
             unknown_results=self.session_unknown,
+            runtime_seconds=self._session_play_runtime_seconds(),
         )
 
     def _analytics_store(self) -> AnalyticsStore:
@@ -154,7 +156,7 @@ class CardTracker:
 
     def _upsert_session_row(self, conn: sqlite3.Connection) -> None:
         """Persist current session counters."""
-        runtime_seconds = max(0, int((datetime.now() - self.session_start_time).total_seconds()))
+        runtime_seconds = self._session_play_runtime_seconds()
         conn.execute(
             """
             INSERT INTO tracker_sessions (
@@ -1703,9 +1705,27 @@ class CardTracker:
             return f"{hours}:{minutes:02d}:{seconds:02d}"
         return f"{minutes}:{seconds:02d}"
 
+    def _current_game_duration_seconds(self, *, now: Optional[datetime] = None) -> int:
+        """Return elapsed seconds for the current game only."""
+        if self.game_state.game_start_time is None:
+            return 0
+        end_time = self.game_state.game_end_time or now or datetime.now()
+        return max(0, int((end_time - self.game_state.game_start_time).total_seconds()))
+
+    def _session_play_runtime_seconds(self) -> int:
+        """Return active game time, excluding tracker idle/lobby uptime."""
+        total = max(0, int(self.session_game_runtime_seconds))
+        if (
+            self.game_state.in_match
+            and not self.game_state.match_complete
+            and not self._session_stats_recorded_this_game
+        ):
+            total += self._current_game_duration_seconds()
+        return max(0, int(total))
+
     def _session_runtime_str(self) -> str:
-        """Return tracker runtime string."""
-        return self._format_duration((datetime.now() - self.session_start_time).total_seconds())
+        """Return active session game time."""
+        return self._format_duration(self._session_play_runtime_seconds())
 
     def _session_stats_line(self) -> str:
         """Return one-line session W/L stats."""
@@ -2728,8 +2748,9 @@ class CardTracker:
         if self.game_state.player_seat_id is None:
             self._try_detect_player_seat(line)
 
-        # Check for game start
-        if not self.game_state.in_match:
+        # Check for game start. A completed game keeps in_match=True until the next
+        # game's first state packet arrives, so completed matches must still listen.
+        if not self.game_state.in_match or self.game_state.match_complete:
             self._check_game_start(line)
 
         # Check for game end (always call when in_match so ConcedeReq can set winner even after MatchCompleted)
@@ -3307,6 +3328,8 @@ class CardTracker:
         if self.game_state.opening_hand_capture_closed:
             return True
         if self.game_state.turn_number and self.game_state.turn_number > 1:
+            if self._finalize_cached_opening_hand_if_safe():
+                return True
             self.game_state.opening_hand_capture_closed = True
             return True
         return False
@@ -3376,6 +3399,24 @@ class CardTracker:
                 for card_name in hand_cards
             ]
         self._finalize_starting_hand(hand_cards, hand_grp_ids, hand_events)
+
+    def _finalize_cached_opening_hand_if_safe(self) -> bool:
+        """Finalize a cached seven-card opening hand once gameplay proves it was kept."""
+        if self.game_state.starting_hand or self.game_state.opening_hand_capture_closed:
+            return False
+        hand_cards = self.game_state._hand_before_mulligan
+        hand_grp_ids = self.game_state._hand_before_mulligan_ids
+        hand_events = self.game_state._hand_before_mulligan_events
+        if len(hand_cards) != 7 or len(hand_grp_ids) != 7:
+            return False
+        if not self.game_state.opening_keep_confirmed and (
+            self.game_state.explicit_mulligan_count > 0 or self.game_state.mulligan_count > 0
+        ):
+            return False
+        if len(hand_events) != len(hand_cards):
+            hand_events = [CardEvent(card_name, "player") for card_name in hand_cards]
+        self._finalize_starting_hand(hand_cards, hand_grp_ids, hand_events)
+        return True
 
     def _visible_opening_hand_snapshots(
         self,
@@ -3525,7 +3566,8 @@ class CardTracker:
         if objects_by_id is None:
             return
         if self._has_gameplay_annotations(data):
-            self.game_state.opening_hand_capture_closed = True
+            if not self._finalize_cached_opening_hand_if_safe():
+                self.game_state.opening_hand_capture_closed = True
             return
 
         visible_hands, hand_zone_owners = self._visible_opening_hand_snapshots(data, objects_by_id)
@@ -3651,10 +3693,6 @@ class CardTracker:
 
     def _line_indicates_live_mulligan_start(self, line: str) -> bool:
         """Return True when a mulligan marker line represents a live game start, not a game-over payload."""
-        for payload in self._extract_client_gre_payloads(line):
-            data = payload.get("data", {})
-            if isinstance(data, dict) and data.get("type") == "ClientMessageType_MulliganResp":
-                return True
         line_lower = line.lower()
         if not (
             "mulligantype" in line_lower
@@ -3693,11 +3731,21 @@ class CardTracker:
                 turn_info = data.get("turnInfo", {})
                 if turn_info.get("turnNumber", 0) == 1:
                     return True
-            elif "zones" in data:
-                zones = data.get("zones", [])
-                for zone in zones:
-                    if zone.get("type") == "ZoneType_Hand" and zone.get("objectInstanceIds"):
-                        return True
+            if self._state_has_opening_hand_zone(data):
+                return True
+        return False
+
+    @staticmethod
+    def _state_has_opening_hand_zone(data: Dict[str, Any]) -> bool:
+        """Return True when a state payload includes a non-empty hand zone."""
+        zones = data.get("zones", [])
+        if not isinstance(zones, list):
+            return False
+        for zone in zones:
+            if not isinstance(zone, dict):
+                continue
+            if zone.get("type") == "ZoneType_Hand" and zone.get("objectInstanceIds"):
+                return True
         return False
 
     def _release_waiting_for_next_game_if_detected(self, line: str) -> None:
@@ -3750,8 +3798,18 @@ class CardTracker:
         self.game_state.game_start_time = datetime.now()
         self.game_state.in_match = True
         self.game_state.match_complete = False
+        self.game_state.starting_hand = []
+        self.game_state.starting_hand_events = []
+        self.game_state.initial_hand_size = 7
+        self.game_state.mulligan_count = 0
+        self.game_state._hand_before_mulligan = []
+        self.game_state._hand_before_mulligan_ids = []
+        self.game_state._hand_before_mulligan_events = []
         self.game_state.opening_hand_capture_closed = False
         self.game_state.opening_mulligan_prompt_seen = opening_mulligan_prompt_seen
+        self.game_state.explicit_mulligan_count = 0
+        self.game_state.opening_keep_confirmed = False
+        self.game_state.opening_select_n_ids = []
         self.player_cards = []
         self.opponent_cards = []
         self._session_stats_recorded_this_game = False
@@ -3773,6 +3831,7 @@ class CardTracker:
                 self._remove_deleted_instances(event_data.get("diffDeletedInstanceIds"))
                 self._snapshot_game_objects(event_data.get("gameObjects", []))
                 self._update_commanders_from_game_state(event_data)
+                self._capture_opening_hand(event_data)
 
     def _print_game_started_banner(self, *, verbose: bool) -> None:
         """Print the game-start banner."""
@@ -3795,6 +3854,8 @@ class CardTracker:
             return
 
         if self.game_state.in_match and self.game_state.match_complete:
+            if not (self._line_indicates_live_mulligan_start(line) or self._line_has_state_game_start(line)):
+                return
             self._prepare_next_match_game()
 
         if self.game_state.in_match:
@@ -3829,6 +3890,15 @@ class CardTracker:
 
             if explicit_start_required:
                 break
+
+            if self._state_has_opening_hand_zone(data) and not self.game_state.in_match:
+                if self.waiting_for_next_game:
+                    self.waiting_for_next_game = False
+                    self._print_new_game_detected()
+                self._reset_new_game_tracking(opening_mulligan_prompt_seen=self._has_mulligan_prompt_in_state(data))
+                self._capture_opening_hand(data)
+                self._print_game_started_banner(verbose=False)
+                return
 
             self._capture_opening_hand(data)
 
@@ -6394,6 +6464,7 @@ class CardTracker:
             return
 
         self.session_games_played += 1
+        self.session_game_runtime_seconds += self._current_game_duration_seconds()
         if outcome == "win":
             self.session_wins += 1
         elif outcome == "loss":
