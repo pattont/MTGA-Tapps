@@ -107,6 +107,7 @@ def make_tracker() -> CardTracker:
     tracker.session_player_cards_played = 0
     tracker.session_opponent_cards_played = 0
     tracker.session_total_mulligans = 0
+    tracker.session_game_runtime_seconds = 0
     tracker.session_id = "test-session"
     tracker._session_stats_recorded_this_game = False
     tracker._deck_candidates = {}
@@ -721,6 +722,30 @@ def test_session_stats_record_once_per_game():
     assert tracker.session_games_played == 2
     assert tracker.session_wins == 1
     assert tracker.session_losses == 1
+
+
+def test_session_runtime_counts_completed_game_time_not_tracker_uptime():
+    tracker = make_tracker()
+    tracker.session_start_time = datetime(2026, 5, 7, 8, 0, 0)
+    tracker.game_state.game_start_time = datetime(2026, 5, 7, 20, 0, 0)
+    tracker.game_state.game_end_time = datetime(2026, 5, 7, 20, 7, 30)
+
+    tracker._record_session_outcome("win")
+
+    assert tracker._session_runtime_str() == "7:30"
+    assert "Runtime:7:30" in tracker._session_stats_line()
+
+
+def test_session_runtime_includes_active_game_time_only():
+    tracker = make_tracker()
+    tracker.session_game_runtime_seconds = 450
+    tracker.game_state.in_match = True
+    tracker.game_state.match_complete = False
+    tracker.game_state.game_start_time = datetime.now()
+    tracker.game_state.game_end_time = None
+
+    assert tracker._session_play_runtime_seconds() >= 450
+    assert tracker._session_play_runtime_seconds() < 455
 
 
 def test_print_summary_uses_session_totals_not_last_game_state(capsys):
@@ -2944,6 +2969,7 @@ def test_game_summary_prints_match_stats_section(capsys):
 def test_game_summary_persists_normalized_sqlite_analytics(capsys, tmp_path):
     tracker = make_tracker()
     tracker._console_db_path = tmp_path / "analytics.sqlite3"
+    tracker.session_start_time = datetime(2026, 4, 20, 12, 0, 0)
     tracker.game_state.player_seat_id = 1
     tracker.game_state.opponent_seat_id = 2
     tracker.game_state.first_player_seat = 1
@@ -3053,7 +3079,7 @@ def test_game_summary_persists_normalized_sqlite_analytics(capsys, tmp_path):
             """
         ).fetchone()
         session = conn.execute(
-            "SELECT games_played, wins, losses FROM tracker_sessions WHERE id = ?",
+            "SELECT games_played, wins, losses, runtime_seconds FROM tracker_sessions WHERE id = ?",
             ("test-session",),
         ).fetchone()
         console_rows = conn.execute("SELECT COUNT(*) FROM console_logs").fetchone()[0]
@@ -3069,7 +3095,7 @@ def test_game_summary_persists_normalized_sqlite_analytics(capsys, tmp_path):
     assert opening_meta == (7, 0)
     assert opening_hand[0] == ("Restless Reef", 1, 1)
     assert opening_hand[-1] == ("Island", 7, 2)
-    assert session == (1, 1, 0)
+    assert session == (1, 1, 0, 450)
     assert console_rows > 0
 
 
@@ -3194,6 +3220,44 @@ def test_process_line_handles_later_gre_turn_message_in_same_line(capsys):
 
     assert tracker.game_state.in_match is True
     assert tracker.game_state.game_start_time is not None
+
+
+def test_check_game_start_after_completed_match_resets_for_next_opening_hand(capsys):
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.match_complete = True
+    tracker.game_state.starting_hand = ["Old Card"]
+    tracker.game_state.opening_hand_capture_closed = True
+
+    line = json.dumps(
+        {
+            "gameStateMessage": {
+                "zones": [
+                    {
+                        "type": "ZoneType_Hand",
+                        "ownerSeatId": 1,
+                        "objectInstanceIds": [31, 32, 33, 34, 35, 36, 37],
+                    }
+                ],
+                "gameObjects": [
+                    {"instanceId": 31, "grpId": 2001},
+                    {"instanceId": 32, "grpId": 2002},
+                    {"instanceId": 33, "grpId": 2003},
+                    {"instanceId": 34, "grpId": 2004},
+                    {"instanceId": 35, "grpId": 2005},
+                    {"instanceId": 36, "grpId": 2006},
+                    {"instanceId": 37, "grpId": 2007},
+                ],
+            }
+        }
+    )
+
+    tracker._check_game_start(line)
+
+    assert tracker.game_state.in_match is True
+    assert tracker.game_state.match_complete is False
+    assert tracker.game_state.starting_hand == []
+    assert len(tracker.game_state._hand_before_mulligan_ids) == 7
 
 
 def test_update_game_state_ignores_command_zone_emblems(capsys):
@@ -3365,6 +3429,97 @@ def test_accept_hand_finalizes_cached_seven_card_mulligan_prompt_hand():
     assert tracker.game_state.initial_hand_size == 7
     assert tracker.game_state.mulligan_count == 0
     assert tracker.game_state.opening_hand_capture_closed is True
+
+
+def test_capture_opening_hand_finalizes_cached_seven_when_gameplay_starts_without_keep_response():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.opening_mulligan_prompt_seen = True
+
+    prompt_data = {
+        "turnInfo": {"activePlayer": 1, "decisionPlayer": 1},
+        "players": [
+            {"systemSeatNumber": 1, "pendingMessageType": "ClientMessageType_MulliganResp"},
+            {"systemSeatNumber": 2, "pendingMessageType": "ClientMessageType_MulliganResp"},
+        ],
+        "zones": [
+            {"type": "ZoneType_Hand", "ownerSeatId": 1, "objectInstanceIds": [31, 32, 33, 34, 35, 36, 37]},
+            {"type": "ZoneType_Hand", "ownerSeatId": 2, "objectInstanceIds": [41, 42, 43, 44, 45, 46, 47]},
+        ],
+        "gameObjects": [
+            {"instanceId": 31, "grpId": 2001},
+            {"instanceId": 32, "grpId": 2002},
+            {"instanceId": 33, "grpId": 2003},
+            {"instanceId": 34, "grpId": 2004},
+            {"instanceId": 35, "grpId": 2005},
+            {"instanceId": 36, "grpId": 2006},
+            {"instanceId": 37, "grpId": 2007},
+        ],
+    }
+    tracker._capture_opening_hand(prompt_data)
+
+    assert tracker.game_state.starting_hand == []
+    assert len(tracker.game_state._hand_before_mulligan_ids) == 7
+
+    gameplay_data = {
+        "turnInfo": {"turnNumber": 1, "activePlayer": 1},
+        "zones": [
+            {"type": "ZoneType_Hand", "ownerSeatId": 1, "objectInstanceIds": [31, 32, 33, 34, 35, 36]},
+        ],
+        "gameObjects": [
+            {"instanceId": 31, "grpId": 2001},
+            {"instanceId": 32, "grpId": 2002},
+            {"instanceId": 33, "grpId": 2003},
+            {"instanceId": 34, "grpId": 2004},
+            {"instanceId": 35, "grpId": 2005},
+            {"instanceId": 36, "grpId": 2006},
+            {"instanceId": 999, "grpId": 2010},
+        ],
+        "annotations": [
+            {
+                "type": ["AnnotationType_ZoneTransfer"],
+                "affectedIds": [999],
+                "details": [{"key": "category", "valueString": ["PlayLand"]}],
+            }
+        ],
+    }
+    tracker._capture_opening_hand(gameplay_data)
+
+    assert len(tracker.game_state.starting_hand) == 7
+    assert tracker.game_state.initial_hand_size == 7
+    assert tracker.game_state.mulligan_count == 0
+    assert tracker.game_state.opening_hand_capture_closed is True
+
+
+def test_reset_new_game_tracking_clears_previous_opening_hand_state():
+    tracker = make_tracker()
+    tracker.game_state.starting_hand = ["Old Card"]
+    tracker.game_state.starting_hand_events = [CardEvent("Old Card", "player")]
+    tracker.game_state.initial_hand_size = 7
+    tracker.game_state.mulligan_count = 1
+    tracker.game_state._hand_before_mulligan = ["Cached Old Card"]
+    tracker.game_state._hand_before_mulligan_ids = [123]
+    tracker.game_state._hand_before_mulligan_events = [CardEvent("Cached Old Card", "player")]
+    tracker.game_state.opening_hand_capture_closed = True
+    tracker.game_state.opening_keep_confirmed = True
+    tracker.game_state.opening_select_n_ids = [456]
+    tracker.game_state.explicit_mulligan_count = 1
+
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=True)
+
+    assert tracker.game_state.starting_hand == []
+    assert tracker.game_state.starting_hand_events == []
+    assert tracker.game_state.initial_hand_size == 7
+    assert tracker.game_state.mulligan_count == 0
+    assert tracker.game_state._hand_before_mulligan == []
+    assert tracker.game_state._hand_before_mulligan_ids == []
+    assert tracker.game_state._hand_before_mulligan_events == []
+    assert tracker.game_state.opening_hand_capture_closed is False
+    assert tracker.game_state.opening_keep_confirmed is False
+    assert tracker.game_state.opening_select_n_ids == []
+    assert tracker.game_state.explicit_mulligan_count == 0
 
 
 def test_capture_opening_hand_corrects_stale_seat_from_visible_hand():
