@@ -17,6 +17,7 @@ class SessionSnapshot:
     wins: int
     losses: int
     unknown_results: int
+    runtime_seconds: Optional[int] = None
 
 
 class AnalyticsStore:
@@ -325,7 +326,11 @@ class AnalyticsStore:
     ) -> None:
         """Persist current session counters."""
         current_time = now or datetime.now()
-        runtime_seconds = max(0, int((current_time - session.started_at).total_seconds()))
+        runtime_seconds = (
+            max(0, int(session.runtime_seconds))
+            if session.runtime_seconds is not None
+            else max(0, int((current_time - session.started_at).total_seconds()))
+        )
         conn.execute(
             """
             INSERT INTO tracker_sessions (
