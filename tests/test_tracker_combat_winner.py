@@ -733,7 +733,7 @@ def test_session_runtime_counts_completed_game_time_not_tracker_uptime():
     tracker._record_session_outcome("win")
 
     assert tracker._session_runtime_str() == "7:30"
-    assert "Runtime:7:30" in tracker._session_stats_line()
+    assert "Play Time:7:30" in tracker._session_stats_line()
 
 
 def test_session_runtime_includes_active_game_time_only():
