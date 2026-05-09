@@ -64,12 +64,21 @@ class MTGALogParser:
 
         return str(log_path)
 
+    def read_new_entries(self) -> Generator[LogEntry, None, None]:
+        """Read complete log entries from the log file since last read."""
+        yield from self._read_new_entries()
+
     def read_new_lines(self) -> Generator[str, None, None]:
-        """Read new lines from the log file since last read.
+        """Read new complete-entry strings from the log file since last read.
 
         Yields:
-            New lines from the log file.
+            New complete log entries rendered as strings.
         """
+        for entry in self._read_new_entries():
+            yield self._entry_to_legacy_line(entry)
+
+    def _read_new_entries(self) -> Generator[LogEntry, None, None]:
+        """Read complete entries from the log file since last read."""
         try:
             with open(self.log_path, "r", encoding="utf-8", errors="ignore") as f:
                 # If file was truncated or rotated (e.g. new match, MTGA restart), start from beginning
@@ -81,10 +90,10 @@ class MTGALogParser:
 
                 for raw_line in f:
                     for entry in self._line_buffer.push_line(raw_line):
-                        yield self._entry_to_legacy_line(entry)
+                        yield entry
 
                 for entry in self._line_buffer.flush():
-                    yield self._entry_to_legacy_line(entry)
+                    yield entry
 
                 # Update position
                 self.last_position = f.tell()
