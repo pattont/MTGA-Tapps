@@ -66,6 +66,8 @@ class CardTracker:
         self._deck_candidates: Dict[str, Dict[str, Any]] = {}
         self._active_deck_candidate_key: Optional[str] = None
         self._metadata_backfilled = False
+        self._format_from_backfill = False
+        self._parsing_backfilled_metadata = False
         self._require_explicit_game_start: bool = False
         self._ansi_reset = ANSI_RESET
         self._ansi_styles: Dict[str, str] = ANSI_STYLES.copy()
@@ -1869,6 +1871,23 @@ class CardTracker:
             return "Standard Best-of-3" if "traditional" in normalized or "bestof3" in normalized else "Standard Best-of-1"
         return raw
 
+    def _set_match_format(self, fmt: str) -> bool:
+        """Apply trusted live match format metadata and infer match length."""
+        if not isinstance(fmt, str) or not fmt:
+            return False
+        updated = self.game_state.format_str != fmt
+        self.game_state.format_str = fmt
+        normalized = self._normalize_match_text(fmt)
+        if "traditional" in normalized or "bestof3" in normalized or normalized in {"constructedbestof3", "bestof3"}:
+            if self.game_state.match_type != "best_of_3":
+                self.game_state.match_type = "best_of_3"
+                updated = True
+        elif "bestof1" in normalized or normalized in {"standard", "ladder", "play", "constructedbestof1", "bestof1"}:
+            if self.game_state.match_type != "best_of_1":
+                self.game_state.match_type = "best_of_1"
+                updated = True
+        return updated
+
     def _seat_stats(self, seat_id: Optional[int]) -> Optional[Dict[str, int]]:
         """Return mutable per-seat stats dict when seat is known."""
         if seat_id not in (1, 2):
@@ -3006,9 +3025,19 @@ class CardTracker:
             else None
         )
         format_attr = candidate.get("format_attr")
-        if isinstance(format_attr, str) and format_attr:
-            if self.game_state.format_str == "Unknown" or candidate.get("trusted_active"):
+        if isinstance(format_attr, str) and format_attr and candidate.get("trusted_active"):
+            format_norm = self._normalize_match_text(format_attr)
+            implies_best_of_three = (
+                "traditional" in format_norm
+                or "bestof3" in format_norm
+                or format_norm in {"constructedbestof3", "bestof3"}
+            )
+            if (
+                not implies_best_of_three
+                and (self.game_state.format_str == "Unknown" or self._format_from_backfill)
+            ):
                 self.game_state.format_str = format_attr
+                self._format_from_backfill = bool(getattr(self, "_parsing_backfilled_metadata", False))
         command_zone_ids = candidate.get("command_zone_ids")
         if isinstance(command_zone_ids, list) and self._candidate_is_brawl(candidate):
             self._set_player_commanders_from_ids(command_zone_ids)
@@ -3070,7 +3099,12 @@ class CardTracker:
         best = ranked[0]
         return self._set_active_deck_from_candidate(best)
 
-    def _backfill_recent_match_metadata(self, max_lines: int = 1200, force: bool = False) -> None:
+    def _backfill_recent_match_metadata(
+        self,
+        max_lines: int = 1200,
+        force: bool = False,
+        trust_match_room_format: bool = True,
+    ) -> None:
         """Scan recent log tail so metadata is available even when starting at EOF."""
         if self._metadata_backfilled and not force:
             return
@@ -3099,12 +3133,26 @@ class CardTracker:
                 slice_start = idx + 1
                 break
         tail = tail[slice_start:]
-        for raw_line in tail:
-            line = raw_line.rstrip("\n")
-            if line:
-                self._parse_match_metadata(line)
+        self._parsing_backfilled_metadata = True
+        try:
+            for raw_line in tail:
+                line = raw_line.rstrip("\n")
+                if line:
+                    self._parse_match_metadata(
+                        line,
+                        from_backfill=True,
+                        trust_match_room_format=trust_match_room_format,
+                    )
+        finally:
+            self._parsing_backfilled_metadata = False
 
-    def _parse_match_metadata(self, line: str) -> None:
+    def _parse_match_metadata(
+        self,
+        line: str,
+        *,
+        from_backfill: bool = False,
+        trust_match_room_format: bool = True,
+    ) -> None:
         """Extract format, players, and deck metadata from log lines."""
         data = self.parser.parse_json_from_line(line)
         if not data:
@@ -3146,15 +3194,15 @@ class CardTracker:
                 or config.get("gameMode")
                 or config.get("format")
             )
-            if isinstance(fmt, str) and fmt:
-                if self.game_state.format_str != fmt:
-                    self.game_state.format_str = fmt
+            if trust_match_room_format and isinstance(fmt, str) and fmt:
+                if self._set_match_format(fmt):
                     format_updated = True
-            elif isinstance(fmt, (int, float)):
+                self._format_from_backfill = from_backfill
+            elif trust_match_room_format and isinstance(fmt, (int, float)):
                 fmt_value = str(fmt)
-                if self.game_state.format_str != fmt_value:
-                    self.game_state.format_str = fmt_value
+                if self._set_match_format(fmt_value):
                     format_updated = True
+                self._format_from_backfill = from_backfill
 
         courses = self._find_nested(data, "Courses")
         deck_updated = self._ingest_course_deck_metadata(courses) if isinstance(courses, list) else False
@@ -3584,39 +3632,54 @@ class CardTracker:
 
     def _prepare_next_match_game(self) -> None:
         """Reset state when another game starts in the same match."""
-        if self._pending_game_summary:
-            self._print_game_summary()
-            self._pending_game_summary = False
-        if self.game_state.match_type == "best_of_1":
-            self.game_state.match_type = "best_of_3"
-            self.game_state.game_number = 2
-        else:
-            self.game_state.game_number += 1
-
-        self.match_games.append({
-            "game_number": self.game_state.game_number - 1,
+        was_best_of_three = self.game_state.match_type == "best_of_3"
+        next_game_number = int(self.game_state.game_number or 1) + 1
+        completed_game = {
+            "game_number": self.game_state.game_number,
             "winner": self.game_state.winner_seat,
             "player_cards": self.player_cards.copy(),
             "opponent_cards": self.opponent_cards.copy(),
             "player_life": self.game_state.player_life,
-            "opponent_life": self.game_state.opponent_life
-        })
+            "opponent_life": self.game_state.opponent_life,
+        }
+        if self._pending_game_summary:
+            self._print_game_summary()
+            self._pending_game_summary = False
+        if not was_best_of_three:
+            return
+
+        self.match_games.append(completed_game)
 
         self._print_line("\n" + "="*75)
-        self._print_line(f"🔄 GAME {self.game_state.game_number} STARTING (Best-of-3 Match)")
+        self._print_line(f"🔄 GAME {next_game_number} STARTING (Best-of-3 Match)")
         self._print_line("="*75 + "\n")
-        match_type = self.game_state.match_type
-        game_number = self.game_state.game_number
         self.game_state.reset()
-        self.game_state.match_type = match_type
-        self.game_state.game_number = game_number
+        self.game_state.match_type = "best_of_3"
+        self.game_state.game_number = next_game_number
         self.player_cards = []
         self.opponent_cards = []
         self._session_stats_recorded_this_game = False
         self._active_deck_candidate_key = None
 
+    def _finish_completed_best_of_one_before_new_start(self) -> None:
+        """Flush a completed BO1 game before processing the next match start."""
+        if self._pending_game_summary:
+            self._print_game_summary()
+            self._pending_game_summary = False
+        else:
+            self.game_state.reset()
+        self.player_cards = []
+        self.opponent_cards = []
+        self._session_stats_recorded_this_game = False
+        self._active_deck_candidate_key = None
+        self._require_explicit_game_start = False
+
     def _reset_new_game_tracking(self, *, opening_mulligan_prompt_seen: bool) -> None:
         """Initialize tracking fields for a newly detected game."""
+        if self._format_from_backfill:
+            self.game_state.format_str = "Unknown"
+            self.game_state.match_type = "best_of_1"
+            self._format_from_backfill = False
         self.game_state.game_start_time = datetime.now()
         self.game_state.in_match = True
         self.game_state.match_complete = False
@@ -3641,7 +3704,7 @@ class CardTracker:
         self.game_state.player_deck_id = None
         self.game_state.player_deck_event_name = None
         self.game_state.player_deck_last_played = None
-        self._backfill_recent_match_metadata(max_lines=1800, force=True)
+        self._backfill_recent_match_metadata(max_lines=1800, force=True, trust_match_room_format=False)
         self._require_explicit_game_start = False
 
     def _hydrate_start_line_state(self, line: str) -> None:
@@ -3678,7 +3741,10 @@ class CardTracker:
         if self.game_state.in_match and self.game_state.match_complete:
             if not (self._line_indicates_live_mulligan_start(line) or self._line_has_state_game_start(line)):
                 return
-            self._prepare_next_match_game()
+            if self.game_state.match_type == "best_of_3":
+                self._prepare_next_match_game()
+            else:
+                self._finish_completed_best_of_one_before_new_start()
 
         if self.game_state.in_match:
             return
