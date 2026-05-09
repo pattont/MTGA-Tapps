@@ -10,6 +10,8 @@ import re
 from pathlib import Path
 from typing import Optional, Generator, Dict, Any, List, Tuple
 
+from .log_entry import LineBuffer, LogEntry
+
 
 class MTGALogParser:
     """Parser for MTGA Player.log files."""
@@ -23,6 +25,7 @@ class MTGALogParser:
         """
         self.log_path = log_path or self._find_log_path()
         self.last_position = 0
+        self._line_buffer = LineBuffer()
 
     @staticmethod
     def _find_log_path() -> str:
@@ -73,61 +76,15 @@ class MTGALogParser:
                 file_size = f.seek(0, 2)
                 if file_size < self.last_position:
                     self.last_position = 0
+                    self._line_buffer.reset()
                 f.seek(self.last_position)
 
-                pending_prefix: Optional[str] = None
-                json_lines: List[str] = []
                 for raw_line in f:
-                    line = raw_line.rstrip("\n")
-                    stripped = line.strip()
+                    for entry in self._line_buffer.push_line(raw_line):
+                        yield self._entry_to_legacy_line(entry)
 
-                    if json_lines:
-                        json_lines.append(line)
-                        parsed, compact = self._try_parse_json_blob(json_lines)
-                        if parsed is None or compact is None:
-                            continue
-                        if pending_prefix:
-                            yield f"{pending_prefix} {compact}"
-                        else:
-                            yield compact
-                        pending_prefix = None
-                        json_lines = []
-                        continue
-
-                    if stripped.startswith("{"):
-                        if pending_prefix is not None:
-                            json_lines = [line]
-                            parsed, compact = self._try_parse_json_blob(json_lines)
-                            if parsed is not None and compact is not None:
-                                yield f"{pending_prefix} {compact}"
-                                pending_prefix = None
-                                json_lines = []
-                            continue
-                        json_lines = [line]
-                        parsed, compact = self._try_parse_json_blob(json_lines)
-                        if parsed is not None and compact is not None:
-                            yield compact
-                            json_lines = []
-                        continue
-
-                    if pending_prefix is not None:
-                        yield pending_prefix
-                        pending_prefix = None
-
-                    if self._looks_like_json_prefix(line):
-                        pending_prefix = line
-                        continue
-
-                    yield line
-
-                if json_lines:
-                    combined = "\n".join(json_lines)
-                    if pending_prefix:
-                        yield f"{pending_prefix} {combined}"
-                    else:
-                        yield combined
-                elif pending_prefix is not None:
-                    yield pending_prefix
+                for entry in self._line_buffer.flush():
+                    yield self._entry_to_legacy_line(entry)
 
                 # Update position
                 self.last_position = f.tell()
@@ -149,6 +106,21 @@ class MTGALogParser:
         if not isinstance(data, dict):
             return None, None
         return data, json.dumps(data, separators=(",", ":"))
+
+    @classmethod
+    def _entry_to_legacy_line(cls, entry: LogEntry) -> str:
+        """Return an entry body in the compact line shape existing callers expect."""
+        lines = entry.body.splitlines()
+        if len(lines) <= 1:
+            return entry.body
+        for index, line in enumerate(lines):
+            if line.strip().startswith("{"):
+                parsed, compact = cls._try_parse_json_blob(lines[index:])
+                if parsed is not None and compact is not None:
+                    prefix = " ".join(part.strip() for part in lines[:index] if part.strip())
+                    return f"{prefix} {compact}".strip()
+                break
+        return entry.body
 
     @staticmethod
     def _looks_like_json_prefix(line: str) -> bool:
