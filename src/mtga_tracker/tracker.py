@@ -2519,51 +2519,29 @@ class CardTracker:
         if not data or not isinstance(data, dict):
             return None
 
-        # Winning team/seat (MTGA may use different keys)
-        for key in ("winningTeamId", "winningteamid", "winnerSeatId", "winnerSeat", "winningSeatId", "winner"):
-            v = self._find_nested(data, key)
-            seat = self._normalize_seat_id(v)
+        latest_result = self._extract_latest_game_result(data)
+        if latest_result is not None:
+            seat = self._normalize_seat_id(
+                latest_result.get("winningTeamId")
+                or latest_result.get("winningteamid")
+                or latest_result.get("winnerSeatId")
+                or latest_result.get("winningSeatId")
+            )
             if seat is not None:
                 return seat
-
-        # Structured results arrays (most reliable in recent MTGA logs)
-        result_entries: List[Dict[str, Any]] = []
-        game_info = self._find_nested(data, "gameInfo")
-        if isinstance(game_info, dict) and isinstance(game_info.get("results"), list):
-            result_entries.extend([r for r in game_info["results"] if isinstance(r, dict)])
-        final_match = self._find_nested(data, "finalMatchResult")
-        if isinstance(final_match, dict) and isinstance(final_match.get("resultList"), list):
-            result_entries.extend([r for r in final_match["resultList"] if isinstance(r, dict)])
-        intermission = self._find_nested(data, "intermissionReq")
-        if isinstance(intermission, dict) and isinstance(intermission.get("result"), dict):
-            result_entries.append(intermission["result"])
-
-        if result_entries:
-            scored_winners: List[tuple] = []
-            for result in result_entries:
-                result_type = str(result.get("result", ""))
-                if "WinLoss" not in result_type:
-                    continue
-                seat = self._normalize_seat_id(
-                    result.get("winningTeamId")
-                    or result.get("winningteamid")
-                    or result.get("winnerSeatId")
-                    or result.get("winningSeatId")
-                )
-                if seat is None:
-                    continue
-                scope = str(result.get("scope", ""))
-                scope_priority = 0 if "MatchScope_Game" in scope else 1 if "MatchScope_Match" in scope else 2
-                scored_winners.append((scope_priority, seat))
-            if scored_winners:
-                scored_winners.sort(key=lambda item: item[0])
-                return scored_winners[0][1]
 
         # Loser seat → winner is the other seat
         loser = self._find_nested(data, "loserSeatId") or self._find_nested(data, "loserSeat")
         loser_seat = self._normalize_seat_id(loser)
         if loser_seat is not None:
             return 2 if loser_seat == 1 else 1
+
+        # Winning team/seat fallback (MTGA may use different keys outside structured result arrays).
+        for key in ("winningTeamId", "winningteamid", "winnerSeatId", "winnerSeat", "winningSeatId", "winner"):
+            v = self._find_nested(data, key)
+            seat = self._normalize_seat_id(v)
+            if seat is not None:
+                return seat
 
         # Fallback: infer from player statuses (PendingLoss/InGame) at game over.
         players = self._find_nested(data, "players")
@@ -2602,6 +2580,40 @@ class CardTracker:
                 return 2 if pending_loss_teams[0] == 1 else 1
 
         return None
+
+    def _extract_latest_game_result(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Return the newest structured WinLoss game result, falling back to match scope."""
+        result_groups: List[List[Dict[str, Any]]] = []
+        game_info = self._find_nested(data, "gameInfo")
+        if isinstance(game_info, dict) and isinstance(game_info.get("results"), list):
+            result_groups.append([r for r in game_info["results"] if isinstance(r, dict)])
+        final_match = self._find_nested(data, "finalMatchResult")
+        if isinstance(final_match, dict) and isinstance(final_match.get("resultList"), list):
+            result_groups.append([r for r in final_match["resultList"] if isinstance(r, dict)])
+        intermission = self._find_nested(data, "intermissionReq")
+        if isinstance(intermission, dict) and isinstance(intermission.get("result"), dict):
+            result_groups.append([intermission["result"]])
+
+        match_scope_fallback: Optional[Dict[str, Any]] = None
+        for results in result_groups:
+            for result in reversed(results):
+                result_type = str(result.get("result", ""))
+                if "WinLoss" not in result_type:
+                    continue
+                seat = self._normalize_seat_id(
+                    result.get("winningTeamId")
+                    or result.get("winningteamid")
+                    or result.get("winnerSeatId")
+                    or result.get("winningSeatId")
+                )
+                if seat is None:
+                    continue
+                scope = str(result.get("scope", ""))
+                if "MatchScope_Game" in scope:
+                    return result
+                if match_scope_fallback is None and "MatchScope_Match" in scope:
+                    match_scope_fallback = result
+        return match_scope_fallback
 
     def _check_if_mid_game(self):
         """Only set mid-game if the tail of the log shows an active game and no match-end (lobby = match already ended)."""
