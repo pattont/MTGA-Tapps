@@ -163,6 +163,58 @@ def test_check_game_end_parses_structured_result_winner():
     assert tracker._pending_game_summary is True
 
 
+def test_winner_parsing_uses_latest_game_scope_result_in_bo3():
+    tracker = make_tracker()
+
+    winner = tracker._try_parse_winner_from_json(
+        {
+            "gameInfo": {
+                "results": [
+                    {"scope": "MatchScope_Game", "result": "ResultType_WinLoss", "winningTeamId": 1},
+                    {"scope": "MatchScope_Game", "result": "ResultType_WinLoss", "winningTeamId": 2},
+                    {"scope": "MatchScope_Game", "result": "ResultType_WinLoss", "winningTeamId": 1},
+                    {"scope": "MatchScope_Match", "result": "ResultType_WinLoss", "winningTeamId": 1},
+                ]
+            }
+        }
+    )
+
+    assert winner == 1
+
+
+def test_winner_parsing_game_scope_beats_stale_nested_winner_key():
+    tracker = make_tracker()
+
+    winner = tracker._try_parse_winner_from_json(
+        {
+            "winningTeamId": 1,
+            "gameInfo": {
+                "results": [
+                    {"scope": "MatchScope_Game", "result": "ResultType_WinLoss", "winningTeamId": 2}
+                ]
+            },
+        }
+    )
+
+    assert winner == 2
+
+
+def test_winner_parsing_match_scope_is_only_fallback():
+    tracker = make_tracker()
+
+    winner = tracker._try_parse_winner_from_json(
+        {
+            "finalMatchResult": {
+                "resultList": [
+                    {"scope": "MatchScope_Match", "result": "ResultType_WinLoss", "winningTeamId": 2}
+                ]
+            }
+        }
+    )
+
+    assert winner == 2
+
+
 def test_process_line_records_explicit_mulligan_response():
     tracker = make_tracker()
 
