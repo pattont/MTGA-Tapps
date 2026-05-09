@@ -8,8 +8,11 @@ before higher-level parsing runs.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 import re
 from typing import List, Optional
+
+from .log_timestamp import extract_entry_timestamp
 
 
 @dataclass(frozen=True)
@@ -19,6 +22,7 @@ class LogEntry:
     header: str
     body: str
     first_line: str
+    timestamp: Optional[datetime] = None
 
 
 class LineBuffer:
@@ -47,7 +51,14 @@ class LineBuffer:
 
         self._saw_entry = True
         if self._is_single_line_header(header, line):
-            completed.append(LogEntry(header=header, body=line, first_line=line))
+            completed.append(
+                LogEntry(
+                    header=header,
+                    body=line,
+                    first_line=line,
+                    timestamp=extract_entry_timestamp(line),
+                )
+            )
             self._header = None
             self._lines = []
         else:
@@ -73,6 +84,7 @@ class LineBuffer:
             header=self._header or "",
             body="\n".join(self._lines),
             first_line=first_line,
+            timestamp=extract_entry_timestamp("\n".join(self._lines)),
         )
         self._header = None
         self._lines = []

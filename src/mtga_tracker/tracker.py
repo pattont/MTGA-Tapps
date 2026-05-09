@@ -68,6 +68,7 @@ class CardTracker:
         self._metadata_backfilled = False
         self._format_from_backfill = False
         self._parsing_backfilled_metadata = False
+        self._current_event_time: Optional[datetime] = None
         self._require_explicit_game_start: bool = False
         self._ansi_reset = ANSI_RESET
         self._ansi_styles: Dict[str, str] = ANSI_STYLES.copy()
@@ -79,6 +80,10 @@ class CardTracker:
     def _should_use_colors(self) -> bool:
         """Return True when ANSI colors should be emitted."""
         return should_use_colors()
+
+    def _now(self) -> datetime:
+        """Return the current source event time when available."""
+        return getattr(self, "_current_event_time", None) or datetime.now()
 
     def _style(self, text: str, style: Optional[str] = None) -> str:
         """Apply ANSI style if enabled."""
@@ -123,7 +128,7 @@ class CardTracker:
     def _record_console_log(self, text: str, style: Optional[str] = None) -> None:
         """Best-effort persistent storage for terminal output."""
         try:
-            now = datetime.now()
+            now = self._now()
             elapsed_seconds = None
             if self.game_state.game_start_time is not None:
                 elapsed_seconds = max(0, int((now - self.game_state.game_start_time).total_seconds()))
@@ -291,7 +296,8 @@ class CardTracker:
             game_id = self._current_game_id()
             actor_role, seat_id = self._infer_event_actor(text)
             participant_id = self._participant_id_for_seat(game_id, seat_id)
-            elapsed_seconds = max(0, int((datetime.now() - self.game_state.game_start_time).total_seconds()))
+            now = self._now()
+            elapsed_seconds = max(0, int((now - self.game_state.game_start_time).total_seconds()))
             with conn:
                 conn.execute(
                     """
@@ -318,7 +324,7 @@ class CardTracker:
                         self.session_id,
                         match_id,
                         game_id,
-                        datetime.now().isoformat(),
+                        now.isoformat(),
                         elapsed_seconds,
                         self.game_state.turn_number or None,
                         self.game_state.phase or None,
@@ -762,7 +768,7 @@ class CardTracker:
         """Return elapsed match time prefix for event lines."""
         if self.game_state.game_start_time is None:
             return "[0:00] "
-        elapsed = max(0, int((datetime.now() - self.game_state.game_start_time).total_seconds()))
+        elapsed = max(0, int((self._now() - self.game_state.game_start_time).total_seconds()))
         return f"[{self._format_duration(elapsed)}] "
 
     @staticmethod
@@ -2620,50 +2626,61 @@ class CardTracker:
 
     def _process_new_events(self):
         """Process new events from the log file."""
-        for line in self.parser.read_new_lines():
-            self._process_line(line)
+        read_entries = getattr(self.parser, "read_new_entries", None)
+        if callable(read_entries):
+            for entry in read_entries():
+                line = self.parser._entry_to_legacy_line(entry)
+                self._process_line(line, timestamp=getattr(entry, "timestamp", None))
+        else:
+            for line in self.parser.read_new_lines():
+                self._process_line(line)
         # Defer game summary until after all lines processed (so ConcedeReq can set winner before we print)
         if self.game_state.match_complete and self._pending_game_summary:
             self._print_game_summary()
             self._pending_game_summary = False
 
-    def _process_line(self, line: str):
+    def _process_line(self, line: str, timestamp: Optional[datetime] = None):
         """Process a single line from the log file.
 
         Args:
             line: A line from the MTGA log file.
         """
-        # Always try to pick up match metadata (format, player name) from any line
-        self._parse_match_metadata(line)
-        for message in self._extract_gre_messages(line):
-            self._capture_casting_time_options_requests(message)
-        for payload in self._extract_client_gre_payloads(line):
-            self._handle_client_gre_payload(payload)
+        prior_event_time = getattr(self, "_current_event_time", None)
+        self._current_event_time = timestamp
+        try:
+            # Always try to pick up match metadata (format, player name) from any line
+            self._parse_match_metadata(line)
+            for message in self._extract_gre_messages(line):
+                self._capture_casting_time_options_requests(message)
+            for payload in self._extract_client_gre_payloads(line):
+                self._handle_client_gre_payload(payload)
 
-        # Skip processing if we're waiting for the next game (launched mid-game)
-        if self.waiting_for_next_game:
-            # Only check for new game start, ignore everything else
-            self._check_game_start(line)
-            return
-        
-        # Try to detect player seat if not yet detected
-        if self.game_state.player_seat_id is None:
-            self._try_detect_player_seat(line)
+            # Skip processing if we're waiting for the next game (launched mid-game)
+            if self.waiting_for_next_game:
+                # Only check for new game start, ignore everything else
+                self._check_game_start(line)
+                return
 
-        # Check for game start. A completed game keeps in_match=True until the next
-        # game's first state packet arrives, so completed matches must still listen.
-        if not self.game_state.in_match or self.game_state.match_complete:
-            self._check_game_start(line)
+            # Try to detect player seat if not yet detected
+            if self.game_state.player_seat_id is None:
+                self._try_detect_player_seat(line)
 
-        # Check for game end (always call when in_match so ConcedeReq can set winner even after MatchCompleted)
-        if self.game_state.in_match:
-            self._check_game_end(line)
-            # Recent MTGA logs include DeclareBlockersReq; use it for snapshots only (not definitive block output).
-            self._process_blocker_requests_from_line(line)
+            # Check for game start. A completed game keeps in_match=True until the next
+            # game's first state packet arrives, so completed matches must still listen.
+            if not self.game_state.in_match or self.game_state.match_complete:
+                self._check_game_start(line)
 
-        # Look for card-related events in GRE message order.
-        for event in self._extract_game_state_events(line):
-            self._handle_event(event)
+            # Check for game end (always call when in_match so ConcedeReq can set winner even after MatchCompleted)
+            if self.game_state.in_match:
+                self._check_game_end(line)
+                # Recent MTGA logs include DeclareBlockersReq; use it for snapshots only (not definitive block output).
+                self._process_blocker_requests_from_line(line)
+
+            # Look for card-related events in GRE message order.
+            for event in self._extract_game_state_events(line):
+                self._handle_event(event)
+        finally:
+            self._current_event_time = prior_event_time
 
     def _try_detect_player_seat(self, line: str):
         """Set player/opponent by hand visibility only: we can see our cards (grpId known), we cannot see opponent's."""
@@ -3680,7 +3697,7 @@ class CardTracker:
             self.game_state.format_str = "Unknown"
             self.game_state.match_type = "best_of_1"
             self._format_from_backfill = False
-        self.game_state.game_start_time = datetime.now()
+        self.game_state.game_start_time = self._now()
         self.game_state.in_match = True
         self.game_state.match_complete = False
         self.game_state.starting_hand = []
@@ -3795,7 +3812,7 @@ class CardTracker:
         if self.game_state.match_complete:
             return False
         self.game_state.match_complete = True
-        self.game_state.game_end_time = datetime.now()
+        self.game_state.game_end_time = self._now()
         self._pending_game_summary = True
         return True
 
@@ -3870,7 +3887,7 @@ class CardTracker:
         if not json_data or self.game_state.match_complete:
             return False
         self.game_state.match_complete = True
-        self.game_state.game_end_time = datetime.now()
+        self.game_state.game_end_time = self._now()
         winner_team = self._find_nested(json_data, "winningTeamId") or self._find_nested(json_data, "winningteamid")
         if winner_team is not None and winner_team in (1, 2):
             self._set_winner_seat(winner_team, reason="game_complete_pattern:winner_team", priority=4)
@@ -3884,7 +3901,7 @@ class CardTracker:
         if self.game_state.match_complete:
             return False
         self.game_state.match_complete = True
-        self.game_state.game_end_time = datetime.now()
+        self.game_state.game_end_time = self._now()
         json_data = self.parser.parse_json_from_line(line)
         if json_data:
             winner_team = self._find_nested(json_data, "winningTeamId") or self._find_nested(json_data, "winningteamid")
