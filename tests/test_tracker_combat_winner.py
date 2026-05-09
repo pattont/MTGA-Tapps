@@ -113,6 +113,8 @@ def make_tracker() -> CardTracker:
     tracker._deck_candidates = {}
     tracker._active_deck_candidate_key = None
     tracker._metadata_backfilled = False
+    tracker._format_from_backfill = False
+    tracker._parsing_backfilled_metadata = False
     tracker._require_explicit_game_start = False
     tracker.use_colors = False
     tracker._ansi_styles = {}
@@ -2291,6 +2293,112 @@ def test_parse_match_metadata_uses_format_hint_to_pick_matching_deck():
     assert tracker.game_state.player_deck_id == "mwm-deck"
 
 
+def test_match_room_traditional_standard_sets_best_of_three_format():
+    tracker = make_tracker()
+    tracker._parse_match_metadata(
+        json.dumps(
+            {
+                "matchGameRoomStateChangedEvent": {
+                    "gameRoomInfo": {"gameRoomConfig": {"eventType": "TraditionalStandard"}}
+                }
+            }
+        )
+    )
+
+    assert tracker.game_state.format_str == "TraditionalStandard"
+    assert tracker.game_state.match_type == "best_of_3"
+    assert tracker._friendly_format_label() == "Standard Best-of-3"
+
+
+def test_game_start_does_not_use_stale_backfilled_traditional_format(tmp_path, capsys):
+    tracker = make_tracker()
+    log_path = tmp_path / "Player.log"
+    tracker.parser.log_path = str(log_path)
+    log_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"gameInfo": {"matchState": "MatchState_GameComplete"}}),
+                json.dumps(
+                    {
+                        "matchGameRoomStateChangedEvent": {
+                            "gameRoomInfo": {
+                                "gameRoomConfig": {
+                                    "eventType": "TraditionalStandard",
+                                    "reservedPlayers": [],
+                                }
+                            }
+                        }
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    tracker._backfill_recent_match_metadata()
+    assert tracker.game_state.match_type == "best_of_3"
+
+    tracker._check_game_start(json.dumps({"gameInfo": {"mulliganType": "MulliganType_London"}}))
+
+    out = capsys.readouterr().out
+    assert tracker.game_state.match_type == "best_of_1"
+    assert tracker.game_state.format_str == "Unknown"
+    assert "Format: Standard Best-of-1" in out
+    assert "Format: Standard Best-of-3" not in out
+
+
+def test_deck_metadata_traditional_standard_does_not_set_match_best_of_three_without_live_format():
+    tracker = make_tracker()
+    tracker._parse_match_metadata(
+        json.dumps(
+            {
+                "Courses": [
+                    {
+                        "InternalEventName": "Play",
+                        "CurrentModule": "CreateMatch",
+                        "CourseDeckSummary": {
+                            "DeckId": "deck-1",
+                            "Name": "Standard Deck",
+                            "Attributes": [{"name": "Format", "value": "TraditionalStandard"}],
+                        },
+                        "CourseDeck": {
+                            "MainDeck": [
+                                {"cardId": 1001, "quantity": 4},
+                                {"cardId": 1002, "quantity": 4},
+                            ],
+                            "CommandZone": [],
+                        },
+                    }
+                ]
+            }
+        )
+    )
+
+    resolved = tracker._resolve_player_deck_from_hand_ids([1001, 1002, 1003, 1004, 1005, 1006, 1007])
+
+    assert resolved is True
+    assert tracker.game_state.player_deck_name == "Standard Deck"
+    assert tracker.game_state.format_str == "Unknown"
+    assert tracker.game_state.match_type == "best_of_1"
+    assert tracker._friendly_format_label() == "Standard Best-of-1"
+
+
+def test_explicit_traditional_standard_deck_event_does_not_set_best_of_three_without_live_format():
+    tracker = make_tracker()
+    tracker._parse_match_metadata(
+        '[UnityCrossThreadLogger]<== EventSetDeckV2 '
+        '{"CourseId":"703c87ae","InternalEventName":"Play","CurrentModule":"CreateMatch",'
+        '"CourseDeckSummary":{"DeckId":"deck-1","Name":"Standard Deck",'
+        '"Attributes":[{"name":"Format","value":"TraditionalStandard"}]},'
+        '"CourseDeck":{"MainDeck":[{"cardId":1001,"quantity":4}],"CommandZone":[]}}'
+    )
+
+    assert tracker.game_state.player_deck_name == "Standard Deck"
+    assert tracker.game_state.format_str == "Unknown"
+    assert tracker.game_state.match_type == "best_of_1"
+    assert tracker._friendly_format_label() == "Standard Best-of-1"
+
+
 def test_parse_match_metadata_sets_player_commander_from_command_zone():
     tracker = make_tracker()
     line = json.dumps(
@@ -3256,6 +3364,8 @@ def test_check_game_start_after_completed_match_resets_for_next_opening_hand(cap
 
     assert tracker.game_state.in_match is True
     assert tracker.game_state.match_complete is False
+    assert tracker.game_state.match_type == "best_of_1"
+    assert tracker.game_state.game_number == 1
     assert tracker.game_state.starting_hand == []
     assert len(tracker.game_state._hand_before_mulligan_ids) == 7
 
