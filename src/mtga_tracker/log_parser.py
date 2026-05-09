@@ -6,11 +6,11 @@ Parses the MTGA Player.log file to extract game events.
 import json
 import os
 import platform
-import re
 from pathlib import Path
 from typing import Optional, Generator, Dict, Any, List, Tuple
 
 from .log_entry import LineBuffer, LogEntry
+from .log_json import parse_json_from_body
 
 
 class MTGALogParser:
@@ -147,17 +147,8 @@ class MTGALogParser:
         Returns:
             Parsed JSON data as a dictionary, or None if no valid JSON found.
         """
-        # Try to find JSON in the line
-        # MTGA logs often have format: [timestamp] message {json...}
-        json_match = re.search(r'\{.*\}', line)
-        if json_match:
-            try:
-                json_str = json_match.group(0)
-                return json.loads(json_str)
-            except json.JSONDecodeError:
-                pass
-
-        return None
+        data = parse_json_from_body(line)
+        return data if isinstance(data, dict) else None
 
     def extract_game_state_events(self, line: str) -> List[Dict[str, Any]]:
         """Extract ordered game-state events from one log line.
