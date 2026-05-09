@@ -87,6 +87,8 @@ class GameState:
         self.explicit_mulligan_count = 0
         self.opening_keep_confirmed = False
         self.opening_select_n_ids: List[int] = []
+        self.submitted_deck_cards: List[int] = []
+        self.submitted_sideboard_cards: List[int] = []
 
         self.instance_roots: Dict[int, int] = {}
         self.pending_spell_roots: Dict[int, Dict[str, Any]] = {}

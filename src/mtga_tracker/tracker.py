@@ -1816,6 +1816,8 @@ class CardTracker:
         payload = payload_event.get("data", {})
         if not isinstance(payload, dict):
             return
+        normalized = payload_event.get("normalized")
+        normalized = normalized if isinstance(normalized, dict) else {}
         payload_type = str(payload.get("type", ""))
 
         if payload_type == "ClientMessageType_CastingTimeOptionsResp":
@@ -1823,15 +1825,27 @@ class CardTracker:
             return
 
         if payload_type == "ClientMessageType_MulliganResp":
-            decision = str((payload.get("mulliganResp") or {}).get("decision", ""))
+            decision = str(
+                normalized.get("decision")
+                or (payload.get("mulliganResp") or {}).get("decision", "")
+            )
             self.game_state.opening_mulligan_prompt_seen = True
-            if decision == "MulliganOption_Mulligan":
+            if decision in {"mulligan", "MulliganOption_Mulligan"}:
                 self.game_state.explicit_mulligan_count += 1
                 self.game_state.opening_keep_confirmed = False
                 self.game_state.opening_select_n_ids = []
-            elif decision == "MulliganOption_AcceptHand":
+            elif decision in {"keep", "MulliganOption_AcceptHand"}:
                 self.game_state.opening_keep_confirmed = True
                 self._finalize_confirmed_opening_hand_candidate()
+            return
+
+        if payload_type == "ClientMessageType_SubmitDeckResp" or normalized.get("type") == "submit_deck_resp":
+            deck_cards = normalized.get("deck_cards")
+            sideboard_cards = normalized.get("sideboard_cards")
+            if isinstance(deck_cards, list):
+                self.game_state.submitted_deck_cards = [int(card) for card in deck_cards]
+            if isinstance(sideboard_cards, list):
+                self.game_state.submitted_sideboard_cards = [int(card) for card in sideboard_cards]
             return
 
         if payload_type != "ClientMessageType_SelectNResp":
@@ -1843,7 +1857,7 @@ class CardTracker:
         if not (self.game_state.opening_keep_confirmed or self.game_state.explicit_mulligan_count > 0):
             return
         select_resp = payload.get("selectNResp") or {}
-        ids = select_resp.get("ids")
+        ids = normalized.get("selected_object_ids") or select_resp.get("selectedObjectIds") or select_resp.get("ids")
         if not isinstance(ids, list):
             return
         parsed_ids: List[int] = []
