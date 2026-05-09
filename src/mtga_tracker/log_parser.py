@@ -11,6 +11,7 @@ from typing import Optional, Generator, Dict, Any, List, Tuple
 
 from .log_entry import LineBuffer, LogEntry
 from .log_json import parse_json_from_body
+from .event_router import EventRouter, RoutedLogEvent
 
 
 class MTGALogParser:
@@ -26,6 +27,11 @@ class MTGALogParser:
         self.log_path = log_path or self._find_log_path()
         self.last_position = 0
         self._line_buffer = LineBuffer()
+        self.event_router = EventRouter()
+
+    def route_entry(self, entry: LogEntry) -> RoutedLogEvent:
+        """Classify a complete log entry and update parser health counters."""
+        return self.event_router.route(entry)
 
     @staticmethod
     def _find_log_path() -> str:

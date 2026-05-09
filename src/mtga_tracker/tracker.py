@@ -764,6 +764,21 @@ class CardTracker:
         except (OSError, TypeError, ValueError):
             return
 
+    def _append_parser_diagnostic_log(self, body: str) -> None:
+        """Best-effort append of unknown parser entries without UI noise."""
+        path = getattr(self, "_diagnostic_text_path", None)
+        if path is None:
+            return
+        try:
+            path = Path(path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            first_line = str(body or "").splitlines()[0] if body else ""
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(f"{datetime.now().isoformat()} Tracker: unknown log entry\n")
+                handle.write(f"entry={first_line[:500]}\n")
+        except (OSError, TypeError, ValueError):
+            return
+
     def _turn_prefix_for_number(self, turn_num: Optional[int]) -> str:
         """Return elapsed match time prefix for event lines."""
         if self.game_state.game_start_time is None:
@@ -2629,6 +2644,9 @@ class CardTracker:
         read_entries = getattr(self.parser, "read_new_entries", None)
         if callable(read_entries):
             for entry in read_entries():
+                routed = self.parser.route_entry(entry) if hasattr(self.parser, "route_entry") else None
+                if routed is not None and getattr(routed, "category", None) == "unknown":
+                    self._append_parser_diagnostic_log(entry.body)
                 line = self.parser._entry_to_legacy_line(entry)
                 self._process_line(line, timestamp=getattr(entry, "timestamp", None))
         else:
