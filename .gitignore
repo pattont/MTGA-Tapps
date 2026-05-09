@@ -52,5 +52,6 @@ Thumbs.db
 data/*.json
 data/*.csv
 data/*.sqlite3
+data/*.sqlite3.backup*
 data/*.sql
 !data/.gitkeep

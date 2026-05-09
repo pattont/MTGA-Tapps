@@ -83,6 +83,9 @@ class DummyCardDB:
     def get_card_ability_text(self, grp_id: int, ability_grp_id: int):
         return self.ability_texts.get((grp_id, ability_grp_id))
 
+    def get_ability_text(self, ability_grp_id: int):
+        return self.ability_texts.get(ability_grp_id)
+
 
 def make_tracker() -> CardTracker:
     """Create tracker instance without heavy constructor dependencies."""
@@ -104,11 +107,14 @@ def make_tracker() -> CardTracker:
     tracker.session_player_cards_played = 0
     tracker.session_opponent_cards_played = 0
     tracker.session_total_mulligans = 0
+    tracker.session_game_runtime_seconds = 0
     tracker.session_id = "test-session"
     tracker._session_stats_recorded_this_game = False
     tracker._deck_candidates = {}
     tracker._active_deck_candidate_key = None
     tracker._metadata_backfilled = False
+    tracker._format_from_backfill = False
+    tracker._parsing_backfilled_metadata = False
     tracker._require_explicit_game_start = False
     tracker.use_colors = False
     tracker._ansi_styles = {}
@@ -720,6 +726,30 @@ def test_session_stats_record_once_per_game():
     assert tracker.session_losses == 1
 
 
+def test_session_runtime_counts_completed_game_time_not_tracker_uptime():
+    tracker = make_tracker()
+    tracker.session_start_time = datetime(2026, 5, 7, 8, 0, 0)
+    tracker.game_state.game_start_time = datetime(2026, 5, 7, 20, 0, 0)
+    tracker.game_state.game_end_time = datetime(2026, 5, 7, 20, 7, 30)
+
+    tracker._record_session_outcome("win")
+
+    assert tracker._session_runtime_str() == "7:30"
+    assert "Play Time:7:30" in tracker._session_stats_line()
+
+
+def test_session_runtime_includes_active_game_time_only():
+    tracker = make_tracker()
+    tracker.session_game_runtime_seconds = 450
+    tracker.game_state.in_match = True
+    tracker.game_state.match_complete = False
+    tracker.game_state.game_start_time = datetime.now()
+    tracker.game_state.game_end_time = None
+
+    assert tracker._session_play_runtime_seconds() >= 450
+    assert tracker._session_play_runtime_seconds() < 455
+
+
 def test_print_summary_uses_session_totals_not_last_game_state(capsys):
     tracker = make_tracker()
     tracker.session_games_played = 6
@@ -1293,6 +1323,124 @@ def test_deleted_pending_stack_item_is_reported_as_unresolved(capsys):
     assert tracker.game_state.stack_stats[1]["fizzled"] == 1
 
 
+def test_deleted_mana_ability_stack_item_is_silently_cleared(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 7
+    tracker.game_state.active_player = 2
+    tracker.game_state.last_turn_announced = 7
+    tracker.game_state.last_opponent_turn_number = 7
+
+    tracker._register_stack_item(
+        811,
+        seat_id=2,
+        label="[Hedron Archive] - {T}: Add {C}{C}.",
+        kind="ability",
+        turn_override=7,
+    )
+
+    tracker._reconcile_deleted_stack_items([811])
+    out = capsys.readouterr().out
+
+    assert "left stack without resolving" not in out
+    assert "Hedron Archive" not in out
+    assert tracker.game_state.stack_stats[2]["fizzled"] == 0
+
+
+def test_artifact_mana_ability_text_is_not_logged_or_stacked(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 12
+    tracker.game_state.last_turn_announced = 12
+    tracker.game_state.last_opponent_turn_number = 12
+    tracker.card_db.names[91783] = "Patchwork Banner"
+    tracker.card_db.ability_texts[(91783, 1055)] = "{T}: Add one mana of any color."
+
+    game_objects_by_id = {
+        431: {
+            "instanceId": 431,
+            "grpId": 91783,
+            "ownerSeatId": 2,
+            "controllerSeatId": 2,
+            "cardTypes": ["CardType_Artifact"],
+        },
+        566: {
+            "instanceId": 566,
+            "grpId": 1055,
+            "objectSourceGrpId": 91783,
+            "ownerSeatId": 2,
+            "controllerSeatId": 2,
+        },
+    }
+
+    tracker._handle_ability_instance_created([566], 431, game_objects_by_id, set())
+    out = capsys.readouterr().out
+
+    assert "Patchwork Banner" not in out
+    assert 566 not in tracker.game_state.stack_items
+
+
+def test_casting_time_modal_response_logs_selected_modes(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 13
+    tracker.game_state.last_turn_announced = 13
+    tracker.game_state.last_player_turn_number = 13
+    tracker.card_db.names[86798] = "Rankle's Prank"
+    tracker.card_db.ability_texts[143323] = "Each player discards two cards."
+    tracker.card_db.ability_texts[168819] = "Each player loses 4 life."
+
+    tracker._capture_casting_time_options_requests(
+        {
+            "type": "GREMessageType_CastingTimeOptionsReq",
+            "gameStateId": 269,
+            "castingTimeOptionsReq": {
+                "castingTimeOptionReq": [
+                    {
+                        "ctoId": 4,
+                        "castingTimeOptionType": "CastingTimeOptionType_Modal",
+                        "affectedId": 572,
+                        "grpId": 86798,
+                        "playerIdToPrompt": 1,
+                        "modalReq": {
+                            "abilityGrpId": 168820,
+                            "modalOptions": [
+                                {"grpId": 143323},
+                                {"grpId": 168819},
+                                {"grpId": 2260},
+                            ],
+                        },
+                    }
+                ]
+            },
+        }
+    )
+    tracker._handle_client_gre_payload(
+        {
+            "data": {
+                "type": "ClientMessageType_CastingTimeOptionsResp",
+                "gameStateId": 269,
+                "castingTimeOptionsResp": {
+                    "castingTimeOptionResp": {
+                        "ctoId": 4,
+                        "castingTimeOptionType": "CastingTimeOptionType_Modal",
+                        "chooseModalResp": {"grpIds": [168819, 143323]},
+                    }
+                },
+            }
+        }
+    )
+    out = capsys.readouterr().out
+
+    assert "You: chose modes for [Rankle's Prank]: Each player loses 4 life.; Each player discards two cards." in out
+
+
 def test_destroy_event_uses_current_turn_not_card_owner_last_turn(capsys):
     tracker = make_tracker()
     tracker.game_state.player_seat_id = 1
@@ -1522,6 +1670,114 @@ def test_opponent_life_trigger_flushes_pending_opponent_header(capsys):
 
     assert "Turn 7 - OPPONENT'S TURN" in out
     assert "[0:00] Opponent: gained 1 life (now 21)" in out
+
+
+def test_turn_header_uses_life_totals_from_turn_start(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 13
+    tracker.game_state.active_player = 1
+    tracker.game_state.last_turn_announced = 13
+    tracker.game_state.last_player_turn_number = 13
+    tracker.game_state.player_life = 16
+    tracker.game_state.opponent_life = 4
+
+    tracker._update_game_state(
+        {
+            "turnInfo": {"turnNumber": 14, "activePlayer": 2, "phase": "Phase_Main1"},
+            "players": [{"systemSeatNumber": 2, "lifeTotal": 2}],
+        }
+    )
+    out = capsys.readouterr().out
+
+    assert "Turn 14 - OPPONENT'S TURN" in out
+    assert "Life: You 16 - 4 Opponent" in out
+    assert "[0:00] Opponent: lost 2 life (now 2)" in out
+
+
+def test_triggered_ability_on_new_active_turn_flushes_active_header(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 14
+    tracker.game_state.active_player = 2
+    tracker.game_state.last_turn_announced = 13
+    tracker.game_state.last_player_turn_number = 13
+    tracker.game_state.player_life = 16
+    tracker.game_state.opponent_life = 4
+    tracker.game_state.pending_opponent_turn_header = (14, 2, 16, 4)
+    tracker.card_db.names[200] = "Bandit's Talent"
+    tracker.card_db.ability_texts[(200, 900)] = (
+        "At the beginning of each opponent's upkeep, if that player has one or fewer cards in hand, they lose 2 life."
+    )
+    game_objects_by_id = {
+        100: {"instanceId": 100, "grpId": 200, "ownerSeatId": 1, "controllerSeatId": 1},
+        500: {
+            "instanceId": 500,
+            "grpId": 900,
+            "objectSourceGrpId": 200,
+            "ownerSeatId": 1,
+            "controllerSeatId": 1,
+        },
+    }
+
+    tracker._handle_ability_instance_created([500], 100, game_objects_by_id, set())
+    out = capsys.readouterr().out
+
+    assert "Turn 14 - OPPONENT'S TURN" in out
+    assert "Life: You 16 - 4 Opponent" in out
+    assert "You: [Bandit's Talent] - At the beginning of each opponent's upkeep" in out
+    assert out.index("Turn 14 - OPPONENT'S TURN") < out.index("You: [Bandit's Talent]")
+    assert tracker.game_state.stack_items[500]["turn"] == 14
+
+
+def test_resolution_annotations_print_before_same_payload_life_change(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 14
+    tracker.game_state.active_player = 2
+    tracker.game_state.last_turn_announced = 14
+    tracker.game_state.last_opponent_turn_number = 14
+    tracker.game_state.player_life = 16
+    tracker.game_state.opponent_life = 4
+    tracker.card_db.names[200] = "Bandit's Talent"
+    tracker.card_db.ability_texts[(200, 900)] = (
+        "At the beginning of each opponent's upkeep, if that player has one or fewer cards in hand, they lose 2 life."
+    )
+    tracker.game_state.ability_instance_sources[500] = 100
+    tracker._register_stack_item(
+        500,
+        seat_id=1,
+        label="[Bandit's Talent] - At the beginning of each opponent's upkeep, if that player has one or fewer cards in hand, they lose 2 life.",
+        kind="ability",
+        turn_override=14,
+    )
+    tracker.game_state.stack_items[500]["show_lifecycle"] = True
+
+    data = {
+        "players": [{"systemSeatNumber": 2, "lifeTotal": 2}],
+        "gameObjects": [{"instanceId": 100, "grpId": 200, "ownerSeatId": 1, "controllerSeatId": 1}],
+        "annotations": [
+            {
+                "type": ["AnnotationType_ResolutionStart"],
+                "affectedIds": [500],
+                "details": [{"key": "grpid", "valueInt32": [900]}],
+            }
+        ],
+    }
+
+    tracker._update_game_state(data)
+    tracker._process_game_events(data)
+    out = capsys.readouterr().out
+
+    assert "Stack: [Bandit's Talent]" in out
+    assert "Opponent: lost 2 life (now 2)" in out
+    assert out.index("Stack: [Bandit's Talent]") < out.index("Opponent: lost 2 life (now 2)")
 
 
 def test_turn_header_life_line_aligns_without_icon(capsys):
@@ -2035,6 +2291,112 @@ def test_parse_match_metadata_uses_format_hint_to_pick_matching_deck():
     assert tracker.game_state.format_str == "MWM_3Sets_20260310"
     assert tracker.game_state.player_deck_name == "MWM Landfall"
     assert tracker.game_state.player_deck_id == "mwm-deck"
+
+
+def test_match_room_traditional_standard_sets_best_of_three_format():
+    tracker = make_tracker()
+    tracker._parse_match_metadata(
+        json.dumps(
+            {
+                "matchGameRoomStateChangedEvent": {
+                    "gameRoomInfo": {"gameRoomConfig": {"eventType": "TraditionalStandard"}}
+                }
+            }
+        )
+    )
+
+    assert tracker.game_state.format_str == "TraditionalStandard"
+    assert tracker.game_state.match_type == "best_of_3"
+    assert tracker._friendly_format_label() == "Standard Best-of-3"
+
+
+def test_game_start_does_not_use_stale_backfilled_traditional_format(tmp_path, capsys):
+    tracker = make_tracker()
+    log_path = tmp_path / "Player.log"
+    tracker.parser.log_path = str(log_path)
+    log_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"gameInfo": {"matchState": "MatchState_GameComplete"}}),
+                json.dumps(
+                    {
+                        "matchGameRoomStateChangedEvent": {
+                            "gameRoomInfo": {
+                                "gameRoomConfig": {
+                                    "eventType": "TraditionalStandard",
+                                    "reservedPlayers": [],
+                                }
+                            }
+                        }
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    tracker._backfill_recent_match_metadata()
+    assert tracker.game_state.match_type == "best_of_3"
+
+    tracker._check_game_start(json.dumps({"gameInfo": {"mulliganType": "MulliganType_London"}}))
+
+    out = capsys.readouterr().out
+    assert tracker.game_state.match_type == "best_of_1"
+    assert tracker.game_state.format_str == "Unknown"
+    assert "Format: Standard Best-of-1" in out
+    assert "Format: Standard Best-of-3" not in out
+
+
+def test_deck_metadata_traditional_standard_does_not_set_match_best_of_three_without_live_format():
+    tracker = make_tracker()
+    tracker._parse_match_metadata(
+        json.dumps(
+            {
+                "Courses": [
+                    {
+                        "InternalEventName": "Play",
+                        "CurrentModule": "CreateMatch",
+                        "CourseDeckSummary": {
+                            "DeckId": "deck-1",
+                            "Name": "Standard Deck",
+                            "Attributes": [{"name": "Format", "value": "TraditionalStandard"}],
+                        },
+                        "CourseDeck": {
+                            "MainDeck": [
+                                {"cardId": 1001, "quantity": 4},
+                                {"cardId": 1002, "quantity": 4},
+                            ],
+                            "CommandZone": [],
+                        },
+                    }
+                ]
+            }
+        )
+    )
+
+    resolved = tracker._resolve_player_deck_from_hand_ids([1001, 1002, 1003, 1004, 1005, 1006, 1007])
+
+    assert resolved is True
+    assert tracker.game_state.player_deck_name == "Standard Deck"
+    assert tracker.game_state.format_str == "Unknown"
+    assert tracker.game_state.match_type == "best_of_1"
+    assert tracker._friendly_format_label() == "Standard Best-of-1"
+
+
+def test_explicit_traditional_standard_deck_event_does_not_set_best_of_three_without_live_format():
+    tracker = make_tracker()
+    tracker._parse_match_metadata(
+        '[UnityCrossThreadLogger]<== EventSetDeckV2 '
+        '{"CourseId":"703c87ae","InternalEventName":"Play","CurrentModule":"CreateMatch",'
+        '"CourseDeckSummary":{"DeckId":"deck-1","Name":"Standard Deck",'
+        '"Attributes":[{"name":"Format","value":"TraditionalStandard"}]},'
+        '"CourseDeck":{"MainDeck":[{"cardId":1001,"quantity":4}],"CommandZone":[]}}'
+    )
+
+    assert tracker.game_state.player_deck_name == "Standard Deck"
+    assert tracker.game_state.format_str == "Unknown"
+    assert tracker.game_state.match_type == "best_of_1"
+    assert tracker._friendly_format_label() == "Standard Best-of-1"
 
 
 def test_parse_match_metadata_sets_player_commander_from_command_zone():
@@ -2551,6 +2913,36 @@ def test_parse_match_metadata_prefers_explicit_set_deck_event():
     assert tracker.game_state.player_commanders == []
 
 
+def test_parse_match_metadata_prefers_explicit_set_deck_v3_event():
+    tracker = make_tracker()
+    request = {
+        "EventName": "Play",
+        "Summary": {
+            "DeckId": "3c24e959-f8ef-405a-9a27-21b7ff080540",
+            "Name": "Izzet Affinity (Temur Arne)",
+            "Attributes": [{"name": "Format", "value": "Standard"}],
+        },
+        "Deck": {
+            "MainDeck": [
+                {"cardId": 100500, "quantity": 4},
+                {"cardId": 100629, "quantity": 3},
+            ],
+            "CommandZone": [],
+        },
+    }
+    line = (
+        '[UnityCrossThreadLogger]==> EventSetDeckV3 '
+        + json.dumps({"id": "abc", "request": json.dumps(request)})
+    )
+
+    tracker._parse_match_metadata(line)
+
+    assert tracker.game_state.player_deck_name == "Izzet Affinity (Temur Arne)"
+    assert tracker.game_state.player_deck_id == "3c24e959-f8ef-405a-9a27-21b7ff080540"
+    assert tracker.game_state.player_deck_total_cards == 7
+    assert tracker._active_deck_candidate_key == "3c24e959-f8ef-405a-9a27-21b7ff080540"
+
+
 def test_explicit_active_standard_deck_is_not_overridden_by_stale_brawl_courses():
     tracker = make_tracker()
     tracker.game_state.player_commanders = ["Nahiri, Storm of Stone"]
@@ -2685,6 +3077,7 @@ def test_game_summary_prints_match_stats_section(capsys):
 def test_game_summary_persists_normalized_sqlite_analytics(capsys, tmp_path):
     tracker = make_tracker()
     tracker._console_db_path = tmp_path / "analytics.sqlite3"
+    tracker.session_start_time = datetime(2026, 4, 20, 12, 0, 0)
     tracker.game_state.player_seat_id = 1
     tracker.game_state.opponent_seat_id = 2
     tracker.game_state.first_player_seat = 1
@@ -2794,7 +3187,7 @@ def test_game_summary_persists_normalized_sqlite_analytics(capsys, tmp_path):
             """
         ).fetchone()
         session = conn.execute(
-            "SELECT games_played, wins, losses FROM tracker_sessions WHERE id = ?",
+            "SELECT games_played, wins, losses, runtime_seconds FROM tracker_sessions WHERE id = ?",
             ("test-session",),
         ).fetchone()
         console_rows = conn.execute("SELECT COUNT(*) FROM console_logs").fetchone()[0]
@@ -2810,7 +3203,7 @@ def test_game_summary_persists_normalized_sqlite_analytics(capsys, tmp_path):
     assert opening_meta == (7, 0)
     assert opening_hand[0] == ("Restless Reef", 1, 1)
     assert opening_hand[-1] == ("Island", 7, 2)
-    assert session == (1, 1, 0)
+    assert session == (1, 1, 0, 450)
     assert console_rows > 0
 
 
@@ -2937,6 +3330,46 @@ def test_process_line_handles_later_gre_turn_message_in_same_line(capsys):
     assert tracker.game_state.game_start_time is not None
 
 
+def test_check_game_start_after_completed_match_resets_for_next_opening_hand(capsys):
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.match_complete = True
+    tracker.game_state.starting_hand = ["Old Card"]
+    tracker.game_state.opening_hand_capture_closed = True
+
+    line = json.dumps(
+        {
+            "gameStateMessage": {
+                "zones": [
+                    {
+                        "type": "ZoneType_Hand",
+                        "ownerSeatId": 1,
+                        "objectInstanceIds": [31, 32, 33, 34, 35, 36, 37],
+                    }
+                ],
+                "gameObjects": [
+                    {"instanceId": 31, "grpId": 2001},
+                    {"instanceId": 32, "grpId": 2002},
+                    {"instanceId": 33, "grpId": 2003},
+                    {"instanceId": 34, "grpId": 2004},
+                    {"instanceId": 35, "grpId": 2005},
+                    {"instanceId": 36, "grpId": 2006},
+                    {"instanceId": 37, "grpId": 2007},
+                ],
+            }
+        }
+    )
+
+    tracker._check_game_start(line)
+
+    assert tracker.game_state.in_match is True
+    assert tracker.game_state.match_complete is False
+    assert tracker.game_state.match_type == "best_of_1"
+    assert tracker.game_state.game_number == 1
+    assert tracker.game_state.starting_hand == []
+    assert len(tracker.game_state._hand_before_mulligan_ids) == 7
+
+
 def test_update_game_state_ignores_command_zone_emblems(capsys):
     tracker = make_tracker()
     tracker.game_state.in_match = True
@@ -3059,6 +3492,176 @@ def test_capture_opening_hand_finalizes_keep_seven_on_turn_start():
 
     assert len(tracker.game_state.starting_hand) == 7
     assert tracker.game_state.mulligan_count == 0
+
+
+def test_accept_hand_finalizes_cached_seven_card_mulligan_prompt_hand():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.opening_mulligan_prompt_seen = True
+
+    prompt_data = {
+        "turnInfo": {"activePlayer": 1, "decisionPlayer": 1},
+        "players": [
+            {"systemSeatNumber": 1, "pendingMessageType": "ClientMessageType_MulliganResp"},
+            {"systemSeatNumber": 2, "pendingMessageType": "ClientMessageType_MulliganResp"},
+        ],
+        "zones": [
+            {"type": "ZoneType_Hand", "ownerSeatId": 1, "objectInstanceIds": [31, 32, 33, 34, 35, 36, 37]},
+        ],
+        "gameObjects": [
+            {"instanceId": 31, "grpId": 2001},
+            {"instanceId": 32, "grpId": 2002},
+            {"instanceId": 33, "grpId": 2003},
+            {"instanceId": 34, "grpId": 2004},
+            {"instanceId": 35, "grpId": 2005},
+            {"instanceId": 36, "grpId": 2006},
+            {"instanceId": 37, "grpId": 2007},
+        ],
+        "annotations": [{"type": ["AnnotationType_NewTurnStarted"], "affectedIds": [1]}],
+    }
+
+    tracker._capture_opening_hand(prompt_data)
+    assert tracker.game_state.starting_hand == []
+    assert len(tracker.game_state._hand_before_mulligan_ids) == 7
+
+    tracker._handle_client_gre_payload(
+        {
+            "data": {
+                "type": "ClientMessageType_MulliganResp",
+                "mulliganResp": {"decision": "MulliganOption_AcceptHand"},
+            }
+        }
+    )
+
+    assert len(tracker.game_state.starting_hand) == 7
+    assert tracker.game_state.initial_hand_size == 7
+    assert tracker.game_state.mulligan_count == 0
+    assert tracker.game_state.opening_hand_capture_closed is True
+
+
+def test_capture_opening_hand_finalizes_cached_seven_when_gameplay_starts_without_keep_response():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.opening_mulligan_prompt_seen = True
+
+    prompt_data = {
+        "turnInfo": {"activePlayer": 1, "decisionPlayer": 1},
+        "players": [
+            {"systemSeatNumber": 1, "pendingMessageType": "ClientMessageType_MulliganResp"},
+            {"systemSeatNumber": 2, "pendingMessageType": "ClientMessageType_MulliganResp"},
+        ],
+        "zones": [
+            {"type": "ZoneType_Hand", "ownerSeatId": 1, "objectInstanceIds": [31, 32, 33, 34, 35, 36, 37]},
+            {"type": "ZoneType_Hand", "ownerSeatId": 2, "objectInstanceIds": [41, 42, 43, 44, 45, 46, 47]},
+        ],
+        "gameObjects": [
+            {"instanceId": 31, "grpId": 2001},
+            {"instanceId": 32, "grpId": 2002},
+            {"instanceId": 33, "grpId": 2003},
+            {"instanceId": 34, "grpId": 2004},
+            {"instanceId": 35, "grpId": 2005},
+            {"instanceId": 36, "grpId": 2006},
+            {"instanceId": 37, "grpId": 2007},
+        ],
+    }
+    tracker._capture_opening_hand(prompt_data)
+
+    assert tracker.game_state.starting_hand == []
+    assert len(tracker.game_state._hand_before_mulligan_ids) == 7
+
+    gameplay_data = {
+        "turnInfo": {"turnNumber": 1, "activePlayer": 1},
+        "zones": [
+            {"type": "ZoneType_Hand", "ownerSeatId": 1, "objectInstanceIds": [31, 32, 33, 34, 35, 36]},
+        ],
+        "gameObjects": [
+            {"instanceId": 31, "grpId": 2001},
+            {"instanceId": 32, "grpId": 2002},
+            {"instanceId": 33, "grpId": 2003},
+            {"instanceId": 34, "grpId": 2004},
+            {"instanceId": 35, "grpId": 2005},
+            {"instanceId": 36, "grpId": 2006},
+            {"instanceId": 999, "grpId": 2010},
+        ],
+        "annotations": [
+            {
+                "type": ["AnnotationType_ZoneTransfer"],
+                "affectedIds": [999],
+                "details": [{"key": "category", "valueString": ["PlayLand"]}],
+            }
+        ],
+    }
+    tracker._capture_opening_hand(gameplay_data)
+
+    assert len(tracker.game_state.starting_hand) == 7
+    assert tracker.game_state.initial_hand_size == 7
+    assert tracker.game_state.mulligan_count == 0
+    assert tracker.game_state.opening_hand_capture_closed is True
+
+
+def test_reset_new_game_tracking_clears_previous_opening_hand_state():
+    tracker = make_tracker()
+    tracker.game_state.starting_hand = ["Old Card"]
+    tracker.game_state.starting_hand_events = [CardEvent("Old Card", "player")]
+    tracker.game_state.initial_hand_size = 7
+    tracker.game_state.mulligan_count = 1
+    tracker.game_state._hand_before_mulligan = ["Cached Old Card"]
+    tracker.game_state._hand_before_mulligan_ids = [123]
+    tracker.game_state._hand_before_mulligan_events = [CardEvent("Cached Old Card", "player")]
+    tracker.game_state.opening_hand_capture_closed = True
+    tracker.game_state.opening_keep_confirmed = True
+    tracker.game_state.opening_select_n_ids = [456]
+    tracker.game_state.explicit_mulligan_count = 1
+
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=True)
+
+    assert tracker.game_state.starting_hand == []
+    assert tracker.game_state.starting_hand_events == []
+    assert tracker.game_state.initial_hand_size == 7
+    assert tracker.game_state.mulligan_count == 0
+    assert tracker.game_state._hand_before_mulligan == []
+    assert tracker.game_state._hand_before_mulligan_ids == []
+    assert tracker.game_state._hand_before_mulligan_events == []
+    assert tracker.game_state.opening_hand_capture_closed is False
+    assert tracker.game_state.opening_keep_confirmed is False
+    assert tracker.game_state.opening_select_n_ids == []
+    assert tracker.game_state.explicit_mulligan_count == 0
+
+
+def test_capture_opening_hand_corrects_stale_seat_from_visible_hand():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.turn_number = 1
+
+    data = {
+        "turnInfo": {"turnNumber": 1, "activePlayer": 1},
+        "players": [{"systemSeatNumber": 1}, {"systemSeatNumber": 2}],
+        "zones": [
+            {"type": "ZoneType_Hand", "ownerSeatId": 1, "objectInstanceIds": [101, 102, 103, 104, 105, 106, 107]},
+            {"type": "ZoneType_Hand", "ownerSeatId": 2, "objectInstanceIds": [201, 202, 203, 204, 205, 206, 207]},
+        ],
+        "gameObjects": [
+            {"instanceId": 201, "grpId": 2201},
+            {"instanceId": 202, "grpId": 2202},
+            {"instanceId": 203, "grpId": 2203},
+            {"instanceId": 204, "grpId": 2204},
+            {"instanceId": 205, "grpId": 2205},
+            {"instanceId": 206, "grpId": 2206},
+            {"instanceId": 207, "grpId": 2207},
+        ],
+    }
+
+    tracker._capture_opening_hand(data)
+
+    assert tracker.game_state.player_seat_id == 2
+    assert tracker.game_state.opponent_seat_id == 1
+    assert len(tracker.game_state.starting_hand) == 7
 
 
 def test_capture_opening_hand_uses_snapshot_fallback_for_partial_diff():
