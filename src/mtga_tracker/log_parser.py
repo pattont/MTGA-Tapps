@@ -12,6 +12,7 @@ from typing import Optional, Generator, Dict, Any, List, Tuple
 from .log_entry import LineBuffer, LogEntry
 from .log_json import parse_json_from_body
 from .event_router import EventRouter, RoutedLogEvent
+from .client_actions import parse_client_action
 
 
 class MTGALogParser:
@@ -241,28 +242,18 @@ class MTGALogParser:
             return []
 
         payloads: List[Dict[str, Any]] = []
-        direct = data.get("clientToGreMessage")
-        if isinstance(direct, dict):
-            direct_payload = direct.get("payload")
-            if isinstance(direct_payload, dict):
-                payloads.append({"type": "client_gre_message", "data": direct_payload})
-            elif direct.get("type"):
-                payloads.append({"type": "client_gre_message", "data": direct})
-
-        service_type = data.get("clientToMatchServiceMessageType")
-        payload = data.get("payload")
-        if (
-            service_type == "ClientToMatchServiceMessageType_ClientToGREMessage"
-            and isinstance(payload, dict)
-        ):
-            payloads.append(
-                {
-                    "type": "client_gre_message",
-                    "data": payload,
-                    "service_type": service_type,
-                }
-            )
-
+        normalized = parse_client_action(data)
+        if normalized is not None:
+            raw_payload = normalized.get("raw")
+            if isinstance(raw_payload, dict):
+                payloads.append(
+                    {
+                        "type": "client_gre_message",
+                        "data": raw_payload,
+                        "normalized": normalized,
+                        "service_type": data.get("clientToMatchServiceMessageType"),
+                    }
+                )
         return payloads
 
     def extract_card_events(self, line: str) -> Optional[Dict[str, Any]]:
