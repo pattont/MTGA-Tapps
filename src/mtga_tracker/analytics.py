@@ -17,6 +17,7 @@ class SessionSnapshot:
     wins: int
     losses: int
     unknown_results: int
+    draws: int = 0
     runtime_seconds: Optional[int] = None
 
 
@@ -66,6 +67,7 @@ class AnalyticsStore:
                 games_played INTEGER NOT NULL DEFAULT 0,
                 wins INTEGER NOT NULL DEFAULT 0,
                 losses INTEGER NOT NULL DEFAULT 0,
+                draws INTEGER NOT NULL DEFAULT 0,
                 unknown_results INTEGER NOT NULL DEFAULT 0,
                 runtime_seconds INTEGER NOT NULL DEFAULT 0
             );
@@ -304,6 +306,7 @@ class AnalyticsStore:
         AnalyticsStore.ensure_table_column(conn, "game_events", "opponent_life", "INTEGER")
         AnalyticsStore.ensure_table_column(conn, "participants", "opening_hand_size", "INTEGER")
         AnalyticsStore.ensure_table_column(conn, "participants", "mulligans", "INTEGER")
+        AnalyticsStore.ensure_table_column(conn, "tracker_sessions", "draws", "INTEGER NOT NULL DEFAULT 0")
 
     @staticmethod
     def ensure_table_column(
@@ -334,14 +337,15 @@ class AnalyticsStore:
         conn.execute(
             """
             INSERT INTO tracker_sessions (
-                id, started_at, ended_at, app_version, games_played, wins, losses, unknown_results, runtime_seconds
+                id, started_at, ended_at, app_version, games_played, wins, losses, draws, unknown_results, runtime_seconds
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 ended_at = excluded.ended_at,
                 games_played = excluded.games_played,
                 wins = excluded.wins,
                 losses = excluded.losses,
+                draws = excluded.draws,
                 unknown_results = excluded.unknown_results,
                 runtime_seconds = excluded.runtime_seconds
             """,
@@ -353,6 +357,7 @@ class AnalyticsStore:
                 session.games_played,
                 session.wins,
                 session.losses,
+                session.draws,
                 session.unknown_results,
                 runtime_seconds,
             ),
