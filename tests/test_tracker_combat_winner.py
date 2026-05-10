@@ -103,6 +103,7 @@ def make_tracker() -> CardTracker:
     tracker.session_games_played = 0
     tracker.session_wins = 0
     tracker.session_losses = 0
+    tracker.session_draws = 0
     tracker.session_unknown = 0
     tracker.session_player_cards_played = 0
     tracker.session_opponent_cards_played = 0
@@ -213,6 +214,95 @@ def test_winner_parsing_match_scope_is_only_fallback():
     )
 
     assert winner == 2
+
+
+def test_check_game_end_handles_forced_draw_result():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.game_start_time = datetime(2026, 5, 9, 23, 7, 40)
+
+    line = json.dumps(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "gameInfo": {
+                                "matchState": "MatchState_MatchComplete",
+                                "results": [
+                                    {
+                                        "scope": "MatchScope_Match",
+                                        "result": "ResultType_Draw",
+                                        "reason": "ResultReason_Force",
+                                    }
+                                ],
+                            }
+                        },
+                    },
+                    {
+                        "type": "GREMessageType_IntermissionReq",
+                        "intermissionReq": {
+                            "result": {
+                                "scope": "MatchScope_Match",
+                                "result": "ResultType_Draw",
+                                "reason": "ResultReason_Force",
+                            }
+                        },
+                    },
+                ]
+            }
+        }
+    )
+
+    tracker._check_game_end(line)
+
+    assert tracker.game_state.match_complete is True
+    assert tracker.game_state.winner_seat is None
+    assert tracker.game_state.result_type == "ResultType_Draw"
+    assert tracker._resolve_game_outcome() == ("draw", "Match ended in a forced draw")
+
+
+def test_final_match_result_draw_marks_match_complete():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+
+    line = json.dumps(
+        {
+            "matchGameRoomStateChangedEvent": {
+                "gameRoomInfo": {
+                    "stateType": "MatchGameRoomStateType_MatchCompleted",
+                    "finalMatchResult": {
+                        "resultList": [
+                            {
+                                "scope": "MatchScope_Match",
+                                "result": "ResultType_Draw",
+                                "reason": "ResultReason_Force",
+                            }
+                        ]
+                    },
+                }
+            }
+        }
+    )
+
+    tracker._check_game_end(line)
+
+    assert tracker.game_state.match_complete is True
+    assert tracker._resolve_game_outcome()[0] == "draw"
+
+
+def test_record_session_outcome_counts_draws_separately():
+    tracker = make_tracker()
+
+    tracker._record_session_outcome("draw")
+
+    assert tracker.session_games_played == 1
+    assert tracker.session_draws == 1
+    assert tracker.session_unknown == 0
+    assert "D:1" in tracker._session_stats_line()
 
 
 def test_process_line_records_explicit_mulligan_response():
