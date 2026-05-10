@@ -123,6 +123,8 @@ class GameState:
         self.winner_seat: Optional[int] = None
         self.winner_priority = 0
         self.winner_reason = ""
+        self.result_type: Optional[str] = None
+        self.result_reason: Optional[str] = None
         self.first_player_seat: Optional[int] = None
         self.pending_player_turn_header: Optional[tuple] = None
         self.pending_opponent_turn_header: Optional[tuple] = None

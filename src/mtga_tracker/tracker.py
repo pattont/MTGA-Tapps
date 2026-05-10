@@ -56,6 +56,7 @@ class CardTracker:
         self.session_games_played = 0
         self.session_wins = 0
         self.session_losses = 0
+        self.session_draws = 0
         self.session_unknown = 0
         self.session_player_cards_played = 0
         self.session_opponent_cards_played = 0
@@ -108,6 +109,7 @@ class CardTracker:
             games_played=self.session_games_played,
             wins=self.session_wins,
             losses=self.session_losses,
+            draws=getattr(self, "session_draws", 0),
             unknown_results=self.session_unknown,
             runtime_seconds=self._session_play_runtime_seconds(),
         )
@@ -173,14 +175,15 @@ class CardTracker:
         conn.execute(
             """
             INSERT INTO tracker_sessions (
-                id, started_at, ended_at, app_version, games_played, wins, losses, unknown_results, runtime_seconds
+                id, started_at, ended_at, app_version, games_played, wins, losses, draws, unknown_results, runtime_seconds
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 ended_at = excluded.ended_at,
                 games_played = excluded.games_played,
                 wins = excluded.wins,
                 losses = excluded.losses,
+                draws = excluded.draws,
                 unknown_results = excluded.unknown_results,
                 runtime_seconds = excluded.runtime_seconds
             """,
@@ -192,6 +195,7 @@ class CardTracker:
                 self.session_games_played,
                 self.session_wins,
                 self.session_losses,
+                getattr(self, "session_draws", 0),
                 self.session_unknown,
                 runtime_seconds,
             ),
@@ -1637,9 +1641,10 @@ class CardTracker:
         """Return one-line session W/L stats."""
         known_results = self.session_wins + self.session_losses
         win_rate = (self.session_wins / known_results * 100.0) if known_results > 0 else 0.0
+        draw_part = f" D:{getattr(self, 'session_draws', 0)}" if getattr(self, "session_draws", 0) else ""
         unknown_part = f", ?:{self.session_unknown}" if self.session_unknown else ""
         return (
-            f"W:{self.session_wins} L:{self.session_losses}{unknown_part} | "
+            f"W:{self.session_wins} L:{self.session_losses}{draw_part}{unknown_part} | "
             f"Games:{self.session_games_played} | WR:{win_rate:.1f}% | Play Time:{self._session_runtime_str()}"
         )
 
@@ -2583,6 +2588,18 @@ class CardTracker:
 
     def _extract_latest_game_result(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Return the newest structured WinLoss game result, falling back to match scope."""
+        return self._extract_latest_structured_result(data, "WinLoss")
+
+    def _extract_latest_draw_result(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Return the newest structured draw result, falling back to match scope."""
+        return self._extract_latest_structured_result(data, "Draw")
+
+    def _extract_latest_structured_result(
+        self,
+        data: Dict[str, Any],
+        result_name: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Return newest result matching `result_name`, preferring game scope."""
         result_groups: List[List[Dict[str, Any]]] = []
         game_info = self._find_nested(data, "gameInfo")
         if isinstance(game_info, dict) and isinstance(game_info.get("results"), list):
@@ -2595,25 +2612,20 @@ class CardTracker:
             result_groups.append([intermission["result"]])
 
         match_scope_fallback: Optional[Dict[str, Any]] = None
+        unscoped_fallback: Optional[Dict[str, Any]] = None
         for results in result_groups:
             for result in reversed(results):
                 result_type = str(result.get("result", ""))
-                if "WinLoss" not in result_type:
-                    continue
-                seat = self._normalize_seat_id(
-                    result.get("winningTeamId")
-                    or result.get("winningteamid")
-                    or result.get("winnerSeatId")
-                    or result.get("winningSeatId")
-                )
-                if seat is None:
+                if result_name not in result_type:
                     continue
                 scope = str(result.get("scope", ""))
                 if "MatchScope_Game" in scope:
                     return result
                 if match_scope_fallback is None and "MatchScope_Match" in scope:
                     match_scope_fallback = result
-        return match_scope_fallback
+                elif match_scope_fallback is None and unscoped_fallback is None:
+                    unscoped_fallback = result
+        return match_scope_fallback or unscoped_fallback
 
     def _check_if_mid_game(self):
         """Only set mid-game if the tail of the log shows an active game and no match-end (lobby = match already ended)."""
@@ -3869,13 +3881,21 @@ class CardTracker:
             if isinstance(game_info, dict):
                 stage = str(game_info.get("stage", ""))
                 match_state = str(game_info.get("matchState", ""))
-                if "GameStage_GameOver" in stage and "MatchState_GameComplete" in match_state:
+                if (
+                    "GameStage_GameOver" in stage
+                    and "MatchState_GameComplete" in match_state
+                ):
                     structured_match_complete = True
             winner = self._try_parse_winner_from_json(json_data)
             if winner is not None:
                 winner_priority = 4 if structured_match_complete else 2
                 winner_reason = "structured_game_over_json" if structured_match_complete else "json_winner_hint"
                 self._set_winner_seat(winner, reason=winner_reason, priority=winner_priority)
+            draw_result = self._extract_latest_draw_result(json_data)
+            if draw_result is not None:
+                self.game_state.result_type = str(draw_result.get("result") or "ResultType_Draw")
+                self.game_state.result_reason = str(draw_result.get("reason") or "ResultReason_Draw")
+                structured_match_complete = True
         return json_data, structured_match_complete
 
     def _handle_concede_end_line(self, line: str, line_lower: str, json_data: Optional[Dict[str, Any]]) -> bool:
@@ -6388,7 +6408,10 @@ class CardTracker:
             self._print_line()
 
     def _resolve_game_outcome(self) -> tuple:
-        """Resolve game outcome as ('win'|'loss'|'unknown', reason)."""
+        """Resolve game outcome as ('win'|'loss'|'draw'|'unknown', reason)."""
+        if str(getattr(self.game_state, "result_type", "")) == "ResultType_Draw":
+            return "draw", self._draw_reason_text(getattr(self.game_state, "result_reason", None))
+
         pl, ol = self.game_state.player_life, self.game_state.opponent_life
         if pl <= 0:
             return "loss", "You reached 0 life"
@@ -6407,6 +6430,15 @@ class CardTracker:
 
         return "unknown", f"Life totals: You {pl} - {ol} Opponent"
 
+    @staticmethod
+    def _draw_reason_text(result_reason: Optional[str]) -> str:
+        """Return a user-facing reason for a structured draw result."""
+        if result_reason == "ResultReason_Force":
+            return "Match ended in a forced draw"
+        if result_reason:
+            return str(result_reason).replace("ResultReason_", "").replace("_", " ")
+        return "Match ended in a draw"
+
     def _record_session_outcome(self, outcome: str) -> None:
         """Record one game result in session totals exactly once."""
         if self._session_stats_recorded_this_game:
@@ -6418,6 +6450,8 @@ class CardTracker:
             self.session_wins += 1
         elif outcome == "loss":
             self.session_losses += 1
+        elif outcome == "draw":
+            self.session_draws = getattr(self, "session_draws", 0) + 1
         else:
             self.session_unknown += 1
         self._session_stats_recorded_this_game = True
@@ -6457,6 +6491,8 @@ class CardTracker:
             return "GAME ENDED - YOU WON", "land"
         if outcome == "loss":
             return "GAME ENDED - YOU LOST", "damage"
+        if outcome == "draw":
+            return "GAME ENDED - DRAW", "turn"
         return "GAME ENDED - RESULT UNKNOWN", "turn"
 
     def _print_result_summary(self, outcome: str, reason: str, duration_display: str) -> None:
@@ -6628,6 +6664,8 @@ class CardTracker:
         self._print_line(f"   Games Played: {self.session_games_played}")
         self._print_line(f"   Wins: {self.session_wins}")
         self._print_line(f"   Losses: {self.session_losses}")
+        if getattr(self, "session_draws", 0):
+            self._print_line(f"   Draws: {self.session_draws}")
         if self.session_unknown:
             self._print_line(f"   Unknown Results: {self.session_unknown}")
         self._print_line(f"   Win Rate: {win_rate:.1f}%")
