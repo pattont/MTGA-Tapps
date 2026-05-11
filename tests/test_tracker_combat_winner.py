@@ -633,7 +633,16 @@ def test_user_action_taken_logs_db_backed_ability_text(capsys):
     tracker._process_annotation(action_annotation, game_objects)
     out = capsys.readouterr().out
 
-    assert "[0:00] You: [Cool but Rude] - {1}{R}: Level 2" in out
+    assert "[0:00] You: [Cool but Rude] - 1R: Level 2" in out
+
+
+def test_ability_text_formats_tap_and_mana_symbols_for_display():
+    assert (
+        CardTracker._normalize_ability_text(
+            "{1}, {T}, Sacrifice this token: Target creature you control explores."
+        )
+        == "1, tap, Sacrifice this token: Target creature you control explores."
+    )
 
 
 def test_resolution_start_logs_hidden_ability_text_for_source_card(capsys):
@@ -810,8 +819,8 @@ def test_resolution_start_skips_duplicate_text_when_user_action_already_logged(c
     )
     out = capsys.readouterr().out
 
-    assert "[Cool but Rude] - {1}{R}: Level 2" in out
-    assert "Stack: [Cool but Rude] - {1}{R}: Level 2 [resolved]" not in out
+    assert "[Cool but Rude] - 1R: Level 2" in out
+    assert "Stack: [Cool but Rude] - 1R: Level 2 [resolved]" not in out
 
 
 def test_user_action_taken_skips_land_mana_ability_text(capsys):
@@ -2388,6 +2397,46 @@ def test_parse_match_metadata_does_not_pick_deck_without_format_hint():
 
     assert tracker.game_state.player_deck_name is None
     assert tracker.game_state.player_deck_id is None
+
+
+def test_parse_match_metadata_tolerates_mixed_last_played_timezone_offsets():
+    tracker = make_tracker()
+    line = json.dumps(
+        {
+            "InventoryInfo": {
+                "Courses": [
+                    {
+                        "InternalEventName": "Play",
+                        "CurrentModule": "CreateMatch",
+                        "CourseDeckSummary": {
+                            "DeckId": "deck-1",
+                            "Name": "Current Deck",
+                            "Attributes": [
+                                {"name": "Format", "value": "Standard"},
+                                {"name": "LastPlayed", "value": '"2026-03-10T22:39:18"'},
+                            ],
+                        },
+                    },
+                    {
+                        "InternalEventName": "Play",
+                        "CurrentModule": "CreateMatch",
+                        "CourseDeckSummary": {
+                            "DeckId": "deck-1",
+                            "Name": "Current Deck",
+                            "Attributes": [
+                                {"name": "Format", "value": "Standard"},
+                                {"name": "LastPlayed", "value": '"2026-03-10T22:40:18.07558-04:00"'},
+                            ],
+                        },
+                    },
+                ]
+            }
+        }
+    )
+
+    tracker._parse_match_metadata(line)
+
+    assert tracker._deck_candidates["deck-1"]["last_played"].tzinfo is None
 
 
 def test_parse_match_metadata_uses_format_hint_to_pick_matching_deck():

@@ -1463,6 +1463,9 @@ class CardTracker:
         if not cleaned:
             return ""
         cleaned = re.sub(r"\{o([^}]*)\}", lambda m: "".join(f"{{{tok}}}" for tok in re.findall(r"[A-Z]+|\d+", m.group(1))), cleaned)
+        cleaned = re.sub(r"\{T\}", "tap", cleaned)
+        cleaned = re.sub(r"\{Q\}", "untap", cleaned)
+        cleaned = re.sub(r"\{([^{}]+)\}", r"\1", cleaned)
         cleaned = re.sub(r"CLASSLEVEL \[(\d+\+?)\] \[\] \[(.*)\]", r"Level \1: \2", cleaned)
         cleaned = cleaned.replace("oT", "T")
         return cleaned
@@ -1476,6 +1479,7 @@ class CardTracker:
         return bool(
             re.search(r"(^|:)\s*add\s+(\{|\w+ mana)", normalized)
             or re.search(r"\badd\s+\{", normalized)
+            or re.search(r"(^|:)\s*add\s+[wubrgcx0-9]+(?:\.|,|$)", normalized)
         )
 
     def _emit_ability_event(
@@ -2830,9 +2834,12 @@ class CardTracker:
         if not raw:
             return None
         try:
-            return datetime.fromisoformat(raw)
+            parsed = datetime.fromisoformat(raw)
         except ValueError:
             return None
+        if parsed.tzinfo is not None:
+            return parsed.astimezone().replace(tzinfo=None)
+        return parsed
 
     @staticmethod
     def _course_candidate_key(course: Dict[str, Any]) -> Optional[str]:

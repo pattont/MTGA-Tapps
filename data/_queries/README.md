@@ -10,6 +10,7 @@ Useful starting points:
 
 - `GamesPerDeck.sql`: deck-level win/loss summary.
 - `WinRateByDeck.sql`: deck-level win rate with average game length.
+- `WinRateByDeckPlayDraw.sql`: deck-level win/loss/draw split by whether you went first.
 - `RecentGames.sql`: latest games with deck, outcome, duration, mulligans, and life totals.
 - `SessionPlayTime.sql`: tracker sessions using active game play time, not idle process uptime.
 - `OpeningHandCardStats.sql`: opening-hand card frequency and win rate by deck.
