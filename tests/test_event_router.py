@@ -56,5 +56,24 @@ def test_router_counts_malformed_json_and_timestamp_failures():
     routed = router.route(entry)
 
     assert routed.category == "gre"
+    assert routed.malformed_json is True
+    assert routed.timestamp_failure is True
     assert router.stats.malformed_json_count == 1
     assert router.stats.timestamp_failure_count == 1
+
+
+def test_router_classifies_connection_lifecycle_entries():
+    router = EventRouter()
+
+    assert router.route(_entry('[UnityCrossThreadLogger]STATE CHANGED {"old":"Connecting","new":"Connected"}')).category == "connection_state"
+    assert router.route(_entry('[UnityCrossThreadLogger]Client.TcpConnection.Close {"status":"Closed"}')).category == "tcp_connection_close"
+    assert router.route(_entry('[UnityCrossThreadLogger]GREConnection.HandleWebSocketClosed {"reason":"normal"}')).category == "websocket_closed"
+    assert router.route(_entry('[UnityCrossThreadLogger]TcpConnection.ProcessRead.Exception {"exception":"boom"}')).category == "connection_error"
+
+
+def test_router_classifies_non_ui_constructed_support_entries():
+    router = EventRouter()
+
+    assert router.route(_entry('[UnityCrossThreadLogger]<== RankGetCombinedRankInfo(abc) {"constructedClass":"Gold"}')).category == "rank"
+    assert router.route(_entry('[UnityCrossThreadLogger]<== EventJoin {"eventId":"Ladder"}')).category == "event_lifecycle"
+    assert router.route(_entry('[UnityCrossThreadLogger]<== StartHook(abc) {"InventoryInfo":{}}')).category == "inventory"
