@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from .log_sanitize import scrub_raw_log
+
 
 @dataclass(frozen=True)
 class SessionSnapshot:
@@ -409,6 +411,44 @@ class AnalyticsStore:
                 text,
                 player_life,
                 opponent_life,
+            ),
+        )
+        conn.commit()
+
+    def record_raw_payload(
+        self,
+        *,
+        session_id: str,
+        created_at: Optional[datetime],
+        payload_type: Optional[str],
+        payload_json: str,
+        match_id: Optional[str] = None,
+        game_id: Optional[str] = None,
+    ) -> None:
+        """Persist a sanitized raw payload snapshot for parser diagnostics/replay."""
+        conn = self.connect()
+        if conn is None:
+            return
+        now = created_at or datetime.now()
+        conn.execute(
+            """
+            INSERT INTO raw_game_payloads (
+                session_id,
+                match_id,
+                game_id,
+                created_at,
+                payload_type,
+                payload_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                match_id,
+                game_id,
+                now.isoformat(),
+                payload_type,
+                scrub_raw_log(payload_json),
             ),
         )
         conn.commit()

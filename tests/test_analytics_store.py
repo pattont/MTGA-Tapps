@@ -73,3 +73,50 @@ def test_analytics_store_records_console_log(tmp_path):
         19,
     )
 
+
+def test_record_raw_payload_sanitizes_before_persisting(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    store = AnalyticsStore(db_path)
+
+    store.record_raw_payload(
+        session_id="session-1",
+        created_at=None,
+        payload_type="unknown",
+        payload_json='{"token":"secret","path":"/Users/travispatton/file","playerName":"Player#123"}',
+    )
+    store.close()
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT payload_type, payload_json FROM raw_game_payloads").fetchone()
+
+    assert row[0] == "unknown"
+    assert "secret" not in row[1]
+    assert "/Users/travispatton/" not in row[1]
+    assert "Player#123" not in row[1]
+    assert "<redacted>" in row[1]
+
+
+def test_tracker_raw_payload_snapshot_uses_current_match_context(tmp_path):
+    from tests.test_tracker_combat_winner import make_tracker
+
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "analytics.sqlite3"
+    tracker.game_state.game_start_time = datetime(2026, 5, 13, 20, 0, 0)
+    tracker.game_state.match_id = "match-1"
+    tracker.game_state.game_number = 2
+
+    tracker._record_raw_payload_snapshot(
+        "connection_error",
+        '{"playerName":"Player#123","path":"/Users/travispatton/log"}',
+    )
+
+    with sqlite3.connect(tracker._console_db_path) as conn:
+        row = conn.execute(
+            "SELECT match_id, game_id, payload_type, payload_json FROM raw_game_payloads"
+        ).fetchone()
+
+    assert row[0] == tracker._current_match_id()
+    assert row[1] == tracker._current_game_id()
+    assert row[2] == "connection_error"
+    assert "Player#123" not in row[3]
+    assert "/Users/travispatton/" not in row[3]
