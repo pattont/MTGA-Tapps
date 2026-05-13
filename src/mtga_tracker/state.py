@@ -94,8 +94,10 @@ class GameState:
         self.pending_spell_roots: Dict[int, Dict[str, Any]] = {}
         self.stack_items: Dict[int, Dict[str, Any]] = {}
         self.ability_instance_sources: Dict[int, int] = {}
+        self.instance_target_ids: Dict[int, List[int]] = {}
         self.logged_ability_actions: Set[tuple] = set()
         self.logged_ability_resolutions: Set[tuple] = set()
+        self.logged_tap_untap_events: Set[tuple] = set()
         self.ability_instance_action_texts: Dict[int, str] = {}
         self.logged_identity_changes: Set[tuple] = set()
         self.logged_unhandled_annotations: Set[tuple] = set()
