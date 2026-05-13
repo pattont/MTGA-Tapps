@@ -645,6 +645,364 @@ def test_ability_text_formats_tap_and_mana_symbols_for_display():
     )
 
 
+def test_target_spec_adds_target_to_triggered_ability_resolution(capsys):
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.turn_number = 8
+    tracker.game_state.last_player_turn_number = 7
+    tracker.card_db.names[100510] = "Sewer-veillance Cam"
+    tracker.card_db.names[92134] = "The Mindskinner"
+    tracker.card_db.ability_texts[(100510, 203096)] = (
+        "When this artifact enters or leaves the battlefield, you may tap or untap target creature."
+    )
+
+    tracker._handle_event(
+        {
+            "type": "game_state",
+            "data": {
+                "gameObjects": [
+                    {"instanceId": 325, "grpId": 100510, "ownerSeatId": 1, "controllerSeatId": 1},
+                    {"instanceId": 331, "grpId": 203096, "ownerSeatId": 1, "controllerSeatId": 1},
+                ],
+                "annotations": [
+                    {"affectorId": 325, "affectedIds": [331], "type": ["AnnotationType_AbilityInstanceCreated"]},
+                    {"affectorId": 1, "affectedIds": [331], "type": ["AnnotationType_PlayerSelectingTargets"]},
+                ],
+            },
+        }
+    )
+    tracker._handle_event(
+        {
+            "type": "game_state",
+            "data": {
+                "gameObjects": [
+                    {
+                        "instanceId": 314,
+                        "grpId": 92134,
+                        "ownerSeatId": 2,
+                        "controllerSeatId": 2,
+                        "cardTypes": ["CardType_Creature"],
+                        "power": {"value": 10},
+                        "toughness": {"value": 1},
+                    }
+                ],
+                "persistentAnnotations": [
+                    {
+                        "affectorId": 331,
+                        "affectedIds": [314],
+                        "type": ["AnnotationType_TargetSpec"],
+                        "details": [{"key": "promptParameters", "valueInt32": [331]}],
+                    }
+                ],
+                "annotations": [
+                    {
+                        "affectorId": 331,
+                        "affectedIds": [331],
+                        "type": ["AnnotationType_ResolutionStart"],
+                        "details": [{"key": "grpid", "valueInt32": [203096]}],
+                    }
+                ],
+            },
+        }
+    )
+    out = capsys.readouterr().out
+
+    assert "[Sewer-veillance Cam] - When this artifact enters or leaves the battlefield, you may tap or untap target creature. -> [The Mindskinner (10/1)]" in out
+
+
+def test_non_mana_tap_result_logs_source_and_target(capsys):
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.turn_number = 8
+    tracker.card_db.names[100510] = "Sewer-veillance Cam"
+    tracker.card_db.names[92134] = "The Mindskinner"
+    tracker.card_db.ability_texts[(100510, 203096)] = "Tap or untap target creature."
+    tracker.game_state.ability_instance_sources[331] = 325
+    tracker.game_state.object_snapshots[325] = {"instanceId": 325, "grpId": 100510, "ownerSeatId": 1}
+    tracker.game_state.object_snapshots[331] = {"instanceId": 331, "grpId": 203096, "ownerSeatId": 1}
+
+    tracker._handle_event(
+        {
+            "type": "game_state",
+            "data": {
+                "gameObjects": [
+                    {
+                        "instanceId": 314,
+                        "grpId": 92134,
+                        "ownerSeatId": 2,
+                        "cardTypes": ["CardType_Creature"],
+                        "power": {"value": 10},
+                        "toughness": {"value": 1},
+                    }
+                ],
+                "annotations": [
+                    {
+                        "affectorId": 331,
+                        "affectedIds": [314],
+                        "type": ["AnnotationType_TappedUntappedPermanent"],
+                        "details": [{"key": "tapped", "valueInt32": [1]}],
+                    }
+                ],
+            },
+        }
+    )
+    out = capsys.readouterr().out
+
+    assert "You: [Sewer-veillance Cam] tapped [The Mindskinner (10/1)]" in out
+
+
+def test_target_selecting_spell_defers_cast_until_target_spec(capsys):
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.turn_number = 9
+    tracker.game_state.last_opponent_turn_number = 9
+    tracker.card_db.names[91001] = "Fell"
+    tracker.card_db.names[91002] = "Synthesizer Labship"
+
+    tracker._handle_event(
+        {
+            "type": "game_state",
+            "data": {
+                "gameObjects": [
+                    {
+                        "instanceId": 369,
+                        "grpId": 91001,
+                        "ownerSeatId": 2,
+                        "controllerSeatId": 2,
+                        "cardTypes": ["CardType_Sorcery"],
+                    },
+                    {
+                        "instanceId": 452,
+                        "grpId": 91002,
+                        "ownerSeatId": 1,
+                        "controllerSeatId": 1,
+                        "cardTypes": ["CardType_Artifact"],
+                    },
+                ],
+                "annotations": [
+                    {
+                        "affectorId": 369,
+                        "affectedIds": [369],
+                        "type": ["AnnotationType_ZoneTransfer"],
+                        "details": [{"key": "category", "valueString": ["CastSpell"]}],
+                    },
+                    {"affectorId": 2, "affectedIds": [369], "type": ["AnnotationType_PlayerSelectingTargets"]},
+                ],
+            },
+        }
+    )
+    first = capsys.readouterr().out
+    assert "cast [Fell" not in first
+
+    tracker._handle_event(
+        {
+            "type": "game_state",
+            "data": {
+                "gameObjects": [
+                    {
+                        "instanceId": 369,
+                        "grpId": 91001,
+                        "ownerSeatId": 2,
+                        "controllerSeatId": 2,
+                        "cardTypes": ["CardType_Sorcery"],
+                    },
+                    {
+                        "instanceId": 452,
+                        "grpId": 91002,
+                        "ownerSeatId": 1,
+                        "controllerSeatId": 1,
+                        "cardTypes": ["CardType_Artifact"],
+                    },
+                ],
+                "persistentAnnotations": [
+                    {
+                        "affectorId": 369,
+                        "affectedIds": [452],
+                        "type": ["AnnotationType_TargetSpec"],
+                        "details": [{"key": "promptParameters", "valueInt32": [369]}],
+                    }
+                ],
+                "annotations": [
+                    {
+                        "affectorId": 2,
+                        "affectedIds": [369],
+                        "type": ["AnnotationType_UserActionTaken"],
+                        "details": [{"key": "actionType", "valueInt32": [1]}],
+                    }
+                ],
+            },
+        }
+    )
+    second = capsys.readouterr().out
+
+    assert "Opponent: cast [Fell (Sorcery)] -> [Synthesizer Labship]" in second
+
+
+def test_modified_life_logs_source_card_when_available(capsys):
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.player_life = 19
+    tracker.game_state.turn_number = 9
+    tracker.card_db.names[95000] = "Starting Town"
+    tracker.game_state.ability_instance_sources[384] = 320
+    tracker.game_state.object_snapshots[320] = {"instanceId": 320, "grpId": 95000, "ownerSeatId": 1}
+
+    tracker._handle_event(
+        {
+            "type": "game_state",
+            "data": {
+                "annotations": [
+                    {
+                        "affectorId": 384,
+                        "affectedIds": [1],
+                        "type": ["AnnotationType_ModifiedLife"],
+                        "details": [{"key": "life", "valueInt32": [-1]}],
+                    }
+                ]
+            },
+        }
+    )
+    out = capsys.readouterr().out
+
+    assert "You: lost 1 life [Starting Town] (now 18)" in out
+
+
+def test_return_zone_transfer_logs_source_spell_and_sneak_cost(capsys):
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.turn_number = 12
+    tracker.game_state.last_player_turn_number = 11
+    tracker.game_state.last_opponent_turn_number = 12
+    tracker.game_state.combat_phase_active = True
+    tracker.card_db.names[94027] = "Unsummon"
+    tracker.card_db.names[94851] = "Memory Guardian"
+    tracker.card_db.names[100496] = "Donatello's Technique"
+    tracker.card_db.names[92142] = "Silent Hallcreeper"
+    tracker.game_state.object_snapshots[369] = {"instanceId": 369, "grpId": 94027, "ownerSeatId": 2, "controllerSeatId": 2}
+    tracker.game_state.object_snapshots[321] = {"instanceId": 321, "grpId": 94851, "ownerSeatId": 1, "controllerSeatId": 1}
+    tracker.game_state.object_snapshots[421] = {"instanceId": 421, "grpId": 100496, "ownerSeatId": 2, "controllerSeatId": 2}
+    tracker.game_state.object_snapshots[397] = {"instanceId": 397, "grpId": 92142, "ownerSeatId": 2, "controllerSeatId": 2}
+    tracker.game_state.stack_items[421] = {"seat": 2, "label": "[Donatello's Technique]", "kind": "spell", "status": "pending"}
+
+    tracker._handle_event(
+        {
+            "type": "game_state",
+            "data": {
+                "annotations": [
+                    {
+                        "affectedIds": [321],
+                        "type": ["AnnotationType_ObjectIdChanged"],
+                        "details": [{"key": "orig_id", "valueInt32": [321]}, {"key": "new_id", "valueInt32": [370]}],
+                    },
+                    {
+                        "affectorId": 369,
+                        "affectedIds": [370],
+                        "type": ["AnnotationType_ZoneTransfer"],
+                        "details": [
+                            {"key": "zone_src", "valueInt32": [28]},
+                            {"key": "zone_dest", "valueInt32": [31]},
+                            {"key": "category", "valueString": ["Return"]},
+                        ],
+                    },
+                    {
+                        "affectedIds": [397],
+                        "type": ["AnnotationType_ObjectIdChanged"],
+                        "details": [{"key": "orig_id", "valueInt32": [397]}, {"key": "new_id", "valueInt32": [423]}],
+                    },
+                    {
+                        "affectorId": 421,
+                        "affectedIds": [423],
+                        "type": ["AnnotationType_ZoneTransfer"],
+                        "details": [
+                            {"key": "zone_src", "valueInt32": [28]},
+                            {"key": "zone_dest", "valueInt32": [35]},
+                            {"key": "category", "valueString": ["Return"]},
+                        ],
+                    },
+                ]
+            },
+        }
+    )
+    out = capsys.readouterr().out
+
+    assert "Opponent: [Unsummon] returned [Memory Guardian] to your hand" in out
+    assert "Opponent: returned [Silent Hallcreeper] to hand as cost for [Donatello's Technique]" in out
+
+
+def test_targeted_equip_action_logs_once_with_target(capsys):
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.turn_number = 13
+    tracker.card_db.names[100520] = "Improvised Arsenal"
+    tracker.card_db.names[94851] = "Memory Guardian"
+    tracker.card_db.ability_texts[(100520, 203146)] = "Equip {R}"
+
+    tracker._handle_event(
+        {
+            "type": "game_state",
+            "data": {
+                "gameObjects": [
+                    {"instanceId": 406, "grpId": 100520, "ownerSeatId": 1, "controllerSeatId": 1},
+                    {"instanceId": 451, "grpId": 203146, "ownerSeatId": 1, "controllerSeatId": 1},
+                ],
+                "annotations": [
+                    {"affectorId": 406, "affectedIds": [451], "type": ["AnnotationType_AbilityInstanceCreated"]},
+                    {"affectorId": 1, "affectedIds": [451], "type": ["AnnotationType_PlayerSelectingTargets"]},
+                ],
+            },
+        }
+    )
+    tracker._handle_event(
+        {
+            "type": "game_state",
+            "data": {
+                "gameObjects": [
+                    {
+                        "instanceId": 405,
+                        "grpId": 94851,
+                        "ownerSeatId": 1,
+                        "cardTypes": ["CardType_Creature"],
+                        "power": {"value": 3},
+                        "toughness": {"value": 4},
+                    }
+                ],
+                "persistentAnnotations": [
+                    {
+                        "affectorId": 451,
+                        "affectedIds": [405],
+                        "type": ["AnnotationType_TargetSpec"],
+                        "details": [{"key": "promptParameters", "valueInt32": [451]}],
+                    }
+                ],
+                "annotations": [
+                    {
+                        "affectorId": 1,
+                        "affectedIds": [451],
+                        "type": ["AnnotationType_UserActionTaken"],
+                        "details": [{"key": "actionType", "valueInt32": [2]}, {"key": "abilityGrpId", "valueInt32": [203146]}],
+                    }
+                ],
+            },
+        }
+    )
+    out = capsys.readouterr().out
+
+    assert out.count("[Improvised Arsenal] - Equip R") == 1
+    assert "[Improvised Arsenal] - Equip R -> [Memory Guardian (3/4)]" in out
+
+
 def test_resolution_start_logs_hidden_ability_text_for_source_card(capsys):
     tracker = make_tracker()
     tracker.game_state.player_seat_id = 1
@@ -769,7 +1127,7 @@ def test_game_over_modified_life_annotation_records_final_life_loss(capsys):
     out = capsys.readouterr().out
 
     assert "You: [Monument to Endurance] - Each opponent loses 3 life." in out
-    assert "Opponent: lost 3 life (now 0)" in out
+    assert "Opponent: lost 3 life [Monument to Endurance] (now 0)" in out
     assert tracker.game_state.opponent_life == 0
     assert tracker.game_state.match_stats[1]["total_damage"] == 3
     assert tracker._resolve_game_outcome() == ("win", "Opponent reached 0 life")
@@ -2439,6 +2797,21 @@ def test_parse_match_metadata_tolerates_mixed_last_played_timezone_offsets():
     assert tracker._deck_candidates["deck-1"]["last_played"].tzinfo is None
 
 
+def test_candidate_score_ignores_ancient_last_played_sentinel():
+    tracker = make_tracker()
+    candidate = {
+        "deck_name": "Current Deck",
+        "last_played": datetime.min,
+        "last_seen": datetime.min,
+    }
+
+    assert tracker._candidate_score(candidate, "Standard") == (3, 0.0, 0.0)
+
+
+def test_parse_attr_timestamp_ignores_ancient_last_played_sentinel():
+    assert CardTracker._parse_attr_timestamp('"0001-01-01T00:00:00"') is None
+
+
 def test_parse_match_metadata_uses_format_hint_to_pick_matching_deck():
     tracker = make_tracker()
     courses_line = json.dumps(
@@ -2482,6 +2855,43 @@ def test_parse_match_metadata_uses_format_hint_to_pick_matching_deck():
     assert tracker.game_state.format_str == "MWM_3Sets_20260310"
     assert tracker.game_state.player_deck_name == "MWM Landfall"
     assert tracker.game_state.player_deck_id == "mwm-deck"
+
+
+def test_match_room_reserved_player_event_id_replaces_stale_brawl_format():
+    tracker = make_tracker()
+    tracker.game_state.format_str = "HistoricBrawl"
+    tracker.game_state.match_type = "best_of_1"
+    tracker.game_state.player_seat_id = 1
+
+    tracker._parse_match_metadata(
+        json.dumps(
+            {
+                "matchGameRoomStateChangedEvent": {
+                    "gameRoomInfo": {
+                        "gameRoomConfig": {
+                            "matchId": "active-match",
+                            "reservedPlayers": [
+                                {
+                                    "systemSeatId": 1,
+                                    "playerName": "Tapps",
+                                    "eventId": "MWM_StarStandard_20260512",
+                                },
+                                {
+                                    "systemSeatId": 2,
+                                    "playerName": "Opponent",
+                                    "eventId": "MWM_StarStandard_20260512",
+                                },
+                            ],
+                        }
+                    }
+                }
+            }
+        )
+    )
+
+    assert tracker.game_state.format_str == "MWM_StarStandard_20260512"
+    assert tracker._friendly_format_label() == "Midweek Magic - Star Standard"
+    assert not tracker._is_brawl_format()
 
 
 def test_match_room_traditional_standard_sets_best_of_three_format():
