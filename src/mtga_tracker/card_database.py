@@ -127,7 +127,10 @@ class CardDatabase:
     def _resolve_mtga_db_path(self) -> Optional[Path]:
         """Resolve path to Raw_CardDatabase_*.mtga once; cache in self._mtga_db_path."""
         if self._mtga_db_resolved:
-            return self._mtga_db_path if (self._mtga_db_path and self._mtga_db_path.exists()) else None
+            if self._mtga_db_path and self._mtga_db_path.exists():
+                return self._mtga_db_path
+            # Arena can download/update Raw_CardDatabase after the tracker process starts.
+            # A previous miss must not poison card-name resolution for the whole session.
         self._mtga_db_resolved = True
         paths = self._find_mtga_card_database_paths()
         if paths:
