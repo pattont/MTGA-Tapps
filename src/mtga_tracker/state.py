@@ -71,6 +71,7 @@ class GameState:
         self.last_turn_announced = 0
         self.last_player_turn_number = 0
         self.last_opponent_turn_number = 0
+        self.turns_taken_by_seat: Dict[int, Set[int]] = {1: set(), 2: set()}
         self.player_seat_id: Optional[int] = None
         self.opponent_seat_id: Optional[int] = None
         self.my_user_id: Optional[str] = None

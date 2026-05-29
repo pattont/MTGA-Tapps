@@ -10,7 +10,20 @@ Primary code paths:
 
 - `src/mtga_tracker/main.py`: CLI entry point.
 - `src/mtga_tracker/log_parser.py`: JSON extraction and ordered game-state/client-message parsing.
-- `src/mtga_tracker/tracker.py`: main state machine, console logging, game summary, analytics persistence.
+- `src/mtga_tracker/tracker.py`: thin `CardTracker` composition/init class. Keep it small.
+- `src/mtga_tracker/tracker_runtime.py`: startup banner, live polling loop, stop/cleanup.
+- `src/mtga_tracker/tracker_lifecycle.py`: game start/end, match lifecycle, winner/outcome handling.
+- `src/mtga_tracker/tracker_events.py`: core GRE event orchestration and annotation dispatch.
+- `src/mtga_tracker/tracker_event_*.py`: focused event helpers for abilities, client actions, life, targets, and turns.
+- `src/mtga_tracker/tracker_zone_transfers.py`: zone-transfer handling for draw/discard/mill/exile/destroy/return/play/cast.
+- `src/mtga_tracker/tracker_stack.py`: stack lifecycle tracking and resolution/fizzle/counter display.
+- `src/mtga_tracker/tracker_combat.py`: attack/block/combat damage handling.
+- `src/mtga_tracker/tracker_opening_deck.py`: opening hand, mulligan, format, commander, deck metadata.
+- `src/mtga_tracker/tracker_analytics.py`: SQLite persistence helpers.
+- `src/mtga_tracker/tracker_summary.py`: end-game and session summary rendering.
+- `src/mtga_tracker/tracker_rendering.py`: console formatting, actor labels, mana/text cleanup, runtime strings.
+- `src/mtga_tracker/tracker_state_lookup.py`: object snapshots, identity/copy-state, card type, zone/seat lookup helpers.
+- `src/mtga_tracker/tracker_diagnostics.py`: unhandled annotation and parser diagnostics text logging.
 - `src/mtga_tracker/card_database.py`: MTGA/Scryfall card ID to card name/type resolution.
 - `tests/test_tracker_combat_winner.py`: broad regression coverage for tracker behavior.
 
@@ -70,7 +83,7 @@ Important tables:
 
 - `tracker_sessions`: one tracker runtime session.
 - `matches`: match grouping within a session.
-- `games`: one game result, duration, total turns, winner/outcome.
+- `games`: one game result, duration, total turns, player/opponent turn counts, winner/outcome.
 - `participants`: player/opponent seat, deck metadata, life, opening hand size, mulligans.
 - `game_opening_hand_cards`: one row per card in the player's opening hand.
 - `game_card_summary`: cards played by each participant.
@@ -97,10 +110,10 @@ High-risk areas needing tests:
 
 ## Coding Guidance
 
-- Keep changes localized; `tracker.py` is large, so avoid broad refactors unless needed.
+- Keep changes localized; `tracker.py` should remain a thin composition class. Put behavior in the focused `tracker_*` mixin that owns that responsibility.
+- Avoid recreating a new monolith. If a tracker module grows well past ~800 lines, split it by responsibility before adding more behavior.
 - Prefer robust inference from MTGA data over string matching console output.
 - Preserve existing user-facing formatting unless the user requested a change.
 - When adding a new event type, update summary stats and DB persistence if it affects analytics.
 - If a log annotation is unknown, write a diagnostic to `data/mtga_tracker_unhandled_annotations.log` and avoid noisy UI output.
 - Do not introduce network dependencies for normal card resolution when the local MTGA card DB can provide the data.
-

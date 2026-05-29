@@ -458,11 +458,11 @@ class TrackerLifecycleMixin:
         """Print the game-start banner."""
         self._print_line("\n" + "="*75)
         if verbose:
-            self._print_line("🎮 🎮 🎮 GAME STARTED 🎮 🎮 🎮")
+            self._print_line("🟡 🔵 ⚫ 🔴 🟢 GAME STARTED 🟡 🔵 ⚫ 🔴 🟢")
         else:
             format_display = "Standard Best-of-3" if self.game_state.match_type == "best_of_3" else "Standard Best-of-1"
             game_num_display = f" (Game {self.game_state.game_number})" if self.game_state.match_type == "best_of_3" else ""
-            self._print_line(f"🎮 GAME STARTED - {format_display}{game_num_display}")
+            self._print_line(f"🟡 🔵 ⚫ 🔴 🟢 GAME STARTED - {format_display}{game_num_display} 🟡 🔵 ⚫ 🔴 🟢")
         self._print_line("="*75)
         self._print_match_started_block()
 
