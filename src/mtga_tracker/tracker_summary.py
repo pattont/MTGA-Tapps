@@ -8,12 +8,14 @@ from .deck_llm import identify_deck, is_deck_llm_enabled, diagnose as deck_llm_d
 from .state import CardEvent
 
 
-
 class TrackerSummaryMixin:
     """End-game and session summary rendering helpers used by CardTracker."""
 
     def _turns_completed(self) -> int:
         """Return best-effort total turn count for the finished game."""
+        player_turns, opponent_turns = self._participant_turn_counts()
+        if player_turns or opponent_turns:
+            return player_turns + opponent_turns
         return max(
             int(self.game_state.turn_number or 0),
             int(self.game_state.last_turn_announced or 0),
@@ -21,11 +23,33 @@ class TrackerSummaryMixin:
             int(self.game_state.last_opponent_turn_number or 0),
         )
 
+    def _participant_turn_counts(self) -> tuple[int, int]:
+        """Return tracked player/opponent turn counts."""
+        turns_by_seat = getattr(self.game_state, "turns_taken_by_seat", {}) or {}
+        player_turns = (
+            len(turns_by_seat.get(int(self.game_state.player_seat_id), set()))
+            if self.game_state.player_seat_id in (1, 2)
+            else 0
+        )
+        opponent_turns = (
+            len(turns_by_seat.get(int(self.game_state.opponent_seat_id), set()))
+            if self.game_state.opponent_seat_id in (1, 2)
+            else 0
+        )
+        if player_turns or opponent_turns:
+            return player_turns, opponent_turns
+
+        player_last = int(self.game_state.last_player_turn_number or 0)
+        opponent_last = int(self.game_state.last_opponent_turn_number or 0)
+        return (1 if player_last else 0), (1 if opponent_last else 0)
+
     def _print_match_stats_section(self) -> None:
         """Print per-player match stats block."""
         self._print_line()
         self._print_summary_heading("Match Stats", "turn")
         self._print_line(f"   Total Turns: {self._turns_completed()}")
+        player_turns, opponent_turns = self._participant_turn_counts()
+        self._print_line(f"   Turns: You {player_turns}, Opponent {opponent_turns}")
         for seat_id, label in (
             (self.game_state.player_seat_id, "You"),
             (self.game_state.opponent_seat_id, "Opponent"),
@@ -33,7 +57,11 @@ class TrackerSummaryMixin:
             if seat_id not in (1, 2):
                 continue
             stats = self.game_state.match_stats[int(seat_id)]
-            cards_played = len(self.player_cards) if seat_id == self.game_state.player_seat_id else len(self.opponent_cards)
+            cards_played = (
+                len(self.player_cards)
+                if seat_id == self.game_state.player_seat_id
+                else len(self.opponent_cards)
+            )
             self._print_line(f"\n   {label}:")
             self._print_line(
                 f"      Combat: {stats['attacks']} attack step(s), {stats['attacking_creatures']} attacking creature(s), "
@@ -82,14 +110,14 @@ class TrackerSummaryMixin:
     def _print_result_summary(self, outcome: str, reason: str, duration_display: str) -> None:
         """Print the consolidated game-end result block."""
         result_line, result_style = self._summary_result_line(outcome)
-        self._print_line("\n" + "="*75)
+        self._print_line("\n" + "=" * 75)
         self._print_line(result_line, result_style)
         self._print_line(f"Reason: {reason}")
         if outcome == "unknown" and self.game_state.winner_seat is None:
             self._print_line("Result Note: Result unclear — possible concede or disconnect")
         self._print_line(f"Duration: {duration_display}")
         self._print_line(f"Session Stats: {self._session_stats_line()}")
-        self._print_line("="*75)
+        self._print_line("=" * 75)
 
     def _print_best_of_three_status(self) -> None:
         """Print best-of-three game status when applicable."""
@@ -101,7 +129,9 @@ class TrackerSummaryMixin:
         if self.match_games:
             self._print_line("   Previous games:")
             for game in self.match_games:
-                game_winner = "You" if game["winner"] == self.game_state.player_seat_id else "Opponent"
+                game_winner = (
+                    "You" if game["winner"] == self.game_state.player_seat_id else "Opponent"
+                )
                 self._print_line(f"      Game {game['game_number']}: {game_winner} won")
 
     def _print_starting_hand_summary(self) -> None:
@@ -112,7 +142,9 @@ class TrackerSummaryMixin:
             for card in self.game_state.starting_hand:
                 self._print_line(f"   • [{self._refresh_fallback_name_text(card)}]")
         else:
-            self._print_line("   Not captured. Start the tracker before the mulligan/keep screen to record this.")
+            self._print_line(
+                "   Not captured. Start the tracker before the mulligan/keep screen to record this."
+            )
 
     def _print_cards_played_summary(self) -> None:
         """Print deck metadata and played-card counts."""
@@ -131,9 +163,13 @@ class TrackerSummaryMixin:
                 f"{self.game_state.observed_starting_deck_total_by_seat[self.game_state.player_seat_id]}"
             )
         if self._is_brawl_format() and self.game_state.player_commanders:
-            self._print_line(f"   Your Commander: {self._format_commander_names(self.game_state.player_commanders)}")
+            self._print_line(
+                f"   Your Commander: {self._format_commander_names(self.game_state.player_commanders)}"
+            )
         if self._is_brawl_format() and self.game_state.opponent_commanders:
-            self._print_line(f"   Opponent Commander: {self._format_commander_names(self.game_state.opponent_commanders)}")
+            self._print_line(
+                f"   Opponent Commander: {self._format_commander_names(self.game_state.opponent_commanders)}"
+            )
         self._print_line(f"   Mulligans: {self.game_state.mulligan_count}")
         self._print_line(f"   Your cards: {len(self.player_cards)}")
         self._print_line(f"   Opponent cards: {len(self.opponent_cards)}")
@@ -159,7 +195,9 @@ class TrackerSummaryMixin:
                 "openai": "CHATGPT_API_KEY",
                 "claude": "CLAUDE_API_KEY",
             }.get(diagnostics.get("provider") or "gemini", "GEMINI_API_KEY")
-            self._print_line(f"   Opponent deck: (LLM: no API key — set {key_name} in config.py or env)")
+            self._print_line(
+                f"   Opponent deck: (LLM: no API key — set {key_name} in config.py or env)"
+            )
         else:
             self._print_line("   Opponent deck: (LLM: request failed — check key/network)")
 
@@ -173,9 +211,26 @@ class TrackerSummaryMixin:
 
     def _format_type_breakdown(self, events: List["CardEvent"]) -> str:
         """Return a 'By type: N Lands, M Creatures, ...' string for a list of card events (non-zero only)."""
-        order = ["Land", "Creature", "Instant", "Sorcery", "Enchantment", "Artifact", "Planeswalker", "Other"]
-        plurals = {"Land": "Lands", "Creature": "Creatures", "Instant": "Instants", "Sorcery": "Sorceries",
-                   "Enchantment": "Enchantments", "Artifact": "Artifacts", "Planeswalker": "Planeswalkers", "Other": "Other"}
+        order = [
+            "Land",
+            "Creature",
+            "Instant",
+            "Sorcery",
+            "Enchantment",
+            "Artifact",
+            "Planeswalker",
+            "Other",
+        ]
+        plurals = {
+            "Land": "Lands",
+            "Creature": "Creatures",
+            "Instant": "Instants",
+            "Sorcery": "Sorceries",
+            "Enchantment": "Enchantments",
+            "Artifact": "Artifacts",
+            "Planeswalker": "Planeswalkers",
+            "Other": "Other",
+        }
         counts: Dict[str, int] = {cat: 0 for cat in order}
         for e in events:
             cat = getattr(e, "card_type_category", None) or "Other"
@@ -224,10 +279,16 @@ class TrackerSummaryMixin:
         self._print_starting_hand_summary()
         self._print_cards_played_summary()
         self._print_exile_and_match_stats_summary()
-        self._print_card_collection_summary(self.player_cards, heading="Your Cards", seat_id=self.game_state.player_seat_id)
-        self._print_card_collection_summary(self.opponent_cards, heading="Opponent's Cards", seat_id=self.game_state.opponent_seat_id)
+        self._print_card_collection_summary(
+            self.player_cards, heading="Your Cards", seat_id=self.game_state.player_seat_id
+        )
+        self._print_card_collection_summary(
+            self.opponent_cards,
+            heading="Opponent's Cards",
+            seat_id=self.game_state.opponent_seat_id,
+        )
 
-        self._print_line("\n" + "="*75)
+        self._print_line("\n" + "=" * 75)
         self._print_line("Ready for next game...\n")
 
         self._persist_game_analytics(outcome, reason)

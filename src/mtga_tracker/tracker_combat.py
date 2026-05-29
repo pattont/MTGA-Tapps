@@ -5,11 +5,12 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Set
 
 
-
 class TrackerCombatMixin:
     """Combat, blocking, and damage helpers used by CardTracker."""
 
-    def _should_announce_attack(self, turn_num: int, instance_id: Optional[int], owner_seat: Optional[int]) -> bool:
+    def _should_announce_attack(
+        self, turn_num: int, instance_id: Optional[int], owner_seat: Optional[int]
+    ) -> bool:
         """Return True if this attacker for this turn has not already been announced."""
         if not turn_num or turn_num <= 0 or instance_id is None:
             return True
@@ -34,9 +35,9 @@ class TrackerCombatMixin:
             stats["total_damage"] += int(amount)
             if source_seat == target_seat:
                 stats["self_damage"] += int(amount)
-        if (
-            queue_life_reconciliation
-            and target_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
+        if queue_life_reconciliation and target_seat in (
+            self.game_state.player_seat_id,
+            self.game_state.opponent_seat_id,
         ):
             self.game_state.pending_damage_to_seat[int(target_seat)] = (
                 self.game_state.pending_damage_to_seat.get(int(target_seat), 0) + int(amount)
@@ -60,12 +61,17 @@ class TrackerCombatMixin:
         if len(attacking_seats) == 1:
             return next(iter(attacking_seats))
 
-        recent_attackers = set(self.game_state.recent_attack_sources_by_target.get(int(target_seat), set()))
+        recent_attackers = set(
+            self.game_state.recent_attack_sources_by_target.get(int(target_seat), set())
+        )
         recent_attackers.discard(None)
         if len(recent_attackers) == 1:
             return next(iter(recent_attackers))
 
-        if self.game_state.active_player in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+        if self.game_state.active_player in (
+            self.game_state.player_seat_id,
+            self.game_state.opponent_seat_id,
+        ):
             return self.game_state.active_player
         return None
 
@@ -97,7 +103,9 @@ class TrackerCombatMixin:
         previous_attack_target_ids = {
             info.get("target_id")
             for info in self.game_state.current_combat_attackers.values()
-            if isinstance(info, dict) and info.get("target_id") in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
+            if isinstance(info, dict)
+            and info.get("target_id")
+            in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
         }
         previous_attack_sources_by_target: Dict[int, Set[int]] = {}
         for info in self.game_state.current_combat_attackers.values():
@@ -105,11 +113,13 @@ class TrackerCombatMixin:
                 continue
             target_id = info.get("target_id")
             owner_seat = info.get("owner_seat")
-            if (
-                target_id in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
-                and owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
-            ):
-                previous_attack_sources_by_target.setdefault(int(target_id), set()).add(int(owner_seat))
+            if target_id in (
+                self.game_state.player_seat_id,
+                self.game_state.opponent_seat_id,
+            ) and owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+                previous_attack_sources_by_target.setdefault(int(target_id), set()).add(
+                    int(owner_seat)
+                )
         return previous_attack_target_ids, previous_attack_sources_by_target
 
     def _clear_combat_tracking(self) -> None:
@@ -220,7 +230,7 @@ class TrackerCombatMixin:
             return
 
         game_objects_by_id: Dict[int, Dict[str, Any]] = {}
-        for message in (gre_event.get("greToClientMessages") or []):
+        for message in gre_event.get("greToClientMessages") or []:
             if not isinstance(message, dict):
                 continue
             msg_type = message.get("type")
@@ -235,7 +245,9 @@ class TrackerCombatMixin:
                     if instance_id is not None:
                         game_objects_by_id[instance_id] = obj
 
-    def _handle_blockers_request(self, blockers: List[Dict[str, Any]], game_objects_by_id: Dict[int, Dict[str, Any]]) -> None:
+    def _handle_blockers_request(
+        self, blockers: List[Dict[str, Any]], game_objects_by_id: Dict[int, Dict[str, Any]]
+    ) -> None:
         """Display blocker mappings from DeclareBlockersReq payloads."""
         for block in blockers:
             if not isinstance(block, dict):
@@ -259,13 +271,20 @@ class TrackerCombatMixin:
                 player = "Opponent"
             else:
                 player = "Unknown"
-            inferred_turn = self.game_state.turn_number if self.game_state.turn_number > 0 else self._turn_for_seat(blocker_owner_seat)
+            inferred_turn = (
+                self.game_state.turn_number
+                if self.game_state.turn_number > 0
+                else self._turn_for_seat(blocker_owner_seat)
+            )
             for attacker_id in attacker_ids:
                 if attacker_id is None:
                     continue
                 attacker_obj = self._lookup_object(attacker_id, game_objects_by_id)
                 attacker_owner_seat = attacker_obj.get("ownerSeatId")
-                if attacker_owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+                if attacker_owner_seat in (
+                    self.game_state.player_seat_id,
+                    self.game_state.opponent_seat_id,
+                ):
                     inferred_turn = self._turn_for_seat(attacker_owner_seat) or inferred_turn
                     break
             self._ensure_turn_header_for_event(blocker_owner_seat, inferred_turn)
@@ -281,7 +300,9 @@ class TrackerCombatMixin:
                 attacker_obj = self._lookup_object(attacker_id, game_objects_by_id)
                 attacker_name = self._object_display_name(attacker_obj, attacker_id)
                 if attacker_name.startswith("ID "):
-                    attacker_name = (self.game_state.current_combat_attackers.get(attacker_id) or {}).get("card_name")
+                    attacker_name = (
+                        self.game_state.current_combat_attackers.get(attacker_id) or {}
+                    ).get("card_name")
                 if not attacker_name:
                     attacker_name = f"ID {attacker_id}"
 
@@ -296,18 +317,26 @@ class TrackerCombatMixin:
 
     def _display_combat_summary(self):
         """Display a summary of combat after it ends."""
-        if not self.game_state.current_combat_attackers and not self.game_state.combat_damage_events:
+        if (
+            not self.game_state.current_combat_attackers
+            and not self.game_state.combat_damage_events
+        ):
             return
-        
+
         # Show combat summary if we have significant combat activity
         if self.game_state.combat_damage_events:
             self._print_line("\n" + self._style("⚔️ Combat Summary:", "attack"))
             for event in self.game_state.combat_damage_events:
                 if event.get("source"):
-                    self._print_event(f"   {event['source']} → {event['target']} ({event['target_owner']}): {event['amount']} damage", "combat_damage")
+                    self._print_event(
+                        f"   [{event['source']}] → [{event['target']}] ({event['target_owner']}): {event['amount']} damage",
+                        "combat_damage",
+                    )
             self._print_line()
 
-    def _handle_attacker_declared(self, affected_ids: List[int], game_objects: List[Dict[str, Any]]):
+    def _handle_attacker_declared(
+        self, affected_ids: List[int], game_objects: List[Dict[str, Any]]
+    ):
         """Handle attacker declarations."""
         game_objects_by_id: Dict[int, Dict[str, Any]] = {}
         for obj in game_objects:
@@ -341,20 +370,28 @@ class TrackerCombatMixin:
                         }
 
                         self._flush_pending_turn_header_for_seat(owner_seat)
-                        player = "You" if owner_seat == self.game_state.player_seat_id else "Opponent"
+                        player = (
+                            "You" if owner_seat == self.game_state.player_seat_id else "Opponent"
+                        )
                         turn_for_display = (
                             self.game_state.turn_number
-                            if owner_seat == self.game_state.active_player and self.game_state.turn_number > 0
+                            if owner_seat == self.game_state.active_player
+                            and self.game_state.turn_number > 0
                             else self._turn_for_seat(owner_seat)
                         )
                         stats = self._seat_stats(owner_seat)
                         if stats is not None:
                             stats["attacking_creatures"] += 1
                             attack_turn_key = (int(turn_for_display or 0), int(owner_seat))
-                            if turn_for_display and attack_turn_key not in self.game_state.counted_attack_turns:
+                            if (
+                                turn_for_display
+                                and attack_turn_key not in self.game_state.counted_attack_turns
+                            ):
                                 self.game_state.counted_attack_turns.add(attack_turn_key)
                                 stats["attacks"] += 1
-                        if not self._should_announce_attack(turn_for_display, instance_id, owner_seat):
+                        if not self._should_announce_attack(
+                            turn_for_display, instance_id, owner_seat
+                        ):
                             break
                         self._ensure_turn_header_for_event(owner_seat, turn_for_display)
                         turn_prefix = self._turn_prefix_for_number(turn_for_display)
@@ -371,7 +408,12 @@ class TrackerCombatMixin:
                             )
                         break
 
-    def _handle_blocker_declared(self, affected_ids: List[int], annotation: Dict[str, Any], game_objects: List[Dict[str, Any]]):
+    def _handle_blocker_declared(
+        self,
+        affected_ids: List[int],
+        annotation: Dict[str, Any],
+        game_objects: List[Dict[str, Any]],
+    ):
         """Handle blocker declarations."""
         if not affected_ids:
             return
@@ -428,13 +470,20 @@ class TrackerCombatMixin:
                 player = "Opponent"
             else:
                 player = "Unknown"
-            inferred_turn = self.game_state.turn_number if self.game_state.turn_number > 0 else self._turn_for_seat(blocker_owner_seat)
+            inferred_turn = (
+                self.game_state.turn_number
+                if self.game_state.turn_number > 0
+                else self._turn_for_seat(blocker_owner_seat)
+            )
             for attacker_id in attacker_ids:
                 if attacker_id is None:
                     continue
                 attacker_obj = self._lookup_object(attacker_id, game_objects_by_id)
                 attacker_owner_seat = attacker_obj.get("ownerSeatId")
-                if attacker_owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+                if attacker_owner_seat in (
+                    self.game_state.player_seat_id,
+                    self.game_state.opponent_seat_id,
+                ):
                     inferred_turn = self._turn_for_seat(attacker_owner_seat) or inferred_turn
                     break
             self._ensure_turn_header_for_event(blocker_owner_seat, inferred_turn)
@@ -447,7 +496,9 @@ class TrackerCombatMixin:
                     continue
                 self.game_state.reported_block_pairs.add(dedupe_key)
 
-                attacker_name = attackers_by_id.get(attacker_id) if attacker_id is not None else None
+                attacker_name = (
+                    attackers_by_id.get(attacker_id) if attacker_id is not None else None
+                )
                 if attacker_name:
                     self._print_event(
                         f"\t{turn_prefix}{player} blocking [{attacker_name}] with [{blocker_name} ({blocker_pt})]",
@@ -462,7 +513,12 @@ class TrackerCombatMixin:
                 if attacker_id is not None and attacker_id not in blocker_targets:
                     blocker_targets.append(attacker_id)
 
-    def _handle_damage(self, affected_ids: List[int], annotation: Dict[str, Any], game_objects: List[Dict[str, Any]]):
+    def _handle_damage(
+        self,
+        affected_ids: List[int],
+        annotation: Dict[str, Any],
+        game_objects: List[Dict[str, Any]],
+    ):
         """Handle damage events."""
         # Extract damage amount
         details = annotation.get("details", [])
@@ -474,28 +530,40 @@ class TrackerCombatMixin:
             for obj in game_objects
             if isinstance(obj, dict) and obj.get("instanceId") is not None
         }
-        
+
         for detail in details:
             if detail.get("key") == "damage" or detail.get("key") == "amount":
                 damage_amount = detail.get("valueInt32", [None])[0]
             elif detail.get("key") == "source" or detail.get("key") == "source_id":
                 source_id = detail.get("valueInt32", [None])[0]
             elif detail.get("key") == "combat" or detail.get("key") == "is_combat":
-                is_combat_damage = detail.get("valueBool", [False])[0] or detail.get("valueInt32", [0])[0] == 1
+                is_combat_damage = (
+                    detail.get("valueBool", [False])[0] or detail.get("valueInt32", [0])[0] == 1
+                )
 
         if source_id is None:
             source_id = annotation.get("affectorId")
-        source_obj = self._lookup_object(source_id, game_objects_by_id) if source_id is not None else {}
-        canonical_source_id = self._canonical_instance_id(source_id) if source_id is not None else None
+        source_obj = (
+            self._lookup_object(source_id, game_objects_by_id) if source_id is not None else {}
+        )
+        canonical_source_id = (
+            self._canonical_instance_id(source_id) if source_id is not None else None
+        )
         source_card_types = source_obj.get("cardTypes") or []
 
         # Spells can deal damage during combat, but that is not combat damage.
         if self.game_state.combat_phase_active and not is_combat_damage:
             if source_id is None:
                 is_combat_damage = True
-            elif canonical_source_id in self.game_state.current_combat_attackers or source_id in self.game_state.current_combat_attackers:
+            elif (
+                canonical_source_id in self.game_state.current_combat_attackers
+                or source_id in self.game_state.current_combat_attackers
+            ):
                 is_combat_damage = True
-            elif canonical_source_id in self.game_state.current_combat_blockers or source_id in self.game_state.current_combat_blockers:
+            elif (
+                canonical_source_id in self.game_state.current_combat_blockers
+                or source_id in self.game_state.current_combat_blockers
+            ):
                 is_combat_damage = True
             elif "CardType_Creature" in source_card_types and bool(source_obj.get("attackInfo")):
                 is_combat_damage = True
@@ -510,7 +578,10 @@ class TrackerCombatMixin:
                     source_seat = source_obj.get("controllerSeatId")
                     if source_seat is None:
                         source_seat = source_obj.get("ownerSeatId")
-                if instance_id in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+                if instance_id in (
+                    self.game_state.player_seat_id,
+                    self.game_state.opponent_seat_id,
+                ):
                     self._record_damage_dealt(int(damage_amount), source_seat, instance_id)
                     continue
                 for obj in game_objects:
@@ -519,57 +590,85 @@ class TrackerCombatMixin:
                         owner_seat = obj.get("ownerSeatId")
                         self._flush_pending_turn_header_for_seat(owner_seat)
                         card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
+                        target_label = self._object_display_label(obj, instance_id)
 
-                        owner = "your" if owner_seat == self.game_state.player_seat_id else "opponent's"
-                        
+                        owner = (
+                            "your" if owner_seat == self.game_state.player_seat_id else "opponent's"
+                        )
+
                         # Find source if available
                         source_name = None
                         if source_id:
-                            for source_obj in game_objects:
-                                if source_obj.get("instanceId") == source_id:
-                                    source_grp_id = source_obj.get("grpId")
-                                    source_name = self.card_db.get_card_name(source_grp_id) if source_grp_id else None
-                                    source_seat = source_obj.get("controllerSeatId")
+                            for candidate_source_obj in game_objects:
+                                if candidate_source_obj.get("instanceId") == source_id:
+                                    source_name = self._object_display_label(
+                                        candidate_source_obj, source_id
+                                    )
+                                    source_seat = candidate_source_obj.get("controllerSeatId")
                                     if source_seat is None:
-                                        source_seat = source_obj.get("ownerSeatId")
+                                        source_seat = candidate_source_obj.get("ownerSeatId")
                                     break
                         self._record_damage_dealt(
                             int(damage_amount),
                             source_seat,
-                            owner_seat if owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id) else None,
+                            (
+                                owner_seat
+                                if owner_seat
+                                in (
+                                    self.game_state.player_seat_id,
+                                    self.game_state.opponent_seat_id,
+                                )
+                                else None
+                            ),
                             queue_life_reconciliation=False,
                         )
 
                         if is_combat_damage:
                             # Store for combat summary
-                            self.game_state.combat_damage_events.append({
-                                "source": source_name,
-                                "target": card_name,
-                                "target_owner": owner,
-                                "amount": damage_amount
-                            })
-                            
-                            event_seat = source_seat if source_seat in (
-                                self.game_state.player_seat_id,
-                                self.game_state.opponent_seat_id,
-                            ) else owner_seat
-                            turn_prefix = self._turn_prefix_for_number(self._event_turn_number(event_seat))
+                            self.game_state.combat_damage_events.append(
+                                {
+                                    "source": source_name,
+                                    "target": target_label,
+                                    "target_owner": owner,
+                                    "amount": damage_amount,
+                                }
+                            )
+
+                            event_seat = (
+                                source_seat
+                                if source_seat
+                                in (
+                                    self.game_state.player_seat_id,
+                                    self.game_state.opponent_seat_id,
+                                )
+                                else owner_seat
+                            )
+                            turn_prefix = self._turn_prefix_for_number(
+                                self._event_turn_number(event_seat)
+                            )
                             if source_name:
                                 self._print_event(
-                                    f"\t{turn_prefix}Combat: [{source_name}] dealt {damage_amount} damage to [{card_name}] ({owner})",
+                                    f"\t{turn_prefix}Combat: [{source_name}] dealt {damage_amount} damage to [{target_label}] ({owner})",
                                     "combat_damage",
                                 )
                             else:
                                 self._print_event(
-                                    f"\t{turn_prefix}Combat: [{card_name}] ({owner}) took {damage_amount} damage",
+                                    f"\t{turn_prefix}Combat: [{target_label}] ({owner}) took {damage_amount} damage",
                                     "combat_damage",
                                 )
                         else:
-                            event_seat = source_seat if source_seat in (
-                                self.game_state.player_seat_id,
-                                self.game_state.opponent_seat_id,
-                            ) else owner_seat
-                            turn_prefix = self._turn_prefix_for_number(self._event_turn_number(event_seat))
+                            event_seat = (
+                                source_seat
+                                if source_seat
+                                in (
+                                    self.game_state.player_seat_id,
+                                    self.game_state.opponent_seat_id,
+                                )
+                                else owner_seat
+                            )
+                            turn_prefix = self._turn_prefix_for_number(
+                                self._event_turn_number(event_seat)
+                            )
                             self._print_event(
                                 f"{turn_prefix}[{card_name}] ({owner}) took {damage_amount} damage",
                                 "damage",
