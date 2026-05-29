@@ -973,7 +973,7 @@ class TrackerOpeningDeckMixin:
         self.game_state.opening_keep_confirmed = False
         self.game_state.opening_select_n_ids = []
         n = len(self.game_state.starting_hand)
-        self._print_line(f"\n🎴 Your Starting Hand ({n} cards):")
+        self._print_line(f"\nYour Starting Hand ({n} cards):")
         for card in self.game_state.starting_hand:
             self._print_line(f"   • {card}")
         self._print_line()

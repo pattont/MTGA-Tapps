@@ -99,6 +99,8 @@ class AnalyticsStore:
                 ended_at TEXT,
                 duration_seconds INTEGER,
                 total_turns INTEGER,
+                player_turns INTEGER,
+                opponent_turns INTEGER,
                 outcome TEXT,
                 outcome_reason TEXT,
                 winner_participant_id TEXT,
@@ -308,7 +310,64 @@ class AnalyticsStore:
         AnalyticsStore.ensure_table_column(conn, "game_events", "opponent_life", "INTEGER")
         AnalyticsStore.ensure_table_column(conn, "participants", "opening_hand_size", "INTEGER")
         AnalyticsStore.ensure_table_column(conn, "participants", "mulligans", "INTEGER")
-        AnalyticsStore.ensure_table_column(conn, "tracker_sessions", "draws", "INTEGER NOT NULL DEFAULT 0")
+        AnalyticsStore.ensure_table_column(
+            conn, "tracker_sessions", "draws", "INTEGER NOT NULL DEFAULT 0"
+        )
+        AnalyticsStore.ensure_table_column(conn, "games", "player_turns", "INTEGER")
+        AnalyticsStore.ensure_table_column(conn, "games", "opponent_turns", "INTEGER")
+        AnalyticsStore.backfill_game_turn_counts(conn)
+
+    @staticmethod
+    def backfill_game_turn_counts(conn: sqlite3.Connection) -> None:
+        """Backfill player/opponent turn counts from persisted turn header events."""
+        conn.execute(
+            """
+            UPDATE games
+            SET
+                player_turns = COALESCE((
+                    SELECT COUNT(DISTINCT ge.turn_number)
+                    FROM game_events ge
+                    WHERE ge.game_id = games.id
+                      AND ge.text LIKE 'Turn % - YOUR TURN'
+                ), 0),
+                opponent_turns = COALESCE((
+                    SELECT COUNT(DISTINCT ge.turn_number)
+                    FROM game_events ge
+                    WHERE ge.game_id = games.id
+                      AND ge.text LIKE "Turn % - OPPONENT'S TURN"
+                ), 0)
+            WHERE player_turns IS NULL OR opponent_turns IS NULL
+            """
+        )
+        conn.execute(
+            """
+            UPDATE games
+            SET total_turns = player_turns + opponent_turns
+            WHERE player_turns IS NOT NULL
+              AND opponent_turns IS NOT NULL
+              AND player_turns + opponent_turns > 0
+            """
+        )
+        conn.execute(
+            """
+            UPDATE games
+            SET
+                player_turns = CASE
+                    WHEN COALESCE(p.went_first, 0) = 1 THEN (COALESCE(games.total_turns, 0) + 1) / 2
+                    ELSE COALESCE(games.total_turns, 0) / 2
+                END,
+                opponent_turns = CASE
+                    WHEN COALESCE(p.went_first, 0) = 1 THEN COALESCE(games.total_turns, 0) / 2
+                    ELSE (COALESCE(games.total_turns, 0) + 1) / 2
+                END
+            FROM participants p
+            WHERE p.game_id = games.id
+              AND p.role = 'player'
+              AND COALESCE(games.total_turns, 0) > 0
+              AND COALESCE(games.player_turns, 0) = 0
+              AND COALESCE(games.opponent_turns, 0) = 0
+            """
+        )
 
     @staticmethod
     def ensure_table_column(

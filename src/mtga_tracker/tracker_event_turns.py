@@ -264,6 +264,9 @@ class TrackerTurnStateMixin:
         self.game_state.last_turn_announced = turn_num
         if active_player == self.game_state.opponent_seat_id:
             self.game_state.last_opponent_turn_number = turn_num
+            self.game_state.turns_taken_by_seat.setdefault(int(active_player), set()).add(
+                int(turn_num)
+            )
         self._print_line(f"\n{'='*75}")
         self._print_event(f"Turn {turn_num} - OPPONENT'S TURN", "turn")
         self._print_line(f"Life: You {player_life} - {opponent_life} Opponent")
@@ -281,6 +284,9 @@ class TrackerTurnStateMixin:
         self.game_state.last_turn_announced = turn_num
         if active_player == self.game_state.player_seat_id:
             self.game_state.last_player_turn_number = turn_num
+            self.game_state.turns_taken_by_seat.setdefault(int(active_player), set()).add(
+                int(turn_num)
+            )
         self._print_line(f"\n{'='*75}")
         self._print_event(f"Turn {turn_num} - YOUR TURN", "turn")
         self._print_line(f"Life: You {player_life} - {opponent_life} Opponent")

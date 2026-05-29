@@ -47,7 +47,9 @@ class TrackerAnalyticsMixin:
             now = self._now()
             elapsed_seconds = None
             if self.game_state.game_start_time is not None:
-                elapsed_seconds = max(0, int((now - self.game_state.game_start_time).total_seconds()))
+                elapsed_seconds = max(
+                    0, int((now - self.game_state.game_start_time).total_seconds())
+                )
             self._analytics_store().record_console_log(
                 self._session_snapshot(),
                 created_at=now,
@@ -95,7 +97,9 @@ class TrackerAnalyticsMixin:
         AnalyticsStore.ensure_schema(conn)
 
     @staticmethod
-    def _ensure_table_column(conn: sqlite3.Connection, table_name: str, column_name: str, column_type: str) -> None:
+    def _ensure_table_column(
+        conn: sqlite3.Connection, table_name: str, column_name: str, column_type: str
+    ) -> None:
         """Add a nullable column when an older analytics DB lacks it."""
         AnalyticsStore.ensure_table_column(conn, table_name, column_name, column_type)
 
@@ -163,7 +167,9 @@ class TrackerAnalyticsMixin:
             return self._participant_id_for_role(game_id, "opponent")
         return None
 
-    def _participant_snapshot(self, game_id: str, role: str, seat_id: Optional[int]) -> Dict[str, Any]:
+    def _participant_snapshot(
+        self, game_id: str, role: str, seat_id: Optional[int]
+    ) -> Dict[str, Any]:
         """Return current participant metadata for summary persistence."""
         is_player = role == "player"
         observed_deck_size = None
@@ -171,25 +177,38 @@ class TrackerAnalyticsMixin:
             observed_deck_size = self.game_state.observed_starting_deck_total_by_seat[seat_id]
         metadata_deck_size = self.game_state.player_deck_total_cards if is_player else None
         deck_size = metadata_deck_size or observed_deck_size
-        deck_size_source = "metadata" if metadata_deck_size else ("observed" if observed_deck_size else None)
+        deck_size_source = (
+            "metadata" if metadata_deck_size else ("observed" if observed_deck_size else None)
+        )
         return {
             "id": self._participant_id_for_role(game_id, role),
             "game_id": game_id,
             "seat_id": seat_id,
             "role": role,
             "display_name": (
-                self.game_state.player_display_name if is_player else self.game_state.opponent_display_name
-            ) or ("You" if is_player else "Opponent"),
+                self.game_state.player_display_name
+                if is_player
+                else self.game_state.opponent_display_name
+            )
+            or ("You" if is_player else "Opponent"),
             "deck_name": self.game_state.player_deck_name if is_player else None,
             "deck_id": self.game_state.player_deck_id if is_player else None,
             "deck_archetype": None,
             "deck_size": deck_size,
             "deck_size_source": deck_size_source,
-            "opening_hand_size": len(self.game_state.starting_hand) if is_player and self.game_state.starting_hand else None,
+            "opening_hand_size": (
+                len(self.game_state.starting_hand)
+                if is_player and self.game_state.starting_hand
+                else None
+            ),
             "mulligans": self.game_state.mulligan_count if is_player else None,
             "starting_life": 20,
-            "ending_life": self.game_state.player_life if is_player else self.game_state.opponent_life,
-            "went_first": 1 if seat_id is not None and self.game_state.first_player_seat == seat_id else 0,
+            "ending_life": (
+                self.game_state.player_life if is_player else self.game_state.opponent_life
+            ),
+            "went_first": (
+                1 if seat_id is not None and self.game_state.first_player_seat == seat_id else 0
+            ),
         }
 
     def _infer_event_actor(self, text: str) -> tuple:
@@ -454,6 +473,7 @@ class TrackerAnalyticsMixin:
         winner_participant_id: Optional[str],
     ) -> None:
         """Persist the current game row."""
+        player_turns, opponent_turns = self._participant_turn_counts()
         conn.execute(
             """
             INSERT INTO games (
@@ -465,15 +485,19 @@ class TrackerAnalyticsMixin:
                 ended_at,
                 duration_seconds,
                 total_turns,
+                player_turns,
+                opponent_turns,
                 outcome,
                 outcome_reason,
                 winner_participant_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 ended_at = excluded.ended_at,
                 duration_seconds = excluded.duration_seconds,
                 total_turns = excluded.total_turns,
+                player_turns = excluded.player_turns,
+                opponent_turns = excluded.opponent_turns,
                 outcome = excluded.outcome,
                 outcome_reason = excluded.outcome_reason,
                 winner_participant_id = excluded.winner_participant_id
@@ -487,13 +511,17 @@ class TrackerAnalyticsMixin:
                 ended_at,
                 duration_seconds,
                 self._turns_completed(),
+                player_turns,
+                opponent_turns,
                 outcome,
                 reason,
                 winner_participant_id,
             ),
         )
 
-    def _upsert_participant_analytics(self, conn: sqlite3.Connection, participants: List[Dict[str, Any]]) -> None:
+    def _upsert_participant_analytics(
+        self, conn: sqlite3.Connection, participants: List[Dict[str, Any]]
+    ) -> None:
         """Persist player/opponent participant rows."""
         for participant in participants:
             conn.execute(
@@ -622,20 +650,33 @@ class TrackerAnalyticsMixin:
                 winner_participant_id = player_participant_id
             elif outcome == "loss":
                 winner_participant_id = opponent_participant_id
-            started_at = self.game_state.game_start_time.isoformat() if self.game_state.game_start_time else None
+            started_at = (
+                self.game_state.game_start_time.isoformat()
+                if self.game_state.game_start_time
+                else None
+            )
             ended_at = (self.game_state.game_end_time or datetime.now()).isoformat()
             duration_seconds = None
             if self.game_state.game_start_time:
                 duration_seconds = max(
                     0,
-                    int(((self.game_state.game_end_time or datetime.now()) - self.game_state.game_start_time).total_seconds()),
+                    int(
+                        (
+                            (self.game_state.game_end_time or datetime.now())
+                            - self.game_state.game_start_time
+                        ).total_seconds()
+                    ),
                 )
             player = self._participant_snapshot(game_id, "player", self.game_state.player_seat_id)
-            opponent = self._participant_snapshot(game_id, "opponent", self.game_state.opponent_seat_id)
+            opponent = self._participant_snapshot(
+                game_id, "opponent", self.game_state.opponent_seat_id
+            )
 
             with conn:
                 self._upsert_session_row(conn)
-                self._upsert_match_analytics(conn, match_id, started_at, ended_at, winner_participant_id)
+                self._upsert_match_analytics(
+                    conn, match_id, started_at, ended_at, winner_participant_id
+                )
                 self._upsert_game_analytics(
                     conn,
                     game_id,
