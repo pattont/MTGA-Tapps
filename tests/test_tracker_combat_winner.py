@@ -3716,6 +3716,7 @@ def test_parse_match_metadata_prefers_explicit_set_deck_event():
 
 def test_parse_match_metadata_prefers_explicit_set_deck_v3_event():
     tracker = make_tracker()
+    tracker.game_state.format_str = "MWM_SlowStart_20260602"
     request = {
         "EventName": "Play",
         "Summary": {
@@ -3741,6 +3742,77 @@ def test_parse_match_metadata_prefers_explicit_set_deck_v3_event():
     assert tracker.game_state.player_deck_id == "3c24e959-f8ef-405a-9a27-21b7ff080540"
     assert tracker.game_state.player_deck_total_cards == 7
     assert tracker._active_deck_candidate_key == "3c24e959-f8ef-405a-9a27-21b7ff080540"
+    assert tracker.game_state.format_str == "Play"
+    assert tracker.game_state.match_type == "best_of_1"
+    assert tracker._friendly_format_label() == "Standard Best-of-1"
+
+
+def test_new_game_tracking_clears_stale_midweek_format():
+    tracker = make_tracker()
+    tracker.game_state.format_str = "MWM_SlowStart_20260602"
+    tracker.game_state.match_type = "best_of_1"
+    tracker.game_state.player_deck_event_name = "MWM_SlowStart_20260602"
+
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+
+    assert tracker.game_state.format_str == "Unknown"
+    assert tracker.game_state.match_type == "best_of_1"
+    assert tracker.game_state.player_deck_event_name is None
+
+
+def test_parse_match_metadata_event_set_deck_v3_midweek_sets_event_format():
+    tracker = make_tracker()
+    request = {
+        "EventName": "MWM_SlowStart_20260602",
+        "Summary": {
+            "DeckId": "129f5a6c-a2c3-4a50-b14e-59b5afc6c06f",
+            "Name": "Golgari Annex (magic.gg)",
+            "Attributes": [{"name": "Format", "value": "TraditionalStandard"}],
+        },
+        "Deck": {
+            "MainDeck": [
+                {"cardId": 95070, "quantity": 4},
+                {"cardId": 90613, "quantity": 4},
+            ],
+            "CommandZone": [],
+        },
+    }
+    line = "[UnityCrossThreadLogger]==> EventSetDeckV3 " + json.dumps(
+        {"id": "abc", "request": json.dumps(request)}
+    )
+
+    tracker._parse_match_metadata(line)
+
+    assert tracker.game_state.format_str == "MWM_SlowStart_20260602"
+    assert tracker.game_state.match_type == "best_of_1"
+    assert tracker._friendly_format_label() == "Midweek Magic - Slow Start"
+
+
+def test_midweek_command_zone_payload_does_not_infer_historic_brawl():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.format_str = "MWM_SlowStart_20260602"
+    tracker.game_state.player_deck_event_name = "MWM_SlowStart_20260602"
+
+    tracker._update_format_from_game_state(
+        {
+            "zones": [
+                {"type": "ZoneType_Command", "objectInstanceIds": [801]},
+            ],
+            "gameObjects": [
+                {
+                    "instanceId": 801,
+                    "grpId": 100610,
+                    "type": "GameObjectType_Card",
+                    "ownerSeatId": 1,
+                },
+            ],
+        }
+    )
+
+    assert tracker.game_state.format_str == "MWM_SlowStart_20260602"
+    assert not tracker._is_brawl_format()
+    assert tracker._friendly_format_label() == "Midweek Magic - Slow Start"
 
 
 def test_explicit_active_standard_deck_is_not_overridden_by_stale_brawl_courses():

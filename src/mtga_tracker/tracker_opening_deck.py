@@ -14,7 +14,6 @@ from .opening_hand import (
 from .state import CardEvent
 
 
-
 class TrackerOpeningDeckMixin:
     """Opening hand, deck metadata, commanders, and format helpers used by CardTracker."""
 
@@ -44,7 +43,11 @@ class TrackerOpeningDeckMixin:
         if not isinstance(raw, str) or not raw.strip() or raw == "Unknown":
             if self._is_brawl_format():
                 return self._best_brawl_format_label()
-            return "Standard Best-of-3" if self.game_state.match_type == "best_of_3" else "Standard Best-of-1"
+            return (
+                "Standard Best-of-3"
+                if self.game_state.match_type == "best_of_3"
+                else "Standard Best-of-1"
+            )
 
         normalized = self._normalize_match_text(raw)
         if normalized.startswith("mwm") or normalized.startswith("midweekmagic"):
@@ -53,7 +56,12 @@ class TrackerOpeningDeckMixin:
             return "Historic Brawl"
         if "brawl" in normalized:
             return "Brawl"
-        if normalized in {"traditionalstandard", "constructedbestof3", "bestof3", "traditional_ladder"}:
+        if normalized in {
+            "traditionalstandard",
+            "constructedbestof3",
+            "bestof3",
+            "traditional_ladder",
+        }:
             return "Standard Best-of-3"
         if normalized in {"standard", "ladder", "play", "constructedbestof1", "bestof1"}:
             return "Standard Best-of-1"
@@ -74,7 +82,11 @@ class TrackerOpeningDeckMixin:
         if "timeless" in normalized:
             return "Timeless"
         if "standard" in normalized:
-            return "Standard Best-of-3" if "traditional" in normalized or "bestof3" in normalized else "Standard Best-of-1"
+            return (
+                "Standard Best-of-3"
+                if "traditional" in normalized or "bestof3" in normalized
+                else "Standard Best-of-1"
+            )
         return raw
 
     @staticmethod
@@ -94,7 +106,11 @@ class TrackerOpeningDeckMixin:
         updated = self.game_state.format_str != fmt
         self.game_state.format_str = fmt
         normalized = self._normalize_match_text(fmt)
-        if "traditional" in normalized or "bestof3" in normalized or normalized in {"constructedbestof3", "bestof3"}:
+        if (
+            "traditional" in normalized
+            or "bestof3" in normalized
+            or normalized in {"constructedbestof3", "bestof3"}
+        ):
             if self.game_state.match_type != "best_of_3":
                 self.game_state.match_type = "best_of_3"
                 updated = True
@@ -112,7 +128,11 @@ class TrackerOpeningDeckMixin:
     def _set_player_commanders_from_ids(self, command_zone_ids: List[int]) -> None:
         """Store player's commander names from deck metadata command zone ids."""
         names = self._unique_names(
-            [self.card_db.get_card_name(int(card_id)) for card_id in command_zone_ids if card_id is not None]
+            [
+                self.card_db.get_card_name(int(card_id))
+                for card_id in command_zone_ids
+                if card_id is not None
+            ]
         )
         if names:
             self.game_state.player_commanders = names
@@ -186,8 +206,75 @@ class TrackerOpeningDeckMixin:
 
     def _is_brawl_format(self, format_text: Optional[str] = None) -> bool:
         """Return True when the supplied/current format text clearly indicates Brawl."""
-        text = self._normalize_match_text(format_text if format_text is not None else self.game_state.format_str)
+        text = self._normalize_match_text(
+            format_text if format_text is not None else self.game_state.format_str
+        )
         return "brawl" in text
+
+    def _is_trusted_queue_event_name(self, event_name: Optional[str]) -> bool:
+        """Return True for event names that identify a live queue rather than only deck format."""
+        text = self._normalize_match_text(event_name)
+        if not text:
+            return False
+        if text.startswith("mwm") or text.startswith("midweekmagic"):
+            return True
+        return text in {
+            "play",
+            "ladder",
+            "standard",
+            "traditionalstandard",
+            "constructedbestof1",
+            "constructedbestof3",
+            "bestof1",
+            "bestof3",
+            "historic",
+            "historicplay",
+            "explorer",
+            "explorerplay",
+            "timeless",
+            "timelessplay",
+            "alchemy",
+        }
+
+    def _has_explicit_non_brawl_format(self) -> bool:
+        """Return True when trusted event/deck metadata identifies a non-Brawl queue."""
+        candidates = [self.game_state.format_str, self.game_state.player_deck_event_name]
+        if self._active_deck_candidate_key:
+            active = self._deck_candidates.get(self._active_deck_candidate_key, {})
+            if isinstance(active, dict):
+                candidates.extend([active.get("internal_event_name"), active.get("format_attr")])
+        for raw in candidates:
+            text = self._normalize_match_text(raw)
+            if not text or text == "unknown":
+                continue
+            if "brawl" in text:
+                return False
+            if text.startswith("mwm") or text.startswith("midweekmagic"):
+                return True
+            if text in {
+                "standard",
+                "traditionalstandard",
+                "constructedbestof1",
+                "constructedbestof3",
+                "bestof1",
+                "bestof3",
+                "play",
+                "ladder",
+                "historic",
+                "historicplay",
+                "explorer",
+                "explorerplay",
+                "timeless",
+                "timelessplay",
+                "alchemy",
+            }:
+                return True
+            if any(
+                marker in text
+                for marker in ("standard", "historic", "explorer", "timeless", "alchemy")
+            ):
+                return True
+        return False
 
     def _clear_commander_state(self) -> None:
         """Clear commander metadata when the current match is not a commander format."""
@@ -210,16 +297,31 @@ class TrackerOpeningDeckMixin:
         if isinstance(deck_constraint, dict):
             min_commander_size = deck_constraint.get("minCommanderSize")
         zones = data.get("zones", [])
-        has_populated_command_zone = any(
-            isinstance(zone, dict)
-            and zone.get("type") == "ZoneType_Command"
-            and bool(zone.get("objectInstanceIds"))
-            for zone in zones
-        ) if isinstance(zones, list) else False
+        has_populated_command_zone = (
+            any(
+                isinstance(zone, dict)
+                and zone.get("type") == "ZoneType_Command"
+                and bool(zone.get("objectInstanceIds"))
+                for zone in zones
+            )
+            if isinstance(zones, list)
+            else False
+        )
 
-        if "brawl" in variant_text or (isinstance(min_commander_size, int) and min_commander_size > 0) or has_populated_command_zone:
+        command_zone_implies_brawl = (
+            has_populated_command_zone and not self._has_explicit_non_brawl_format()
+        )
+        if (
+            "brawl" in variant_text
+            or (isinstance(min_commander_size, int) and min_commander_size > 0)
+            or command_zone_implies_brawl
+        ):
             self.game_state.format_str = self._best_brawl_format_label()
-        elif isinstance(min_commander_size, int) and min_commander_size == 0 and not self._is_brawl_format():
+        elif (
+            isinstance(min_commander_size, int)
+            and min_commander_size == 0
+            and not self._is_brawl_format()
+        ):
             self._clear_commander_state()
 
     def _update_commanders_from_game_state(self, data: Dict[str, Any]) -> None:
@@ -250,7 +352,9 @@ class TrackerOpeningDeckMixin:
                 grp_id = obj.get("grpId") or obj.get("overlayGrpId") or obj.get("objectSourceGrpId")
                 if owner_seat is None or grp_id is None:
                     continue
-                command_by_seat.setdefault(int(owner_seat), []).append(self.card_db.get_card_name(int(grp_id)))
+                command_by_seat.setdefault(int(owner_seat), []).append(
+                    self.card_db.get_card_name(int(grp_id))
+                )
 
         if not command_by_seat:
             if not self.game_state.commanders_by_seat:
@@ -266,17 +370,29 @@ class TrackerOpeningDeckMixin:
         if self.game_state.player_seat_id not in (1, 2) and self.game_state.player_commanders:
             player_commander_names = set(self._unique_names(self.game_state.player_commanders))
             matching_seats = [
-                seat for seat, names in self.game_state.commanders_by_seat.items()
+                seat
+                for seat, names in self.game_state.commanders_by_seat.items()
                 if set(names) == player_commander_names
             ]
             if len(matching_seats) == 1:
                 self.game_state.player_seat_id = matching_seats[0]
-                other_seats = [seat for seat in self.game_state.commanders_by_seat.keys() if seat != matching_seats[0]]
+                other_seats = [
+                    seat
+                    for seat in self.game_state.commanders_by_seat.keys()
+                    if seat != matching_seats[0]
+                ]
                 if len(other_seats) == 1:
                     self.game_state.opponent_seat_id = other_seats[0]
 
-        if self.game_state.player_seat_id in (1, 2) and self.game_state.opponent_seat_id not in (1, 2):
-            other_seats = [seat for seat in self.game_state.commanders_by_seat.keys() if seat != self.game_state.player_seat_id]
+        if self.game_state.player_seat_id in (1, 2) and self.game_state.opponent_seat_id not in (
+            1,
+            2,
+        ):
+            other_seats = [
+                seat
+                for seat in self.game_state.commanders_by_seat.keys()
+                if seat != self.game_state.player_seat_id
+            ]
             if len(other_seats) == 1:
                 self.game_state.opponent_seat_id = other_seats[0]
 
@@ -284,7 +400,9 @@ class TrackerOpeningDeckMixin:
         if self.game_state._reserved_players:
             for r in self.game_state._reserved_players:
                 if r.get("seat") == self.game_state.player_seat_id and r.get("name"):
-                    self.game_state.player_display_name = self.game_state.player_display_name or r["name"]
+                    self.game_state.player_display_name = (
+                        self.game_state.player_display_name or r["name"]
+                    )
                 elif r.get("seat") == self.game_state.opponent_seat_id and r.get("name"):
                     self.game_state.opponent_display_name = r["name"]
 
@@ -295,10 +413,17 @@ class TrackerOpeningDeckMixin:
         if not self._is_brawl_format():
             return
         if self.game_state.player_commanders and not self.game_state.player_commanders_announced:
-            self._print_line(f"   Your Commander: {self._format_commander_names(self.game_state.player_commanders)}")
+            self._print_line(
+                f"   Your Commander: {self._format_commander_names(self.game_state.player_commanders)}"
+            )
             self.game_state.player_commanders_announced = True
-        if self.game_state.opponent_commanders and not self.game_state.opponent_commanders_announced:
-            self._print_line(f"   Opponent Commander: {self._format_commander_names(self.game_state.opponent_commanders)}")
+        if (
+            self.game_state.opponent_commanders
+            and not self.game_state.opponent_commanders_announced
+        ):
+            self._print_line(
+                f"   Opponent Commander: {self._format_commander_names(self.game_state.opponent_commanders)}"
+            )
             self.game_state.opponent_commanders_announced = True
 
     def _maybe_print_seat_resolution(self) -> None:
@@ -365,7 +490,9 @@ class TrackerOpeningDeckMixin:
             if self.game_state._reserved_players:
                 for r in self.game_state._reserved_players:
                     if r.get("seat") == self.game_state.player_seat_id and r.get("name"):
-                        self.game_state.player_display_name = self.game_state.player_display_name or r["name"]
+                        self.game_state.player_display_name = (
+                            self.game_state.player_display_name or r["name"]
+                        )
                     elif r.get("seat") == self.game_state.opponent_seat_id and r.get("name"):
                         self.game_state.opponent_display_name = r["name"]
             self._maybe_print_seat_resolution()
@@ -377,7 +504,15 @@ class TrackerOpeningDeckMixin:
         """Get first non-empty string from dict using common name keys (any casing)."""
         if not d or not isinstance(d, dict):
             return None
-        for key in ("screenName", "ScreenName", "displayName", "DisplayName", "accountName", "userName", "name"):
+        for key in (
+            "screenName",
+            "ScreenName",
+            "displayName",
+            "DisplayName",
+            "accountName",
+            "userName",
+            "name",
+        ):
             v = d.get(key)
             if isinstance(v, str) and v.strip():
                 return v.strip()
@@ -511,12 +646,9 @@ class TrackerOpeningDeckMixin:
 
             existing_name = candidate.get("deck_name")
             if isinstance(deck_name, str) and deck_name.strip():
-                if (
-                    not existing_name
-                    or (
-                        self._is_localized_placeholder_name(existing_name)
-                        and not self._is_localized_placeholder_name(deck_name)
-                    )
+                if not existing_name or (
+                    self._is_localized_placeholder_name(existing_name)
+                    and not self._is_localized_placeholder_name(deck_name)
                 ):
                     candidate["deck_name"] = deck_name.strip()
                     updated = True
@@ -585,7 +717,10 @@ class TrackerOpeningDeckMixin:
 
             if last_played is not None:
                 existing_last_played = candidate.get("last_played")
-                if not isinstance(existing_last_played, datetime) or last_played > existing_last_played:
+                if (
+                    not isinstance(existing_last_played, datetime)
+                    or last_played > existing_last_played
+                ):
                     candidate["last_played"] = last_played
                     updated = True
 
@@ -599,7 +734,11 @@ class TrackerOpeningDeckMixin:
         if candidate.get("trusted_active"):
             score += 20
         deck_name = candidate.get("deck_name")
-        if isinstance(deck_name, str) and deck_name and not self._is_localized_placeholder_name(deck_name):
+        if (
+            isinstance(deck_name, str)
+            and deck_name
+            and not self._is_localized_placeholder_name(deck_name)
+        ):
             score += 3
         module = str(candidate.get("current_module", "")).lower()
         if module == "creatematch":
@@ -681,6 +820,15 @@ class TrackerOpeningDeckMixin:
         self.game_state.player_deck_id = deck_id
         self.game_state.player_deck_event_name = candidate.get("internal_event_name")
         self.game_state.player_deck_last_played = candidate.get("last_played")
+        event_name = candidate.get("internal_event_name")
+        if (
+            candidate.get("trusted_active")
+            and candidate.get("trusted_queue_format")
+            and isinstance(event_name, str)
+            and self._is_trusted_queue_event_name(event_name)
+        ):
+            self._set_match_format(event_name)
+            self._format_from_backfill = bool(getattr(self, "_parsing_backfilled_metadata", False))
         main_total = candidate.get("main_deck_total")
         command_total = candidate.get("command_zone_total")
         self.game_state.player_deck_total_cards = (
@@ -696,12 +844,13 @@ class TrackerOpeningDeckMixin:
                 or "bestof3" in format_norm
                 or format_norm in {"constructedbestof3", "bestof3"}
             )
-            if (
-                not implies_best_of_three
-                and (self.game_state.format_str == "Unknown" or self._format_from_backfill)
+            if not implies_best_of_three and (
+                self.game_state.format_str == "Unknown" or self._format_from_backfill
             ):
                 self.game_state.format_str = format_attr
-                self._format_from_backfill = bool(getattr(self, "_parsing_backfilled_metadata", False))
+                self._format_from_backfill = bool(
+                    getattr(self, "_parsing_backfilled_metadata", False)
+                )
         command_zone_ids = candidate.get("command_zone_ids")
         if isinstance(command_zone_ids, list) and self._candidate_is_brawl(candidate):
             self._set_player_commanders_from_ids(command_zone_ids)
@@ -856,7 +1005,9 @@ class TrackerOpeningDeckMixin:
                 if self.game_state.player_seat_id is not None and self.game_state._reserved_players:
                     for r in self.game_state._reserved_players:
                         if r.get("seat") == self.game_state.player_seat_id and r.get("name"):
-                            self.game_state.player_display_name = self.game_state.player_display_name or r["name"]
+                            self.game_state.player_display_name = (
+                                self.game_state.player_display_name or r["name"]
+                            )
                         elif r.get("seat") == self.game_state.opponent_seat_id and r.get("name"):
                             self.game_state.opponent_display_name = r["name"]
             # Format
@@ -883,24 +1034,53 @@ class TrackerOpeningDeckMixin:
                 self._format_from_backfill = from_backfill
 
         courses = self._find_nested(data, "Courses")
-        deck_updated = self._ingest_course_deck_metadata(courses) if isinstance(courses, list) else False
-        trusted_single_course = (
-            isinstance(data.get("CourseDeckSummary"), dict)
-            and isinstance(data.get("InternalEventName"), str)
+        deck_updated = (
+            self._ingest_course_deck_metadata(courses) if isinstance(courses, list) else False
+        )
+        trusted_single_course = isinstance(data.get("CourseDeckSummary"), dict) and isinstance(
+            data.get("InternalEventName"), str
         )
         if trusted_single_course:
             single_course = [data]
             if self._ingest_course_deck_metadata(single_course):
                 deck_updated = True
-            if any(marker in line_lower for marker in ("eventsetdeckv2", "eventsetdeckv3", "deckupsertdeckv2", "deckupsertdeckv3")):
+            if any(
+                marker in line_lower
+                for marker in (
+                    "eventsetdeckv2",
+                    "eventsetdeckv3",
+                    "deckupsertdeckv2",
+                    "deckupsertdeckv3",
+                )
+            ):
                 candidate_key = self._course_candidate_key(data)
+                if candidate_key and (
+                    "eventsetdeckv3" in line_lower or "deckupsertdeckv3" in line_lower
+                ):
+                    candidate = self._deck_candidates.get(candidate_key)
+                    if isinstance(candidate, dict):
+                        candidate["trusted_queue_format"] = True
                 self._lock_active_deck_candidate(candidate_key)
         deck_event_course = self._course_from_deck_event_payload(data)
         if deck_event_course is not None:
             if self._ingest_course_deck_metadata([deck_event_course]):
                 deck_updated = True
-            if any(marker in line_lower for marker in ("eventsetdeckv2", "eventsetdeckv3", "deckupsertdeckv2", "deckupsertdeckv3")):
+            if any(
+                marker in line_lower
+                for marker in (
+                    "eventsetdeckv2",
+                    "eventsetdeckv3",
+                    "deckupsertdeckv2",
+                    "deckupsertdeckv3",
+                )
+            ):
                 candidate_key = self._course_candidate_key(deck_event_course)
+                if candidate_key and (
+                    "eventsetdeckv3" in line_lower or "deckupsertdeckv3" in line_lower
+                ):
+                    candidate = self._deck_candidates.get(candidate_key)
+                    if isinstance(candidate, dict):
+                        candidate["trusted_queue_format"] = True
                 self._lock_active_deck_candidate(candidate_key)
         if deck_updated or format_updated:
             self._resolve_player_deck_from_candidates()
@@ -924,10 +1104,14 @@ class TrackerOpeningDeckMixin:
             self._print_line(f"   Seat: {g.player_seat_id}")
             g.seat_line_announced = True
         if self._is_brawl_format(g.format_str) and g.player_commanders:
-            self._print_line(f"   Your Commander: {self._format_commander_names(g.player_commanders)}")
+            self._print_line(
+                f"   Your Commander: {self._format_commander_names(g.player_commanders)}"
+            )
             g.player_commanders_announced = True
         if self._is_brawl_format(g.format_str) and g.opponent_commanders:
-            self._print_line(f"   Opponent Commander: {self._format_commander_names(g.opponent_commanders)}")
+            self._print_line(
+                f"   Opponent Commander: {self._format_commander_names(g.opponent_commanders)}"
+            )
             g.opponent_commanders_announced = True
 
     def _opening_hand_capture_blocked(self) -> bool:
@@ -965,7 +1149,9 @@ class TrackerOpeningDeckMixin:
             if thrown:
                 self._print_line(f"🔄 Mulliganed away: {', '.join(thrown)}")
         elif len(hand_cards) < 7:
-            self._print_line(f"🔄 Mulligan to {len(hand_cards)} (mulligans: {self.game_state.mulligan_count})")
+            self._print_line(
+                f"🔄 Mulligan to {len(hand_cards)} (mulligans: {self.game_state.mulligan_count})"
+            )
         self.game_state._hand_before_mulligan = []
         self.game_state._hand_before_mulligan_ids = []
         self.game_state._hand_before_mulligan_events = []
@@ -992,10 +1178,7 @@ class TrackerOpeningDeckMixin:
         if len(hand_cards) > 7:
             return
         if len(hand_events) != len(hand_cards):
-            hand_events = [
-                CardEvent(card_name, "player")
-                for card_name in hand_cards
-            ]
+            hand_events = [CardEvent(card_name, "player") for card_name in hand_cards]
         self._finalize_starting_hand(hand_cards, hand_grp_ids, hand_events)
 
     def _finalize_cached_opening_hand_if_safe(self) -> bool:
@@ -1030,13 +1213,19 @@ class TrackerOpeningDeckMixin:
             type_category_for_card_types=self._get_card_type_category,
         )
 
-    def _choose_visible_opening_hand(self, visible_hands: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    def _choose_visible_opening_hand(
+        self, visible_hands: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
         """Select the player hand from fully visible opening hand snapshots."""
         if not visible_hands:
             return None
         if self.game_state.player_seat_id is not None:
             hand = next(
-                (hand for hand in visible_hands if hand["owner_seat"] == self.game_state.player_seat_id),
+                (
+                    hand
+                    for hand in visible_hands
+                    if hand["owner_seat"] == self.game_state.player_seat_id
+                ),
                 None,
             )
             if hand is not None:
@@ -1049,7 +1238,9 @@ class TrackerOpeningDeckMixin:
             return visible_hands[0]
         return None
 
-    def _sync_opening_hand_seats(self, owner_seat: int, hand_zone_owners: List[int], data: Dict[str, Any]) -> None:
+    def _sync_opening_hand_seats(
+        self, owner_seat: int, hand_zone_owners: List[int], data: Dict[str, Any]
+    ) -> None:
         """Update player/opponent seats from the visible opening hand owner."""
         if self.game_state.player_seat_id != owner_seat:
             self.game_state.player_seat_id = owner_seat
@@ -1093,7 +1284,9 @@ class TrackerOpeningDeckMixin:
             current_sig = sorted(hand_grp_ids)
             previous_sig = sorted(self.game_state._hand_before_mulligan_ids)
             if not self.game_state._hand_before_mulligan_ids:
-                if self.game_state.opening_keep_confirmed or (turn_num and turn_num >= 1 and not mulligan_prompt_present):
+                if self.game_state.opening_keep_confirmed or (
+                    turn_num and turn_num >= 1 and not mulligan_prompt_present
+                ):
                     self._finalize_starting_hand(hand_cards, hand_grp_ids, hand_events)
                     return
                 self.game_state._hand_before_mulligan = hand_cards

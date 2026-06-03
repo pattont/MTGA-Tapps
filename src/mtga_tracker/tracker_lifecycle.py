@@ -10,7 +10,6 @@ from .opening_hand import state_has_opening_hand_zone
 from .state import GameState
 
 
-
 class TrackerLifecycleMixin:
     """Game start/end, winner, and match lifecycle helpers used by CardTracker."""
 
@@ -74,7 +73,6 @@ class TrackerLifecycleMixin:
         self.game_state.winner_priority = priority
         self.game_state.winner_reason = reason
 
-
         return True
 
     def _try_parse_winner_from_json(self, data: Optional[Dict[str, Any]]) -> Optional[int]:
@@ -100,7 +98,14 @@ class TrackerLifecycleMixin:
             return 2 if loser_seat == 1 else 1
 
         # Winning team/seat fallback (MTGA may use different keys outside structured result arrays).
-        for key in ("winningTeamId", "winningteamid", "winnerSeatId", "winnerSeat", "winningSeatId", "winner"):
+        for key in (
+            "winningTeamId",
+            "winningteamid",
+            "winnerSeatId",
+            "winnerSeat",
+            "winningSeatId",
+            "winner",
+        ):
             v = self._find_nested(data, key)
             seat = self._normalize_seat_id(v)
             if seat is not None:
@@ -194,9 +199,16 @@ class TrackerLifecycleMixin:
 
             # If the tail contains match-end, we're in lobby or between games — not mid-game
             match_end_markers = (
-                "matchcompleted", "gamecompleted", "concedereq", "matchendscene",
-                "you left", "opponent left", "you concede", "opponent concede",
-                "finalresults", "on sceneloaded for matchendscene"
+                "matchcompleted",
+                "gamecompleted",
+                "concedereq",
+                "matchendscene",
+                "you left",
+                "opponent left",
+                "you concede",
+                "opponent concede",
+                "finalresults",
+                "on sceneloaded for matchendscene",
             )
             tail_text = "\n".join(tail).lower()
             if any(m in tail_text for m in match_end_markers):
@@ -212,25 +224,29 @@ class TrackerLifecycleMixin:
                         turn_num = (data.get("turnInfo") or {}).get("turnNumber", 0)
                         if turn_num and turn_num > 0:
                             self.waiting_for_next_game = True
-                            self._print_line("\n" + "="*75)
+                            self._print_line("\n" + "=" * 75)
                             self._print_line("⚠️  DETECTED GAME IN PROGRESS")
-                            self._print_line("="*75)
+                            self._print_line("=" * 75)
                             self._print_line("   Tracker launched mid-game.")
-                            self._print_line("   Will start tracking at the beginning of the next game.")
-                            self._print_line("="*75 + "\n")
+                            self._print_line(
+                                "   Will start tracking at the beginning of the next game."
+                            )
+                            self._print_line("=" * 75 + "\n")
                             return
                     if "zones" in data:
-                        for zone in (data.get("zones") or []):
-                            ztype = (zone.get("type") or "")
+                        for zone in data.get("zones") or []:
+                            ztype = zone.get("type") or ""
                             objs = zone.get("objectInstanceIds", [])
                             if objs and ("Battlefield" in ztype or "Hand" in ztype):
                                 self.waiting_for_next_game = True
-                                self._print_line("\n" + "="*75)
+                                self._print_line("\n" + "=" * 75)
                                 self._print_line("⚠️  DETECTED GAME IN PROGRESS")
-                                self._print_line("="*75)
+                                self._print_line("=" * 75)
                                 self._print_line("   Tracker launched mid-game.")
-                                self._print_line("   Will start tracking at the beginning of the next game.")
-                                self._print_line("="*75 + "\n")
+                                self._print_line(
+                                    "   Will start tracking at the beginning of the next game."
+                                )
+                                self._print_line("=" * 75 + "\n")
                                 return
         except Exception:
             pass
@@ -240,7 +256,9 @@ class TrackerLifecycleMixin:
         read_entries = getattr(self.parser, "read_new_entries", None)
         if callable(read_entries):
             for entry in read_entries():
-                routed = self.parser.route_entry(entry) if hasattr(self.parser, "route_entry") else None
+                routed = (
+                    self.parser.route_entry(entry) if hasattr(self.parser, "route_entry") else None
+                )
                 if routed is not None:
                     category = getattr(routed, "category", None)
                     if category == "unknown":
@@ -315,7 +333,10 @@ class TrackerLifecycleMixin:
         line_lower = line.lower()
         if not (
             "mulligantype" in line_lower
-            or ("mulligan" in line_lower and ("gretolient" in line_lower or "gretoclient" in line_lower))
+            or (
+                "mulligan" in line_lower
+                and ("gretolient" in line_lower or "gretoclient" in line_lower)
+            )
             or "mulliganreq" in line_lower
         ):
             return False
@@ -336,9 +357,9 @@ class TrackerLifecycleMixin:
 
     def _print_new_game_detected(self) -> None:
         """Print the marker used when a new game starts after a completed game."""
-        self._print_line("\n" + "="*75)
+        self._print_line("\n" + "=" * 75)
         self._print_line("✅ NEW GAME DETECTED - Starting to track!")
-        self._print_line("="*75 + "\n")
+        self._print_line("=" * 75 + "\n")
 
     def _line_has_state_game_start(self, line: str) -> bool:
         """Return True when state packets show turn 1 or an opening hand."""
@@ -386,9 +407,9 @@ class TrackerLifecycleMixin:
 
         self.match_games.append(completed_game)
 
-        self._print_line("\n" + "="*75)
+        self._print_line("\n" + "=" * 75)
         self._print_line(f"🔄 GAME {next_game_number} STARTING (Best-of-3 Match)")
-        self._print_line("="*75 + "\n")
+        self._print_line("=" * 75 + "\n")
         self.game_state.reset()
         self.game_state.match_type = "best_of_3"
         self.game_state.game_number = next_game_number
@@ -412,10 +433,9 @@ class TrackerLifecycleMixin:
 
     def _reset_new_game_tracking(self, *, opening_mulligan_prompt_seen: bool) -> None:
         """Initialize tracking fields for a newly detected game."""
-        if self._format_from_backfill:
-            self.game_state.format_str = "Unknown"
-            self.game_state.match_type = "best_of_1"
-            self._format_from_backfill = False
+        self.game_state.format_str = "Unknown"
+        self.game_state.match_type = "best_of_1"
+        self._format_from_backfill = False
         self.game_state.game_start_time = self._now()
         self.game_state.in_match = True
         self.game_state.match_complete = False
@@ -440,7 +460,9 @@ class TrackerLifecycleMixin:
         self.game_state.player_deck_id = None
         self.game_state.player_deck_event_name = None
         self.game_state.player_deck_last_played = None
-        self._backfill_recent_match_metadata(max_lines=1800, force=True, trust_match_room_format=False)
+        self._backfill_recent_match_metadata(
+            max_lines=1800, force=True, trust_match_room_format=False
+        )
         self._require_explicit_game_start = False
 
     def _hydrate_start_line_state(self, line: str) -> None:
@@ -456,26 +478,41 @@ class TrackerLifecycleMixin:
 
     def _print_game_started_banner(self, *, verbose: bool) -> None:
         """Print the game-start banner."""
-        self._print_line("\n" + "="*75)
+        self._print_line("\n" + "=" * 75)
         if verbose:
             self._print_line("🟡 🔵 ⚫ 🔴 🟢 GAME STARTED 🟡 🔵 ⚫ 🔴 🟢")
         else:
-            format_display = "Standard Best-of-3" if self.game_state.match_type == "best_of_3" else "Standard Best-of-1"
-            game_num_display = f" (Game {self.game_state.game_number})" if self.game_state.match_type == "best_of_3" else ""
-            self._print_line(f"🟡 🔵 ⚫ 🔴 🟢 GAME STARTED - {format_display}{game_num_display} 🟡 🔵 ⚫ 🔴 🟢")
-        self._print_line("="*75)
+            format_display = (
+                "Standard Best-of-3"
+                if self.game_state.match_type == "best_of_3"
+                else "Standard Best-of-1"
+            )
+            game_num_display = (
+                f" (Game {self.game_state.game_number})"
+                if self.game_state.match_type == "best_of_3"
+                else ""
+            )
+            self._print_line(
+                f"🟡 🔵 ⚫ 🔴 🟢 GAME STARTED - {format_display}{game_num_display} 🟡 🔵 ⚫ 🔴 🟢"
+            )
+        self._print_line("=" * 75)
         self._print_match_started_block()
 
     def _check_game_start(self, line: str):
         """Check if a game is starting."""
-        explicit_start_required = self._require_explicit_game_start and not self.waiting_for_next_game
+        explicit_start_required = (
+            self._require_explicit_game_start and not self.waiting_for_next_game
+        )
 
         self._release_waiting_for_next_game_if_detected(line)
         if self.waiting_for_next_game:
             return
 
         if self.game_state.in_match and self.game_state.match_complete:
-            if not (self._line_indicates_live_mulligan_start(line) or self._line_has_state_game_start(line)):
+            if not (
+                self._line_indicates_live_mulligan_start(line)
+                or self._line_has_state_game_start(line)
+            ):
                 return
             if self.game_state.match_type == "best_of_3":
                 self._prepare_next_match_game()
@@ -519,7 +556,9 @@ class TrackerLifecycleMixin:
                 if self.waiting_for_next_game:
                     self.waiting_for_next_game = False
                     self._print_new_game_detected()
-                self._reset_new_game_tracking(opening_mulligan_prompt_seen=self._has_mulligan_prompt_in_state(data))
+                self._reset_new_game_tracking(
+                    opening_mulligan_prompt_seen=self._has_mulligan_prompt_in_state(data)
+                )
                 self._capture_opening_hand(data)
                 self._print_game_started_banner(verbose=False)
                 return
@@ -544,24 +583,27 @@ class TrackerLifecycleMixin:
             if isinstance(game_info, dict):
                 stage = str(game_info.get("stage", ""))
                 match_state = str(game_info.get("matchState", ""))
-                if (
-                    "GameStage_GameOver" in stage
-                    and "MatchState_GameComplete" in match_state
-                ):
+                if "GameStage_GameOver" in stage and "MatchState_GameComplete" in match_state:
                     structured_match_complete = True
             winner = self._try_parse_winner_from_json(json_data)
             if winner is not None:
                 winner_priority = 4 if structured_match_complete else 2
-                winner_reason = "structured_game_over_json" if structured_match_complete else "json_winner_hint"
+                winner_reason = (
+                    "structured_game_over_json" if structured_match_complete else "json_winner_hint"
+                )
                 self._set_winner_seat(winner, reason=winner_reason, priority=winner_priority)
             draw_result = self._extract_latest_draw_result(json_data)
             if draw_result is not None:
                 self.game_state.result_type = str(draw_result.get("result") or "ResultType_Draw")
-                self.game_state.result_reason = str(draw_result.get("reason") or "ResultReason_Draw")
+                self.game_state.result_reason = str(
+                    draw_result.get("reason") or "ResultReason_Draw"
+                )
                 structured_match_complete = True
         return json_data, structured_match_complete
 
-    def _handle_concede_end_line(self, line: str, line_lower: str, json_data: Optional[Dict[str, Any]]) -> bool:
+    def _handle_concede_end_line(
+        self, line: str, line_lower: str, json_data: Optional[Dict[str, Any]]
+    ) -> bool:
         """Handle explicit concede request lines."""
         if "concedereq" not in line_lower and "clientmessagetype_concedereq" not in line_lower:
             return False
@@ -591,33 +633,60 @@ class TrackerLifecycleMixin:
     @staticmethod
     def _line_indicates_local_player_loss(line_lower: str) -> bool:
         """Return True for text patterns showing the local player left or lost."""
-        local_loss = any(pattern in line_lower for pattern in [
-            "youleft", "you left", "i left",
-            "i concede", "you concede", "conceded the match",
-            "quit the match", "defeat", "you were defeated",
-            "you disconnected", "i disconnected",
-            "forfeit", "you forfeit", "i forfeit", "forfeited",
-        ])
-        opponent_left = any(pattern in line_lower for pattern in [
-            "opponentleft", "opponent left", "opponent quit",
-        ])
+        local_loss = any(
+            pattern in line_lower
+            for pattern in [
+                "youleft",
+                "you left",
+                "i left",
+                "i concede",
+                "you concede",
+                "conceded the match",
+                "quit the match",
+                "defeat",
+                "you were defeated",
+                "you disconnected",
+                "i disconnected",
+                "forfeit",
+                "you forfeit",
+                "i forfeit",
+                "forfeited",
+            ]
+        )
+        opponent_left = any(
+            pattern in line_lower
+            for pattern in [
+                "opponentleft",
+                "opponent left",
+                "opponent quit",
+            ]
+        )
         return local_loss and not opponent_left
 
     def _handle_game_completion_pattern(self, line: str, line_lower: str) -> bool:
         """Handle explicit game-completion payload patterns."""
-        if not any(pattern in line_lower for pattern in [
-            "gamecompletedtype", "finalresults",
-            "matchendscene", "on sceneloaded for matchendscene",
-        ]):
+        if not any(
+            pattern in line_lower
+            for pattern in [
+                "gamecompletedtype",
+                "finalresults",
+                "matchendscene",
+                "on sceneloaded for matchendscene",
+            ]
+        ):
             return False
         json_data = self.parser.parse_json_from_line(line)
         if not json_data or self.game_state.match_complete:
             return False
         self.game_state.match_complete = True
         self.game_state.game_end_time = self._now()
-        winner_team = self._find_nested(json_data, "winningTeamId") or self._find_nested(json_data, "winningteamid")
+        winner_team = self._find_nested(json_data, "winningTeamId") or self._find_nested(
+            json_data, "winningteamid"
+        )
         if winner_team is not None and winner_team in (1, 2):
-            self._set_winner_seat(winner_team, reason="game_complete_pattern:winner_team", priority=4)
+            self._set_winner_seat(
+                winner_team, reason="game_complete_pattern:winner_team", priority=4
+            )
         self._pending_game_summary = True
         return True
 
@@ -631,9 +700,13 @@ class TrackerLifecycleMixin:
         self.game_state.game_end_time = self._now()
         json_data = self.parser.parse_json_from_line(line)
         if json_data:
-            winner_team = self._find_nested(json_data, "winningTeamId") or self._find_nested(json_data, "winningteamid")
+            winner_team = self._find_nested(json_data, "winningTeamId") or self._find_nested(
+                json_data, "winningteamid"
+            )
             if winner_team is not None and winner_team in (1, 2):
-                self._set_winner_seat(winner_team, reason="state_transition:winner_team", priority=4)
+                self._set_winner_seat(
+                    winner_team, reason="state_transition:winner_team", priority=4
+                )
         self._pending_game_summary = True
         return True
 
@@ -663,7 +736,11 @@ class TrackerLifecycleMixin:
         # Check for match completion state changes - be very specific
         # Only set match_complete here; do NOT set winner_seat (we don't know who won from this line).
         if '"old":"matchcompleted"' in line_lower or '"old":"MatchCompleted"' in line:
-            if '"new":"matchcompleted"' in line_lower or '"new":"MatchCompleted"' in line or '"new":"disconnected"' in line_lower:
+            if (
+                '"new":"matchcompleted"' in line_lower
+                or '"new":"MatchCompleted"' in line
+                or '"new":"disconnected"' in line_lower
+            ):
                 if self._mark_match_complete_now():
                     return
 
@@ -756,7 +833,9 @@ class TrackerLifecycleMixin:
                     continue
                 winner = self._try_parse_winner_from_json(data)
                 if winner is not None:
-                    self._set_winner_seat(winner, reason="summary_tail:json_winner_hint", priority=2)
+                    self._set_winner_seat(
+                        winner, reason="summary_tail:json_winner_hint", priority=2
+                    )
                     return
         except Exception:
             return
