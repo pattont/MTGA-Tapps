@@ -31,6 +31,8 @@ dev = [
 
 [project.scripts]
 mtga-tracker = "mtga_tracker.main:main"
+mtga-tracker-audit-db = "mtga_tracker.db_audit:main"
+mtga-tracker-dashboard = "mtga_tracker.dashboard:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
