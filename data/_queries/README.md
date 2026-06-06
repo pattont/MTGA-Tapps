@@ -13,6 +13,7 @@ Useful starting points:
 - `WinRateByFormat.sql`: win rate grouped by raw persisted format and queue.
 - `WinRateByDeckPlayDraw.sql`: deck-level win/loss/draw split by whether you went first.
 - `OnPlayVsOnDrawWinRate.sql`: overall win rate on the play vs. on the draw.
+- `PlayDrawPercentage.sql`: total games plus percentage on the play vs. on the draw.
 - `RecentGames.sql`: latest games with deck, outcome, duration, mulligans, and life totals.
 - `SessionPlayTime.sql`: tracker sessions using active game play time, not idle process uptime.
 - `OpeningHandCardStats.sql`: opening-hand card frequency and win rate by deck.
