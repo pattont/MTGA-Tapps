@@ -20,6 +20,9 @@ Primary code paths:
 - `src/mtga_tracker/tracker_combat.py`: attack/block/combat damage handling.
 - `src/mtga_tracker/tracker_opening_deck.py`: opening hand, mulligan, format, commander, deck metadata.
 - `src/mtga_tracker/tracker_analytics.py`: SQLite persistence helpers.
+- `src/mtga_tracker/format_normalizer.py`: single source of truth for raw queue/format labels and best-of inference.
+- `src/mtga_tracker/db_audit.py`: SQLite consistency audit and safe repair CLI.
+- `src/mtga_tracker/dashboard.py`: dependency-free local SQLite dashboard.
 - `src/mtga_tracker/tracker_summary.py`: end-game and session summary rendering.
 - `src/mtga_tracker/tracker_rendering.py`: console formatting, actor labels, mana/text cleanup, runtime strings.
 - `src/mtga_tracker/tracker_state_lookup.py`: object snapshots, identity/copy-state, card type, zone/seat lookup helpers.
@@ -35,6 +38,9 @@ Use the repo virtualenv unless there is a clear reason not to.
 venv/bin/python -m pytest -q
 venv/bin/python -m pytest tests/test_tracker_combat_winner.py -q
 venv/bin/python -m mtga_tracker.main
+venv/bin/python -m mtga_tracker.db_audit
+venv/bin/python -m mtga_tracker.db_audit --repair
+venv/bin/python -m mtga_tracker.dashboard
 ```
 
 The full suite is fast; run it after tracker changes.
@@ -93,6 +99,10 @@ Important tables:
 - `raw_game_payloads`: raw payload persistence when enabled/available.
 
 When adding stats, persist both player and opponent perspectives when the log can support it.
+
+Use `format_normalizer.py` for queue labels and best-of inference. Do not duplicate string-matching format logic in tracker mixins or reports.
+
+Run `mtga_tracker.db_audit` after suspected tracker inconsistencies. Safe repairs currently include format/queue mismatches and turn-count aggregate mismatches; unresolved deck names and `Card #...` labels are reported for manual follow-up.
 
 ## Testing Expectations
 

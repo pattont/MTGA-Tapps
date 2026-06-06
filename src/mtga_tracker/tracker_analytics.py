@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from .analytics import AnalyticsStore, SessionSnapshot
 from .analytics_persistence import persist_card_summary, persist_commanders, persist_opening_hand
+from .format_normalizer import normalize_match_format
 from .state import CardEvent
 
 
@@ -419,6 +420,10 @@ class TrackerAnalyticsMixin:
         winner_participant_id: Optional[str],
     ) -> None:
         """Persist the current match row."""
+        normalized_format = normalize_match_format(
+            self.game_state.format_str,
+            default_best_of=3 if self.game_state.match_type == "best_of_3" else 1,
+        )
         conn.execute(
             """
             INSERT INTO matches (
@@ -454,7 +459,7 @@ class TrackerAnalyticsMixin:
                 self.game_state.format_str,
                 self.game_state.player_deck_event_name,
                 self.game_state.player_deck_event_name,
-                3 if self.game_state.match_type == "best_of_3" else 1,
+                normalized_format.best_of,
                 int(self.game_state.game_number or 1),
                 winner_participant_id,
             ),

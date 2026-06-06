@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
+from .format_normalizer import (
+    format_label,
+    friendly_midweek_label,
+    normalize_match_format,
+    normalize_match_text,
+)
 from .opening_hand import (
     game_objects_by_instance,
     visible_opening_hand_snapshots,
@@ -40,64 +45,13 @@ class TrackerOpeningDeckMixin:
     def _friendly_format_label(self, raw_format: Optional[str] = None) -> str:
         """Convert raw queue/format identifiers into user-facing labels."""
         raw = raw_format if raw_format is not None else self.game_state.format_str
-        if not isinstance(raw, str) or not raw.strip() or raw == "Unknown":
-            if self._is_brawl_format():
-                return self._best_brawl_format_label()
-            return (
-                "Standard Best-of-3"
-                if self.game_state.match_type == "best_of_3"
-                else "Standard Best-of-1"
-            )
-
-        normalized = self._normalize_match_text(raw)
-        if normalized.startswith("mwm") or normalized.startswith("midweekmagic"):
-            return self._friendly_midweek_label(raw)
-        if "historicbrawl" in normalized:
-            return "Historic Brawl"
-        if "brawl" in normalized:
-            return "Brawl"
-        if normalized in {
-            "traditionalstandard",
-            "constructedbestof3",
-            "bestof3",
-            "traditional_ladder",
-        }:
-            return "Standard Best-of-3"
-        if normalized in {"standard", "ladder", "play", "constructedbestof1", "bestof1"}:
-            return "Standard Best-of-1"
-        if normalized == "historicplay" or normalized == "historic":
-            return "Historic"
-        if normalized == "explorerplay" or normalized == "explorer":
-            return "Explorer"
-        if normalized == "timelessplay" or normalized == "timeless":
-            return "Timeless"
-        if normalized == "alchemy":
-            return "Alchemy"
-        if "traditionalstandard" in normalized:
-            return "Standard Best-of-3"
-        if "historic" in normalized and "brawl" not in normalized:
-            return "Historic"
-        if "explorer" in normalized:
-            return "Explorer"
-        if "timeless" in normalized:
-            return "Timeless"
-        if "standard" in normalized:
-            return (
-                "Standard Best-of-3"
-                if "traditional" in normalized or "bestof3" in normalized
-                else "Standard Best-of-1"
-            )
-        return raw
+        default_best_of = 3 if self.game_state.match_type == "best_of_3" else 1
+        return format_label(raw, default_best_of=default_best_of)
 
     @staticmethod
     def _friendly_midweek_label(raw_format: str) -> str:
         """Convert MWM event identifiers into readable Midweek Magic labels."""
-        text = re.sub(r"^MWM[_-]?", "", raw_format.strip(), flags=re.IGNORECASE)
-        text = re.sub(r"[_-]?\d{8}$", "", text)
-        text = re.sub(r"[_-]+", " ", text).strip()
-        text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
-        return f"Midweek Magic - {text}" if text else "Midweek Magic"
+        return friendly_midweek_label(raw_format)
 
     def _set_match_format(self, fmt: str) -> bool:
         """Apply trusted live match format metadata and infer match length."""
@@ -105,21 +59,12 @@ class TrackerOpeningDeckMixin:
             return False
         updated = self.game_state.format_str != fmt
         self.game_state.format_str = fmt
-        normalized = self._normalize_match_text(fmt)
-        if (
-            "traditional" in normalized
-            or "bestof3" in normalized
-            or normalized in {"constructedbestof3", "bestof3"}
-        ):
+        normalized = normalize_match_format(fmt)
+        if normalized.best_of == 3:
             if self.game_state.match_type != "best_of_3":
                 self.game_state.match_type = "best_of_3"
                 updated = True
-        elif (
-            "bestof1" in normalized
-            or normalized.startswith("mwm")
-            or normalized.startswith("midweekmagic")
-            or normalized in {"standard", "ladder", "play", "constructedbestof1", "bestof1"}
-        ):
+        elif normalized.best_of == 1:
             if self.game_state.match_type != "best_of_1":
                 self.game_state.match_type = "best_of_1"
                 updated = True
@@ -528,9 +473,7 @@ class TrackerOpeningDeckMixin:
     @staticmethod
     def _normalize_match_text(value: Optional[str]) -> str:
         """Normalize strings for loose event/format matching."""
-        if not isinstance(value, str):
-            return ""
-        return "".join(ch for ch in value.lower() if ch.isalnum())
+        return normalize_match_text(value)
 
     @staticmethod
     def _parse_attr_timestamp(value: Optional[str]) -> Optional[datetime]:

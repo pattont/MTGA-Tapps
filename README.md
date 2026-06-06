@@ -56,6 +56,24 @@ python -m mtga_tracker.main
 
 The tracker will monitor your MTGA log file and output card events to the console.
 
+Audit the analytics database for suspicious rows:
+```bash
+python -m mtga_tracker.db_audit
+python -m mtga_tracker.db_audit --repair
+```
+
+Run the local dashboard:
+```bash
+python -m mtga_tracker.dashboard
+```
+
+The dashboard defaults to `http://127.0.0.1:8765` and reads `data/mtga_tracker.sqlite3`.
+
+Common SQL reports live in `data/_queries`, for example:
+```bash
+sqlite3 data/mtga_tracker.sqlite3 < data/_queries/WinRateByDeck.sql
+```
+
 ## Project Structure
 
 ```
@@ -65,7 +83,10 @@ MTGA-Tapps/
 │       ├── __init__.py
 │       ├── main.py           # Entry point
 │       ├── log_parser.py     # MTGA log file parser
-│       └── tracker.py        # Card tracking logic
+│       ├── tracker.py        # Thin CardTracker composition class
+│       ├── db_audit.py       # SQLite consistency audit/repair command
+│       ├── dashboard.py      # Dependency-free local analytics dashboard
+│       └── format_normalizer.py # Queue/format label normalization
 ├── tests/                    # Unit tests
 ├── data/                     # Data files and cache
 ├── logs/                     # Application logs
