@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .analytics import AnalyticsStore, SessionSnapshot
-from .analytics_persistence import persist_card_summary, persist_commanders, persist_opening_hand
+from .analytics_persistence import (
+    persist_card_summary,
+    persist_commanders,
+    persist_drawn_cards,
+    persist_opening_hand,
+)
 from .format_normalizer import normalize_match_format
 from .state import CardEvent
 
@@ -624,6 +629,21 @@ class TrackerAnalyticsMixin:
             player_participant_id,
             starting_hand_events=self.game_state.starting_hand_events,
             starting_hand=self.game_state.starting_hand,
+            refresh_display_name=self._refresh_fallback_name_text,
+        )
+        drawn_cards_by_seat = getattr(self.game_state, "drawn_card_events", {}) or {}
+        persist_drawn_cards(
+            conn,
+            game_id,
+            player_participant_id,
+            drawn_cards_by_seat.get(self.game_state.player_seat_id, []),
+            refresh_display_name=self._refresh_fallback_name_text,
+        )
+        persist_drawn_cards(
+            conn,
+            game_id,
+            opponent_participant_id,
+            drawn_cards_by_seat.get(self.game_state.opponent_seat_id, []),
             refresh_display_name=self._refresh_fallback_name_text,
         )
         persist_commanders(

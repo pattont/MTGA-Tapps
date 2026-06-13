@@ -43,6 +43,22 @@ class TrackerSummaryMixin:
         opponent_last = int(self.game_state.last_opponent_turn_number or 0)
         return (1 if player_last else 0), (1 if opponent_last else 0)
 
+    def _first_player_label_for_current_game(self) -> str:
+        """Return user-facing first-player label for the current game."""
+        if (
+            self.game_state.first_player_seat in (1, 2)
+            and self.game_state.player_seat_id in (1, 2)
+            and self.game_state.first_player_seat == self.game_state.player_seat_id
+        ):
+            return "You"
+        if (
+            self.game_state.first_player_seat in (1, 2)
+            and self.game_state.opponent_seat_id in (1, 2)
+            and self.game_state.first_player_seat == self.game_state.opponent_seat_id
+        ):
+            return "Opponent"
+        return "Unknown"
+
     def _print_match_stats_section(self) -> None:
         """Print per-player match stats block."""
         self._print_line()
@@ -50,6 +66,8 @@ class TrackerSummaryMixin:
         self._print_line(f"   Total Turns: {self._turns_completed()}")
         player_turns, opponent_turns = self._participant_turn_counts()
         self._print_line(f"   Turns: You {player_turns}, Opponent {opponent_turns}")
+        self._print_line(f"   Went First This Game: {self._first_player_label_for_current_game()}")
+        self._print_line(f"   {self._session_first_split_line()}")
         for seat_id, label in (
             (self.game_state.player_seat_id, "You"),
             (self.game_state.opponent_seat_id, "Opponent"),
@@ -326,6 +344,7 @@ class TrackerSummaryMixin:
         if self.session_unknown:
             self._print_line(f"   Unknown Results: {self.session_unknown}")
         self._print_line(f"   Win Rate: {win_rate:.1f}%")
+        self._print_line(f"   {self._session_first_split_line()}")
         self._print_line(f"   Play Time: {self._session_runtime_str()}")
         self._print_line(f"   Total Mulligans: {self.session_total_mulligans}")
         self._print_line(f"   Total Cards Played: {self.session_player_cards_played}")

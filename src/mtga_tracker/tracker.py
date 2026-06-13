@@ -78,6 +78,9 @@ class CardTracker(
         self.session_opponent_cards_played = 0
         self.session_total_mulligans = 0
         self.session_game_runtime_seconds = 0
+        self.session_player_went_first = 0
+        self.session_opponent_went_first = 0
+        self.session_first_unknown = 0
         self.session_id = datetime.now().strftime("%Y%m%dT%H%M%S%f")
         self._session_stats_recorded_this_game = False
         self._deck_candidates: Dict[str, Dict[str, Any]] = {}

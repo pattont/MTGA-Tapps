@@ -9,7 +9,9 @@ def _write_raw_card_db(path, grp_id=12345, title_id=67890, name="Recovered Card"
     conn.execute('CREATE TABLE "Cards" ("GrpId" INTEGER, "TitleId" INTEGER)')
     conn.execute('CREATE TABLE "Localizations_enUS" ("LocId" INTEGER, "Loc" TEXT)')
     conn.execute('INSERT INTO "Cards" ("GrpId", "TitleId") VALUES (?, ?)', (grp_id, title_id))
-    conn.execute('INSERT INTO "Localizations_enUS" ("LocId", "Loc") VALUES (?, ?)', (title_id, name))
+    conn.execute(
+        'INSERT INTO "Localizations_enUS" ("LocId", "Loc") VALUES (?, ?)', (title_id, name)
+    )
     conn.commit()
     conn.close()
 
@@ -17,7 +19,9 @@ def _write_raw_card_db(path, grp_id=12345, title_id=67890, name="Recovered Card"
 def test_card_database_retries_local_db_resolution_after_initial_miss(tmp_path, monkeypatch):
     raw_dir = tmp_path / "Raw"
     raw_dir.mkdir()
-    monkeypatch.setattr(card_database, "get_mtga_raw_card_db_folders", lambda mtga_data_dir=None: [raw_dir])
+    monkeypatch.setattr(
+        card_database, "get_mtga_raw_card_db_folders", lambda mtga_data_dir=None: [raw_dir]
+    )
 
     db = CardDatabase()
 
@@ -26,3 +30,23 @@ def test_card_database_retries_local_db_resolution_after_initial_miss(tmp_path, 
     _write_raw_card_db(raw_dir / "Raw_CardDatabase_test.mtga")
 
     assert db.get_card_name(12345) == "Recovered Card"
+
+
+def test_card_database_resolves_primary_type_category_from_local_db(tmp_path, monkeypatch):
+    raw_dir = tmp_path / "Raw"
+    raw_dir.mkdir()
+    raw_path = raw_dir / "Raw_CardDatabase_test.mtga"
+    conn = sqlite3.connect(raw_path)
+    conn.execute('CREATE TABLE "Cards" ("GrpId" INTEGER, "TitleId" INTEGER, "Types" TEXT)')
+    conn.execute('CREATE TABLE "Localizations_enUS" ("LocId" INTEGER, "Loc" TEXT)')
+    conn.execute('INSERT INTO "Cards" ("GrpId", "TitleId", "Types") VALUES (111, 222, "5")')
+    conn.execute('INSERT INTO "Localizations_enUS" ("LocId", "Loc") VALUES (222, "Forest")')
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(
+        card_database, "get_mtga_raw_card_db_folders", lambda mtga_data_dir=None: [raw_dir]
+    )
+
+    db = CardDatabase()
+
+    assert db.get_card_type_category(111) == "Land"
