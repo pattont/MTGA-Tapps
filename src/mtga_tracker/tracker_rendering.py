@@ -204,6 +204,43 @@ class TrackerRenderingMixin:
         """Return active session game time."""
         return self._format_duration(self._session_play_runtime_seconds())
 
+    def _session_first_counts(self) -> tuple[int, int, int]:
+        """Return session first-player counts as player, opponent, unknown."""
+        return (
+            int(getattr(self, "session_player_went_first", 0) or 0),
+            int(getattr(self, "session_opponent_went_first", 0) or 0),
+            int(getattr(self, "session_first_unknown", 0) or 0),
+        )
+
+    def _session_first_split_line(self) -> str:
+        """Return detailed session first-player split."""
+        player_first, opponent_first, unknown = self._session_first_counts()
+        known = player_first + opponent_first
+        if known <= 0:
+            if unknown:
+                return f"Went First: Not captured ({unknown} unknown)"
+            return "Went First: Not captured"
+        player_pct = 100.0 * player_first / known
+        opponent_pct = 100.0 * opponent_first / known
+        line = (
+            f"Went First: You {player_first}/{known} ({player_pct:.1f}%), "
+            f"Opponent {opponent_first}/{known} ({opponent_pct:.1f}%)"
+        )
+        if unknown:
+            line += f", Unknown {unknown}"
+        return line
+
+    def _session_first_split_compact(self) -> str:
+        """Return compact first-player split for one-line session stats."""
+        player_first, opponent_first, _unknown = self._session_first_counts()
+        known = player_first + opponent_first
+        if known <= 0:
+            return "First: n/a"
+        return (
+            f"First: You {100.0 * player_first / known:.1f}% / "
+            f"Opp {100.0 * opponent_first / known:.1f}%"
+        )
+
     def _session_stats_line(self) -> str:
         """Return one-line session W/L stats."""
         known_results = self.session_wins + self.session_losses
@@ -214,7 +251,8 @@ class TrackerRenderingMixin:
         unknown_part = f", ?:{self.session_unknown}" if self.session_unknown else ""
         return (
             f"W:{self.session_wins} L:{self.session_losses}{draw_part}{unknown_part} | "
-            f"Games:{self.session_games_played} | WR:{win_rate:.1f}% | Play Time:{self._session_runtime_str()}"
+            f"Games:{self.session_games_played} | WR:{win_rate:.1f}% | "
+            f"{self._session_first_split_compact()} | Play Time:{self._session_runtime_str()}"
         )
 
     def _refresh_fallback_name_text(self, text: Optional[str]) -> str:

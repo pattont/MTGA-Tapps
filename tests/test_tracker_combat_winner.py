@@ -110,6 +110,9 @@ def make_tracker() -> CardTracker:
     tracker.session_opponent_cards_played = 0
     tracker.session_total_mulligans = 0
     tracker.session_game_runtime_seconds = 0
+    tracker.session_player_went_first = 0
+    tracker.session_opponent_went_first = 0
+    tracker.session_first_unknown = 0
     tracker.session_id = "test-session"
     tracker._session_stats_recorded_this_game = False
     tracker._deck_candidates = {}
@@ -1336,18 +1339,37 @@ def test_user_action_taken_skips_land_mana_ability_text(capsys):
 
 def test_session_stats_record_once_per_game():
     tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.first_player_seat = 1
 
     tracker._record_session_outcome("win")
     tracker._record_session_outcome("win")
     assert tracker.session_games_played == 1
     assert tracker.session_wins == 1
     assert tracker.session_losses == 0
+    assert tracker.session_player_went_first == 1
+    assert tracker.session_opponent_went_first == 0
 
     tracker._session_stats_recorded_this_game = False
+    tracker.game_state.first_player_seat = 2
     tracker._record_session_outcome("loss")
     assert tracker.session_games_played == 2
     assert tracker.session_wins == 1
     assert tracker.session_losses == 1
+    assert tracker.session_player_went_first == 1
+    assert tracker.session_opponent_went_first == 1
+
+
+def test_session_first_split_formats_counts_and_percentages():
+    tracker = make_tracker()
+    tracker.session_player_went_first = 4
+    tracker.session_opponent_went_first = 7
+
+    assert (
+        tracker._session_first_split_line() == "Went First: You 4/11 (36.4%), Opponent 7/11 (63.6%)"
+    )
+    assert "First: You 36.4% / Opp 63.6%" in tracker._session_stats_line()
 
 
 def test_session_runtime_counts_completed_game_time_not_tracker_uptime():
@@ -1379,6 +1401,8 @@ def test_print_summary_uses_session_totals_not_last_game_state(capsys):
     tracker.session_games_played = 6
     tracker.session_wins = 3
     tracker.session_losses = 3
+    tracker.session_player_went_first = 2
+    tracker.session_opponent_went_first = 4
     tracker.session_player_cards_played = 42
     tracker.session_opponent_cards_played = 37
     tracker.session_total_mulligans = 5
@@ -1395,12 +1419,33 @@ def test_print_summary_uses_session_totals_not_last_game_state(capsys):
     assert "Wins: 3" in out
     assert "Losses: 3" in out
     assert "Win Rate: 50.0%" in out
+    assert "Went First: You 2/6 (33.3%), Opponent 4/6 (66.7%)" in out
     assert "Total Mulligans: 5" in out
     assert "Total Cards Played: 42" in out
     assert "Total Opponent Cards Played: 37" in out
     assert "Final Life:" not in out
     assert "Turns Played:" not in out
-    assert "Went First:" not in out
+
+
+def test_game_summary_prints_first_player_and_session_split(capsys):
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.first_player_seat = 2
+    tracker.game_state.player_life = 0
+    tracker.game_state.opponent_life = 10
+    tracker.game_state.game_start_time = datetime(2026, 6, 11, 20, 0, 0)
+    tracker.game_state.game_end_time = datetime(2026, 6, 11, 20, 5, 0)
+    tracker.game_state.winner_seat = 2
+    tracker.session_player_went_first = 4
+    tracker.session_opponent_went_first = 6
+
+    tracker._print_game_summary()
+    out = capsys.readouterr().out
+
+    assert "Went First This Game: Opponent" in out
+    assert "Went First: You 4/11 (36.4%), Opponent 7/11 (63.6%)" in out
 
 
 def test_seatless_concede_req_does_not_override_structured_winner():

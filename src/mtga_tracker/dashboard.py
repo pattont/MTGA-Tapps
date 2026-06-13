@@ -88,6 +88,107 @@ def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
                 """
             )
         )
+        deck_play_draw_rows = _dict_rows(
+            conn.execute(
+                """
+                SELECT
+                  COALESCE(p.deck_name, '(unknown)') AS deck_name,
+                  CASE p.went_first WHEN 1 THEN 'On the play' WHEN 0 THEN 'On the draw' ELSE 'Unknown' END AS play_draw,
+                  COUNT(*) AS games,
+                  SUM(g.outcome = 'win') AS wins,
+                  SUM(g.outcome = 'loss') AS losses,
+                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
+                FROM games g
+                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                GROUP BY p.deck_name, p.went_first
+                ORDER BY deck_name, play_draw
+                LIMIT 40
+                """
+            )
+        )
+        draw_quality_rows = _dict_rows(
+            conn.execute(
+                """
+                SELECT
+                  COALESCE(g.started_at, g.ended_at) AS started_at,
+                  COALESCE(p.deck_name, '(unknown)') AS deck_name,
+                  g.outcome,
+                  COUNT(seen.display_name) AS cards_seen,
+                  COALESCE(SUM(CASE
+                    WHEN seen.type_category = 'Land' OR seen.display_name LIKE '%(Land)' THEN 1
+                    ELSE 0
+                  END), 0) AS lands_seen,
+                  ROUND(
+                    100.0 * COALESCE(SUM(CASE
+                      WHEN seen.type_category = 'Land' OR seen.display_name LIKE '%(Land)' THEN 1
+                      ELSE 0
+                    END), 0) / NULLIF(COUNT(seen.display_name), 0),
+                    1
+                  ) AS land_seen_pct,
+                  COALESCE(SUM(CASE WHEN seen.source = 'opening' THEN 1 ELSE 0 END), 0) AS opening_cards,
+                  COALESCE(SUM(CASE WHEN seen.source = 'draw' THEN 1 ELSE 0 END), 0) AS known_draws
+                FROM games g
+                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                LEFT JOIN (
+                  SELECT game_id, participant_id, display_name, type_category, 'opening' AS source
+                  FROM game_opening_hand_cards
+                  UNION ALL
+                  SELECT game_id, participant_id, display_name, type_category, 'draw' AS source
+                  FROM game_drawn_cards
+                ) seen ON seen.game_id = g.id AND seen.participant_id = p.id
+                GROUP BY g.id
+                ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
+                LIMIT 25
+                """
+            )
+        )
+        drawn_card_rows = _dict_rows(
+            conn.execute(
+                """
+                SELECT
+                  d.display_name,
+                  COALESCE(d.type_category, 'Other') AS type_category,
+                  COUNT(*) AS times_drawn,
+                  COUNT(DISTINCT d.game_id) AS games_seen,
+                  ROUND(100.0 * COUNT(DISTINCT d.game_id) / NULLIF((SELECT COUNT(*) FROM games), 0), 1) AS pct_of_games
+                FROM game_drawn_cards d
+                JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
+                GROUP BY d.display_name, d.type_category
+                ORDER BY times_drawn DESC, d.display_name
+                LIMIT 25
+                """
+            )
+        )
+        momentum_rows = _dict_rows(
+            conn.execute(
+                """
+                WITH ordered_games AS (
+                  SELECT
+                    g.id,
+                    g.outcome,
+                    p.went_first,
+                    p.mulligans,
+                    LAG(g.outcome) OVER (
+                      ORDER BY COALESCE(g.started_at, g.ended_at), g.id
+                    ) AS previous_outcome
+                  FROM games g
+                  JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                )
+                SELECT
+                  CASE previous_outcome WHEN 'win' THEN 'After a win' WHEN 'loss' THEN 'After a loss' END AS split,
+                  COUNT(*) AS games,
+                  SUM(outcome = 'win') AS wins,
+                  SUM(outcome = 'loss') AS losses,
+                  ROUND(100.0 * SUM(outcome = 'win') / NULLIF(SUM(outcome IN ('win', 'loss')), 0), 1) AS win_rate,
+                  ROUND(AVG(COALESCE(mulligans, 0)), 2) AS avg_mulligans,
+                  ROUND(100.0 * SUM(went_first = 1) / NULLIF(SUM(went_first IN (0, 1)), 0), 1) AS on_play_pct
+                FROM ordered_games
+                WHERE previous_outcome IN ('win', 'loss')
+                GROUP BY previous_outcome
+                ORDER BY split
+                """
+            )
+        )
         recent_rows = _dict_rows(
             conn.execute(
                 """
@@ -123,6 +224,10 @@ def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
         "decks": deck_rows,
         "formats": format_rows,
         "play_draw": play_draw_rows,
+        "deck_play_draw": deck_play_draw_rows,
+        "draw_quality": draw_quality_rows,
+        "drawn_cards": drawn_card_rows,
+        "momentum": momentum_rows,
         "recent": recent_rows,
     }
 
@@ -176,6 +281,52 @@ def render_dashboard_html(snapshot: Dict[str, Any]) -> str:
         }
         for row in snapshot["play_draw"]
     ]
+    deck_play_draw_rows = [
+        {
+            "Deck": row["deck_name"],
+            "Split": row["play_draw"],
+            "Games": row["games"],
+            "Wins": row["wins"],
+            "Losses": row["losses"],
+            "WR": row["win_rate"],
+        }
+        for row in snapshot["deck_play_draw"]
+    ]
+    draw_quality_rows = [
+        {
+            "Started": row["started_at"],
+            "Deck": row["deck_name"],
+            "Outcome": row["outcome"],
+            "Seen": row["cards_seen"],
+            "Lands": row["lands_seen"],
+            "Land %": row["land_seen_pct"],
+            "Opening": row["opening_cards"],
+            "Known Draws": row["known_draws"],
+        }
+        for row in snapshot["draw_quality"]
+    ]
+    drawn_card_rows = [
+        {
+            "Card": row["display_name"],
+            "Type": row["type_category"],
+            "Draws": row["times_drawn"],
+            "Games": row["games_seen"],
+            "% Games": row["pct_of_games"],
+        }
+        for row in snapshot["drawn_cards"]
+    ]
+    momentum_rows = [
+        {
+            "Split": row["split"],
+            "Games": row["games"],
+            "Wins": row["wins"],
+            "Losses": row["losses"],
+            "WR": row["win_rate"],
+            "Avg Mulligans": row["avg_mulligans"],
+            "On Play %": row["on_play_pct"],
+        }
+        for row in snapshot["momentum"]
+    ]
     recent_rows = [
         {
             "Started": row["started_at"],
@@ -208,6 +359,7 @@ def render_dashboard_html(snapshot: Dict[str, Any]) -> str:
     th {{ color: #93c5fd; background: #111827; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; }}
     tr:last-child td {{ border-bottom: 0; }}
     .empty {{ color: #9ca3af; }}
+    .note {{ color: #cbd5e1; margin: 8px 0 14px; max-width: 900px; line-height: 1.45; }}
   </style>
 </head>
 <body>
@@ -222,6 +374,14 @@ def render_dashboard_html(snapshot: Dict[str, Any]) -> str:
   <h2>Decks</h2>{_table(["Deck", "Games", "Wins", "Losses", "WR"], deck_rows)}
   <h2>Formats</h2>{_table(["Format", "Raw", "Games", "WR"], format_rows)}
   <h2>Play / Draw</h2>{_table(["Split", "Games", "Wins", "Losses", "WR"], play_draw_rows)}
+  <h2>Deck Play / Draw</h2>{_table(["Deck", "Split", "Games", "Wins", "Losses", "WR"], deck_play_draw_rows)}
+  <h2>Draw Quality</h2>
+  <p class="note">Opening hands plus known visible draws. Older games may only have opening-hand data.</p>
+  {_table(["Started", "Deck", "Outcome", "Seen", "Lands", "Land %", "Opening", "Known Draws"], draw_quality_rows)}
+  <h2>Visible Drawn Cards</h2>{_table(["Card", "Type", "Draws", "Games", "% Games"], drawn_card_rows)}
+  <h2>Momentum</h2>
+  <p class="note">Next-game results after wins and losses, including mulligans and on-play percentage.</p>
+  {_table(["Split", "Games", "Wins", "Losses", "WR", "Avg Mulligans", "On Play %"], momentum_rows)}
   <h2>Recent Games</h2>{_table(["Started", "Deck", "Format", "Outcome", "Mulligans", "Minutes"], recent_rows)}
 </main>
 </body>
