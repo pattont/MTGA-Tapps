@@ -62,12 +62,32 @@ python -m mtga_tracker.db_audit
 python -m mtga_tracker.db_audit --repair
 ```
 
+Audit recent draw quality from opening hands and known visible draws:
+```bash
+python -m mtga_tracker.draw_quality --card "Llanowar Elves" --land-rate 0.37
+```
+
 Run the local dashboard:
 ```bash
 python -m mtga_tracker.dashboard
 ```
 
 The dashboard defaults to `http://127.0.0.1:8765` and reads `data/mtga_tracker.sqlite3`.
+
+Stop the dashboard from the terminal where it is running:
+```text
+Ctrl+C
+```
+
+If port `8765` is already in use, choose another port:
+```bash
+python -m mtga_tracker.dashboard --port 8766
+```
+
+If you lost the terminal running the dashboard on macOS, stop the process using the port:
+```bash
+lsof -ti tcp:8765 | xargs kill
+```
 
 Common SQL reports live in `data/_queries`, for example:
 ```bash

@@ -120,6 +120,7 @@ class GameState:
         self.combat_loss_events_counted: Set[tuple] = set()
         self.match_stats = self._new_match_stats()
         self.stack_stats = self._new_stack_stats()
+        self.drawn_card_events: Dict[int, List[CardEvent]] = {1: [], 2: []}
 
         self.game_start_time: Optional[datetime] = None
         self.game_end_time: Optional[datetime] = None

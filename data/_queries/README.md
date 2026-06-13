@@ -18,6 +18,9 @@ Useful starting points:
 - `SessionPlayTime.sql`: tracker sessions using active game play time, not idle process uptime.
 - `OpeningHandCardStats.sql`: opening-hand card frequency and win rate by deck.
 - `OpeningHandCardFrequency.sql`: opening-hand card frequency including duplicate copies seen.
+- `DrawQualityRecent.sql`: recent games with opening hand plus known visible draws and observed land rate.
+- `DrawnCardFrequency.sql`: visible player draws by card, populated for games after drawn-card capture was added.
+- `CardSeenInOpeningAndDraws.sql`: target-card appearances across opening hands and known draws.
 - `CardPerformancePlayed.sql`: cards played and associated game outcomes.
 - `CardPlayedFrequency.sql`: played-card frequency and win rate when played.
 - `MulliganStatsByDeck.sql`: win rate grouped by deck and mulligan count.

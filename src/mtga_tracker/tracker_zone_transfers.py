@@ -85,7 +85,9 @@ class TrackerZoneTransferMixin:
             card_name = self.card_db.get_card_name(grp_id) if grp_id else "Unknown"
             if not self._emit_stack_item_status(canonical_instance_id, "countered"):
                 self._flush_pending_turn_header_for_seat(owner_seat)
-                event_turn = self.game_state.turn_number if self.game_state.turn_number > 0 else None
+                event_turn = (
+                    self.game_state.turn_number if self.game_state.turn_number > 0 else None
+                )
                 self._print_event(
                     self._format_actor_event(
                         "🚫",
@@ -126,6 +128,26 @@ class TrackerZoneTransferMixin:
         stats = self._seat_stats(owner_seat)
         if stats is not None:
             stats["cards_drawn"] += 1
+        grp_id = card_obj.get("grpId") if isinstance(card_obj, dict) else None
+        if grp_id:
+            try:
+                seat_id = int(owner_seat)
+            except (TypeError, ValueError):
+                seat_id = None
+            if seat_id in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+                card_name = self.card_db.get_card_name(grp_id)
+                card_types = card_obj.get("cardTypes") or []
+                type_category = self._get_card_type_category(card_types)
+                if type_category == "Other":
+                    type_category = self.card_db.get_card_type_category(grp_id) or "Other"
+                draw_event = CardEvent(
+                    card_name,
+                    "player" if seat_id == self.game_state.player_seat_id else "opponent",
+                    timestamp=self._now(),
+                    card_type_category=type_category,
+                )
+                draw_event.turn_number = event_turn
+                self.game_state.drawn_card_events.setdefault(seat_id, []).append(draw_event)
 
     def _handle_mill_zone_transfer(
         self,
@@ -215,7 +237,10 @@ class TrackerZoneTransferMixin:
             zone_dest=zone_dest,
             zones_by_id=zones_by_id,
         )
-        if not (card_obj or owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)):
+        if not (
+            card_obj
+            or owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
+        ):
             return
 
         grp_id = card_obj.get("grpId") if card_obj else None
@@ -243,7 +268,8 @@ class TrackerZoneTransferMixin:
             category in {"Discard", "Sacrifice", "Exile"}
             and affector_id is not None
             and isinstance(self.game_state.stack_items.get(self._stack_key(affector_id)), dict)
-            and self.game_state.stack_items.get(self._stack_key(affector_id), {}).get("status") == "pending"
+            and self.game_state.stack_items.get(self._stack_key(affector_id), {}).get("status")
+            == "pending"
         )
         action_text = f"[{card_name}] was {action}"
         if is_stack_cost:
@@ -294,9 +320,15 @@ class TrackerZoneTransferMixin:
             ):
                 exiler_seat = self.game_state.active_player
 
-            if owner_seat == self.game_state.player_seat_id and exiler_seat == self.game_state.opponent_seat_id:
+            if (
+                owner_seat == self.game_state.player_seat_id
+                and exiler_seat == self.game_state.opponent_seat_id
+            ):
                 self.game_state.player_cards_exiled_by_opponent += 1
-            elif owner_seat == self.game_state.opponent_seat_id and exiler_seat == self.game_state.player_seat_id:
+            elif (
+                owner_seat == self.game_state.opponent_seat_id
+                and exiler_seat == self.game_state.player_seat_id
+            ):
                 self.game_state.opponent_cards_exiled_by_player += 1
         elif category == "Discard":
             stats = self._seat_stats(owner_seat)
@@ -342,14 +374,27 @@ class TrackerZoneTransferMixin:
             source_seat = source_obj.get("controllerSeatId") if source_obj else None
             if source_seat is None and source_obj:
                 source_seat = source_obj.get("ownerSeatId")
-            source_name = self._object_display_name(source_obj, source_obj.get("instanceId") or affector_id) if source_obj else None
-            if source_obj and source_name and source_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+            source_name = (
+                self._object_display_name(source_obj, source_obj.get("instanceId") or affector_id)
+                if source_obj
+                else None
+            )
+            if (
+                source_obj
+                and source_name
+                and source_seat
+                in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
+            ):
                 source_stack_key = self._stack_key(source_obj.get("instanceId") or affector_id)
                 source_pending = isinstance(self.game_state.stack_items.get(source_stack_key), dict)
                 if source_seat == determining_seat and source_pending:
                     message = f"returned [{card_name}] to hand as cost for [{source_name}]"
                 else:
-                    hand_owner = "your" if determining_seat == self.game_state.player_seat_id else "opponent's"
+                    hand_owner = (
+                        "your"
+                        if determining_seat == self.game_state.player_seat_id
+                        else "opponent's"
+                    )
                     message = f"[{source_name}] returned [{card_name}] to {hand_owner} hand"
                 self._print_event(
                     self._format_actor_event(
@@ -486,7 +531,9 @@ class TrackerZoneTransferMixin:
         if target_objs:
             target_names = []
             for t_obj in target_objs:
-                target_names.append(f"[{self._object_display_label(t_obj, t_obj.get('instanceId'))}]")
+                target_names.append(
+                    f"[{self._object_display_label(t_obj, t_obj.get('instanceId'))}]"
+                )
             return f" -> {', '.join(target_names)}"
         if target_obj:
             return f" -> [{self._object_display_label(target_obj, target_obj.get('instanceId'))}]"
@@ -498,7 +545,9 @@ class TrackerZoneTransferMixin:
             return f" -> [ID: {target_id}]"
         return ""
 
-    def _track_name_for_card(self, card_name: str, type_str: str, card_types: List[str], card_obj: Dict[str, Any]) -> str:
+    def _track_name_for_card(
+        self, card_name: str, type_str: str, card_types: List[str], card_obj: Dict[str, Any]
+    ) -> str:
         """Return summary/display track name for a played card."""
         if "CardType_Creature" in card_types:
             power = card_obj.get("power", {}).get("value", "?")
@@ -538,17 +587,15 @@ class TrackerZoneTransferMixin:
             turn_for_display = (
                 self.game_state.last_player_turn_number
                 if determining_seat == self.game_state.player_seat_id
-                else (self.game_state.last_opponent_turn_number or self.game_state.last_turn_announced)
+                else (
+                    self.game_state.last_opponent_turn_number or self.game_state.last_turn_announced
+                )
             )
             turn_for_display = self._event_turn_number(determining_seat, turn_for_display)
             track_name = self._track_name_for_card(card_name, type_str, card_types, card_obj)
             deferred_ids = deferred_spell_instance_ids or set()
-            if (
-                not target_str
-                and (
-                    int(instance_id) in deferred_ids
-                    or int(canonical_instance_id) in deferred_ids
-                )
+            if not target_str and (
+                int(instance_id) in deferred_ids or int(canonical_instance_id) in deferred_ids
             ):
                 self.game_state.pending_spell_roots[int(canonical_instance_id)] = {
                     "seat": determining_seat,
@@ -587,8 +634,10 @@ class TrackerZoneTransferMixin:
         )
         if (
             category == "PlayLand"
-            and determining_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
-            and self.game_state.active_player in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
+            and determining_seat
+            in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
+            and self.game_state.active_player
+            in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
             and determining_seat != self.game_state.active_player
             and self.game_state.turn_number > 1
         ):
@@ -700,7 +749,10 @@ class TrackerZoneTransferMixin:
         if "AnnotationType_TappedUntappedPermanent" in ann_type:
             self._handle_tapped_untapped_permanent(affected_ids, annotation, game_objects_by_id)
             return True
-        if "AnnotationType_AbilityActivated" in ann_type or "AnnotationType_ActivatedAbility" in ann_type:
+        if (
+            "AnnotationType_AbilityActivated" in ann_type
+            or "AnnotationType_ActivatedAbility" in ann_type
+        ):
             self._handle_ability_activated(affected_ids, annotation, game_objects)
             return True
         if "AnnotationType_TriggeredAbility" in ann_type or "AnnotationType_Triggered" in ann_type:

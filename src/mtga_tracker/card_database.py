@@ -23,16 +23,30 @@ except ImportError:
 
 class CardDatabase:
     """Resolves MTGA card IDs (grpId) to card names using Scryfall API with fallback.
-    
+
     Tries multiple methods in order:
     1. Scryfall direct lookup: /cards/arena/{grpId}
     2. Scryfall search: /cards/search?q=arena:{grpId}
-    
+
     Uses local caching to avoid excessive API calls.
     """
 
-    def __init__(self, cache_path: Optional[str] = None, log_path: Optional[str] = None,
-                 mtga_data_dir: Optional[str] = None):
+    _RAW_TYPE_CATEGORY_BY_CODE = {
+        "1": "Artifact",
+        "2": "Creature",
+        "3": "Enchantment",
+        "4": "Instant",
+        "5": "Land",
+        "8": "Planeswalker",
+        "10": "Sorcery",
+    }
+
+    def __init__(
+        self,
+        cache_path: Optional[str] = None,
+        log_path: Optional[str] = None,
+        mtga_data_dir: Optional[str] = None,
+    ):
         """Initialize the card database.
 
         Args:
@@ -55,6 +69,7 @@ class CardDatabase:
         self.mtgjson_cache: Dict[int, str] = {}
         self.scryfall_arena_index: Dict[int, str] = {}
         self.log_cache: Dict[int, str] = {}
+        self.type_category_cache: Dict[int, Optional[str]] = {}
         self.last_api_call = 0
         self.api_delay = 0.1
         # Local MTGA SQLite DB: path resolved on first lookup (no preload)
@@ -142,6 +157,7 @@ class CardDatabase:
     def _query_mtga_local_db(self, grp_id: int) -> Optional[str]:
         """Look up card name for grp_id from local MTGA SQLite (Cards ⋈ Localizations_enUS). On-demand only."""
         import sqlite3
+
         db_path = self._resolve_mtga_db_path()
         if not db_path:
             return None
@@ -267,7 +283,7 @@ class CardDatabase:
         Returns:
             Card name, or "Unknown Card (ID: grp_id)" if not found.
         """
-        
+
         # Session cache: same deck/cards looked up many times in one run
         if grp_id in self.cache:
             return self.cache[grp_id]
@@ -280,6 +296,34 @@ class CardDatabase:
 
         fallback = f"Card #{grp_id}"
         return fallback
+
+    def get_card_type_category(self, grp_id: int) -> Optional[str]:
+        """Return a primary card type category for a grpId using the local MTGA card DB."""
+        try:
+            grp_id_int = int(grp_id)
+        except (TypeError, ValueError):
+            return None
+        if grp_id_int in self.type_category_cache:
+            return self.type_category_cache[grp_id_int]
+        db_path = self._resolve_mtga_db_path()
+        if not db_path:
+            self.type_category_cache[grp_id_int] = None
+            return None
+        import sqlite3
+
+        category = None
+        try:
+            conn = sqlite3.connect(str(db_path))
+            cur = conn.cursor()
+            cur.execute('SELECT "Types" FROM "Cards" WHERE "GrpId" = ?', (grp_id_int,))
+            row = cur.fetchone()
+            conn.close()
+            if row and row[0] is not None:
+                category = self._RAW_TYPE_CATEGORY_BY_CODE.get(str(row[0]).strip())
+        except Exception:
+            category = None
+        self.type_category_cache[grp_id_int] = category
+        return category
 
     def _fetch_from_scryfall(self, grp_id: int) -> Optional[str]:
         """Fetch card name from Scryfall API.
@@ -298,12 +342,11 @@ class CardDatabase:
 
         url = f"https://api.scryfall.com/cards/arena/{grp_id}"
 
-
         try:
             # Create request with User-Agent header (Scryfall requests this)
             req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'MTGA-Tracker/1.0')
-            req.add_header('Accept', 'application/json')
+            req.add_header("User-Agent", "MTGA-Tracker/1.0")
+            req.add_header("Accept", "application/json")
 
             with urllib.request.urlopen(req, timeout=10) as response:
                 self.last_api_call = time.time()
@@ -340,17 +383,16 @@ class CardDatabase:
         # Try Scryfall's search endpoint as an alternative fallback
         # Search for cards with this arena ID
         url = f"https://api.scryfall.com/cards/search?q=arena%3A{grp_id}"
-        
 
         try:
             req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'MTGA-Tracker/1.0')
-            req.add_header('Accept', 'application/json')
+            req.add_header("User-Agent", "MTGA-Tracker/1.0")
+            req.add_header("Accept", "application/json")
 
             with urllib.request.urlopen(req, timeout=10) as response:
                 self.last_api_call = time.time()
                 data = json.loads(response.read())
-                
+
                 # Scryfall search returns a list of cards in 'data' field
                 if data.get("data") and len(data["data"]) > 0:
                     card_name = data["data"][0].get("name")
@@ -382,39 +424,39 @@ class CardDatabase:
         self.cache = {}
         if self.cache_path.exists():
             self.cache_path.unlink()
-    
+
     def download_mtgjson_database(self, force: bool = False) -> bool:
         """Download MTGJSON AllPrintings database for better MTGA card coverage.
-        
+
         This downloads the full MTGJSON database which includes MTGA card IDs.
         The file is large (~100MB+) but provides comprehensive card coverage.
-        
+
         Args:
             force: If True, re-download even if file exists.
-            
+
         Returns:
             True if download successful, False otherwise.
         """
         mtgjson_path = self.cache_path.parent / "mtgjson_allprintings.json"
-        
+
         if mtgjson_path.exists() and not force:
             print(f"MTGJSON database already exists at {mtgjson_path}")
             return True
-        
+
         print("Downloading MTGJSON AllPrintings database...")
         print("This may take a few minutes (file is ~100MB+)...")
-        
+
         url = "https://mtgjson.com/api/v5/AllPrintings.json"
-        
+
         try:
             req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'MTGA-Tracker/1.0')
-            
+            req.add_header("User-Agent", "MTGA-Tracker/1.0")
+
             with urllib.request.urlopen(req, timeout=300) as response:
-                total_size = int(response.headers.get('Content-Length', 0))
+                total_size = int(response.headers.get("Content-Length", 0))
                 downloaded = 0
-                
-                with open(mtgjson_path, 'wb') as f:
+
+                with open(mtgjson_path, "wb") as f:
                     while True:
                         chunk = response.read(8192)
                         if not chunk:
@@ -423,52 +465,52 @@ class CardDatabase:
                         downloaded += len(chunk)
                         if total_size > 0:
                             percent = (downloaded / total_size) * 100
-                            print(f"\rDownloaded: {percent:.1f}%", end='', flush=True)
-                
+                            print(f"\rDownloaded: {percent:.1f}%", end="", flush=True)
+
                 print(f"\n✓ MTGJSON database downloaded to {mtgjson_path}")
                 return True
         except Exception as e:
             print(f"\n✗ Failed to download MTGJSON database: {e}")
             return False
-    
+
     def _load_mtgjson_database(self) -> Dict[int, str]:
         """Load MTGJSON database and extract MTGA card mappings.
-        
+
         Uses a pre-processed cache file for fast loading. If cache doesn't exist
         or is older than the MTGJSON file, rebuilds it.
-        
+
         Returns:
             Dictionary mapping grpId to card name.
         """
         mtgjson_path = self.cache_path.parent / "mtgjson_allprintings.json"
         cache_path = self.cache_path.parent / "mtgjson_cache.json"
-        
+
         if not mtgjson_path.exists():
             return {}
-        
+
         # Check if we have a cached version that's up to date
         if cache_path.exists():
             mtgjson_mtime = mtgjson_path.stat().st_mtime
             cache_mtime = cache_path.stat().st_mtime
-            
+
             # If cache is newer than MTGJSON file, use the cache
             if cache_mtime >= mtgjson_mtime:
                 try:
-                    with open(cache_path, 'r', encoding='utf-8') as f:
+                    with open(cache_path, "r", encoding="utf-8") as f:
                         card_map = {int(k): v for k, v in json.load(f).items()}
                     print(f"✓ Loaded {len(card_map)} MTGA cards from cache")
                     return card_map
                 except Exception as e:
                     print(f"⚠ Cache load failed, rebuilding: {e}")
-        
+
         # Need to rebuild cache from full MTGJSON file
         print("Loading MTGJSON database (this may take a few seconds)...")
         card_map = {}
-        
+
         try:
-            with open(mtgjson_path, 'r', encoding='utf-8') as f:
+            with open(mtgjson_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                
+
             # MTGJSON structure: data -> set_code -> cards -> [card objects]
             # Each card has "identifiers" -> "mtgArenaId" (grpId)
             count = 0
@@ -478,7 +520,7 @@ class CardDatabase:
                     identifiers = card.get("identifiers", {})
                     arena_id = identifiers.get("mtgArenaId")
                     card_name = card.get("name")
-                    
+
                     if arena_id and card_name:
                         try:
                             grp_id = int(arena_id)
@@ -486,21 +528,21 @@ class CardDatabase:
                             count += 1
                         except (ValueError, TypeError):
                             continue
-            
+
             # Save the processed cache for next time
             try:
-                with open(cache_path, 'w', encoding='utf-8') as f:
+                with open(cache_path, "w", encoding="utf-8") as f:
                     json.dump(card_map, f, indent=2)
                 print(f"✓ Processed and cached {count} MTGA cards")
             except Exception as e:
                 print(f"⚠ Failed to save cache: {e}")
-            
+
             print(f"✓ Loaded {count} MTGA cards from MTGJSON database")
             return card_map
         except Exception as e:
             print(f"✗ Failed to load MTGJSON database: {e}")
             return {}
-    
+
     def _find_scryfall_bulk_file(self) -> Optional[Path]:
         """Find Scryfall bulk file in data dir. Prefers all-cards*.json, then default-cards*.json."""
         data_dir = self.cache_path.parent
@@ -509,7 +551,7 @@ class CardDatabase:
             if matches:
                 return max(matches, key=lambda p: p.stat().st_mtime)
         return None
-    
+
     def _build_scryfall_arena_index(self, bulk_path: Path) -> Dict[int, str]:
         """Stream-parse Scryfall bulk JSON and build arena_id -> name index. Requires ijson.
 
@@ -549,16 +591,20 @@ class CardDatabase:
                     if count > 0 and count % report_interval == 0:
                         print(f"   ... {count} Arena cards indexed")
             with open(index_path, "w", encoding="utf-8") as out:
-                json.dump({str(k): v for k, v in card_map.items()}, out, indent=0, separators=(",", ":"))
+                json.dump(
+                    {str(k): v for k, v in card_map.items()}, out, indent=0, separators=(",", ":")
+                )
             with open(name_index_path, "w", encoding="utf-8") as out:
                 json.dump(name_to_arena, out, indent=0, separators=(",", ":"))
             print(f"✓ Scryfall index built: {len(card_map)} Arena cards → {index_path.name}")
-            print(f"✓ Full name index: {len(name_to_arena)} cards (all names) → {name_index_path.name}")
+            print(
+                f"✓ Full name index: {len(name_to_arena)} cards (all names) → {name_index_path.name}"
+            )
             return card_map
         except Exception as e:
             print(f"✗ Failed to build Scryfall index: {e}")
             return {}
-    
+
     def _load_or_build_scryfall_arena_index(self) -> None:
         """Load Scryfall arena index from data/scryfall_arena_index.json, or build it from all-cards*.json."""
         data_dir = self.cache_path.parent
@@ -570,34 +616,36 @@ class CardDatabase:
                     with open(index_path, "r", encoding="utf-8") as f:
                         self.scryfall_arena_index = {int(k): v for k, v in json.load(f).items()}
                     if self.scryfall_arena_index:
-                        print(f"✓ Loaded {len(self.scryfall_arena_index)} cards from Scryfall index")
+                        print(
+                            f"✓ Loaded {len(self.scryfall_arena_index)} cards from Scryfall index"
+                        )
                     return
                 except Exception as e:
                     print(f"⚠ Scryfall index load failed: {e}")
         if bulk_path is not None:
             self.scryfall_arena_index = self._build_scryfall_arena_index(bulk_path)
-    
+
     def _extract_cards_from_log(self) -> None:
         """Extract card name mappings from Player.log file.
-        
+
         Scans the log file for card objects that contain both grpId and name fields,
         building a local database of card IDs to names. This helps identify cards
         that aren't in MTGJSON or Scryfall yet.
         """
         if not self.log_path or not Path(self.log_path).exists():
             return
-        
+
         log_cache_path = self.cache_path.parent / "log_card_cache.json"
-        
+
         # Try to load cached log extractions first
         if log_cache_path.exists():
             try:
                 log_mtime = Path(self.log_path).stat().st_mtime
                 cache_mtime = log_cache_path.stat().st_mtime
-                
+
                 # If cache is newer than log file, use cache
                 if cache_mtime >= log_mtime:
-                    with open(log_cache_path, 'r', encoding='utf-8') as f:
+                    with open(log_cache_path, "r", encoding="utf-8") as f:
                         self.log_cache = {int(k): v for k, v in json.load(f).items()}
                     if self.log_cache:
                         print(f"✓ Loaded {len(self.log_cache)} card names from log cache")
@@ -605,49 +653,51 @@ class CardDatabase:
             except Exception as e:
                 # If cache load fails, continue to scan log
                 pass
-        
+
         # Scan the log file for card objects
         print("Scanning Player.log for card names...")
         card_map = {}
         scanned_lines = 0
         max_scan_lines = 200000  # Increased to scan more lines for better coverage
-        
+
         try:
-            with open(self.log_path, 'r', encoding='utf-8', errors='ignore') as f:
+            with open(self.log_path, "r", encoding="utf-8", errors="ignore") as f:
                 # Read last N lines (most recent cards)
                 lines = f.readlines()
                 lines_to_scan = lines[-max_scan_lines:] if len(lines) > max_scan_lines else lines
-                
+
                 for line in lines_to_scan:
                     scanned_lines += 1
                     if scanned_lines % 10000 == 0:
                         print(f"  Scanned {scanned_lines} lines, found {len(card_map)} cards...")
-                    
+
                     # Look for JSON objects that might contain card data
                     # Check for grpId, cardId (deck data), or gameObjects (game state)
-                    if '{' not in line or ('grpId' not in line and 'cardId' not in line and 'gameObjects' not in line):
+                    if "{" not in line or (
+                        "grpId" not in line and "cardId" not in line and "gameObjects" not in line
+                    ):
                         continue
-                    
+
                     # Try to parse JSON from the line
                     try:
                         # Extract JSON object
-                        json_match = re.search(r'\{.*\}', line)
+                        json_match = re.search(r"\{.*\}", line)
                         if not json_match:
                             continue
-                        
+
                         data = json.loads(json_match.group(0))
-                        
+
                         # Recursively search for card objects with grpId and name
                         self._extract_cards_from_json(data, card_map)
                     except (json.JSONDecodeError, ValueError):
                         continue
-            
+
             self.log_cache = card_map
-            
+
             # Save the extracted mappings
             if card_map:
                 try:
-                    with open(log_cache_path, 'w', encoding='utf-8') as f:
+                    with open(log_cache_path, "w", encoding="utf-8") as f:
                         json.dump(card_map, f, indent=2)
                     print(f"✓ Extracted {len(card_map)} card names from Player.log")
                 except Exception as e:
@@ -656,10 +706,10 @@ class CardDatabase:
                 print("  No card names found in recent log entries")
         except Exception as e:
             print(f"⚠ Failed to scan Player.log: {e}")
-    
+
     def _extract_cards_from_json(self, obj: Any, card_map: Dict[int, str]) -> None:
         """Recursively extract card objects from JSON structure.
-        
+
         Args:
             obj: JSON object to search (dict, list, or primitive)
             card_map: Dictionary to store grpId -> card name mappings
@@ -668,7 +718,7 @@ class CardDatabase:
             # Check if this dict has both grpId and name/cardName (or overlayGrpId for alt-set IDs)
             grp_id = obj.get("grpId") or obj.get("cardId")  # Also check cardId (used in deck data)
             overlay_grp_id = obj.get("overlayGrpId")
-            
+
             # Try multiple name fields - skip "name" if it's numeric (localization ID)
             potential_name = None
             for name_field in ["cardName", "displayName", "title", "cardTitle", "name"]:
@@ -680,20 +730,29 @@ class CardDatabase:
                         break
                     # Also check if it's a number but we can use it as a last resort
                     # (some cards might have numeric names, but very rare)
-            
-            if potential_name and isinstance(potential_name, str) and not potential_name.isdigit() and len(potential_name) > 1:
+
+            if (
+                potential_name
+                and isinstance(potential_name, str)
+                and not potential_name.isdigit()
+                and len(potential_name) > 1
+            ):
                 try:
                     if grp_id:
                         grp_id_int = int(grp_id)
-                        if grp_id_int not in card_map or len(potential_name) > len(card_map.get(grp_id_int, "")):
+                        if grp_id_int not in card_map or len(potential_name) > len(
+                            card_map.get(grp_id_int, "")
+                        ):
                             card_map[grp_id_int] = potential_name
                     if overlay_grp_id is not None:
                         overlay_id_int = int(overlay_grp_id)
-                        if overlay_id_int not in card_map or len(potential_name) > len(card_map.get(overlay_id_int, "")):
+                        if overlay_id_int not in card_map or len(potential_name) > len(
+                            card_map.get(overlay_id_int, "")
+                        ):
                             card_map[overlay_id_int] = potential_name
                 except (ValueError, TypeError):
                     pass
-            
+
             # Recursively search nested structures
             for value in obj.values():
                 self._extract_cards_from_json(value, card_map)

@@ -23,6 +23,7 @@ Primary code paths:
 - `src/mtga_tracker/format_normalizer.py`: single source of truth for raw queue/format labels and best-of inference.
 - `src/mtga_tracker/db_audit.py`: SQLite consistency audit and safe repair CLI.
 - `src/mtga_tracker/dashboard.py`: dependency-free local SQLite dashboard.
+- `src/mtga_tracker/draw_quality.py`: CLI/report helpers for land flood/screw and repeated-card draw audits.
 - `src/mtga_tracker/tracker_summary.py`: end-game and session summary rendering.
 - `src/mtga_tracker/tracker_rendering.py`: console formatting, actor labels, mana/text cleanup, runtime strings.
 - `src/mtga_tracker/tracker_state_lookup.py`: object snapshots, identity/copy-state, card type, zone/seat lookup helpers.
@@ -41,6 +42,7 @@ venv/bin/python -m mtga_tracker.main
 venv/bin/python -m mtga_tracker.db_audit
 venv/bin/python -m mtga_tracker.db_audit --repair
 venv/bin/python -m mtga_tracker.dashboard
+venv/bin/python -m mtga_tracker.draw_quality --card "Llanowar Elves"
 ```
 
 The full suite is fast; run it after tracker changes.
@@ -92,6 +94,7 @@ Important tables:
 - `games`: one game result, duration, total turns, player/opponent turn counts, winner/outcome.
 - `participants`: player/opponent seat, deck metadata, life, opening hand size, mulligans.
 - `game_opening_hand_cards`: one row per card in the player's opening hand.
+- `game_drawn_cards`: one row per visible player/opponent drawn card identity when Arena exposes it.
 - `game_card_summary`: cards played by each participant.
 - `game_participant_stats`: combat, damage/life, cards drawn/discarded/milled/exiled, stack stats.
 - `game_events`: structured event history where available.

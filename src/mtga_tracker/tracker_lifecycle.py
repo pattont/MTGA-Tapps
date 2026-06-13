@@ -809,6 +809,20 @@ class TrackerLifecycleMixin:
 
         self.session_games_played += 1
         self.session_game_runtime_seconds += self._current_game_duration_seconds()
+        if (
+            self.game_state.first_player_seat in (1, 2)
+            and self.game_state.player_seat_id in (1, 2)
+            and self.game_state.first_player_seat == self.game_state.player_seat_id
+        ):
+            self.session_player_went_first = getattr(self, "session_player_went_first", 0) + 1
+        elif (
+            self.game_state.first_player_seat in (1, 2)
+            and self.game_state.opponent_seat_id in (1, 2)
+            and self.game_state.first_player_seat == self.game_state.opponent_seat_id
+        ):
+            self.session_opponent_went_first = getattr(self, "session_opponent_went_first", 0) + 1
+        else:
+            self.session_first_unknown = getattr(self, "session_first_unknown", 0) + 1
         if outcome == "win":
             self.session_wins += 1
         elif outcome == "loss":
