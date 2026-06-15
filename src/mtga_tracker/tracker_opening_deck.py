@@ -452,6 +452,8 @@ class TrackerOpeningDeckMixin:
         for key in (
             "screenName",
             "ScreenName",
+            "playerName",
+            "PlayerName",
             "displayName",
             "DisplayName",
             "accountName",
@@ -462,6 +464,46 @@ class TrackerOpeningDeckMixin:
             if isinstance(v, str) and v.strip():
                 return v.strip()
         return None
+
+    def _resolve_seats_from_reserved_players(self) -> None:
+        """Resolve seats when reserved player names identify the local player."""
+        if self.game_state.player_seat_id in (1, 2):
+            return
+        local_name = self.game_state.player_display_name
+        if not isinstance(local_name, str) or not local_name.strip():
+            return
+        local_key = local_name.strip().casefold()
+        reserved = [
+            player
+            for player in self.game_state._reserved_players
+            if isinstance(player, dict) and player.get("seat") in (1, 2)
+        ]
+        if len(reserved) < 2:
+            return
+
+        local = None
+        for player in reserved:
+            name = player.get("name")
+            if isinstance(name, str) and name.strip().casefold() == local_key:
+                local = player
+                break
+        if local is None:
+            return
+
+        player_seat = local.get("seat")
+        opponent = next(
+            (player for player in reserved if player.get("seat") != player_seat),
+            None,
+        )
+        if opponent is None:
+            return
+
+        self.game_state.player_seat_id = player_seat
+        self.game_state.opponent_seat_id = opponent.get("seat")
+        if local.get("name"):
+            self.game_state.player_display_name = local["name"]
+        if opponent.get("name"):
+            self.game_state.opponent_display_name = opponent["name"]
 
     @staticmethod
     def _is_localized_placeholder_name(name: Optional[str]) -> bool:
@@ -944,6 +986,7 @@ class TrackerOpeningDeckMixin:
                             if seat == self.game_state.player_seat_id:
                                 local_reserved_event_id = clean_event_id
                         self.game_state._reserved_players.append({"seat": seat, "name": name})
+                self._resolve_seats_from_reserved_players()
                 # If we know our seat, resolve our name and opponent's from reserved list
                 if self.game_state.player_seat_id is not None and self.game_state._reserved_players:
                     for r in self.game_state._reserved_players:

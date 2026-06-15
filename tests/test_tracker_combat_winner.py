@@ -3101,6 +3101,42 @@ def test_match_room_reserved_player_event_id_replaces_stale_brawl_format():
     assert not tracker._is_brawl_format()
 
 
+def test_match_room_reserved_players_resolve_seats_from_local_player_name_with_unicode_opponent():
+    tracker = make_tracker()
+    tracker.game_state.player_display_name = "Tapps"
+
+    tracker._parse_match_metadata(
+        json.dumps(
+            {
+                "matchGameRoomStateChangedEvent": {
+                    "gameRoomInfo": {
+                        "gameRoomConfig": {
+                            "matchId": "active-match",
+                            "reservedPlayers": [
+                                {
+                                    "systemSeatId": 1,
+                                    "playerName": "みんと",
+                                    "eventId": "Play",
+                                },
+                                {
+                                    "systemSeatId": 2,
+                                    "playerName": "Tapps",
+                                    "eventId": "Play",
+                                },
+                            ],
+                        }
+                    }
+                }
+            }
+        )
+    )
+
+    assert tracker.game_state.player_seat_id == 2
+    assert tracker.game_state.opponent_seat_id == 1
+    assert tracker.game_state.player_display_name == "Tapps"
+    assert tracker.game_state.opponent_display_name == "みんと"
+
+
 def test_match_room_traditional_standard_sets_best_of_three_format():
     tracker = make_tracker()
     tracker._parse_match_metadata(
