@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List
+from urllib.parse import urlparse
 
 from .analytics import AnalyticsStore
 from .format_normalizer import format_label
@@ -388,28 +390,49 @@ def render_dashboard_html(snapshot: Dict[str, Any]) -> str:
 </html>"""
 
 
+def render_snapshot_json(snapshot: Dict[str, Any]) -> bytes:
+    """Return UTF-8 encoded dashboard JSON."""
+    return json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
+def _send_bytes(
+    handler: BaseHTTPRequestHandler,
+    status: int,
+    body: bytes,
+    content_type: str,
+) -> None:
+    handler.send_response(status)
+    handler.send_header("Content-Type", content_type)
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     """HTTP handler rendering the dashboard on each request."""
 
     db_path: Path = DEFAULT_DB_PATH
 
     def do_GET(self) -> None:  # noqa: N802 - http.server API
-        if self.path not in {"/", "/index.html"}:
+        parsed = urlparse(self.path)
+        request_path = parsed.path
+        if request_path == "/api/snapshot":
+            try:
+                body = render_snapshot_json(dashboard_snapshot(self.db_path))
+            except Exception as exc:
+                _send_bytes(self, 500, str(exc).encode("utf-8"), "text/plain; charset=utf-8")
+                return
+            _send_bytes(self, 200, body, "application/json; charset=utf-8")
+            return
+        if request_path not in {"/", "/index.html"}:
             self.send_error(404)
             return
         try:
             body = render_dashboard_html(dashboard_snapshot(self.db_path)).encode("utf-8")
         except Exception as exc:
-            self.send_response(500)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(str(exc).encode("utf-8"))
+            _send_bytes(self, 500, str(exc).encode("utf-8"), "text/plain; charset=utf-8")
             return
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        _send_bytes(self, 200, body, "text/html; charset=utf-8")
 
 
 def main() -> None:

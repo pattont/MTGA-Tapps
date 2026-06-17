@@ -1,10 +1,14 @@
+import json
 import sqlite3
+from http.client import HTTPConnection
+from http.server import ThreadingHTTPServer
+from threading import Thread
 
 from mtga_tracker.analytics import AnalyticsStore
-from mtga_tracker.dashboard import dashboard_snapshot, render_dashboard_html
+from mtga_tracker.dashboard import DashboardHandler, dashboard_snapshot, render_dashboard_html
 
 
-def test_dashboard_snapshot_and_html_render_latest_game(tmp_path):
+def _sample_dashboard_db(tmp_path):
     db_path = tmp_path / "analytics.sqlite3"
     with sqlite3.connect(db_path) as conn:
         AnalyticsStore.ensure_schema(conn)
@@ -57,7 +61,11 @@ def test_dashboard_snapshot_and_html_render_latest_game(tmp_path):
             values ('game-1', 'player-1', 'Llanowar Elves', 'Creature', 1, 2, 1)
             """
         )
+    return db_path
 
+
+def test_dashboard_snapshot_and_html_render_latest_game(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
     snapshot = dashboard_snapshot(db_path)
     html = render_dashboard_html(snapshot)
 
@@ -72,3 +80,26 @@ def test_dashboard_snapshot_and_html_render_latest_game(tmp_path):
     assert "Momentum" in html
     assert "Llanowar Elves" in html
     assert "Standard Best-of-1" in html
+
+
+def test_dashboard_handler_serves_snapshot_json(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    DashboardHandler.db_path = db_path
+    server = ThreadingHTTPServer(("127.0.0.1", 0), DashboardHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        conn = HTTPConnection("127.0.0.1", server.server_address[1])
+        conn.request("GET", "/api/snapshot")
+        response = conn.getresponse()
+        body = response.read().decode("utf-8")
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+    assert response.status == 200
+    assert response.getheader("Content-Type") == "application/json; charset=utf-8"
+    payload = json.loads(body)
+    assert payload["summary"]["games"] == 2
+    assert payload["decks"][0]["deck_name"] == "Boros Mouse"
+    assert payload["recent"][0]["format_label"] == "Standard Best-of-1"
