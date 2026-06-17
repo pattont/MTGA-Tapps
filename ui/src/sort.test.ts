@@ -33,4 +33,39 @@ describe('sortRows', () => {
     expect(sorted.map((row) => row.games)).toEqual([4, 1]);
     expect(rows.map((row) => row.games)).toEqual([1, 4]);
   });
+
+  it('accepts interface-shaped row types', () => {
+    interface ApiDeckRow {
+      deck_name: string;
+      win_rate: number | null;
+    }
+
+    const rows: ApiDeckRow[] = [
+      { deck_name: 'Azorius Control', win_rate: 50 },
+      { deck_name: 'Boros Mouse', win_rate: 66.7 },
+      { deck_name: 'Dimir Midrange', win_rate: null },
+    ];
+
+    expect(sortRows(rows, 'win_rate', 'desc').map((row) => row.deck_name)).toEqual([
+      'Boros Mouse',
+      'Azorius Control',
+      'Dimir Midrange',
+    ]);
+  });
+
+  it('keeps blank values last when sorting descending', () => {
+    const rows = [
+      { deck: 'Boros', winRate: null },
+      { deck: 'Azorius', winRate: 42 },
+      { deck: 'Dimir', winRate: undefined },
+      { deck: 'Gruul', winRate: 58 },
+    ];
+
+    expect(sortRows(rows, 'winRate', 'desc').map((row) => row.deck)).toEqual([
+      'Gruul',
+      'Azorius',
+      'Boros',
+      'Dimir',
+    ]);
+  });
 });
