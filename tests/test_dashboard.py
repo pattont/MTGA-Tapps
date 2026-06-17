@@ -115,3 +115,25 @@ def test_dashboard_handler_serves_snapshot_json(tmp_path):
     assert payload["summary"]["games"] == 2
     assert payload["decks"][0]["deck_name"] == "Boros Mouse"
     assert payload["recent"][0]["format_label"] == "Standard Best-of-1"
+
+
+def test_dashboard_snapshot_includes_local_only_deck_visual(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            )
+            values ('game-1', 'player-1', 12345, 'Mouse Mentor', 'Creature', 3)
+            """
+        )
+
+    snapshot = dashboard_snapshot(db_path)
+    deck = snapshot["decks"][0]
+
+    assert deck["deck_visual"]["card_name"] == "Mouse Mentor"
+    assert deck["deck_visual"]["card_id"] == 12345
+    assert deck["deck_visual"]["type_category"] == "Creature"
+    assert deck["deck_visual"]["image_url"] is None
+    assert deck["deck_visual"]["source"] == "local_metadata"
