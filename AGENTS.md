@@ -43,6 +43,9 @@ venv/bin/python -m mtga_tracker.db_audit
 venv/bin/python -m mtga_tracker.db_audit --repair
 venv/bin/python -m mtga_tracker.dashboard
 venv/bin/python -m mtga_tracker.draw_quality --card "Llanowar Elves"
+cd ui && npm install
+cd ui && npm test
+cd ui && npm run build
 ```
 
 The full suite is fast; run it after tracker changes.
@@ -110,6 +113,8 @@ Run `mtga_tracker.db_audit` after suspected tracker inconsistencies. Safe repair
 ## Testing Expectations
 
 Add or update regression tests for every parser/state-machine bug. Prefer focused tests that build minimal game-state payloads rather than replaying huge logs.
+
+For dashboard UI changes, run both the Python tests and the frontend test/build commands. Keep the frontend app isolated under `ui/`; do not move tracker runtime behavior into the frontend.
 
 High-risk areas needing tests:
 

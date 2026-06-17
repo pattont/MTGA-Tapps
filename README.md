@@ -67,12 +67,24 @@ Audit recent draw quality from opening hands and known visible draws:
 python -m mtga_tracker.draw_quality --card "Llanowar Elves" --land-rate 0.37
 ```
 
-Run the local dashboard:
+### Local dashboard UI
+
+The tracker includes a separate frontend app in `ui/`. Build it once, then run the Python dashboard server:
+
 ```bash
-python -m mtga_tracker.dashboard
+cd ui && npm install && npm run build
+cd ..
+venv/bin/python -m mtga_tracker.dashboard
 ```
 
-The dashboard defaults to `http://127.0.0.1:8765` and reads `data/mtga_tracker.sqlite3`.
+Open `http://127.0.0.1:8765`. During UI development, run the Python dashboard API and the Vite dev server separately:
+
+```bash
+venv/bin/python -m mtga_tracker.dashboard
+cd ui && npm run dev
+```
+
+The dashboard uses only local tracker data and local MTGA metadata. V1 does not fetch card art from external services.
 
 Stop the dashboard from the terminal where it is running:
 ```text
