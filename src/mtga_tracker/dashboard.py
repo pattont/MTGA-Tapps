@@ -5,11 +5,12 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import mimetypes
 import sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from .analytics import AnalyticsStore
 from .format_normalizer import format_label
@@ -17,6 +18,7 @@ from .paths import DATA_DIR
 
 
 DEFAULT_DB_PATH = DATA_DIR / "mtga_tracker.sqlite3"
+DEFAULT_STATIC_DIR = DATA_DIR.parent / "ui" / "dist"
 
 
 def _dict_rows(cursor: sqlite3.Cursor) -> List[Dict[str, Any]]:
@@ -501,10 +503,38 @@ def _send_bytes(
     handler.wfile.write(body)
 
 
+def _safe_static_path(static_dir: Path, request_path: str) -> Path | None:
+    relative = unquote(request_path.lstrip("/")) or "index.html"
+    if relative == "index.html":
+        candidate = static_dir / "index.html"
+    else:
+        candidate = static_dir / relative
+    try:
+        resolved_static = static_dir.resolve()
+        resolved_candidate = candidate.resolve()
+    except OSError:
+        return None
+    if resolved_candidate == resolved_static or resolved_static not in resolved_candidate.parents:
+        return None
+    if resolved_candidate.is_dir():
+        resolved_candidate = resolved_candidate / "index.html"
+    if not resolved_candidate.is_file():
+        return None
+    return resolved_candidate
+
+
+def _content_type(path: Path) -> str:
+    if path.suffix == ".html":
+        return "text/html; charset=utf-8"
+    guessed, _ = mimetypes.guess_type(str(path))
+    return guessed or "application/octet-stream"
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     """HTTP handler rendering the dashboard on each request."""
 
     db_path: Path = DEFAULT_DB_PATH
+    static_dir: Path | None = DEFAULT_STATIC_DIR if DEFAULT_STATIC_DIR.exists() else None
 
     def do_GET(self) -> None:  # noqa: N802 - http.server API
         parsed = urlparse(self.path)
@@ -517,6 +547,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             _send_bytes(self, 200, body, "application/json; charset=utf-8")
             return
+        if self.static_dir:
+            static_path = _safe_static_path(Path(self.static_dir), request_path)
+            if static_path:
+                _send_bytes(self, 200, static_path.read_bytes(), _content_type(static_path))
+                return
+            if request_path not in {"/", "/index.html"}:
+                self.send_error(404)
+                return
         if request_path not in {"/", "/index.html"}:
             self.send_error(404)
             return
