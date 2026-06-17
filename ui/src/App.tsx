@@ -25,6 +25,8 @@ type LoadState =
   | { status: 'loaded'; snapshot: DashboardSnapshot }
   | { status: 'error'; message: string };
 
+const SNAPSHOT_REFRESH_MS = 20_000;
+
 function formatNumber(value: number | null | undefined): string {
   return value === null || value === undefined ? '—' : String(value);
 }
@@ -297,20 +299,28 @@ export default function App() {
   useEffect(() => {
     let ignore = false;
 
-    fetchDashboardSnapshot()
-      .then((snapshot) => {
+    async function loadSnapshot() {
+      try {
+        const snapshot = await fetchDashboardSnapshot();
         if (!ignore) {
           setLoadState({ status: 'loaded', snapshot });
         }
-      })
-      .catch((error: unknown) => {
+      } catch (error: unknown) {
         if (!ignore) {
-          setLoadState({ status: 'error', message: error instanceof Error ? error.message : 'Dashboard API failed' });
+          const message = error instanceof Error ? error.message : 'Dashboard API failed';
+          setLoadState((current) => (current.status === 'loaded' ? current : { status: 'error', message }));
         }
-      });
+      }
+    }
+
+    void loadSnapshot();
+    const refreshId = window.setInterval(() => {
+      void loadSnapshot();
+    }, SNAPSHOT_REFRESH_MS);
 
     return () => {
       ignore = true;
+      window.clearInterval(refreshId);
     };
   }, []);
 
