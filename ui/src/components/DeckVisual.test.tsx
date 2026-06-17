@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+import type { DeckVisual as DeckVisualData } from '../api';
 import { DeckVisual } from './DeckVisual';
 
 describe('DeckVisual', () => {
@@ -19,5 +20,20 @@ describe('DeckVisual', () => {
 
     expect(screen.getByText('Mouse Mentor')).toBeInTheDocument();
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  });
+
+  it('falls back when runtime metadata is blank or nullish', () => {
+    const visual = {
+      card_id: null,
+      card_name: '',
+      type_category: null,
+      image_url: null,
+      source: 'deck_name',
+    } as unknown as DeckVisualData;
+
+    render(<DeckVisual deckName="Boros Mouse" visual={visual} />);
+
+    expect(screen.getByText('Boros Mouse')).toBeInTheDocument();
+    expect(screen.getByText('Other')).toBeInTheDocument();
   });
 });
