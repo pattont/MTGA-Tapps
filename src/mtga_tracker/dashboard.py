@@ -74,7 +74,12 @@ def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
                 activity_count,
                 ROW_NUMBER() OVER (
                   PARTITION BY deck_name
-                  ORDER BY source_rank, activity_count DESC, display_name
+                  ORDER BY
+                    source_rank,
+                    activity_count DESC,
+                    display_name,
+                    type_category,
+                    COALESCE(card_id, -1)
                 ) AS rank
               FROM candidate_cards
               WHERE display_name IS NOT NULL AND TRIM(display_name) != ''
