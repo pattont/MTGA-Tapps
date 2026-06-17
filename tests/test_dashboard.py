@@ -137,3 +137,41 @@ def test_dashboard_snapshot_includes_local_only_deck_visual(tmp_path):
     assert deck["deck_visual"]["type_category"] == "Creature"
     assert deck["deck_visual"]["image_url"] is None
     assert deck["deck_visual"]["source"] == "local_metadata"
+
+
+def test_dashboard_snapshot_deck_visual_ranking_has_stable_tiebreakers(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into games (id, session_id, match_id, started_at, outcome, duration_seconds)
+            values ('game-3', 'session-1', 'match-1', '2026-06-04T00:20:00', 'win', 180)
+            """
+        )
+        conn.execute(
+            """
+            insert into participants (id, game_id, role, deck_name, went_first, mulligans)
+            values ('player-3', 'game-3', 'player', 'Boros Mouse', 1, 0)
+            """
+        )
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            )
+            values (?, ?, ?, 'Shared Mascot', ?, 2)
+            """,
+            [
+                ("game-1", "player-1", 11111, "Creature"),
+                ("game-2", "player-2", 99999, "Artifact"),
+                ("game-3", "player-3", 88888, "Artifact"),
+            ],
+        )
+
+    snapshot = dashboard_snapshot(db_path)
+    deck = snapshot["decks"][0]
+
+    assert deck["deck_visual"]["card_name"] == "Shared Mascot"
+    assert deck["deck_visual"]["card_id"] == 88888
+    assert deck["deck_visual"]["type_category"] == "Artifact"
+    assert deck["deck_visual"]["source"] == "local_metadata"
