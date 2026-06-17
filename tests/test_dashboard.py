@@ -64,6 +64,14 @@ def _sample_dashboard_db(tmp_path):
     return db_path
 
 
+def _dashboard_handler_for(db_path):
+    class TestDashboardHandler(DashboardHandler):
+        pass
+
+    TestDashboardHandler.db_path = db_path
+    return TestDashboardHandler
+
+
 def test_dashboard_snapshot_and_html_render_latest_game(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
     snapshot = dashboard_snapshot(db_path)
@@ -84,9 +92,9 @@ def test_dashboard_snapshot_and_html_render_latest_game(tmp_path):
 
 def test_dashboard_handler_serves_snapshot_json(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
-    DashboardHandler.db_path = db_path
-    server = ThreadingHTTPServer(("127.0.0.1", 0), DashboardHandler)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _dashboard_handler_for(db_path))
     thread = Thread(target=server.serve_forever, daemon=True)
+    conn = None
     thread.start()
     try:
         conn = HTTPConnection("127.0.0.1", server.server_address[1])
@@ -94,8 +102,12 @@ def test_dashboard_handler_serves_snapshot_json(tmp_path):
         response = conn.getresponse()
         body = response.read().decode("utf-8")
     finally:
+        if conn is not None:
+            conn.close()
         server.shutdown()
+        server.server_close()
         thread.join(timeout=5)
+        assert not thread.is_alive()
 
     assert response.status == 200
     assert response.getheader("Content-Type") == "application/json; charset=utf-8"
