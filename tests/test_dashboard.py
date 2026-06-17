@@ -117,6 +117,70 @@ def test_dashboard_handler_serves_snapshot_json(tmp_path):
     assert payload["recent"][0]["format_label"] == "Standard Best-of-1"
 
 
+def test_dashboard_handler_serves_built_frontend_index(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir()
+    (dist_dir / "index.html").write_text("<!doctype html><div id='root'></div>", encoding="utf-8")
+    handler = type(
+        "TestDashboardHandler",
+        (DashboardHandler,),
+        {"db_path": db_path, "static_dir": dist_dir},
+    )
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    conn = None
+    thread.start()
+    try:
+        conn = HTTPConnection("127.0.0.1", server.server_address[1])
+        conn.request("GET", "/")
+        response = conn.getresponse()
+        body = response.read().decode("utf-8")
+    finally:
+        if conn is not None:
+            conn.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+    assert response.status == 200
+    assert response.getheader("Content-Type") == "text/html; charset=utf-8"
+    assert "<div id='root'></div>" in body
+
+
+def test_dashboard_handler_blocks_static_path_escape(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir()
+    (tmp_path / "secret.txt").write_text("secret", encoding="utf-8")
+    handler = type(
+        "TestDashboardHandler",
+        (DashboardHandler,),
+        {"db_path": db_path, "static_dir": dist_dir},
+    )
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    conn = None
+    thread.start()
+    try:
+        conn = HTTPConnection("127.0.0.1", server.server_address[1])
+        conn.request("GET", "/../secret.txt")
+        response = conn.getresponse()
+        response.read()
+    finally:
+        if conn is not None:
+            conn.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+    assert response.status == 404
+
+
 def test_dashboard_snapshot_includes_local_only_deck_visual(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
     with sqlite3.connect(db_path) as conn:
