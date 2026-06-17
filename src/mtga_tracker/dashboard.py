@@ -24,6 +24,90 @@ def _dict_rows(cursor: sqlite3.Cursor) -> List[Dict[str, Any]]:
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
+def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
+    rows = _dict_rows(
+        conn.execute(
+            """
+            WITH candidate_cards AS (
+              SELECT
+                COALESCE(p.deck_name, '(unknown)') AS deck_name,
+                s.card_id,
+                s.display_name,
+                COALESCE(s.type_category, 'Other') AS type_category,
+                SUM(COALESCE(s.played_count, 0)) AS activity_count,
+                1 AS source_rank
+              FROM participants p
+              JOIN game_card_summary s ON s.participant_id = p.id
+              WHERE p.role = 'player'
+              GROUP BY p.deck_name, s.card_id, s.display_name, s.type_category
+              UNION ALL
+              SELECT
+                COALESCE(p.deck_name, '(unknown)') AS deck_name,
+                h.card_id,
+                h.display_name,
+                COALESCE(h.type_category, 'Other') AS type_category,
+                COUNT(*) AS activity_count,
+                2 AS source_rank
+              FROM participants p
+              JOIN game_opening_hand_cards h ON h.participant_id = p.id
+              WHERE p.role = 'player'
+              GROUP BY p.deck_name, h.card_id, h.display_name, h.type_category
+              UNION ALL
+              SELECT
+                COALESCE(p.deck_name, '(unknown)') AS deck_name,
+                d.card_id,
+                d.display_name,
+                COALESCE(d.type_category, 'Other') AS type_category,
+                COUNT(*) AS activity_count,
+                3 AS source_rank
+              FROM participants p
+              JOIN game_drawn_cards d ON d.participant_id = p.id
+              WHERE p.role = 'player'
+              GROUP BY p.deck_name, d.card_id, d.display_name, d.type_category
+            ),
+            ranked AS (
+              SELECT
+                deck_name,
+                card_id,
+                display_name,
+                type_category,
+                activity_count,
+                ROW_NUMBER() OVER (
+                  PARTITION BY deck_name
+                  ORDER BY source_rank, activity_count DESC, display_name
+                ) AS rank
+              FROM candidate_cards
+              WHERE display_name IS NOT NULL AND TRIM(display_name) != ''
+            )
+            SELECT deck_name, card_id, display_name, type_category
+            FROM ranked
+            WHERE rank = 1
+            """
+        )
+    )
+    visuals: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        deck_name = row["deck_name"]
+        visuals[deck_name] = {
+            "card_id": row.get("card_id"),
+            "card_name": row.get("display_name"),
+            "type_category": row.get("type_category") or "Other",
+            "image_url": None,
+            "source": "local_metadata",
+        }
+    return visuals
+
+
+def _empty_deck_visual(deck_name: str) -> Dict[str, Any]:
+    return {
+        "card_id": None,
+        "card_name": deck_name,
+        "type_category": "Other",
+        "image_url": None,
+        "source": "deck_name",
+    }
+
+
 def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
     """Return dashboard-friendly aggregate data from SQLite."""
     db_path = Path(db_path)
@@ -209,6 +293,10 @@ def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
                 """
             )
         )
+        deck_visuals = _deck_visuals(conn)
+        for row in deck_rows:
+            deck_name = row["deck_name"]
+            row["deck_visual"] = deck_visuals.get(deck_name, _empty_deck_visual(deck_name))
 
     summary_dict = {
         "games": int(summary[0] or 0),
