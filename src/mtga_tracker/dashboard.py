@@ -518,6 +518,12 @@ def _safe_static_path(static_dir: Path, request_path: str) -> Path | None:
         return None
     if resolved_candidate.is_dir():
         resolved_candidate = resolved_candidate / "index.html"
+        try:
+            resolved_candidate = resolved_candidate.resolve()
+        except OSError:
+            return None
+        if resolved_candidate == resolved_static or resolved_static not in resolved_candidate.parents:
+            return None
     if not resolved_candidate.is_file():
         return None
     return resolved_candidate

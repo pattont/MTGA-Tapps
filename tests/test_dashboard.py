@@ -4,6 +4,8 @@ from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from threading import Thread
 
+import pytest
+
 from mtga_tracker.analytics import AnalyticsStore
 from mtga_tracker.dashboard import DashboardHandler, dashboard_snapshot, render_dashboard_html
 
@@ -168,6 +170,43 @@ def test_dashboard_handler_blocks_static_path_escape(tmp_path):
     try:
         conn = HTTPConnection("127.0.0.1", server.server_address[1])
         conn.request("GET", "/../secret.txt")
+        response = conn.getresponse()
+        response.read()
+    finally:
+        if conn is not None:
+            conn.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+    assert response.status == 404
+
+
+def test_dashboard_handler_blocks_symlinked_static_directory_index_escape(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    dist_dir = tmp_path / "dist"
+    sub_dir = dist_dir / "sub"
+    sub_dir.mkdir(parents=True)
+    secret_path = tmp_path / "secret.html"
+    secret_path.write_text("<!doctype html>secret", encoding="utf-8")
+    try:
+        (sub_dir / "index.html").symlink_to(secret_path)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"symlink creation unsupported: {exc}")
+    handler = type(
+        "TestDashboardHandler",
+        (DashboardHandler,),
+        {"db_path": db_path, "static_dir": dist_dir},
+    )
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    conn = None
+    thread.start()
+    try:
+        conn = HTTPConnection("127.0.0.1", server.server_address[1])
+        conn.request("GET", "/sub")
         response = conn.getresponse()
         response.read()
     finally:
