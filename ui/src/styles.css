@@ -183,6 +183,16 @@ a {
   outline: none;
 }
 
+.refresh-status {
+  margin: 0 0 12px;
+  color: var(--subtle);
+  font-size: 0.82rem;
+}
+
+.refresh-status-error {
+  color: var(--danger);
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(140px, 1fr));
