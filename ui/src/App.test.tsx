@@ -72,8 +72,18 @@ describe('App', () => {
 
     expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
     expect(screen.getAllByText('Boros Mouse').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Draw Quality').length).toBeGreaterThan(0);
-    expect(screen.getByText('Visible Drawn Cards')).toBeInTheDocument();
+    [
+      'Decks',
+      'Formats',
+      'Play / Draw',
+      'Deck Play / Draw',
+      'Draw Quality',
+      'Visible Drawn Cards',
+      'Momentum',
+      'Recent Games',
+    ].forEach((sectionName) => {
+      expect(screen.getByRole('heading', { name: sectionName })).toBeInTheDocument();
+    });
 
     await user.click(screen.getByRole('button', { name: /switch to light mode/i }));
     await waitFor(() => expect(document.documentElement.dataset.theme).toBe('light'));
