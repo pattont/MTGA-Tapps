@@ -16,11 +16,12 @@ const typeClass: Record<string, string> = {
 };
 
 export function DeckVisual({ deckName, visual }: DeckVisualProps) {
-  const className = typeClass[visual.type_category] ?? 'deck-visual-other';
+  const typeCategory = visual.type_category || 'Other';
+  const className = typeClass[typeCategory] ?? 'deck-visual-other';
   return (
     <div className={`deck-visual ${className}`} aria-label={`${deckName} deck visual`}>
       <div className="deck-visual-frame">
-        <span className="deck-visual-type">{visual.type_category}</span>
+        <span className="deck-visual-type">{typeCategory}</span>
         <strong>{visual.card_name || deckName}</strong>
       </div>
     </div>
