@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
@@ -61,6 +61,7 @@ describe('App', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -94,5 +95,32 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByText(/Dashboard API returned 500/)).toBeInTheDocument();
+  });
+
+  it('refreshes the dashboard snapshot on an interval', async () => {
+    vi.useFakeTimers();
+    const updatedSnapshot = {
+      ...snapshot,
+      summary: { ...snapshot.summary, games: 3 },
+      decks: [{ ...snapshot.decks[0], games: 3 }],
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(snapshot), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(updatedSnapshot), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+
+    await act(async () => {});
+    const overview = screen.getByLabelText('Overview metrics');
+    expect(within(overview).getByText('Games').closest('article')).toHaveTextContent('2');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(within(overview).getByText('Games').closest('article')).toHaveTextContent('3');
   });
 });
