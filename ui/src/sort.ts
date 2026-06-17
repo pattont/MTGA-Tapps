@@ -2,8 +2,12 @@ export type SortDirection = 'asc' | 'desc';
 
 type Comparable = string | number | boolean | null | undefined;
 
+function isBlankValue(value: unknown): boolean {
+  return value === null || value === undefined || value === '';
+}
+
 function normalizeValue(value: Comparable): number | string | null {
-  if (value === null || value === undefined || value === '') {
+  if (isBlankValue(value)) {
     return null;
   }
   if (typeof value === 'number') {
@@ -38,13 +42,22 @@ export function compareValues(left: Comparable, right: Comparable): number {
   return String(a).localeCompare(String(b), undefined, { numeric: true });
 }
 
-export function sortRows<T extends Record<string, unknown>>(
+export function sortRows<T extends object>(
   rows: T[],
   key: keyof T,
   direction: SortDirection,
 ): T[] {
   const multiplier = direction === 'asc' ? 1 : -1;
   return [...rows].sort((left, right) => {
-    return multiplier * compareValues(left[key] as Comparable, right[key] as Comparable);
+    const leftValue = left[key] as Comparable;
+    const rightValue = right[key] as Comparable;
+    const leftBlank = isBlankValue(leftValue);
+    const rightBlank = isBlankValue(rightValue);
+
+    if (leftBlank && rightBlank) return 0;
+    if (leftBlank) return 1;
+    if (rightBlank) return -1;
+
+    return multiplier * compareValues(leftValue, rightValue);
   });
 }
