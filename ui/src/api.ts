@@ -48,6 +48,7 @@ export interface DeckPlayDrawRow {
 }
 
 export interface DrawQualityRow {
+  game_id: string;
   started_at: string;
   deck_name: string;
   outcome: string | null;
@@ -77,6 +78,7 @@ export interface MomentumRow {
 }
 
 export interface RecentGameRow {
+  game_id: string;
   started_at: string;
   deck_name: string;
   format_label: string;
@@ -97,8 +99,8 @@ export interface DashboardSnapshot {
   recent: RecentGameRow[];
 }
 
-export async function fetchDashboardSnapshot(): Promise<DashboardSnapshot> {
-  const response = await fetch('/api/snapshot');
+export async function fetchDashboardSnapshot(signal?: AbortSignal): Promise<DashboardSnapshot> {
+  const response = await fetch('/api/snapshot', { signal });
   if (!response.ok) {
     throw new Error(`Dashboard API returned ${response.status}`);
   }

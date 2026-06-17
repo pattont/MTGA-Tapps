@@ -92,6 +92,15 @@ def test_dashboard_snapshot_and_html_render_latest_game(tmp_path):
     assert "Standard Best-of-1" in html
 
 
+def test_dashboard_snapshot_missing_db_does_not_create_file(tmp_path):
+    db_path = tmp_path / "missing.sqlite3"
+
+    with pytest.raises(FileNotFoundError, match="Dashboard database not found"):
+        dashboard_snapshot(db_path)
+
+    assert not db_path.exists()
+
+
 def test_dashboard_handler_serves_snapshot_json(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
     server = ThreadingHTTPServer(("127.0.0.1", 0), _dashboard_handler_for(db_path))
@@ -113,10 +122,36 @@ def test_dashboard_handler_serves_snapshot_json(tmp_path):
 
     assert response.status == 200
     assert response.getheader("Content-Type") == "application/json; charset=utf-8"
+    assert response.getheader("Cache-Control") == "no-store"
     payload = json.loads(body)
     assert payload["summary"]["games"] == 2
     assert payload["decks"][0]["deck_name"] == "Boros Mouse"
     assert payload["recent"][0]["format_label"] == "Standard Best-of-1"
+
+
+def test_dashboard_handler_reports_missing_snapshot_db(tmp_path):
+    db_path = tmp_path / "missing.sqlite3"
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _dashboard_handler_for(db_path))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    conn = None
+    thread.start()
+    try:
+        conn = HTTPConnection("127.0.0.1", server.server_address[1])
+        conn.request("GET", "/api/snapshot")
+        response = conn.getresponse()
+        body = response.read().decode("utf-8")
+    finally:
+        if conn is not None:
+            conn.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+    assert response.status == 404
+    assert response.getheader("Cache-Control") == "no-store"
+    assert "Dashboard database not found" in body
+    assert not db_path.exists()
 
 
 def test_dashboard_handler_serves_built_frontend_index(tmp_path):
@@ -240,6 +275,14 @@ def test_dashboard_snapshot_includes_local_only_deck_visual(tmp_path):
     assert deck["deck_visual"]["type_category"] == "Creature"
     assert deck["deck_visual"]["image_url"] is None
     assert deck["deck_visual"]["source"] == "local_metadata"
+
+
+def test_dashboard_snapshot_includes_stable_game_ids(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    snapshot = dashboard_snapshot(db_path)
+
+    assert snapshot["draw_quality"][0]["game_id"] == "game-2"
+    assert snapshot["recent"][0]["game_id"] == "game-2"
 
 
 def test_dashboard_snapshot_deck_visual_ranking_has_stable_tiebreakers(tmp_path):

@@ -26,6 +26,7 @@ const snapshot = {
   deck_play_draw: [{ deck_name: 'Boros Mouse', play_draw: 'On the play', games: 1, wins: 1, losses: 0, win_rate: 100 }],
   draw_quality: [
     {
+      game_id: 'game-1',
       started_at: '2026-06-04T00:01:00',
       deck_name: 'Boros Mouse',
       outcome: 'win',
@@ -42,6 +43,7 @@ const snapshot = {
   momentum: [{ split: 'After a win', games: 1, wins: 0, losses: 1, win_rate: 0, avg_mulligans: 1, on_play_pct: 0 }],
   recent: [
     {
+      game_id: 'game-2',
       started_at: '2026-06-04T00:10:00',
       deck_name: 'Boros Mouse',
       format_label: 'Standard Best-of-1',
@@ -122,5 +124,72 @@ describe('App', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(within(overview).getByText('Games').closest('article')).toHaveTextContent('3');
+  });
+
+  it('keeps the loaded dashboard visible when a refresh fails', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(snapshot), { status: 200 }))
+      .mockResolvedValueOnce(new Response('locked', { status: 500 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+
+    await act(async () => {});
+    const overview = screen.getByLabelText('Overview metrics');
+    expect(within(overview).getByText('Games').closest('article')).toHaveTextContent('2');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(within(overview).getByText('Games').closest('article')).toHaveTextContent('2');
+    expect(screen.getByRole('status')).toHaveTextContent('Latest refresh failed: Dashboard API returned 500');
+  });
+
+  it('aborts a stale refresh before starting the next poll', async () => {
+    vi.useFakeTimers();
+    const latestSnapshot = {
+      ...snapshot,
+      summary: { ...snapshot.summary, games: 4 },
+      decks: [{ ...snapshot.decks[0], games: 4 }],
+    };
+    let callCount = 0;
+    let staleSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return Promise.resolve(new Response(JSON.stringify(snapshot), { status: 200 }));
+      }
+      if (callCount === 2) {
+        staleSignal = init?.signal ?? undefined;
+        return new Promise<Response>(() => {});
+      }
+      return Promise.resolve(new Response(JSON.stringify(latestSnapshot), { status: 200 }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+
+    await act(async () => {});
+    const overview = screen.getByLabelText('Overview metrics');
+    expect(within(overview).getByText('Games').closest('article')).toHaveTextContent('2');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(staleSignal?.aborted).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(staleSignal?.aborted).toBe(true);
+    expect(within(overview).getByText('Games').closest('article')).toHaveTextContent('4');
   });
 });

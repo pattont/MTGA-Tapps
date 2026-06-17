@@ -22,7 +22,7 @@ import { getInitialTheme, persistTheme, type ThemeName } from './theme';
 
 type LoadState =
   | { status: 'loading' }
-  | { status: 'loaded'; snapshot: DashboardSnapshot }
+  | { status: 'loaded'; snapshot: DashboardSnapshot; lastUpdated: string; refreshError?: string }
   | { status: 'error'; message: string };
 
 const SNAPSHOT_REFRESH_MS = 20_000;
@@ -77,6 +77,10 @@ function applyTheme(theme: ThemeName): void {
   } catch {
     document.documentElement.dataset.theme = theme;
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
 }
 
 function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
@@ -298,17 +302,26 @@ export default function App() {
 
   useEffect(() => {
     let ignore = false;
+    let requestSequence = 0;
+    let activeController: AbortController | null = null;
 
     async function loadSnapshot() {
+      const sequence = requestSequence + 1;
+      requestSequence = sequence;
+      activeController?.abort();
+      const controller = new AbortController();
+      activeController = controller;
       try {
-        const snapshot = await fetchDashboardSnapshot();
-        if (!ignore) {
-          setLoadState({ status: 'loaded', snapshot });
+        const snapshot = await fetchDashboardSnapshot(controller.signal);
+        if (!ignore && sequence === requestSequence) {
+          setLoadState({ status: 'loaded', snapshot, lastUpdated: new Date().toISOString() });
         }
       } catch (error: unknown) {
-        if (!ignore) {
+        if (!ignore && sequence === requestSequence && !isAbortError(error)) {
           const message = error instanceof Error ? error.message : 'Dashboard API failed';
-          setLoadState((current) => (current.status === 'loaded' ? current : { status: 'error', message }));
+          setLoadState((current) =>
+            current.status === 'loaded' ? { ...current, refreshError: message } : { status: 'error', message },
+          );
         }
       }
     }
@@ -320,6 +333,7 @@ export default function App() {
 
     return () => {
       ignore = true;
+      activeController?.abort();
       window.clearInterval(refreshId);
     };
   }, []);
@@ -336,14 +350,30 @@ export default function App() {
           {loadState.message}
         </div>
       ) : null}
-      {loadState.status === 'loaded' ? <Dashboard snapshot={loadState.snapshot} /> : null}
+      {loadState.status === 'loaded' ? (
+        <Dashboard lastUpdated={loadState.lastUpdated} refreshError={loadState.refreshError} snapshot={loadState.snapshot} />
+      ) : null}
     </AppShell>
   );
 }
 
-function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
+function Dashboard({
+  lastUpdated,
+  refreshError,
+  snapshot,
+}: {
+  lastUpdated: string;
+  refreshError?: string;
+  snapshot: DashboardSnapshot;
+}) {
   return (
     <>
+      <div className={refreshError ? 'refresh-status refresh-status-error' : 'refresh-status'} role="status">
+        {refreshError
+          ? `Latest refresh failed: ${refreshError}. Showing last dashboard snapshot.`
+          : `Updated ${formatDateTime(lastUpdated)}`}
+      </div>
+
       <section className="metric-grid" id="overview" aria-label="Overview metrics">
         {metricCards(snapshot).map((metric) => (
           <MetricCard key={metric.label} label={metric.label} value={metric.value} />
@@ -385,7 +415,7 @@ function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
         <SortableTable
           caption="Draw quality by game"
           columns={drawQualityColumns}
-          getRowKey={(row) => `${row.started_at}-${row.deck_name}`}
+          getRowKey={(row) => row.game_id}
           rows={snapshot.draw_quality}
         />
       </Section>
@@ -407,7 +437,7 @@ function Dashboard({ snapshot }: { snapshot: DashboardSnapshot }) {
         <SortableTable
           caption="Recent games"
           columns={recentColumns}
-          getRowKey={(row) => `${row.started_at}-${row.deck_name}-${row.outcome ?? 'unknown'}`}
+          getRowKey={(row) => row.game_id}
           rows={snapshot.recent}
         />
       </Section>

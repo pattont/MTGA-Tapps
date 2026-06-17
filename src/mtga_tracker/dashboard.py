@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any, Dict, List
 from urllib.parse import unquote, urlparse
 
-from .analytics import AnalyticsStore
 from .format_normalizer import format_label
 from .paths import DATA_DIR
 
@@ -117,9 +116,12 @@ def _empty_deck_visual(deck_name: str) -> Dict[str, Any]:
 
 def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
     """Return dashboard-friendly aggregate data from SQLite."""
-    db_path = Path(db_path)
-    with sqlite3.connect(db_path) as conn:
-        AnalyticsStore.ensure_schema(conn)
+    db_path = Path(db_path).expanduser()
+    if not db_path.is_file():
+        raise FileNotFoundError(f"Dashboard database not found: {db_path}")
+    db_uri = db_path.resolve().as_uri() + "?mode=ro"
+    with sqlite3.connect(db_uri, uri=True) as conn:
+        conn.execute("PRAGMA query_only = ON")
         summary = conn.execute(
             """
             SELECT
@@ -203,6 +205,7 @@ def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
             conn.execute(
                 """
                 SELECT
+                  g.id AS game_id,
                   COALESCE(g.started_at, g.ended_at) AS started_at,
                   COALESCE(p.deck_name, '(unknown)') AS deck_name,
                   g.outcome,
@@ -286,6 +289,7 @@ def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
             conn.execute(
                 """
                 SELECT
+                  g.id AS game_id,
                   g.started_at,
                   g.outcome,
                   g.duration_seconds,
@@ -495,10 +499,13 @@ def _send_bytes(
     status: int,
     body: bytes,
     content_type: str,
+    headers: Dict[str, str] | None = None,
 ) -> None:
     handler.send_response(status)
     handler.send_header("Content-Type", content_type)
     handler.send_header("Content-Length", str(len(body)))
+    for name, value in (headers or {}).items():
+        handler.send_header(name, value)
     handler.end_headers()
     handler.wfile.write(body)
 
@@ -548,10 +555,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if request_path == "/api/snapshot":
             try:
                 body = render_snapshot_json(dashboard_snapshot(self.db_path))
-            except Exception as exc:
-                _send_bytes(self, 500, str(exc).encode("utf-8"), "text/plain; charset=utf-8")
+            except FileNotFoundError as exc:
+                _send_bytes(
+                    self,
+                    404,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
                 return
-            _send_bytes(self, 200, body, "application/json; charset=utf-8")
+            except Exception as exc:
+                _send_bytes(
+                    self,
+                    500,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
             return
         if self.static_dir:
             static_path = _safe_static_path(Path(self.static_dir), request_path)
@@ -566,6 +588,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         try:
             body = render_dashboard_html(dashboard_snapshot(self.db_path)).encode("utf-8")
+        except FileNotFoundError as exc:
+            _send_bytes(self, 404, str(exc).encode("utf-8"), "text/plain; charset=utf-8")
+            return
         except Exception as exc:
             _send_bytes(self, 500, str(exc).encode("utf-8"), "text/plain; charset=utf-8")
             return
