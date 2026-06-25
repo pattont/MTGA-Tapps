@@ -3137,6 +3137,45 @@ def test_match_room_reserved_players_resolve_seats_from_local_player_name_with_u
     assert tracker.game_state.opponent_display_name == "みんと"
 
 
+def test_match_room_reserved_players_correct_stale_seat_assignment():
+    tracker = make_tracker()
+    tracker.game_state.player_display_name = "Tapps"
+    tracker.game_state.opponent_display_name = "PreviousOpponent"
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+
+    tracker._parse_match_metadata(
+        json.dumps(
+            {
+                "matchGameRoomStateChangedEvent": {
+                    "gameRoomInfo": {
+                        "gameRoomConfig": {
+                            "matchId": "active-match",
+                            "reservedPlayers": [
+                                {
+                                    "systemSeatId": 1,
+                                    "playerName": "Raveneye4599",
+                                    "eventId": "Play",
+                                },
+                                {
+                                    "systemSeatId": 2,
+                                    "playerName": "Tapps",
+                                    "eventId": "Play",
+                                },
+                            ],
+                        }
+                    }
+                }
+            }
+        )
+    )
+
+    assert tracker.game_state.player_seat_id == 2
+    assert tracker.game_state.opponent_seat_id == 1
+    assert tracker.game_state.player_display_name == "Tapps"
+    assert tracker.game_state.opponent_display_name == "Raveneye4599"
+
+
 def test_match_room_traditional_standard_sets_best_of_three_format():
     tracker = make_tracker()
     tracker._parse_match_metadata(
@@ -3189,6 +3228,20 @@ def test_game_start_does_not_use_stale_backfilled_traditional_format(tmp_path, c
     assert tracker.game_state.format_str == "Unknown"
     assert "Format: Standard Best-of-1" in out
     assert "Format: Standard Best-of-3" not in out
+
+
+def test_game_started_banner_uses_friendly_midweek_format(capsys):
+    tracker = make_tracker()
+    tracker.game_state.game_start_time = datetime(2026, 6, 16, 19, 31, 0)
+    tracker.game_state.format_str = "MWM_SOS_Sealed_20260616"
+    tracker.game_state.match_type = "best_of_1"
+
+    tracker._print_game_started_banner(verbose=False)
+    out = capsys.readouterr().out
+
+    assert "GAME STARTED - Midweek Magic - SOS Sealed" in out
+    assert "Format: Midweek Magic - SOS Sealed" in out
+    assert "Standard Best-of-1" not in out
 
 
 def test_deck_metadata_traditional_standard_does_not_set_match_best_of_three_without_live_format():
@@ -3841,6 +3894,24 @@ def test_new_game_tracking_clears_stale_midweek_format():
     assert tracker.game_state.player_deck_event_name is None
 
 
+def test_new_game_tracking_clears_stale_opponent_identity(tmp_path):
+    tracker = make_tracker()
+    log_path = tmp_path / "Player.log"
+    log_path.write_text("", encoding="utf-8")
+    tracker.parser.log_path = str(log_path)
+    tracker.game_state.player_display_name = "Tapps"
+    tracker.game_state.opponent_display_name = "PreviousOpponent"
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+
+    assert tracker.game_state.player_display_name == "Tapps"
+    assert tracker.game_state.opponent_display_name is None
+    assert tracker.game_state.player_seat_id is None
+    assert tracker.game_state.opponent_seat_id is None
+
+
 def test_parse_match_metadata_event_set_deck_v3_midweek_sets_event_format():
     tracker = make_tracker()
     request = {
@@ -3867,6 +3938,35 @@ def test_parse_match_metadata_event_set_deck_v3_midweek_sets_event_format():
     assert tracker.game_state.format_str == "MWM_SlowStart_20260602"
     assert tracker.game_state.match_type == "best_of_1"
     assert tracker._friendly_format_label() == "Midweek Magic - Slow Start"
+
+
+def test_midweek_brawl_event_set_deck_v3_keeps_midweek_brawl_format():
+    tracker = make_tracker()
+    request = {
+        "EventName": "MWM_Brawl_20260623",
+        "Summary": {
+            "DeckId": "eb229407-184c-443e-9ec8-572e8ad7296d",
+            "Name": "Tifa - MWM",
+            "Attributes": [{"name": "Format", "value": "HistoricBrawl"}],
+        },
+        "Deck": {
+            "MainDeck": [{"cardId": 82394, "quantity": 36}],
+            "CommandZone": [{"cardId": 96074, "quantity": 1}],
+        },
+    }
+    line = "[UnityCrossThreadLogger]==> EventSetDeckV3 " + json.dumps(
+        {"id": "abc", "request": json.dumps(request)}
+    )
+
+    tracker._parsing_backfilled_metadata = True
+    try:
+        tracker._parse_match_metadata(line, from_backfill=True)
+    finally:
+        tracker._parsing_backfilled_metadata = False
+
+    assert tracker.game_state.format_str == "MWM_Brawl_20260623"
+    assert tracker.game_state.match_type == "best_of_1"
+    assert tracker._friendly_format_label() == "Midweek Magic - Brawl"
 
 
 def test_midweek_command_zone_payload_does_not_infer_historic_brawl():
@@ -4166,6 +4266,30 @@ def test_game_summary_persists_normalized_sqlite_analytics(capsys, tmp_path):
     assert console_rows > 0
 
 
+def test_game_summary_persists_brawl_starting_life(capsys, tmp_path):
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "analytics.sqlite3"
+    tracker.session_start_time = datetime(2026, 6, 23, 20, 0, 0)
+    tracker.game_state.player_seat_id = 2
+    tracker.game_state.opponent_seat_id = 1
+    tracker.game_state.format_str = "MWM_Brawl_20260623"
+    tracker.game_state.player_life = 15
+    tracker.game_state.opponent_life = 20
+    tracker.game_state.game_start_time = datetime(2026, 6, 23, 20, 40, 0)
+    tracker.game_state.game_end_time = datetime(2026, 6, 23, 20, 45, 0)
+    tracker.game_state.winner_seat = 1
+
+    tracker._print_game_summary()
+    capsys.readouterr()
+
+    with sqlite3.connect(tracker._console_db_path) as conn:
+        rows = conn.execute(
+            "SELECT role, starting_life FROM participants ORDER BY role"
+        ).fetchall()
+
+    assert rows == [("opponent", 25), ("player", 25)]
+
+
 def test_combat_damage_labels_include_power_toughness_in_log_and_summary(capsys):
     tracker = make_tracker()
     tracker.game_state.in_match = True
@@ -4299,6 +4423,32 @@ def test_update_game_state_detects_brawl_commanders_and_infers_seat(capsys):
     assert tracker.game_state.opponent_commanders == ["Card100610"]
     assert "Your Commander: Card100471" in out
     assert "Opponent Commander: Card100610" in out
+
+
+def test_brawl_initial_life_totals_seed_without_life_gain(capsys):
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.game_start_time = datetime(2026, 6, 23, 20, 40, 39)
+    tracker.game_state.format_str = "MWM_Brawl_20260623"
+    tracker.game_state.player_seat_id = 2
+    tracker.game_state.opponent_seat_id = 1
+
+    tracker._update_game_state(
+        {
+            "turnInfo": {"turnNumber": 1, "activePlayer": 1},
+            "players": [
+                {"systemSeatNumber": 1, "lifeTotal": 25},
+                {"systemSeatNumber": 2, "lifeTotal": 25},
+            ],
+        }
+    )
+    tracker._flush_pending_opponent_turn_header()
+    out = capsys.readouterr().out
+
+    assert "Life: You 25 - 25 Opponent" in out
+    assert "gained 5 life" not in out
+    assert tracker.game_state.player_life == 25
+    assert tracker.game_state.opponent_life == 25
 
 
 def test_update_game_state_removes_deleted_instances_from_snapshots():
