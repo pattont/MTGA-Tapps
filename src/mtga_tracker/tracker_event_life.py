@@ -8,6 +8,34 @@ from typing import Any, Dict, List, Optional, Set
 class TrackerLifeMixin:
     """Focused event helpers used by TrackerEventsMixin."""
 
+    def _starting_life_total_for_current_format(self) -> int:
+        """Return the expected starting life for the current match format."""
+        return 25 if self._is_brawl_format() else 20
+
+    def _seed_initial_life_totals(self, data: Dict[str, Any]) -> None:
+        """Apply format-specific starting life before emitting first turn/life events."""
+        if self.game_state.turn_number > 0 or self.game_state.last_turn_announced > 0:
+            return
+        expected_life = self._starting_life_total_for_current_format()
+        if expected_life == 20:
+            return
+        players = data.get("players", [])
+        if not isinstance(players, list):
+            return
+        for player in players:
+            if not isinstance(player, dict):
+                continue
+            seat_id = self._normalize_seat_id(player.get("systemSeatNumber"))
+            life = player.get("lifeTotal")
+            if seat_id is None or not isinstance(life, int):
+                continue
+            if life != expected_life:
+                continue
+            if seat_id == self.game_state.player_seat_id:
+                self.game_state.player_life = life
+            elif seat_id == self.game_state.opponent_seat_id:
+                self.game_state.opponent_life = life
+
     def _emit_life_change(
         self,
         seat_id: int,

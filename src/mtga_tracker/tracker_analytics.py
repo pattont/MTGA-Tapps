@@ -208,7 +208,7 @@ class TrackerAnalyticsMixin:
                 else None
             ),
             "mulligans": self.game_state.mulligan_count if is_player else None,
-            "starting_life": 20,
+            "starting_life": self._starting_life_total_for_current_format(),
             "ending_life": (
                 self.game_state.player_life if is_player else self.game_state.opponent_life
             ),
