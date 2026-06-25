@@ -451,6 +451,11 @@ class TrackerLifecycleMixin:
         self.game_state.explicit_mulligan_count = 0
         self.game_state.opening_keep_confirmed = False
         self.game_state.opening_select_n_ids = []
+        self.game_state.player_seat_id = None
+        self.game_state.opponent_seat_id = None
+        self.game_state.opponent_display_name = None
+        self.game_state._reserved_players = []
+        self.game_state.seat_line_announced = False
         self.player_cards = []
         self.opponent_cards = []
         self._session_stats_recorded_this_game = False
@@ -482,11 +487,7 @@ class TrackerLifecycleMixin:
         if verbose:
             self._print_line("🟡 🔵 ⚫ 🔴 🟢 GAME STARTED 🟡 🔵 ⚫ 🔴 🟢")
         else:
-            format_display = (
-                "Standard Best-of-3"
-                if self.game_state.match_type == "best_of_3"
-                else "Standard Best-of-1"
-            )
+            format_display = self._friendly_format_label(self.game_state.format_str)
             game_num_display = (
                 f" (Game {self.game_state.game_number})"
                 if self.game_state.match_type == "best_of_3"

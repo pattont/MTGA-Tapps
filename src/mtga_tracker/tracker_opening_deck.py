@@ -467,8 +467,6 @@ class TrackerOpeningDeckMixin:
 
     def _resolve_seats_from_reserved_players(self) -> None:
         """Resolve seats when reserved player names identify the local player."""
-        if self.game_state.player_seat_id in (1, 2):
-            return
         local_name = self.game_state.player_display_name
         if not isinstance(local_name, str) or not local_name.strip():
             return
@@ -806,6 +804,7 @@ class TrackerOpeningDeckMixin:
         self.game_state.player_deck_event_name = candidate.get("internal_event_name")
         self.game_state.player_deck_last_played = candidate.get("last_played")
         event_name = candidate.get("internal_event_name")
+        used_trusted_queue_format = False
         if (
             candidate.get("trusted_active")
             and candidate.get("trusted_queue_format")
@@ -814,6 +813,7 @@ class TrackerOpeningDeckMixin:
         ):
             self._set_match_format(event_name)
             self._format_from_backfill = bool(getattr(self, "_parsing_backfilled_metadata", False))
+            used_trusted_queue_format = True
         main_total = candidate.get("main_deck_total")
         command_total = candidate.get("command_zone_total")
         self.game_state.player_deck_total_cards = (
@@ -829,7 +829,7 @@ class TrackerOpeningDeckMixin:
                 or "bestof3" in format_norm
                 or format_norm in {"constructedbestof3", "bestof3"}
             )
-            if not implies_best_of_three and (
+            if not used_trusted_queue_format and not implies_best_of_three and (
                 self.game_state.format_str == "Unknown" or self._format_from_backfill
             ):
                 self.game_state.format_str = format_attr

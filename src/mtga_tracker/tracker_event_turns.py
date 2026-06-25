@@ -109,6 +109,7 @@ class TrackerTurnStateMixin:
         self._capture_starting_deck_totals(data)
         self._update_format_from_game_state(data)
         self._update_commanders_from_game_state(data)
+        self._seed_initial_life_totals(data)
         self._maybe_print_seat_resolution()
         self._maybe_print_pregame_commander_lines()
 
