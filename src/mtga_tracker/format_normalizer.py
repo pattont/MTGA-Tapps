@@ -36,6 +36,29 @@ def friendly_midweek_label(raw_format: str) -> str:
     return f"Midweek Magic - {text}" if text else "Midweek Magic"
 
 
+def friendly_limited_label(raw_format: str) -> str:
+    """Convert limited event identifiers into readable labels."""
+    raw = raw_format.strip()
+    patterns = (
+        (r"^PremierDraft[_-]?", "Premier Draft"),
+        (r"^QuickDraft[_-]?", "Quick Draft"),
+        (r"^TradDraft[_-]?", "Traditional Draft"),
+        (r"^TraditionalDraft[_-]?", "Traditional Draft"),
+        (r"^Sealed[_-]?", "Sealed"),
+        (r"^Trad[_-]?Sealed[_-]?", "Traditional Sealed"),
+        (r"^TraditionalSealed[_-]?", "Traditional Sealed"),
+    )
+    for pattern, prefix in patterns:
+        text = re.sub(pattern, "", raw, flags=re.IGNORECASE)
+        if text != raw:
+            text = re.sub(r"[_-]?\d{8}$", "", text)
+            text = re.sub(r"[_-]+", " ", text).strip()
+            text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", text)
+            text = re.sub(r"\s+", " ", text).strip()
+            return f"{prefix} - {text}" if text else prefix
+    return raw
+
+
 def normalize_match_format(
     raw_format: Optional[str], *, default_best_of: int = 1
 ) -> NormalizedFormat:
@@ -57,6 +80,20 @@ def normalize_match_format(
             family="midweek_magic",
             best_of=1,
             is_midweek=True,
+        )
+    if normalized.startswith(("premierdraft", "quickdraft", "traddraft", "traditionaldraft")):
+        return NormalizedFormat(
+            raw=raw,
+            label=friendly_limited_label(raw),
+            family="draft",
+            best_of=1,
+        )
+    if normalized.startswith(("sealed", "tradsealed", "traditionalsealed")):
+        return NormalizedFormat(
+            raw=raw,
+            label=friendly_limited_label(raw),
+            family="sealed",
+            best_of=1,
         )
     if "historicbrawl" in normalized:
         return NormalizedFormat(
