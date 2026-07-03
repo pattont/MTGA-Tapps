@@ -133,6 +133,7 @@ class TrackerSummaryMixin:
         self._print_line(f"Reason: {reason}")
         if outcome == "unknown" and self.game_state.winner_seat is None:
             self._print_line("Result Note: Result unclear — possible concede or disconnect")
+        self._print_line(f"Format: {self._friendly_format_label()}")
         self._print_line(f"Duration: {duration_display}")
         self._print_line(f"Session Stats: {self._session_stats_line()}")
         self._print_line("=" * 75)
@@ -282,7 +283,7 @@ class TrackerSummaryMixin:
         top_creature = self._highest_known_creature_snapshot(seat_id)
         if top_creature:
             self._print_line(
-                f"      Highest observed creature: [{top_creature['name']}] "
+                f"      Biggest Creature: [{top_creature['name']}] "
                 f"reached {top_creature['power']}/{top_creature['toughness']}"
             )
 

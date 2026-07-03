@@ -172,6 +172,7 @@ class TrackerCombatMixin:
             target_id = (obj.get("attackInfo") or {}).get("targetId")
             target_label = self._resolve_target_label(target_id, game_objects_by_id)
 
+            self._record_observed_creature_snapshot(obj)
             self.game_state.current_combat_attackers[instance_id] = {
                 "card_name": card_name,
                 "power": power,

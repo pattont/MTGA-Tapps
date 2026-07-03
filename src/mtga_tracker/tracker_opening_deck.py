@@ -163,6 +163,18 @@ class TrackerOpeningDeckMixin:
             return False
         if text.startswith("mwm") or text.startswith("midweekmagic"):
             return True
+        if text.startswith(
+            (
+                "premierdraft",
+                "quickdraft",
+                "traddraft",
+                "traditionaldraft",
+                "sealed",
+                "tradsealed",
+                "traditionalsealed",
+            )
+        ):
+            return True
         return text in {
             "play",
             "ladder",

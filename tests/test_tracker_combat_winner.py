@@ -3244,6 +3244,23 @@ def test_game_started_banner_uses_friendly_midweek_format(capsys):
     assert "Standard Best-of-1" not in out
 
 
+def test_premier_draft_format_gets_friendly_label():
+    tracker = make_tracker()
+    tracker.game_state.format_str = "PremierDraft_MSH_20260623"
+
+    assert tracker._friendly_format_label() == "Premier Draft - MSH"
+
+
+def test_result_summary_prints_format_above_duration(capsys):
+    tracker = make_tracker()
+    tracker.game_state.format_str = "PremierDraft_MSH_20260623"
+
+    tracker._print_result_summary("win", "Opponent reached 0 life", "12m 13s")
+    out = capsys.readouterr().out
+
+    assert "Format: Premier Draft - MSH\nDuration: 12m 13s" in out
+
+
 def test_deck_metadata_traditional_standard_does_not_set_match_best_of_three_without_live_format():
     tracker = make_tracker()
     tracker._parse_match_metadata(
@@ -3575,7 +3592,7 @@ def test_summary_refreshes_fallback_card_ids_from_local_db(capsys):
     assert "Opponent Commander: Ghalta, Primal Hunger" in out
     assert "• [Forest (Land)]" in out
     assert "• [Elvish Mystic (Creature 1/1)]" in out
-    assert "Highest observed creature: [Ghalta, Primal Hunger] reached 12/12" in out
+    assert "Biggest Creature: [Ghalta, Primal Hunger] reached 12/12" in out
 
 
 def test_match_started_block_hides_commanders_for_standard_even_if_stale(capsys):
@@ -3640,6 +3657,47 @@ def test_highest_observed_creature_uses_battlefield_stats_not_library_printed_st
     assert best["name"] == "Card98430"
     assert best["power"] == 3
     assert best["toughness"] == 3
+
+
+def test_biggest_creature_summary_uses_large_attack_state_stats(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.active_player = 1
+    tracker.game_state.turn_number = 4
+    tracker.card_db.names[1001] = "Mossborn Hydra"
+    tracker.player_cards = [CardEvent("Mossborn Hydra", "you", card_type_category="creatures")]
+    tracker.game_state.highest_creature_by_seat[1] = {
+        "instance_id": 700,
+        "name": "Mossborn Hydra",
+        "power": 10,
+        "toughness": 10,
+        "owner_seat": 1,
+        "score": 10,
+    }
+
+    tracker._handle_attack_state_objects(
+        [
+            {
+                "instanceId": 700,
+                "grpId": 1001,
+                "ownerSeatId": 1,
+                "cardTypes": ["CardType_Creature"],
+                "attackState": "AttackState_Attacking",
+                "power": {"value": 46},
+                "toughness": {"value": 46},
+                "attackInfo": {"targetId": 2},
+            }
+        ]
+    )
+    tracker._print_card_collection_summary(
+        tracker.player_cards, heading="Your Cards", seat_id=tracker.game_state.player_seat_id
+    )
+    out = capsys.readouterr().out
+
+    assert "You attacking [opponent] with [Mossborn Hydra (46/46)]" in out
+    assert "Biggest Creature: [Mossborn Hydra] reached 46/46" in out
+    assert "Highest observed creature:" not in out
 
 
 def test_summary_hides_commanders_for_standard_even_if_stale(capsys):
@@ -3938,6 +3996,36 @@ def test_parse_match_metadata_event_set_deck_v3_midweek_sets_event_format():
     assert tracker.game_state.format_str == "MWM_SlowStart_20260602"
     assert tracker.game_state.match_type == "best_of_1"
     assert tracker._friendly_format_label() == "Midweek Magic - Slow Start"
+
+
+def test_parse_match_metadata_event_set_deck_v3_premier_draft_sets_event_format():
+    tracker = make_tracker()
+    request = {
+        "EventName": "PremierDraft_MSH_20260623",
+        "Summary": {
+            "DeckId": "draft-deck",
+            "Name": "Draft Deck",
+            "Attributes": [{"name": "Format", "value": "Draft"}],
+        },
+        "Deck": {
+            "MainDeck": [{"cardId": 105071, "quantity": 1}],
+            "Sideboard": [{"cardId": 105057, "quantity": 2}],
+            "CommandZone": [],
+        },
+    }
+    line = "[UnityCrossThreadLogger]==> EventSetDeckV3 " + json.dumps(
+        {"id": "abc", "request": json.dumps(request)}
+    )
+
+    tracker._parsing_backfilled_metadata = True
+    try:
+        tracker._parse_match_metadata(line, from_backfill=True)
+    finally:
+        tracker._parsing_backfilled_metadata = False
+
+    assert tracker.game_state.format_str == "PremierDraft_MSH_20260623"
+    assert tracker.game_state.match_type == "best_of_1"
+    assert tracker._friendly_format_label() == "Premier Draft - MSH"
 
 
 def test_midweek_brawl_event_set_deck_v3_keeps_midweek_brawl_format():
