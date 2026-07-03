@@ -266,6 +266,35 @@ class TrackerStateLookupMixin:
                 }
         return best
 
+    def _record_observed_creature_snapshot(self, obj: Dict[str, Any]) -> None:
+        """Remember the biggest live creature stats observed for a concrete seat."""
+        if obj.get("isFacedown"):
+            return
+        card_types = obj.get("cardTypes")
+        if not isinstance(card_types, list) or "CardType_Creature" not in card_types:
+            return
+        owner_seat = self._normalize_seat_id(obj.get("ownerSeatId"))
+        if owner_seat not in (1, 2):
+            return
+        power = self._extract_stat_value(obj.get("power"))
+        toughness = self._extract_stat_value(obj.get("toughness"))
+        if power is None or toughness is None:
+            return
+
+        score = max(power, toughness)
+        instance_id = obj.get("instanceId")
+        candidate = {
+            "instance_id": instance_id,
+            "name": self._object_display_name(obj, instance_id),
+            "power": power,
+            "toughness": toughness,
+            "owner_seat": owner_seat,
+            "score": score,
+        }
+        best = self.game_state.highest_creature_by_seat.get(owner_seat)
+        if best is None or score > best.get("score", -1):
+            self.game_state.highest_creature_by_seat[owner_seat] = candidate
+
     def _observe_battlefield_creatures(self, data: Dict[str, Any]) -> None:
         """Track highest observed live battlefield creature stats by seat."""
         zones = data.get("zones", [])
@@ -286,32 +315,7 @@ class TrackerStateLookupMixin:
                 continue
             if obj.get("zoneId") not in battlefield_zone_ids:
                 continue
-            if obj.get("isFacedown"):
-                continue
-            card_types = obj.get("cardTypes")
-            if not isinstance(card_types, list) or "CardType_Creature" not in card_types:
-                continue
-            owner_seat = self._normalize_seat_id(obj.get("ownerSeatId"))
-            if owner_seat not in (1, 2):
-                continue
-            power = self._extract_stat_value(obj.get("power"))
-            toughness = self._extract_stat_value(obj.get("toughness"))
-            if power is None or toughness is None:
-                continue
-
-            score = max(power, toughness)
-            instance_id = obj.get("instanceId")
-            candidate = {
-                "instance_id": instance_id,
-                "name": self._object_display_name(obj, instance_id),
-                "power": power,
-                "toughness": toughness,
-                "owner_seat": owner_seat,
-                "score": score,
-            }
-            best = self.game_state.highest_creature_by_seat.get(owner_seat)
-            if best is None or score > best.get("score", -1):
-                self.game_state.highest_creature_by_seat[owner_seat] = candidate
+            self._record_observed_creature_snapshot(obj)
 
     def _seat_stats(self, seat_id: Optional[int]) -> Optional[Dict[str, int]]:
         """Return mutable per-seat stats dict when seat is known."""
