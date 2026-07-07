@@ -36,6 +36,10 @@ describe('metricCards', () => {
       drawn_cards: [],
       momentum: [],
       recent: [],
+      matches: [],
+      sessions: [],
+      trend: [],
+      filter_options: { decks: [], formats: [] },
     } satisfies DashboardSnapshot;
 
     expect(metricCards(snapshot)).toEqual([
@@ -43,7 +47,7 @@ describe('metricCards', () => {
       { label: 'Wins', value: '2' },
       { label: 'Losses', value: '1' },
       { label: 'Win Rate', value: '66.7%' },
-      { label: 'Best Deck', value: 'Boros Mouse' },
+      { label: 'Best Deck', value: 'Boros Mouse', href: '#/deck/Boros%20Mouse' },
     ]);
   });
 });

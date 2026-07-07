@@ -1,13 +1,20 @@
 interface MetricCardProps {
   label: string;
   value: string;
+  href?: string;
 }
 
-export function MetricCard({ label, value }: MetricCardProps) {
+export function MetricCard({ label, value, href }: MetricCardProps) {
   return (
     <article className="metric-card">
       <span>{label}</span>
-      <strong>{value}</strong>
+      {href ? (
+        <a className="metric-link" href={href}>
+          <strong>{value}</strong>
+        </a>
+      ) : (
+        <strong>{value}</strong>
+      )}
     </article>
   );
 }

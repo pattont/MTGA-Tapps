@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Dashboard UI
+
+- Added game detail routes with life charts, opening hand, drawn cards, played cards, and filterable event timeline.
+- Added card drill-down routes with card art, by-deck performance, and opening-hand impact.
+- Added filter-aware deck routes, sidebar scrollspy, deck/card table search, match recap rows, session recap rows, and empty-dashboard setup guidance.
+- Extended the local dashboard API with `/api/game`, `/api/card`, filtered `/api/deck`, match/session snapshot data, and larger deck/card result limits.
+
 ## v0.4.0 - Complete Game Tracking & Auto-Summary (2025-11-19)
 
 ### Major Features

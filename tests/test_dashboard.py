@@ -7,7 +7,14 @@ from threading import Thread
 import pytest
 
 from mtga_tracker.analytics import AnalyticsStore
-from mtga_tracker.dashboard import DashboardHandler, dashboard_snapshot, render_dashboard_html
+from mtga_tracker.dashboard import (
+    card_detail,
+    DashboardHandler,
+    dashboard_snapshot,
+    deck_detail,
+    game_detail,
+    render_dashboard_html,
+)
 
 
 def _sample_dashboard_db(tmp_path):
@@ -19,32 +26,69 @@ def _sample_dashboard_db(tmp_path):
         )
         conn.execute(
             """
-            insert into matches (id, session_id, format, queue, event_name)
-            values ('match-1', 'session-1', 'Play', 'Play', 'Play')
+            insert into matches (id, session_id, format, queue, event_name, best_of)
+            values ('match-1', 'session-1', 'Play', 'Play', 'Play', 1)
             """
         )
         conn.execute(
             """
-            insert into games (id, session_id, match_id, started_at, outcome, duration_seconds)
-            values ('game-1', 'session-1', 'match-1', '2026-06-04T00:01:00', 'win', 240)
+            insert into games (
+                id, session_id, match_id, game_number, started_at, outcome,
+                outcome_reason, duration_seconds, total_turns, player_turns, opponent_turns
+            )
+            values (
+                'game-1', 'session-1', 'match-1', 1, '2026-06-04T00:01:00', 'win',
+                'opponent_conceded', 240, 8, 4, 4
+            )
             """
         )
         conn.execute(
             """
-            insert into participants (id, game_id, role, deck_name, went_first, mulligans)
-            values ('player-1', 'game-1', 'player', 'Boros Mouse', 1, 0)
+            insert into participants (
+                id, game_id, seat_id, role, display_name, deck_name, went_first,
+                mulligans, opening_hand_size, starting_life, ending_life
+            )
+            values (
+                'player-1', 'game-1', 1, 'player', 'Tapps', 'Boros Mouse', 1,
+                0, 7, 20, 12
+            )
             """
         )
         conn.execute(
             """
-            insert into games (id, session_id, match_id, started_at, outcome, duration_seconds)
-            values ('game-2', 'session-1', 'match-1', '2026-06-04T00:10:00', 'loss', 300)
+            insert into participants (
+                id, game_id, seat_id, role, display_name, starting_life, ending_life
+            )
+            values ('opponent-1', 'game-1', 2, 'opponent', 'Opponent', 20, 0)
             """
         )
         conn.execute(
             """
-            insert into participants (id, game_id, role, deck_name, went_first, mulligans)
-            values ('player-2', 'game-2', 'player', 'Boros Mouse', 0, 1)
+            insert into games (
+                id, session_id, match_id, game_number, started_at, outcome,
+                duration_seconds, total_turns, player_turns, opponent_turns
+            )
+            values ('game-2', 'session-1', 'match-1', 2, '2026-06-04T00:10:00', 'loss', 300, 10, 5, 5)
+            """
+        )
+        conn.execute(
+            """
+            insert into participants (
+                id, game_id, seat_id, role, display_name, deck_name, went_first,
+                mulligans, opening_hand_size, starting_life, ending_life
+            )
+            values (
+                'player-2', 'game-2', 1, 'player', 'Tapps', 'Boros Mouse', 0,
+                1, 6, 20, 0
+            )
+            """
+        )
+        conn.execute(
+            """
+            insert into participants (
+                id, game_id, seat_id, role, display_name, starting_life, ending_life
+            )
+            values ('opponent-2', 'game-2', 2, 'opponent', 'Opponent', 20, 7)
             """
         )
         conn.execute(
@@ -62,6 +106,47 @@ def _sample_dashboard_db(tmp_path):
             )
             values ('game-1', 'player-1', 'Llanowar Elves', 'Creature', 1, 2, 1)
             """
+        )
+        conn.executemany(
+            """
+            insert into game_events (
+                session_id, match_id, game_id, event_time, elapsed_seconds, turn_number,
+                phase, step, actor_role, event_type, text, player_life, opponent_life
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    "session-1",
+                    "match-1",
+                    "game-1",
+                    "2026-06-04T00:01:05",
+                    5,
+                    1,
+                    "beginning",
+                    "upkeep",
+                    "player",
+                    "turn",
+                    "Turn 1 begins",
+                    20,
+                    20,
+                ),
+                (
+                    "session-1",
+                    "match-1",
+                    "game-1",
+                    "2026-06-04T00:03:00",
+                    120,
+                    4,
+                    "combat",
+                    "damage",
+                    "player",
+                    "damage",
+                    "Mouse Mentor attacks",
+                    12,
+                    0,
+                ),
+            ],
         )
     return db_path
 
@@ -84,6 +169,10 @@ def test_dashboard_snapshot_and_html_render_latest_game(tmp_path):
     assert snapshot["draw_quality"][1]["known_draws"] == 1
     assert snapshot["drawn_cards"][0]["display_name"] == "Llanowar Elves"
     assert snapshot["momentum"][0]["split"] == "After a win"
+    assert snapshot["matches"][0]["match_id"] == "match-1"
+    assert snapshot["matches"][0]["record"] == "1-1"
+    assert snapshot["sessions"][0]["session_id"] == "session-1"
+    assert snapshot["sessions"][0]["games"] == 2
     assert "Boros Mouse" in html
     assert "Draw Quality" in html
     assert "Visible Drawn Cards" in html
@@ -273,7 +362,9 @@ def test_dashboard_snapshot_includes_local_only_deck_visual(tmp_path):
     assert deck["deck_visual"]["card_name"] == "Mouse Mentor"
     assert deck["deck_visual"]["card_id"] == 12345
     assert deck["deck_visual"]["type_category"] == "Creature"
-    assert deck["deck_visual"]["image_url"] is None
+    assert deck["deck_visual"]["image_url"] == (
+        "https://api.scryfall.com/cards/named?fuzzy=Mouse%20Mentor&format=image&version=art_crop"
+    )
     assert deck["deck_visual"]["source"] == "local_metadata"
 
 
@@ -283,6 +374,504 @@ def test_dashboard_snapshot_includes_stable_game_ids(tmp_path):
 
     assert snapshot["draw_quality"][0]["game_id"] == "game-2"
     assert snapshot["recent"][0]["game_id"] == "game-2"
+
+
+def test_dashboard_snapshot_supports_deck_and_format_filters(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into matches (id, session_id, format, queue, event_name)
+            values ('match-2', 'session-1', 'Constructed_BestOf3', 'Ladder', 'Ladder')
+            """
+        )
+        conn.execute(
+            """
+            insert into games (id, session_id, match_id, started_at, outcome, duration_seconds)
+            values ('game-3', 'session-1', 'match-2', '2026-06-05T00:01:00', 'win', 200)
+            """
+        )
+        conn.execute(
+            """
+            insert into participants (id, game_id, role, deck_name, went_first, mulligans)
+            values ('player-3', 'game-3', 'player', 'Izzet Wizards', 1, 0)
+            """
+        )
+
+    unfiltered = dashboard_snapshot(db_path)
+    assert unfiltered["summary"]["games"] == 3
+    assert unfiltered["filters"] == {"deck": None, "format": None, "days": None}
+    assert "Izzet Wizards" in unfiltered["filter_options"]["decks"]
+    assert {"raw_format": "Play", "format_label": "Standard Best-of-1"} in unfiltered[
+        "filter_options"
+    ]["formats"]
+
+    by_deck = dashboard_snapshot(db_path, deck="Izzet Wizards")
+    assert by_deck["summary"]["games"] == 1
+    assert by_deck["summary"]["wins"] == 1
+    assert [row["deck_name"] for row in by_deck["decks"]] == ["Izzet Wizards"]
+    assert [row["game_id"] for row in by_deck["recent"]] == ["game-3"]
+    # Filter options stay global so the UI can switch between decks.
+    assert "Boros Mouse" in by_deck["filter_options"]["decks"]
+
+    by_format = dashboard_snapshot(db_path, fmt="Play")
+    assert by_format["summary"]["games"] == 2
+    assert [row["raw_format"] for row in by_format["formats"]] == ["Play"]
+
+    combined = dashboard_snapshot(db_path, deck="Boros Mouse", fmt="Constructed_BestOf3")
+    assert combined["summary"]["games"] == 0
+
+
+def test_dashboard_snapshot_days_filter_keeps_recent_games(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    from datetime import datetime, timedelta
+
+    recent_started = (datetime.now() - timedelta(hours=1)).isoformat(timespec="seconds")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into games (id, session_id, match_id, started_at, outcome, duration_seconds)
+            values ('game-3', 'session-1', 'match-1', ?, 'win', 200)
+            """,
+            (recent_started,),
+        )
+        conn.execute(
+            """
+            insert into participants (id, game_id, role, deck_name, went_first, mulligans)
+            values ('player-3', 'game-3', 'player', 'Boros Mouse', 1, 0)
+            """
+        )
+
+    snapshot = dashboard_snapshot(db_path, days=7)
+    assert snapshot["summary"]["games"] == 1
+    assert snapshot["recent"][0]["game_id"] == "game-3"
+    assert snapshot["filters"]["days"] == 7
+
+
+def test_dashboard_snapshot_includes_win_rate_trend(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    snapshot = dashboard_snapshot(db_path)
+
+    assert [row["game_id"] for row in snapshot["trend"]] == ["game-1", "game-2"]
+    assert snapshot["trend"][0]["outcome"] == "win"
+    assert snapshot["trend"][1]["outcome"] == "loss"
+
+
+def test_dashboard_handler_applies_snapshot_query_filters(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _dashboard_handler_for(db_path))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    conn = None
+    thread.start()
+    try:
+        conn = HTTPConnection("127.0.0.1", server.server_address[1])
+        conn.request("GET", "/api/snapshot?deck=Boros%20Mouse&format=Play&days=bogus")
+        response = conn.getresponse()
+        body = response.read().decode("utf-8")
+    finally:
+        if conn is not None:
+            conn.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+    assert response.status == 200
+    payload = json.loads(body)
+    assert payload["summary"]["games"] == 2
+    assert payload["filters"] == {"deck": "Boros Mouse", "format": "Play", "days": None}
+
+
+def test_deck_detail_reports_cards_openers_and_mulligans(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count, drawn_count
+            )
+            values (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("game-1", "player-1", 11, "Mouse Mentor (Creature 2/1)", "Creature", 2, 0),
+                ("game-2", "player-2", 11, "Mouse Mentor (Creature 2/1)", "Creature", 1, 0),
+                ("game-2", "player-2", 12, "Mountain (Land)", "Land", 3, 0),
+            ],
+        )
+        conn.execute(
+            """
+            insert into game_opening_hand_cards (
+                game_id, participant_id, display_name, type_category, hand_position, copy_number
+            )
+            values ('game-2', 'player-2', 'Mountain', 'Land', 1, 1)
+            """
+        )
+        # Visible draws are recorded under the clean card name in game_drawn_cards.
+        conn.execute(
+            """
+            insert into game_drawn_cards (
+                game_id, participant_id, display_name, type_category, draw_position, turn_number, copy_number
+            )
+            values ('game-2', 'player-2', 'Mouse Mentor', 'Creature', 1, 3, 1)
+            """
+        )
+
+    detail = deck_detail(db_path, "Boros Mouse")
+
+    assert detail["deck_name"] == "Boros Mouse"
+    assert detail["summary"] == {"games": 2, "wins": 1, "losses": 1, "draws": 0, "win_rate": 50.0}
+    assert detail["profile"]["avg_mulligans"] == 0.5
+    assert detail["profile"]["on_play_pct"] == 50.0
+    assert detail["profile"]["avg_duration_seconds"] == 270.0
+
+    mentor = next(row for row in detail["card_performance"] if row["display_name"] == "Mouse Mentor")
+    assert mentor["games_seen"] == 2
+    assert mentor["times_played"] == 3
+    assert mentor["times_drawn"] == 1
+    assert mentor["win_rate_when_seen"] == 50.0
+
+    # game-1 opener has a Mountain (from the shared fixture); game-2 adds another.
+    mountain = next(row for row in detail["opening_hands"] if row["display_name"] == "Mountain")
+    assert mountain["games_in_opener"] == 2
+
+    assert detail["mulligans"] == [
+        {"mulligans": 0, "games": 1, "wins": 1, "losses": 0, "win_rate": 100.0},
+        {"mulligans": 1, "games": 1, "wins": 0, "losses": 1, "win_rate": 0.0},
+    ]
+    assert [row["game_id"] for row in detail["recent"]] == ["game-2", "game-1"]
+    assert detail["recent"][0]["play_draw"] == "On the draw"
+    assert [row["game_id"] for row in detail["trend"]] == ["game-1", "game-2"]
+
+
+def test_deck_detail_applies_format_filter_to_all_sections(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into matches (id, session_id, format, queue, event_name, best_of)
+            values ('match-2', 'session-1', 'Constructed_BestOf3', 'Ladder', 'Ladder', 3)
+            """
+        )
+        conn.execute(
+            """
+            insert into games (id, session_id, match_id, started_at, outcome, duration_seconds, total_turns)
+            values ('game-3', 'session-1', 'match-2', '2026-06-05T00:01:00', 'win', 200, 9)
+            """
+        )
+        conn.execute(
+            """
+            insert into participants (id, game_id, role, deck_name, went_first, mulligans)
+            values ('player-3', 'game-3', 'player', 'Boros Mouse', 1, 0)
+            """
+        )
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            )
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("game-1", "player-1", 11, "Mouse Mentor (Creature 2/1)", "Creature", 2),
+                ("game-3", "player-3", 12, "Ladder Specialist (Creature 2/2)", "Creature", 1),
+            ],
+        )
+        conn.execute(
+            """
+            insert into game_opening_hand_cards (
+                game_id, participant_id, display_name, type_category, hand_position, copy_number
+            )
+            values ('game-3', 'player-3', 'Ladder Specialist', 'Creature', 1, 1)
+            """
+        )
+        conn.execute(
+            """
+            insert into game_drawn_cards (
+                game_id, participant_id, display_name, type_category, draw_position, turn_number, copy_number
+            )
+            values ('game-3', 'player-3', 'Ladder Specialist', 'Creature', 1, 2, 1)
+            """
+        )
+
+    detail = deck_detail(db_path, "Boros Mouse", fmt="Constructed_BestOf3")
+
+    assert detail["summary"]["games"] == 1
+    assert [row["raw_format"] for row in detail["formats"]] == ["Constructed_BestOf3"]
+    assert [row["game_id"] for row in detail["recent"]] == ["game-3"]
+    assert [row["game_id"] for row in detail["trend"]] == ["game-3"]
+    assert [row["display_name"] for row in detail["card_performance"]] == ["Ladder Specialist"]
+    assert [row["display_name"] for row in detail["opening_hands"]] == ["Ladder Specialist"]
+    assert detail["card_performance"][0]["times_drawn"] == 1
+
+
+def test_deck_detail_rejects_unknown_deck(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+
+    with pytest.raises(LookupError, match="No recorded games for deck"):
+        deck_detail(db_path, "Missing Deck")
+
+
+def test_game_detail_reports_header_cards_and_timeline(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            )
+            values ('game-1', 'player-1', 101, 'Mouse Mentor (Creature 2/1)', 'Creature', 2)
+            """
+        )
+
+    detail = game_detail(db_path, "game-1")
+
+    assert detail["game"]["game_id"] == "game-1"
+    assert detail["game"]["outcome"] == "win"
+    assert detail["game"]["outcome_reason"] == "opponent_conceded"
+    assert detail["game"]["format_label"] == "Standard Best-of-1"
+    assert detail["game"]["best_of"] == 1
+    assert detail["game"]["total_turns"] == 8
+    assert detail["player"]["deck_name"] == "Boros Mouse"
+    assert detail["player"]["went_first"] == 1
+    assert detail["player"]["mulligans"] == 0
+    assert detail["player"]["opening_hand_size"] == 7
+    assert detail["player"]["ending_life"] == 12
+    assert detail["opponent"]["ending_life"] == 0
+    assert detail["opening_hand"] == [
+        {"display_name": "Mountain", "type_category": "Land", "hand_position": 1, "copy_number": 1}
+    ]
+    assert detail["drawn"] == [
+        {
+            "display_name": "Llanowar Elves",
+            "type_category": "Creature",
+            "turn_number": 2,
+            "draw_position": 1,
+            "copy_number": 1,
+        }
+    ]
+    assert detail["cards_played"] == [
+        {"display_name": "Mouse Mentor", "type_category": "Creature", "played_count": 2}
+    ]
+    assert [row["event_type"] for row in detail["timeline"]] == ["turn", "damage"]
+    assert detail["life_curve"] == [
+        {"turn_number": 1, "player_life": 20, "opponent_life": 20},
+        {"turn_number": 4, "player_life": 12, "opponent_life": 0},
+    ]
+
+
+def test_game_detail_rejects_unknown_game(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+
+    with pytest.raises(LookupError, match="No recorded game"):
+        game_detail(db_path, "missing-game")
+
+
+def test_dashboard_handler_serves_game_detail(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _dashboard_handler_for(db_path))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    conn = None
+    thread.start()
+    try:
+        conn = HTTPConnection("127.0.0.1", server.server_address[1])
+        conn.request("GET", "/api/game?id=game-1")
+        response = conn.getresponse()
+        body = response.read().decode("utf-8")
+
+        conn.request("GET", "/api/game?id=missing-game")
+        missing_response = conn.getresponse()
+        missing_response.read()
+
+        conn.request("GET", "/api/game")
+        bad_response = conn.getresponse()
+        bad_response.read()
+    finally:
+        if conn is not None:
+            conn.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+    assert response.status == 200
+    payload = json.loads(body)
+    assert payload["game"]["game_id"] == "game-1"
+    assert payload["timeline"][0]["text"] == "Turn 1 begins"
+    assert missing_response.status == 404
+    assert bad_response.status == 400
+
+
+def test_card_detail_reports_summary_by_deck_and_opener_impact(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            )
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("game-1", "player-1", 11, "Mouse Mentor (Creature 2/1)", "Creature", 2),
+                ("game-2", "player-2", 11, "Mouse Mentor (Creature 2/1)", "Creature", 1),
+            ],
+        )
+        conn.execute(
+            """
+            insert into game_opening_hand_cards (
+                game_id, participant_id, display_name, type_category, hand_position, copy_number
+            )
+            values ('game-2', 'player-2', 'Mouse Mentor', 'Creature', 2, 1)
+            """
+        )
+        conn.execute(
+            """
+            insert into game_drawn_cards (
+                game_id, participant_id, display_name, type_category, draw_position, turn_number, copy_number
+            )
+            values ('game-2', 'player-2', 'Mouse Mentor', 'Creature', 2, 4, 1)
+            """
+        )
+
+    detail = card_detail(db_path, "Mouse Mentor")
+
+    assert detail["card_name"] == "Mouse Mentor"
+    assert detail["summary"] == {
+        "games_seen": 2,
+        "total_played": 3,
+        "wins": 1,
+        "losses": 1,
+        "win_rate": 50.0,
+    }
+    assert detail["by_deck"] == [
+        {
+            "deck_name": "Boros Mouse",
+            "games_seen": 2,
+            "total_played": 3,
+            "wins": 1,
+            "losses": 1,
+            "win_rate": 50.0,
+        }
+    ]
+    assert detail["opener_impact"] == {
+        "games_in_opener": 1,
+        "wins": 0,
+        "losses": 1,
+        "win_rate": 0.0,
+        "times_drawn": 1,
+    }
+    assert detail["image_url"] == (
+        "https://api.scryfall.com/cards/named?fuzzy=Mouse%20Mentor&format=image&version=art_crop"
+    )
+
+
+def test_card_detail_rejects_unknown_card(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+
+    with pytest.raises(LookupError, match="No recorded card"):
+        card_detail(db_path, "Missing Card")
+
+
+def test_dashboard_handler_serves_card_detail(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            )
+            values ('game-1', 'player-1', 11, 'Mouse Mentor (Creature 2/1)', 'Creature', 2)
+            """
+        )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _dashboard_handler_for(db_path))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    conn = None
+    thread.start()
+    try:
+        conn = HTTPConnection("127.0.0.1", server.server_address[1])
+        conn.request("GET", "/api/card?name=Mouse%20Mentor")
+        response = conn.getresponse()
+        body = response.read().decode("utf-8")
+
+        conn.request("GET", "/api/card?name=Missing%20Card")
+        missing_response = conn.getresponse()
+        missing_response.read()
+
+        conn.request("GET", "/api/card")
+        bad_response = conn.getresponse()
+        bad_response.read()
+    finally:
+        if conn is not None:
+            conn.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+    assert response.status == 200
+    payload = json.loads(body)
+    assert payload["card_name"] == "Mouse Mentor"
+    assert payload["summary"]["games_seen"] == 1
+    assert missing_response.status == 404
+    assert bad_response.status == 400
+
+
+def test_dashboard_handler_serves_deck_detail(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _dashboard_handler_for(db_path))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    conn = None
+    thread.start()
+    try:
+        conn = HTTPConnection("127.0.0.1", server.server_address[1])
+        conn.request("GET", "/api/deck?name=Boros%20Mouse&format=Play")
+        response = conn.getresponse()
+        body = response.read().decode("utf-8")
+
+        conn.request("GET", "/api/deck?name=Missing%20Deck")
+        missing_response = conn.getresponse()
+        missing_response.read()
+
+        conn.request("GET", "/api/deck")
+        bad_response = conn.getresponse()
+        bad_response.read()
+    finally:
+        if conn is not None:
+            conn.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+    assert response.status == 200
+    payload = json.loads(body)
+    assert payload["deck_name"] == "Boros Mouse"
+    assert payload["summary"]["games"] == 2
+    assert missing_response.status == 404
+    assert bad_response.status == 400
+
+
+def test_dashboard_snapshot_deck_visual_prefers_nonland_cards(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            )
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("game-1", "player-1", 1, "Mountain (Land)", "Land", 9),
+                ("game-1", "player-1", 2, "Emberheart Challenger (Creature)", "Creature", 2),
+            ],
+        )
+
+    snapshot = dashboard_snapshot(db_path)
+    deck = snapshot["decks"][0]
+
+    assert deck["deck_visual"]["card_name"] == "Emberheart Challenger"
+    assert deck["deck_visual"]["type_category"] == "Creature"
 
 
 def test_dashboard_snapshot_deck_visual_ranking_has_stable_tiebreakers(tmp_path):

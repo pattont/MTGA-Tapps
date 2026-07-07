@@ -21,6 +21,14 @@ from .state import CardEvent
 class TrackerAnalyticsMixin:
     """SQLite analytics and dashboard persistence helpers used by CardTracker."""
 
+    def _is_bot_match(self) -> bool:
+        """Return True for MTGA bot matches that should stay out of analytics."""
+        opponent_name = str(self.game_state.opponent_display_name or "").strip().lower()
+        if opponent_name == "sparky":
+            return True
+        format_text = str(self.game_state.format_str or "").strip().lower()
+        return format_text.startswith("aibotmatch")
+
     def _session_snapshot(self) -> SessionSnapshot:
         """Return the current session counters for analytics persistence."""
         return SessionSnapshot(
@@ -49,6 +57,8 @@ class TrackerAnalyticsMixin:
 
     def _record_console_log(self, text: str, style: Optional[str] = None) -> None:
         """Best-effort persistent storage for terminal output."""
+        if self._is_bot_match():
+            return
         try:
             now = self._now()
             elapsed_seconds = None
@@ -73,6 +83,8 @@ class TrackerAnalyticsMixin:
 
     def _record_raw_payload_snapshot(self, payload_type: str, payload_text: str) -> None:
         """Best-effort sanitized raw payload persistence for diagnostics/replay."""
+        if self._is_bot_match():
+            return
         try:
             game_id = self._current_game_id() if self.game_state.game_start_time else None
             match_id = self._current_match_id() if self.game_state.game_start_time else None
@@ -234,6 +246,8 @@ class TrackerAnalyticsMixin:
     def _record_game_event(self, text: str, style: Optional[str] = None) -> None:
         """Best-effort structured event row for turn-log lines."""
         if not self.game_state.game_start_time:
+            return
+        if self._is_bot_match():
             return
         conn = self._analytics_connect()
         if conn is None:
@@ -662,6 +676,8 @@ class TrackerAnalyticsMixin:
 
     def _persist_game_analytics(self, outcome: str, reason: str) -> None:
         """Persist dashboard-ready summary data for a completed game."""
+        if self._is_bot_match():
+            return
         conn = self._analytics_connect()
         if conn is None:
             return

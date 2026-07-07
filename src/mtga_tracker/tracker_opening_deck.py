@@ -1097,7 +1097,10 @@ class TrackerOpeningDeckMixin:
         )
         if opponent_name_known:
             player_label = g.player_display_name or "You"
-            self._print_line(f"   Players: {player_label} vs {g.opponent_display_name.strip()}")
+            suffix = " (Log Not Saved to DB)" if self._is_bot_match() else ""
+            self._print_line(
+                f"   Players: {player_label} vs {g.opponent_display_name.strip()}{suffix}"
+            )
         if g.player_seat_id in (1, 2):
             self._print_line(f"   Seat: {g.player_seat_id}")
             g.seat_line_announced = True
