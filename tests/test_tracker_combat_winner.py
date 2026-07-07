@@ -3418,6 +3418,19 @@ def test_match_started_block_prints_players_when_opponent_known(capsys):
     assert "Players: Tapps vs Rival123" in out
 
 
+def test_match_started_block_marks_sparky_games_not_saved(capsys):
+    tracker = make_tracker()
+    tracker.game_state.game_start_time = datetime(2026, 7, 4, 0, 28, 38)
+    tracker.game_state.format_str = "AIBotMatch_Rebalanced"
+    tracker.game_state.player_display_name = "Tapps"
+    tracker.game_state.opponent_display_name = "Sparky"
+
+    tracker._print_match_started_block()
+    out = capsys.readouterr().out
+
+    assert "Players: Tapps vs Sparky (Log Not Saved to DB)" in out
+
+
 def test_match_started_block_prints_commanders_when_known(capsys):
     tracker = make_tracker()
     tracker.game_state.game_start_time = datetime(2026, 3, 10, 21, 15, 0)
@@ -4352,6 +4365,43 @@ def test_game_summary_persists_normalized_sqlite_analytics(capsys, tmp_path):
     assert opening_hand[-1] == ("Island", 7, 2)
     assert session == (1, 1, 0, 450)
     assert console_rows > 0
+
+
+def test_sparky_game_summary_is_not_persisted_to_sqlite(capsys, tmp_path):
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "analytics.sqlite3"
+    tracker.session_start_time = datetime(2026, 7, 4, 0, 0, 0)
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.game_start_time = datetime(2026, 7, 4, 0, 28, 38)
+    tracker.game_state.game_end_time = datetime(2026, 7, 4, 0, 31, 16)
+    tracker.game_state.winner_seat = 1
+    tracker.game_state.player_display_name = "Tapps"
+    tracker.game_state.opponent_display_name = "Sparky"
+    tracker.game_state.format_str = "AIBotMatch_Rebalanced"
+
+    tracker._print_game_summary()
+    capsys.readouterr()
+
+    with sqlite3.connect(tracker._console_db_path) as conn:
+        def table_count(table_name):
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (table_name,),
+            ).fetchone()
+            if not exists:
+                return 0
+            return conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+
+        game_count = table_count("games")
+        match_count = table_count("matches")
+        participant_count = table_count("participants")
+        console_count = table_count("console_logs")
+
+    assert game_count == 0
+    assert match_count == 0
+    assert participant_count == 0
+    assert console_count == 0
 
 
 def test_game_summary_persists_brawl_starting_life(capsys, tmp_path):

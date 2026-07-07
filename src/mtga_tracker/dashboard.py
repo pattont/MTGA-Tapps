@@ -6,11 +6,13 @@ import argparse
 import html
 import json
 import mimetypes
+import re
 import sqlite3
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List
-from urllib.parse import unquote, urlparse
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .format_normalizer import format_label
 from .paths import DATA_DIR
@@ -23,6 +25,58 @@ DEFAULT_STATIC_DIR = DATA_DIR.parent / "ui" / "dist"
 def _dict_rows(cursor: sqlite3.Cursor) -> List[Dict[str, Any]]:
     columns = [column[0] for column in cursor.description or []]
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+_TYPE_SUFFIX_RE = re.compile(r"\s*\([^()]*\)\s*$")
+
+
+def _clean_card_name(display_name: Optional[str]) -> Optional[str]:
+    """Strip the trailing '(Type)' suffix tracker display names carry."""
+    if not display_name:
+        return display_name
+    cleaned = _TYPE_SUFFIX_RE.sub("", display_name).strip()
+    return cleaned or display_name
+
+
+def _card_image_url(arena_id: Optional[int], card_name: Optional[str]) -> Optional[str]:
+    """Best-effort Scryfall art-crop URL for a card; None when unresolvable."""
+    if arena_id:
+        return f"https://api.scryfall.com/cards/arena/{arena_id}?format=image&version=art_crop"
+    if card_name:
+        front_face = card_name.split(" // ")[0].strip()
+        if front_face:
+            return f"https://api.scryfall.com/cards/named?fuzzy={quote(front_face)}&format=image&version=art_crop"
+    return None
+
+
+def _games_filter(
+    deck: Optional[str], fmt: Optional[str], days: Optional[int]
+) -> Tuple[str, List[Any]]:
+    """WHERE fragment (referencing games alias `g`) plus bound params."""
+    clauses = ["1=1"]
+    params: List[Any] = []
+    if deck:
+        clauses.append(
+            """EXISTS (
+              SELECT 1 FROM participants pf
+              WHERE pf.game_id = g.id AND pf.role = 'player'
+                AND COALESCE(pf.deck_name, '(unknown)') = ?
+            )"""
+        )
+        params.append(deck)
+    if fmt:
+        clauses.append(
+            """EXISTS (
+              SELECT 1 FROM matches mf
+              WHERE mf.id = g.match_id AND COALESCE(mf.format, '(unknown)') = ?
+            )"""
+        )
+        params.append(fmt)
+    if days:
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
+        clauses.append("COALESCE(g.started_at, g.ended_at) >= ?")
+        params.append(cutoff)
+    return " AND ".join(clauses), params
 
 
 def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
@@ -76,6 +130,7 @@ def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
                 ROW_NUMBER() OVER (
                   PARTITION BY deck_name
                   ORDER BY
+                    CASE WHEN type_category = 'Land' THEN 1 ELSE 0 END,
                     source_rank,
                     activity_count DESC,
                     display_name,
@@ -85,20 +140,28 @@ def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
               FROM candidate_cards
               WHERE display_name IS NOT NULL AND TRIM(display_name) != ''
             )
-            SELECT deck_name, card_id, display_name, type_category
-            FROM ranked
-            WHERE rank = 1
+            SELECT
+              r.deck_name,
+              r.card_id,
+              r.display_name,
+              r.type_category,
+              c.name AS card_name,
+              c.arena_id
+            FROM ranked r
+            LEFT JOIN cards c ON c.id = r.card_id
+            WHERE r.rank = 1
             """
         )
     )
     visuals: Dict[str, Dict[str, Any]] = {}
     for row in rows:
         deck_name = row["deck_name"]
+        card_name = row.get("card_name") or _clean_card_name(row.get("display_name"))
         visuals[deck_name] = {
             "card_id": row.get("card_id"),
-            "card_name": row.get("display_name"),
+            "card_name": card_name,
             "type_category": row.get("type_category") or "Other",
-            "image_url": None,
+            "image_url": _card_image_url(row.get("arena_id"), card_name),
             "source": "local_metadata",
         }
     return visuals
@@ -114,16 +177,27 @@ def _empty_deck_visual(deck_name: str) -> Dict[str, Any]:
     }
 
 
-def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
-    """Return dashboard-friendly aggregate data from SQLite."""
+def dashboard_snapshot(
+    db_path: Path = DEFAULT_DB_PATH,
+    deck: Optional[str] = None,
+    fmt: Optional[str] = None,
+    days: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Return dashboard-friendly aggregate data from SQLite.
+
+    Optional filters narrow every aggregate: `deck` matches the player's deck
+    name, `fmt` matches the raw queue/format string, and `days` keeps games
+    started within the last N days.
+    """
     db_path = Path(db_path).expanduser()
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
+    where, params = _games_filter(deck, fmt, days)
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
         summary = conn.execute(
-            """
+            f"""
             SELECT
               COUNT(*) AS games,
               SUM(g.outcome = 'win') AS wins,
@@ -131,11 +205,13 @@ def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
               SUM(g.outcome = 'draw') AS draws,
               ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
             FROM games g
-            """
+            WHERE {where}
+            """,
+            params,
         ).fetchone()
         deck_rows = _dict_rows(
             conn.execute(
-                """
+                f"""
                 SELECT
                   COALESCE(p.deck_name, '(unknown)') AS deck_name,
                   COUNT(*) AS games,
@@ -144,15 +220,17 @@ def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
                   ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
                 FROM games g
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                WHERE {where}
                 GROUP BY p.deck_name
                 ORDER BY games DESC, win_rate DESC
-                LIMIT 20
-                """
+                LIMIT 100
+                """,
+                params,
             )
         )
         format_rows = _dict_rows(
             conn.execute(
-                """
+                f"""
                 SELECT
                   COALESCE(m.format, '(unknown)') AS raw_format,
                   COUNT(*) AS games,
@@ -161,15 +239,17 @@ def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
                   ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
                 FROM games g
                 JOIN matches m ON m.id = g.match_id
+                WHERE {where}
                 GROUP BY m.format
                 ORDER BY games DESC
                 LIMIT 20
-                """
+                """,
+                params,
             )
         )
         play_draw_rows = _dict_rows(
             conn.execute(
-                """
+                f"""
                 SELECT
                   CASE p.went_first WHEN 1 THEN 'On the play' WHEN 0 THEN 'On the draw' ELSE 'Unknown' END AS play_draw,
                   COUNT(*) AS games,
@@ -178,14 +258,16 @@ def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
                   ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
                 FROM games g
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                WHERE {where}
                 GROUP BY p.went_first
                 ORDER BY play_draw
-                """
+                """,
+                params,
             )
         )
         deck_play_draw_rows = _dict_rows(
             conn.execute(
-                """
+                f"""
                 SELECT
                   COALESCE(p.deck_name, '(unknown)') AS deck_name,
                   CASE p.went_first WHEN 1 THEN 'On the play' WHEN 0 THEN 'On the draw' ELSE 'Unknown' END AS play_draw,
@@ -195,15 +277,17 @@ def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
                   ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
                 FROM games g
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                WHERE {where}
                 GROUP BY p.deck_name, p.went_first
                 ORDER BY deck_name, play_draw
                 LIMIT 40
-                """
+                """,
+                params,
             )
         )
         draw_quality_rows = _dict_rows(
             conn.execute(
-                """
+                f"""
                 SELECT
                   g.id AS game_id,
                   COALESCE(g.started_at, g.ended_at) AS started_at,
@@ -232,32 +316,36 @@ def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
                   SELECT game_id, participant_id, display_name, type_category, 'draw' AS source
                   FROM game_drawn_cards
                 ) seen ON seen.game_id = g.id AND seen.participant_id = p.id
+                WHERE {where}
                 GROUP BY g.id
                 ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
-                LIMIT 25
-                """
+                LIMIT 100
+                """,
+                params,
             )
         )
         drawn_card_rows = _dict_rows(
             conn.execute(
-                """
+                f"""
                 SELECT
                   d.display_name,
                   COALESCE(d.type_category, 'Other') AS type_category,
                   COUNT(*) AS times_drawn,
-                  COUNT(DISTINCT d.game_id) AS games_seen,
-                  ROUND(100.0 * COUNT(DISTINCT d.game_id) / NULLIF((SELECT COUNT(*) FROM games), 0), 1) AS pct_of_games
+                  COUNT(DISTINCT d.game_id) AS games_seen
                 FROM game_drawn_cards d
                 JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
+                JOIN games g ON g.id = d.game_id
+                WHERE {where}
                 GROUP BY d.display_name, d.type_category
                 ORDER BY times_drawn DESC, d.display_name
                 LIMIT 25
-                """
+                """,
+                params,
             )
         )
         momentum_rows = _dict_rows(
             conn.execute(
-                """
+                f"""
                 WITH ordered_games AS (
                   SELECT
                     g.id,
@@ -269,6 +357,7 @@ def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
                     ) AS previous_outcome
                   FROM games g
                   JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                  WHERE {where}
                 )
                 SELECT
                   CASE previous_outcome WHEN 'win' THEN 'After a win' WHEN 'loss' THEN 'After a loss' END AS split,
@@ -282,12 +371,13 @@ def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
                 WHERE previous_outcome IN ('win', 'loss')
                 GROUP BY previous_outcome
                 ORDER BY split
-                """
+                """,
+                params,
             )
         )
         recent_rows = _dict_rows(
             conn.execute(
-                """
+                f"""
                 SELECT
                   g.id AS game_id,
                   g.started_at,
@@ -299,11 +389,104 @@ def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
                 FROM games g
                 JOIN matches m ON m.id = g.match_id
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                WHERE {where}
                 ORDER BY g.started_at DESC
                 LIMIT 25
-                """
+                """,
+                params,
             )
         )
+        trend_rows = _dict_rows(
+            conn.execute(
+                f"""
+                SELECT
+                  g.id AS game_id,
+                  COALESCE(g.started_at, g.ended_at) AS started_at,
+                  g.outcome
+                FROM games g
+                WHERE {where} AND g.outcome IN ('win', 'loss')
+                ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
+                LIMIT 200
+                """,
+                params,
+            )
+        )
+        trend_rows.reverse()
+        match_rows = _dict_rows(
+            conn.execute(
+                f"""
+                SELECT
+                  m.id AS match_id,
+                  COALESCE(m.started_at, MIN(COALESCE(g.started_at, g.ended_at))) AS started_at,
+                  m.format AS raw_format,
+                  m.best_of,
+                  COALESCE(MAX(p.deck_name), '(unknown)') AS deck_name,
+                  COUNT(g.id) AS games,
+                  SUM(g.outcome = 'win') AS wins,
+                  SUM(g.outcome = 'loss') AS losses,
+                  CASE
+                    WHEN m.winner_participant_id IS NOT NULL
+                      THEN CASE WHEN SUM(p.id = m.winner_participant_id) > 0 THEN 'win' ELSE 'loss' END
+                    WHEN SUM(g.outcome = 'win') > SUM(g.outcome = 'loss') THEN 'win'
+                    WHEN SUM(g.outcome = 'loss') > SUM(g.outcome = 'win') THEN 'loss'
+                    WHEN SUM(g.outcome = 'draw') > 0 THEN 'draw'
+                    ELSE NULL
+                  END AS outcome
+                FROM matches m
+                JOIN games g ON g.match_id = m.id
+                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                WHERE {where}
+                GROUP BY m.id
+                ORDER BY COALESCE(m.started_at, MIN(COALESCE(g.started_at, g.ended_at))) DESC, m.id DESC
+                LIMIT 25
+                """,
+                params,
+            )
+        )
+        session_rows = _dict_rows(
+            conn.execute(
+                f"""
+                SELECT
+                  s.id AS session_id,
+                  s.started_at,
+                  s.ended_at,
+                  s.runtime_seconds AS duration_seconds,
+                  COUNT(g.id) AS games,
+                  SUM(g.outcome = 'win') AS wins,
+                  SUM(g.outcome = 'loss') AS losses,
+                  SUM(g.outcome = 'draw') AS draws,
+                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
+                FROM tracker_sessions s
+                JOIN games g ON g.session_id = s.id
+                WHERE {where}
+                GROUP BY s.id
+                ORDER BY s.started_at DESC, s.id DESC
+                LIMIT 25
+                """,
+                params,
+            )
+        )
+        deck_options = [
+            row[0]
+            for row in conn.execute(
+                """
+                SELECT DISTINCT COALESCE(deck_name, '(unknown)') AS deck_name
+                FROM participants
+                WHERE role = 'player'
+                ORDER BY deck_name COLLATE NOCASE
+                """
+            )
+        ]
+        format_options = [
+            {"raw_format": row[0], "format_label": format_label(row[0])}
+            for row in conn.execute(
+                """
+                SELECT DISTINCT COALESCE(format, '(unknown)') AS raw_format
+                FROM matches
+                ORDER BY raw_format COLLATE NOCASE
+                """
+            )
+        ]
         deck_visuals = _deck_visuals(conn)
         for row in deck_rows:
             deck_name = row["deck_name"]
@@ -316,10 +499,17 @@ def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
         "draws": int(summary[3] or 0),
         "win_rate": summary[4],
     }
+    total_games = summary_dict["games"]
+    for row in drawn_card_rows:
+        games_seen = row.get("games_seen") or 0
+        row["pct_of_games"] = round(100.0 * games_seen / total_games, 1) if total_games else None
     for row in format_rows:
         row["format_label"] = format_label(row.get("raw_format"))
     for row in recent_rows:
         row["format_label"] = format_label(row.get("raw_format"))
+    for row in match_rows:
+        row["format_label"] = format_label(row.get("raw_format"))
+        row["record"] = f"{int(row.get('wins') or 0)}-{int(row.get('losses') or 0)}"
     return {
         "summary": summary_dict,
         "decks": deck_rows,
@@ -330,6 +520,472 @@ def dashboard_snapshot(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
         "drawn_cards": drawn_card_rows,
         "momentum": momentum_rows,
         "recent": recent_rows,
+        "trend": trend_rows,
+        "matches": match_rows,
+        "sessions": session_rows,
+        "filters": {"deck": deck, "format": fmt, "days": days},
+        "filter_options": {"decks": deck_options, "formats": format_options},
+    }
+
+
+def deck_detail(
+    db_path: Path = DEFAULT_DB_PATH,
+    deck_name: str = "(unknown)",
+    fmt: Optional[str] = None,
+    days: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Return drill-down analytics for a single deck.
+
+    Raises LookupError when the deck has no recorded games.
+    """
+    db_path = Path(db_path).expanduser()
+    if not db_path.is_file():
+        raise FileNotFoundError(f"Dashboard database not found: {db_path}")
+    where, params = _games_filter(deck_name, fmt, days)
+    db_uri = db_path.resolve().as_uri() + "?mode=ro"
+    with sqlite3.connect(db_uri, uri=True) as conn:
+        conn.execute("PRAGMA query_only = ON")
+        summary = conn.execute(
+            f"""
+            SELECT
+              COUNT(*) AS games,
+              SUM(g.outcome = 'win') AS wins,
+              SUM(g.outcome = 'loss') AS losses,
+              SUM(g.outcome = 'draw') AS draws,
+              ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
+            FROM games g
+            WHERE {where}
+            """,
+            params,
+        ).fetchone()
+        if not summary or not summary[0]:
+            raise LookupError(f"No recorded games for deck: {deck_name}")
+        profile = conn.execute(
+            f"""
+            SELECT
+              ROUND(AVG(g.duration_seconds), 0) AS avg_duration_seconds,
+              ROUND(AVG(g.total_turns), 1) AS avg_turns,
+              ROUND(AVG(COALESCE(p.mulligans, 0)), 2) AS avg_mulligans,
+              ROUND(100.0 * SUM(p.went_first = 1) / NULLIF(SUM(p.went_first IN (0, 1)), 0), 1) AS on_play_pct
+            FROM games g
+            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            WHERE {where}
+            """,
+            params,
+        ).fetchone()
+        format_rows = _dict_rows(
+            conn.execute(
+                f"""
+                SELECT
+                  COALESCE(m.format, '(unknown)') AS raw_format,
+                  COUNT(*) AS games,
+                  SUM(g.outcome = 'win') AS wins,
+                  SUM(g.outcome = 'loss') AS losses,
+                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
+                FROM games g
+                JOIN matches m ON m.id = g.match_id
+                WHERE {where}
+                GROUP BY m.format
+                ORDER BY games DESC
+                LIMIT 20
+                """,
+                params,
+            )
+        )
+        card_rows = _dict_rows(
+            conn.execute(
+                f"""
+                SELECT
+                  s.display_name,
+                  COALESCE(s.type_category, 'Other') AS type_category,
+                  COUNT(*) AS games_seen,
+                  SUM(COALESCE(s.played_count, 0)) AS times_played,
+                  SUM(g.outcome = 'win') AS wins_when_seen,
+                  SUM(g.outcome = 'loss') AS losses_when_seen,
+                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate_when_seen
+                FROM game_card_summary s
+                JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
+                JOIN games g ON g.id = s.game_id
+                WHERE {where}
+                GROUP BY s.display_name, s.type_category
+                ORDER BY games_seen DESC, s.display_name
+                LIMIT 100
+                """,
+                params,
+            )
+        )
+        # game_card_summary.drawn_count is never populated by the tracker;
+        # visible draw counts live in game_drawn_cards under the clean card name.
+        drawn_counts = {
+            row["display_name"]: row["times_drawn"]
+            for row in _dict_rows(
+                conn.execute(
+                    f"""
+                    SELECT d.display_name, COUNT(*) AS times_drawn
+                    FROM game_drawn_cards d
+                    JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
+                    JOIN games g ON g.id = d.game_id
+                    WHERE {where}
+                    GROUP BY d.display_name
+                    """,
+                    params,
+                )
+            )
+        }
+        opener_rows = _dict_rows(
+            conn.execute(
+                f"""
+                WITH opener_games AS (
+                  SELECT DISTINCT h.game_id, h.display_name, COALESCE(h.type_category, 'Other') AS type_category
+                  FROM game_opening_hand_cards h
+                  JOIN participants p ON p.id = h.participant_id AND p.role = 'player'
+                  JOIN games g ON g.id = h.game_id
+                  WHERE {where}
+                )
+                SELECT
+                  og.display_name,
+                  og.type_category,
+                  COUNT(*) AS games_in_opener,
+                  SUM(g.outcome = 'win') AS wins,
+                  SUM(g.outcome = 'loss') AS losses,
+                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
+                FROM opener_games og
+                JOIN games g ON g.id = og.game_id
+                GROUP BY og.display_name, og.type_category
+                ORDER BY games_in_opener DESC, og.display_name
+                LIMIT 60
+                """,
+                params,
+            )
+        )
+        mulligan_rows = _dict_rows(
+            conn.execute(
+                f"""
+                SELECT
+                  COALESCE(p.mulligans, 0) AS mulligans,
+                  COUNT(*) AS games,
+                  SUM(g.outcome = 'win') AS wins,
+                  SUM(g.outcome = 'loss') AS losses,
+                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
+                FROM games g
+                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                WHERE {where}
+                GROUP BY COALESCE(p.mulligans, 0)
+                ORDER BY mulligans
+                """,
+                params,
+            )
+        )
+        recent_rows = _dict_rows(
+            conn.execute(
+                f"""
+                SELECT
+                  g.id AS game_id,
+                  g.started_at,
+                  g.outcome,
+                  g.duration_seconds,
+                  g.total_turns,
+                  m.format AS raw_format,
+                  p.mulligans,
+                  CASE p.went_first WHEN 1 THEN 'On the play' WHEN 0 THEN 'On the draw' ELSE NULL END AS play_draw
+                FROM games g
+                JOIN matches m ON m.id = g.match_id
+                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                WHERE {where}
+                ORDER BY g.started_at DESC
+                LIMIT 25
+                """,
+                params,
+            )
+        )
+        trend_rows = _dict_rows(
+            conn.execute(
+                f"""
+                SELECT
+                  g.id AS game_id,
+                  COALESCE(g.started_at, g.ended_at) AS started_at,
+                  g.outcome
+                FROM games g
+                WHERE {where} AND g.outcome IN ('win', 'loss')
+                ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
+                LIMIT 200
+                """,
+                params,
+            )
+        )
+        trend_rows.reverse()
+        deck_visuals = _deck_visuals(conn)
+
+    for row in format_rows:
+        row["format_label"] = format_label(row.get("raw_format"))
+    for row in recent_rows:
+        row["format_label"] = format_label(row.get("raw_format"))
+    for row in card_rows:
+        row["display_name"] = _clean_card_name(row.get("display_name"))
+        row["times_drawn"] = drawn_counts.get(row["display_name"], 0)
+    for row in opener_rows:
+        row["display_name"] = _clean_card_name(row.get("display_name"))
+    return {
+        "deck_name": deck_name,
+        "deck_visual": deck_visuals.get(deck_name, _empty_deck_visual(deck_name)),
+        "summary": {
+            "games": int(summary[0] or 0),
+            "wins": int(summary[1] or 0),
+            "losses": int(summary[2] or 0),
+            "draws": int(summary[3] or 0),
+            "win_rate": summary[4],
+        },
+        "profile": {
+            "avg_duration_seconds": profile[0],
+            "avg_turns": profile[1],
+            "avg_mulligans": profile[2],
+            "on_play_pct": profile[3],
+        },
+        "formats": format_rows,
+        "card_performance": card_rows,
+        "opening_hands": opener_rows,
+        "mulligans": mulligan_rows,
+        "recent": recent_rows,
+        "trend": trend_rows,
+    }
+
+
+def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str, Any]:
+    """Return a detailed, game-scoped dashboard payload.
+
+    Raises LookupError when the game id is unknown.
+    """
+    db_path = Path(db_path).expanduser()
+    if not db_path.is_file():
+        raise FileNotFoundError(f"Dashboard database not found: {db_path}")
+    db_uri = db_path.resolve().as_uri() + "?mode=ro"
+    with sqlite3.connect(db_uri, uri=True) as conn:
+        conn.execute("PRAGMA query_only = ON")
+        game_rows = _dict_rows(
+            conn.execute(
+                """
+                SELECT
+                  g.id AS game_id,
+                  g.match_id,
+                  g.game_number,
+                  g.started_at,
+                  g.ended_at,
+                  g.duration_seconds,
+                  g.total_turns,
+                  g.player_turns,
+                  g.opponent_turns,
+                  g.outcome,
+                  g.outcome_reason,
+                  m.format AS raw_format,
+                  m.best_of
+                FROM games g
+                JOIN matches m ON m.id = g.match_id
+                WHERE g.id = ?
+                """,
+                (game_id,),
+            )
+        )
+        if not game_rows:
+            raise LookupError(f"No recorded game for id: {game_id}")
+        game = game_rows[0]
+        game["format_label"] = format_label(game.get("raw_format"))
+
+        participant_rows = _dict_rows(
+            conn.execute(
+                """
+                SELECT
+                  id,
+                  role,
+                  seat_id,
+                  display_name,
+                  deck_name,
+                  went_first,
+                  mulligans,
+                  opening_hand_size,
+                  starting_life,
+                  ending_life
+                FROM participants
+                WHERE game_id = ?
+                ORDER BY CASE role WHEN 'player' THEN 0 WHEN 'opponent' THEN 1 ELSE 2 END
+                """,
+                (game_id,),
+            )
+        )
+        player = next((row for row in participant_rows if row.get("role") == "player"), None)
+        opponent = next((row for row in participant_rows if row.get("role") == "opponent"), None)
+        player_participant_id = player.get("id") if player else None
+
+        opening_hand = _dict_rows(
+            conn.execute(
+                """
+                SELECT display_name, COALESCE(type_category, 'Other') AS type_category, hand_position, copy_number
+                FROM game_opening_hand_cards
+                WHERE game_id = ? AND participant_id = ?
+                ORDER BY hand_position, copy_number
+                """,
+                (game_id, player_participant_id),
+            )
+        )
+        drawn = _dict_rows(
+            conn.execute(
+                """
+                SELECT display_name, COALESCE(type_category, 'Other') AS type_category, turn_number, draw_position, copy_number
+                FROM game_drawn_cards
+                WHERE game_id = ? AND participant_id = ?
+                ORDER BY draw_position
+                """,
+                (game_id, player_participant_id),
+            )
+        )
+        cards_played = _dict_rows(
+            conn.execute(
+                """
+                SELECT display_name, COALESCE(type_category, 'Other') AS type_category, played_count
+                FROM game_card_summary
+                WHERE game_id = ? AND participant_id = ? AND played_count > 0
+                ORDER BY played_count DESC, display_name
+                """,
+                (game_id, player_participant_id),
+            )
+        )
+        for row in cards_played:
+            row["display_name"] = _clean_card_name(row.get("display_name"))
+
+        timeline = _dict_rows(
+            conn.execute(
+                """
+                SELECT
+                  turn_number,
+                  phase,
+                  step,
+                  event_type,
+                  actor_role,
+                  text,
+                  player_life,
+                  opponent_life
+                FROM game_events
+                WHERE game_id = ?
+                ORDER BY event_time, id
+                LIMIT 500
+                """,
+                (game_id,),
+            )
+        )
+        life_curve = [
+            {
+                "turn_number": row.get("turn_number"),
+                "player_life": row.get("player_life"),
+                "opponent_life": row.get("opponent_life"),
+            }
+            for row in timeline
+            if row.get("player_life") is not None and row.get("opponent_life") is not None
+        ]
+
+    return {
+        "game": game,
+        "player": player or {},
+        "opponent": opponent or {},
+        "opening_hand": opening_hand,
+        "drawn": drawn,
+        "cards_played": cards_played,
+        "timeline": timeline,
+        "life_curve": life_curve,
+    }
+
+
+def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[str, Any]:
+    """Return drill-down analytics for one clean card name.
+
+    Raises LookupError when the card has no player summary rows.
+    """
+    clean_name = _clean_card_name(card_name) or card_name
+    db_path = Path(db_path).expanduser()
+    if not db_path.is_file():
+        raise FileNotFoundError(f"Dashboard database not found: {db_path}")
+    db_uri = db_path.resolve().as_uri() + "?mode=ro"
+    with sqlite3.connect(db_uri, uri=True) as conn:
+        conn.execute("PRAGMA query_only = ON")
+        match_params = (clean_name, f"{clean_name} (%")
+        summary = conn.execute(
+            """
+            SELECT
+              COUNT(DISTINCT g.id) AS games_seen,
+              COALESCE(SUM(s.played_count), 0) AS total_played,
+              SUM(g.outcome = 'win') AS wins,
+              SUM(g.outcome = 'loss') AS losses,
+              ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
+            FROM game_card_summary s
+            JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
+            JOIN games g ON g.id = s.game_id
+            WHERE s.display_name = ? OR s.display_name LIKE ?
+            """,
+            match_params,
+        ).fetchone()
+        if not summary or not summary[0]:
+            raise LookupError(f"No recorded card for name: {clean_name}")
+        by_deck = _dict_rows(
+            conn.execute(
+                """
+                SELECT
+                  COALESCE(p.deck_name, '(unknown)') AS deck_name,
+                  COUNT(DISTINCT g.id) AS games_seen,
+                  COALESCE(SUM(s.played_count), 0) AS total_played,
+                  SUM(g.outcome = 'win') AS wins,
+                  SUM(g.outcome = 'loss') AS losses,
+                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
+                FROM game_card_summary s
+                JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
+                JOIN games g ON g.id = s.game_id
+                WHERE s.display_name = ? OR s.display_name LIKE ?
+                GROUP BY p.deck_name
+                ORDER BY games_seen DESC, win_rate DESC, deck_name
+                LIMIT 50
+                """,
+                match_params,
+            )
+        )
+        opener = conn.execute(
+            """
+            SELECT
+              COUNT(DISTINCT g.id) AS games_in_opener,
+              SUM(g.outcome = 'win') AS wins,
+              SUM(g.outcome = 'loss') AS losses,
+              ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
+            FROM game_opening_hand_cards h
+            JOIN participants p ON p.id = h.participant_id AND p.role = 'player'
+            JOIN games g ON g.id = h.game_id
+            WHERE h.display_name = ? OR h.display_name LIKE ?
+            """,
+            match_params,
+        ).fetchone()
+        drawn = conn.execute(
+            """
+            SELECT COUNT(*) AS times_drawn
+            FROM game_drawn_cards d
+            JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
+            WHERE d.display_name = ? OR d.display_name LIKE ?
+            """,
+            match_params,
+        ).fetchone()
+
+    return {
+        "card_name": clean_name,
+        "image_url": _card_image_url(None, clean_name),
+        "summary": {
+            "games_seen": int(summary[0] or 0),
+            "total_played": int(summary[1] or 0),
+            "wins": int(summary[2] or 0),
+            "losses": int(summary[3] or 0),
+            "win_rate": summary[4],
+        },
+        "by_deck": by_deck,
+        "opener_impact": {
+            "games_in_opener": int(opener[0] or 0) if opener else 0,
+            "wins": int(opener[1] or 0) if opener else 0,
+            "losses": int(opener[2] or 0) if opener else 0,
+            "win_rate": opener[3] if opener else None,
+            "times_drawn": int(drawn[0] or 0) if drawn else 0,
+        },
     }
 
 
@@ -553,9 +1209,129 @@ class DashboardHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         request_path = parsed.path
         if request_path == "/api/snapshot":
+            query = parse_qs(parsed.query)
+            deck = query.get("deck", [None])[0] or None
+            fmt = query.get("format", [None])[0] or None
+            days_raw = query.get("days", [None])[0]
             try:
-                body = render_snapshot_json(dashboard_snapshot(self.db_path))
+                days = int(days_raw) if days_raw else None
+            except ValueError:
+                days = None
+            if days is not None and days <= 0:
+                days = None
+            try:
+                body = render_snapshot_json(dashboard_snapshot(self.db_path, deck=deck, fmt=fmt, days=days))
             except FileNotFoundError as exc:
+                _send_bytes(
+                    self,
+                    404,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            except Exception as exc:
+                _send_bytes(
+                    self,
+                    500,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
+        if request_path == "/api/deck":
+            query = parse_qs(parsed.query)
+            deck_name = query.get("name", [None])[0]
+            fmt = query.get("format", [None])[0] or None
+            days_raw = query.get("days", [None])[0]
+            try:
+                days = int(days_raw) if days_raw else None
+            except ValueError:
+                days = None
+            if days is not None and days <= 0:
+                days = None
+            if not deck_name:
+                _send_bytes(
+                    self,
+                    400,
+                    b"Missing required query parameter: name",
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            try:
+                body = render_snapshot_json(deck_detail(self.db_path, deck_name, fmt=fmt, days=days))
+            except (FileNotFoundError, LookupError) as exc:
+                _send_bytes(
+                    self,
+                    404,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            except Exception as exc:
+                _send_bytes(
+                    self,
+                    500,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
+        if request_path == "/api/game":
+            query = parse_qs(parsed.query)
+            game_id = query.get("id", [None])[0]
+            if not game_id:
+                _send_bytes(
+                    self,
+                    400,
+                    b"Missing required query parameter: id",
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            try:
+                body = render_snapshot_json(game_detail(self.db_path, game_id))
+            except (FileNotFoundError, LookupError) as exc:
+                _send_bytes(
+                    self,
+                    404,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            except Exception as exc:
+                _send_bytes(
+                    self,
+                    500,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
+        if request_path == "/api/card":
+            query = parse_qs(parsed.query)
+            name = query.get("name", [None])[0]
+            if not name:
+                _send_bytes(
+                    self,
+                    400,
+                    b"Missing required query parameter: name",
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            try:
+                body = render_snapshot_json(card_detail(self.db_path, name))
+            except (FileNotFoundError, LookupError) as exc:
                 _send_bytes(
                     self,
                     404,

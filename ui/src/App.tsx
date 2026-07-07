@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   fetchDashboardSnapshot,
   type DashboardSnapshot,
@@ -7,16 +7,31 @@ import {
   type DrawQualityRow,
   type DrawnCardRow,
   type FormatRow,
+  type MatchRow,
   type MomentumRow,
   type PlayDrawRow,
   type RecentGameRow,
+  type SessionRow,
+  type SnapshotFilters,
 } from './api';
 import { Badge } from './components/Badge';
+import { CardDetailPage } from './components/CardDetailPage';
+import { CardLink } from './components/CardLink';
+import { DeckDetailPage } from './components/DeckDetailPage';
+import { DeckLink } from './components/DeckLink';
 import { DeckVisual } from './components/DeckVisual';
+import { FilterBar } from './components/FilterBar';
+import { GameDetailPage } from './components/GameDetailPage';
 import { MetricCard } from './components/MetricCard';
 import { SortableTable, type Column } from './components/SortableTable';
+import { TrendChart } from './components/TrendChart';
+import { WinRateBar } from './components/WinRateBar';
 import { AppShell } from './components/AppShell';
 import { formatPercent, metricCards } from './dashboardData';
+import { formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone } from './format';
+import { cardNavItems, deckNavItems, gameNavItems } from './nav';
+import { RouteFiltersContext } from './routeFilters';
+import { dashboardRouteHash, gameRouteHash, parseCardRoute, parseDashboardRouteFilters, parseDeckRoute, parseGameRoute } from './routes';
 import './styles.css';
 import { getInitialTheme, persistTheme, type ThemeName } from './theme';
 
@@ -26,42 +41,6 @@ type LoadState =
   | { status: 'error'; message: string };
 
 const SNAPSHOT_REFRESH_MS = 20_000;
-
-function formatNumber(value: number | null | undefined): string {
-  return value === null || value === undefined ? '—' : String(value);
-}
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(date);
-}
-
-function formatDuration(seconds: number | null | undefined): string {
-  if (seconds === null || seconds === undefined) {
-    return '—';
-  }
-  const minutes = Math.round(seconds / 60);
-  return `${minutes} min`;
-}
-
-function outcomeTone(outcome: string | null | undefined): 'neutral' | 'win' | 'loss' | 'draw' {
-  if (outcome === 'win' || outcome === 'loss' || outcome === 'draw') {
-    return outcome;
-  }
-  return 'neutral';
-}
-
-function outcomeLabel(outcome: string | null | undefined): string {
-  return outcome ? outcome[0].toUpperCase() + outcome.slice(1) : 'Unknown';
-}
 
 function readInitialTheme(): ThemeName {
   try {
@@ -83,13 +62,40 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
 }
 
-function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
+function Section({
+  id,
+  title,
+  description,
+  children,
+}: {
+  id: string;
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
   return (
     <section className="dashboard-section" id={id}>
       <div className="section-heading">
-        <h3>{title}</h3>
+        <div>
+          <h3>{title}</h3>
+          {description ? <p className="section-description">{description}</p> : null}
+        </div>
       </div>
       {children}
+    </section>
+  );
+}
+
+function SetupCard() {
+  return (
+    <section className="setup-card" id="overview">
+      <span className="eyebrow">Getting started</span>
+      <h3>No tracked games yet</h3>
+      <p>Run the tracker while playing Arena. Finished games will appear here automatically.</p>
+      <div className="setup-commands">
+        <code>venv/bin/python -m mtga_tracker.main</code>
+        <code>venv/bin/python -m mtga_tracker.dashboard</code>
+      </div>
     </section>
   );
 }
@@ -102,21 +108,24 @@ const deckColumns: Column<DeckRow>[] = [
       <div className="deck-cell">
         <DeckVisual deckName={row.deck_name} visual={row.deck_visual} />
         <div>
-          <strong>{row.deck_name}</strong>
-          <span>{row.deck_visual.source === 'local_metadata' ? 'Local metadata' : 'Deck name fallback'}</span>
+          <DeckLink deckName={row.deck_name}>
+            <strong>{row.deck_name}</strong>
+          </DeckLink>
+          <span>{row.deck_visual.source === 'local_metadata' && row.deck_visual.card_name ? row.deck_visual.card_name : 'No card data yet'}</span>
         </div>
       </div>
     ),
     sortValue: (row) => row.deck_name,
   },
-  { key: 'games', header: 'Games' },
-  { key: 'wins', header: 'Wins' },
-  { key: 'losses', header: 'Losses' },
+  { key: 'games', header: 'Games', numeric: true },
+  { key: 'wins', header: 'Wins', numeric: true },
+  { key: 'losses', header: 'Losses', numeric: true },
   {
     key: 'win_rate',
     header: 'Win Rate',
-    render: (row) => formatPercent(row.win_rate),
+    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
     sortValue: (row) => row.win_rate,
+    numeric: true,
   },
 ];
 
@@ -128,12 +137,13 @@ const formatColumns: Column<FormatRow>[] = [
     render: (row) => row.raw_format ?? '—',
     sortValue: (row) => row.raw_format,
   },
-  { key: 'games', header: 'Games' },
+  { key: 'games', header: 'Games', numeric: true },
   {
     key: 'win_rate',
     header: 'Win Rate',
-    render: (row) => formatPercent(row.win_rate),
+    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
     sortValue: (row) => row.win_rate,
+    numeric: true,
   },
 ];
 
@@ -144,33 +154,40 @@ const playDrawColumns: Column<PlayDrawRow>[] = [
     render: (row) => row.play_draw ?? 'Unknown',
     sortValue: (row) => row.play_draw,
   },
-  { key: 'games', header: 'Games' },
-  { key: 'wins', header: 'Wins' },
-  { key: 'losses', header: 'Losses' },
+  { key: 'games', header: 'Games', numeric: true },
+  { key: 'wins', header: 'Wins', numeric: true },
+  { key: 'losses', header: 'Losses', numeric: true },
   {
     key: 'win_rate',
     header: 'Win Rate',
-    render: (row) => formatPercent(row.win_rate),
+    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
     sortValue: (row) => row.win_rate,
+    numeric: true,
   },
 ];
 
 const deckPlayDrawColumns: Column<DeckPlayDrawRow>[] = [
-  { key: 'deck_name', header: 'Deck' },
+  {
+    key: 'deck_name',
+    header: 'Deck',
+    render: (row) => <DeckLink deckName={row.deck_name} />,
+    sortValue: (row) => row.deck_name,
+  },
   {
     key: 'play_draw',
     header: 'Play / Draw',
     render: (row) => row.play_draw ?? 'Unknown',
     sortValue: (row) => row.play_draw,
   },
-  { key: 'games', header: 'Games' },
-  { key: 'wins', header: 'Wins' },
-  { key: 'losses', header: 'Losses' },
+  { key: 'games', header: 'Games', numeric: true },
+  { key: 'wins', header: 'Wins', numeric: true },
+  { key: 'losses', header: 'Losses', numeric: true },
   {
     key: 'win_rate',
     header: 'Win Rate',
-    render: (row) => formatPercent(row.win_rate),
+    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
     sortValue: (row) => row.win_rate,
+    numeric: true,
   },
 ];
 
@@ -178,10 +195,15 @@ const drawQualityColumns: Column<DrawQualityRow>[] = [
   {
     key: 'started_at',
     header: 'Started',
-    render: (row) => formatDateTime(row.started_at),
+    render: (row) => <a href={gameRouteHash(row.game_id)}>{formatDateTime(row.started_at)}</a>,
     sortValue: (row) => row.started_at,
   },
-  { key: 'deck_name', header: 'Deck' },
+  {
+    key: 'deck_name',
+    header: 'Deck',
+    render: (row) => <DeckLink deckName={row.deck_name} />,
+    sortValue: (row) => row.deck_name,
+  },
   {
     key: 'outcome',
     header: 'Outcome',
@@ -193,73 +215,87 @@ const drawQualityColumns: Column<DrawQualityRow>[] = [
     header: 'Cards Seen',
     render: (row) => formatNumber(row.cards_seen),
     sortValue: (row) => row.cards_seen,
+    numeric: true,
   },
   {
     key: 'lands_seen',
     header: 'Lands Seen',
     render: (row) => formatNumber(row.lands_seen),
     sortValue: (row) => row.lands_seen,
+    numeric: true,
   },
   {
     key: 'land_seen_pct',
     header: 'Land Seen',
     render: (row) => formatPercent(row.land_seen_pct),
     sortValue: (row) => row.land_seen_pct,
+    numeric: true,
   },
   {
     key: 'opening_cards',
     header: 'Opening',
     render: (row) => formatNumber(row.opening_cards),
     sortValue: (row) => row.opening_cards,
+    numeric: true,
   },
   {
     key: 'known_draws',
     header: 'Known Draws',
     render: (row) => formatNumber(row.known_draws),
     sortValue: (row) => row.known_draws,
+    numeric: true,
   },
 ];
 
 const drawnCardColumns: Column<DrawnCardRow>[] = [
-  { key: 'display_name', header: 'Card' },
+  {
+    key: 'display_name',
+    header: 'Card',
+    render: (row) => <CardLink cardName={row.display_name} />,
+    sortValue: (row) => row.display_name,
+  },
   {
     key: 'type_category',
     header: 'Type',
     render: (row) => row.type_category ?? 'Other',
     sortValue: (row) => row.type_category,
   },
-  { key: 'times_drawn', header: 'Times Drawn' },
-  { key: 'games_seen', header: 'Games Seen' },
+  { key: 'times_drawn', header: 'Times Drawn', numeric: true },
+  { key: 'games_seen', header: 'Games Seen', numeric: true },
   {
     key: 'pct_of_games',
     header: 'Game Share',
     render: (row) => formatPercent(row.pct_of_games),
     sortValue: (row) => row.pct_of_games,
+    numeric: true,
   },
 ];
 
 const momentumColumns: Column<MomentumRow>[] = [
   { key: 'split', header: 'Split' },
-  { key: 'games', header: 'Games' },
-  { key: 'wins', header: 'Wins' },
-  { key: 'losses', header: 'Losses' },
+  { key: 'games', header: 'Games', numeric: true },
+  { key: 'wins', header: 'Wins', numeric: true },
+  { key: 'losses', header: 'Losses', numeric: true },
   {
     key: 'win_rate',
     header: 'Win Rate',
-    render: (row) => formatPercent(row.win_rate),
+    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
     sortValue: (row) => row.win_rate,
+    numeric: true,
   },
   {
     key: 'avg_mulligans',
     header: 'Avg Mulligans',
     render: (row) => formatNumber(row.avg_mulligans),
     sortValue: (row) => row.avg_mulligans,
+    numeric: true,
   },
   {
     key: 'on_play_pct',
     header: 'On Play',
     render: (row) => formatPercent(row.on_play_pct),
     sortValue: (row) => row.on_play_pct,
+    numeric: true,
   },
 ];
 
@@ -267,10 +303,15 @@ const recentColumns: Column<RecentGameRow>[] = [
   {
     key: 'started_at',
     header: 'Started',
-    render: (row) => formatDateTime(row.started_at),
+    render: (row) => <a href={gameRouteHash(row.game_id)}>{formatDateTime(row.started_at)}</a>,
     sortValue: (row) => row.started_at,
   },
-  { key: 'deck_name', header: 'Deck' },
+  {
+    key: 'deck_name',
+    header: 'Deck',
+    render: (row) => <DeckLink deckName={row.deck_name} />,
+    sortValue: (row) => row.deck_name,
+  },
   { key: 'format_label', header: 'Format' },
   {
     key: 'outcome',
@@ -283,24 +324,127 @@ const recentColumns: Column<RecentGameRow>[] = [
     header: 'Mulligans',
     render: (row) => formatNumber(row.mulligans),
     sortValue: (row) => row.mulligans,
+    numeric: true,
   },
   {
     key: 'duration_seconds',
     header: 'Duration',
     render: (row) => formatDuration(row.duration_seconds),
     sortValue: (row) => row.duration_seconds,
+    numeric: true,
+  },
+];
+
+const matchColumns: Column<MatchRow>[] = [
+  {
+    key: 'started_at',
+    header: 'Started',
+    render: (row) => (row.started_at ? formatDateTime(row.started_at) : '—'),
+    sortValue: (row) => row.started_at,
+  },
+  {
+    key: 'deck_name',
+    header: 'Deck',
+    render: (row) => <DeckLink deckName={row.deck_name} />,
+    sortValue: (row) => row.deck_name,
+  },
+  { key: 'format_label', header: 'Format' },
+  {
+    key: 'best_of',
+    header: 'Best Of',
+    render: (row) => formatNumber(row.best_of),
+    sortValue: (row) => row.best_of,
+    numeric: true,
+  },
+  { key: 'record', header: 'Record' },
+  {
+    key: 'outcome',
+    header: 'Outcome',
+    render: (row) => <Badge tone={outcomeTone(row.outcome)}>{outcomeLabel(row.outcome)}</Badge>,
+    sortValue: (row) => row.outcome,
+  },
+];
+
+const sessionColumns: Column<SessionRow>[] = [
+  {
+    key: 'started_at',
+    header: 'Started',
+    render: (row) => formatDateTime(row.started_at),
+    sortValue: (row) => row.started_at,
+  },
+  { key: 'games', header: 'Games', numeric: true },
+  { key: 'wins', header: 'Wins', numeric: true },
+  { key: 'losses', header: 'Losses', numeric: true },
+  { key: 'draws', header: 'Draws', numeric: true },
+  {
+    key: 'win_rate',
+    header: 'Win Rate',
+    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
+    sortValue: (row) => row.win_rate,
+    numeric: true,
+  },
+  {
+    key: 'duration_seconds',
+    header: 'Duration',
+    render: (row) => formatDuration(row.duration_seconds),
+    sortValue: (row) => row.duration_seconds,
+    numeric: true,
   },
 ];
 
 export default function App() {
   const [theme, setTheme] = useState<ThemeName>(() => readInitialTheme());
+  const [filters, setFilters] = useState<SnapshotFilters>(() => parseDashboardRouteFilters(window.location.hash) ?? {});
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
+  const [routeHash, setRouteHash] = useState<string>(() => window.location.hash);
+  const deckRoute = useMemo(() => parseDeckRoute(routeHash), [routeHash]);
+  const gameRoute = useMemo(() => parseGameRoute(routeHash), [routeHash]);
+  const cardRoute = useMemo(() => parseCardRoute(routeHash), [routeHash]);
+  const deckName = deckRoute?.name ?? null;
+  const deckRouteFilters = deckRoute?.filters ?? {};
+  const activeRouteFilters = deckRoute ? deckRouteFilters : filters;
+  const deckBackHref = deckRoute ? dashboardRouteHash(deckRoute.filters) : '#overview';
+  const deckPageNavItems = useMemo(
+    () =>
+      deckRoute
+        ? deckNavItems.map((item) =>
+            item.id === 'back-to-dashboard' ? { ...item, route: dashboardRouteHash(deckRoute.filters) } : item,
+          )
+        : deckNavItems,
+    [deckRoute],
+  );
+
+  useEffect(() => {
+    function onHashChange() {
+      const nextHash = window.location.hash;
+      setRouteHash(nextHash);
+      const dashboardFilters = parseDashboardRouteFilters(nextHash);
+      if (dashboardFilters) {
+        setFilters(dashboardFilters);
+      }
+    }
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
 
   useEffect(() => {
+    document.title = deckRoute
+      ? `${deckRoute.name} – MTGA Tracker`
+      : gameRoute
+        ? 'Game – MTGA Tracker'
+        : cardRoute
+          ? `${cardRoute} – MTGA Tracker`
+          : 'MTGA Tracker Dashboard';
+  }, [deckRoute, gameRoute, cardRoute]);
+
+  useEffect(() => {
+    if (deckName || gameRoute || cardRoute) {
+      return;
+    }
     let ignore = false;
     let requestSequence = 0;
     let activeController: AbortController | null = null;
@@ -312,7 +456,7 @@ export default function App() {
       const controller = new AbortController();
       activeController = controller;
       try {
-        const snapshot = await fetchDashboardSnapshot(controller.signal);
+        const snapshot = await fetchDashboardSnapshot(filters, controller.signal);
         if (!ignore && sequence === requestSequence) {
           setLoadState({ status: 'loaded', snapshot, lastUpdated: new Date().toISOString() });
         }
@@ -336,36 +480,86 @@ export default function App() {
       activeController?.abort();
       window.clearInterval(refreshId);
     };
-  }, []);
+  }, [filters, deckName, gameRoute, cardRoute]);
 
   function toggleTheme() {
     setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
   }
 
   return (
-    <AppShell theme={theme} onToggleTheme={toggleTheme}>
-      {loadState.status === 'loading' ? <p className="state-panel">Loading dashboard snapshot...</p> : null}
-      {loadState.status === 'error' ? (
-        <div className="state-panel error-state" role="alert">
-          {loadState.message}
-        </div>
-      ) : null}
-      {loadState.status === 'loaded' ? (
-        <Dashboard lastUpdated={loadState.lastUpdated} refreshError={loadState.refreshError} snapshot={loadState.snapshot} />
-      ) : null}
-    </AppShell>
+    <RouteFiltersContext.Provider value={activeRouteFilters}>
+      <AppShell
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        navItems={cardRoute ? cardNavItems : gameRoute ? gameNavItems : deckName ? deckPageNavItems : undefined}
+        eyebrow={cardRoute ? 'Card breakdown' : gameRoute ? 'Game breakdown' : deckName ? 'Deck breakdown' : 'SQLite analytics'}
+        heading={cardRoute ?? (gameRoute ? 'Game detail' : deckName ?? 'Performance overview')}
+      >
+        {cardRoute ? (
+          <CardDetailPage key={cardRoute} cardName={cardRoute} />
+        ) : gameRoute ? (
+          <GameDetailPage key={gameRoute} gameId={gameRoute} />
+        ) : deckName ? (
+          <DeckDetailPage
+            key={`${deckName}-${deckBackHref}`}
+            backHref={deckBackHref}
+            deckName={deckName}
+            filters={deckRouteFilters}
+          />
+        ) : (
+          <>
+            {loadState.status === 'loading' ? <p className="state-panel">Loading dashboard snapshot...</p> : null}
+            {loadState.status === 'error' ? (
+              <div className="state-panel error-state" role="alert">
+                {loadState.message}
+              </div>
+            ) : null}
+            {loadState.status === 'loaded' ? (
+              <Dashboard
+                filters={filters}
+                lastUpdated={loadState.lastUpdated}
+                onFiltersChange={setFilters}
+                refreshError={loadState.refreshError}
+                snapshot={loadState.snapshot}
+              />
+            ) : null}
+          </>
+        )}
+      </AppShell>
+    </RouteFiltersContext.Provider>
   );
 }
 
 function Dashboard({
+  filters,
   lastUpdated,
+  onFiltersChange,
   refreshError,
   snapshot,
 }: {
+  filters: SnapshotFilters;
   lastUpdated: string;
+  onFiltersChange: (filters: SnapshotFilters) => void;
   refreshError?: string;
   snapshot: DashboardSnapshot;
 }) {
+  const [deckSearch, setDeckSearch] = useState('');
+  const [drawnCardSearch, setDrawnCardSearch] = useState('');
+  const filteredDecks = useMemo(() => {
+    const query = deckSearch.trim().toLocaleLowerCase();
+    if (!query) {
+      return snapshot.decks;
+    }
+    return snapshot.decks.filter((row) => row.deck_name.toLocaleLowerCase().includes(query));
+  }, [deckSearch, snapshot.decks]);
+  const filteredDrawnCards = useMemo(() => {
+    const query = drawnCardSearch.trim().toLocaleLowerCase();
+    if (!query) {
+      return snapshot.drawn_cards;
+    }
+    return snapshot.drawn_cards.filter((row) => row.display_name.toLocaleLowerCase().includes(query));
+  }, [drawnCardSearch, snapshot.drawn_cards]);
+
   return (
     <>
       <div className={refreshError ? 'refresh-status refresh-status-error' : 'refresh-status'} role="status">
@@ -374,14 +568,41 @@ function Dashboard({
           : `Updated ${formatDateTime(lastUpdated)}`}
       </div>
 
+      {snapshot.summary.games === 0 ? (
+        <SetupCard />
+      ) : (
+        <>
+      <FilterBar filters={filters} onChange={onFiltersChange} options={snapshot.filter_options} />
+
       <section className="metric-grid" id="overview" aria-label="Overview metrics">
-        {metricCards(snapshot).map((metric) => (
-          <MetricCard key={metric.label} label={metric.label} value={metric.value} />
+        {metricCards(snapshot, filters).map((metric) => (
+          <MetricCard key={metric.label} href={metric.href} label={metric.label} value={metric.value} />
         ))}
       </section>
 
+      <Section
+        id="trend"
+        title="Win Rate Trend"
+        description="Rolling win rate across your most recent finished games."
+      >
+        <div className="trend-wrap">
+          <TrendChart rows={snapshot.trend} />
+        </div>
+      </Section>
+
       <Section id="decks" title="Decks">
-        <SortableTable caption="Deck performance" columns={deckColumns} getRowKey={(row) => row.deck_name} rows={snapshot.decks} />
+        <div className="table-filter">
+          <label>
+            <span>Search decks</span>
+            <input
+              type="search"
+              value={deckSearch}
+              onChange={(event) => setDeckSearch(event.target.value)}
+              placeholder="Deck name"
+            />
+          </label>
+        </div>
+        <SortableTable caption="Deck performance" columns={deckColumns} getRowKey={(row) => row.deck_name} rows={filteredDecks} />
       </Section>
 
       <Section id="formats" title="Formats">
@@ -411,7 +632,11 @@ function Dashboard({
         />
       </Section>
 
-      <Section id="draw-quality" title="Draw Quality">
+      <Section
+        id="draw-quality"
+        title="Draw Quality"
+        description="Opening hands plus known visible draws. Older games may only have opening-hand data."
+      >
         <SortableTable
           caption="Draw quality by game"
           columns={drawQualityColumns}
@@ -421,15 +646,30 @@ function Dashboard({
       </Section>
 
       <Section id="visible-drawn-cards" title="Visible Drawn Cards">
+        <div className="table-filter">
+          <label>
+            <span>Search cards</span>
+            <input
+              type="search"
+              value={drawnCardSearch}
+              onChange={(event) => setDrawnCardSearch(event.target.value)}
+              placeholder="Card name"
+            />
+          </label>
+        </div>
         <SortableTable
           caption="Visible drawn card frequency"
           columns={drawnCardColumns}
           getRowKey={(row) => `${row.display_name}-${row.type_category ?? 'unknown'}`}
-          rows={snapshot.drawn_cards}
+          rows={filteredDrawnCards}
         />
       </Section>
 
-      <Section id="momentum" title="Momentum">
+      <Section
+        id="momentum"
+        title="Momentum"
+        description="Next-game results after wins and losses, including mulligans and on-play percentage."
+      >
         <SortableTable caption="Momentum splits" columns={momentumColumns} getRowKey={(row) => row.split} rows={snapshot.momentum} />
       </Section>
 
@@ -441,6 +681,26 @@ function Dashboard({
           rows={snapshot.recent}
         />
       </Section>
+
+      <Section id="matches" title="Matches" description="Recent match recaps grouped across games in the same match.">
+        <SortableTable
+          caption="Recent matches"
+          columns={matchColumns}
+          getRowKey={(row) => row.match_id}
+          rows={snapshot.matches}
+        />
+      </Section>
+
+      <Section id="sessions" title="Sessions" description="Tracker runtime sessions with game volume and record.">
+        <SortableTable
+          caption="Tracker sessions"
+          columns={sessionColumns}
+          getRowKey={(row) => row.session_id}
+          rows={snapshot.sessions}
+        />
+      </Section>
+        </>
+      )}
     </>
   );
 }
