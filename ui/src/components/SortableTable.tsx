@@ -10,6 +10,7 @@ export interface Column<T extends object> {
   render?: (row: T) => ReactNode;
   sortValue?: (row: T) => SortValue;
   sortable?: boolean;
+  numeric?: boolean;
 }
 
 interface SortableTableProps<T extends object> {
@@ -73,7 +74,12 @@ export function SortableTable<T extends object>({
               const ariaSort = isActive ? (activeDirection === 'asc' ? 'ascending' : 'descending') : 'none';
 
               return (
-                <th key={String(column.key)} scope="col" aria-sort={ariaSort}>
+                <th
+                  key={String(column.key)}
+                  scope="col"
+                  aria-sort={ariaSort}
+                  className={column.numeric ? 'num' : undefined}
+                >
                   {isSortable ? (
                     <button className="table-sort" type="button" onClick={() => toggleSort(column.key)}>
                       {column.header}
@@ -91,7 +97,9 @@ export function SortableTable<T extends object>({
           {sortedRows.map((row) => (
             <tr key={getRowKey(row)}>
               {columns.map((column) => (
-                <td key={String(column.key)}>{column.render ? column.render(row) : String(row[column.key] ?? '')}</td>
+                <td key={String(column.key)} className={column.numeric ? 'num' : undefined}>
+                  {column.render ? column.render(row) : String(row[column.key] ?? '')}
+                </td>
               ))}
             </tr>
           ))}

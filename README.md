@@ -84,7 +84,15 @@ venv/bin/python -m mtga_tracker.dashboard
 cd ui && npm run dev
 ```
 
-The dashboard uses only local tracker data and local MTGA metadata. V1 does not fetch card art from external services.
+The dashboard reads only the local SQLite tracker database. The browser may request Scryfall art URLs for deck and card visuals when a card name is available; the tracker itself does not depend on network card resolution.
+
+Dashboard routes and endpoints:
+
+- `#/deck/<deck name>`: deck drill-down with card performance, opening hands, mulligans, formats, recent games, and filtered trends.
+- `#/game/<game id>`: game detail with life chart, opening hand, drawn cards, played cards, and timeline filter.
+- `#/card/<card name>`: card drill-down with by-deck performance and opening-hand impact.
+- `GET /api/snapshot?deck=&format=&days=`: dashboard aggregates, matches, sessions, trend, and filter options.
+- `GET /api/deck?name=&format=&days=`, `GET /api/game?id=`, and `GET /api/card?name=`: detail payloads for the hash routes.
 
 Stop the dashboard from the terminal where it is running:
 ```text
