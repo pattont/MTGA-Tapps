@@ -8,6 +8,13 @@
 - Added card drill-down routes with card art, by-deck performance, and opening-hand impact.
 - Added filter-aware deck routes, sidebar scrollspy, deck/card table search, match recap rows, session recap rows, and empty-dashboard setup guidance.
 - Extended the local dashboard API with `/api/game`, `/api/card`, filtered `/api/deck`, match/session snapshot data, and larger deck/card result limits.
+- Added global tracked-card search with usage-ranked autocomplete results and direct card detail navigation.
+- Expanded card analytics to include player and opponent usage, with compact side-by-side and deck tables.
+- Added per-game draw totals, land-draw percentage, and Flood detection for games above 50% land draws.
+- Preserved dashboard section context when opening a game so Back returns to the originating table and scroll position.
+- Merged Draw Quality into Recent Games and moved Recent Games directly below Win Rate Trend in dashboard navigation.
+- Reordered dashboard content so its top-to-bottom section sequence exactly matches sidebar navigation.
+- Consolidated Play / Draw and Momentum into Overview and replaced intersection-based navigation highlighting with position-based scroll tracking.
 
 ## v0.4.0 - Complete Game Tracking & Auto-Summary (2025-11-19)
 

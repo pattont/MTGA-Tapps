@@ -433,6 +433,7 @@ class TrackerLifecycleMixin:
 
     def _reset_new_game_tracking(self, *, opening_mulligan_prompt_seen: bool) -> None:
         """Initialize tracking fields for a newly detected game."""
+        pending_event_format = getattr(self, "_pending_event_format", None)
         self.game_state.format_str = "Unknown"
         self.game_state.match_type = "best_of_1"
         self._format_from_backfill = False
@@ -445,6 +446,7 @@ class TrackerLifecycleMixin:
         self.game_state.mulligan_count = 0
         self.game_state._hand_before_mulligan = []
         self.game_state._hand_before_mulligan_ids = []
+        self.game_state._hand_before_mulligan_instance_ids = []
         self.game_state._hand_before_mulligan_events = []
         self.game_state.opening_hand_capture_closed = False
         self.game_state.opening_mulligan_prompt_seen = opening_mulligan_prompt_seen
@@ -468,6 +470,10 @@ class TrackerLifecycleMixin:
         self._backfill_recent_match_metadata(
             max_lines=1800, force=True, trust_match_room_format=False
         )
+        pending_event_format = pending_event_format or getattr(self, "_pending_event_format", None)
+        if pending_event_format:
+            self._set_match_format(pending_event_format)
+        self._pending_event_format = None
         self._require_explicit_game_start = False
 
     def _hydrate_start_line_state(self, line: str) -> None:
@@ -805,7 +811,7 @@ class TrackerLifecycleMixin:
 
     def _record_session_outcome(self, outcome: str) -> None:
         """Record one game result in session totals exactly once."""
-        if self._session_stats_recorded_this_game:
+        if self._session_stats_recorded_this_game or self._is_untracked_match():
             return
 
         self.session_games_played += 1

@@ -89,9 +89,10 @@ The dashboard reads only the local SQLite tracker database. The browser may requ
 Dashboard routes and endpoints:
 
 - `#/deck/<deck name>`: deck drill-down with card performance, opening hands, mulligans, formats, recent games, and filtered trends.
-- `#/game/<game id>`: game detail with life chart, opening hand, drawn cards, played cards, and timeline filter.
+- `#/game/<game id>`: game detail with draw quality/flood detection, life chart, opening hand, drawn cards, played cards, and timeline filter.
 - `#/card/<card name>`: card drill-down with by-deck performance and opening-hand impact.
 - `GET /api/snapshot?deck=&format=&days=`: dashboard aggregates, matches, sessions, trend, and filter options.
+- `GET /api/cards?q=&limit=`: partial-name search across cards used by either side in tracked games.
 - `GET /api/deck?name=&format=&days=`, `GET /api/game?id=`, and `GET /api/card?name=`: detail payloads for the hash routes.
 
 Stop the dashboard from the terminal where it is running:

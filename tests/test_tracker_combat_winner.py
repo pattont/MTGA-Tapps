@@ -3190,7 +3190,7 @@ def test_match_room_traditional_standard_sets_best_of_three_format():
 
     assert tracker.game_state.format_str == "TraditionalStandard"
     assert tracker.game_state.match_type == "best_of_3"
-    assert tracker._friendly_format_label() == "Standard Best-of-3"
+    assert tracker._friendly_format_label() == "Standard Best-of-3 (Unranked)"
 
 
 def test_game_start_does_not_use_stale_backfilled_traditional_format(tmp_path, capsys):
@@ -3296,7 +3296,7 @@ def test_deck_metadata_traditional_standard_does_not_set_match_best_of_three_wit
     assert tracker.game_state.player_deck_name == "Standard Deck"
     assert tracker.game_state.format_str == "Unknown"
     assert tracker.game_state.match_type == "best_of_1"
-    assert tracker._friendly_format_label() == "Standard Best-of-1"
+    assert tracker._friendly_format_label() == "Standard Best-of-1 (Unranked)"
 
 
 def test_explicit_traditional_standard_deck_event_does_not_set_best_of_three_without_live_format():
@@ -3312,7 +3312,7 @@ def test_explicit_traditional_standard_deck_event_does_not_set_best_of_three_wit
     assert tracker.game_state.player_deck_name == "Standard Deck"
     assert tracker.game_state.format_str == "Unknown"
     assert tracker.game_state.match_type == "best_of_1"
-    assert tracker._friendly_format_label() == "Standard Best-of-1"
+    assert tracker._friendly_format_label() == "Standard Best-of-1 (Unranked)"
 
 
 def test_parse_match_metadata_sets_player_commander_from_command_zone():
@@ -3429,6 +3429,84 @@ def test_match_started_block_marks_sparky_games_not_saved(capsys):
     out = capsys.readouterr().out
 
     assert "Players: Tapps vs Sparky (Log Not Saved to DB)" in out
+
+
+def test_match_started_block_marks_momir_games_not_saved(capsys):
+    tracker = make_tracker()
+    tracker.game_state.game_start_time = datetime(2026, 7, 15, 22, 51, 32)
+    tracker.game_state.format_str = "MWM_Momir"
+    tracker.game_state.player_display_name = "Tapps"
+    tracker.game_state.opponent_display_name = "Rival123"
+
+    tracker._print_match_started_block()
+    out = capsys.readouterr().out
+
+    assert "Format: Midweek Magic - Momir" in out
+    assert "Players: Tapps vs Rival123 (Log Not Saved to DB)" in out
+
+
+def test_momir_scene_context_survives_game_start_reset(tmp_path):
+    tracker = make_tracker()
+    log_path = tmp_path / "Player.log"
+    tracker.parser.log_path = str(log_path)
+    scene_line = json.dumps(
+        {
+            "fromSceneName": "Home",
+            "toSceneName": "EventLanding",
+            "initiator": "User",
+            "context": "MWM_Momir",
+        }
+    )
+    log_path.write_text(scene_line, encoding="utf-8")
+
+    tracker._parse_match_metadata(scene_line)
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+
+    assert tracker.game_state.format_str == "MWM_Momir"
+    assert tracker._is_untracked_match()
+
+
+def test_live_queue_format_wins_over_stale_backfilled_momir_context(tmp_path):
+    tracker = make_tracker()
+    log_path = tmp_path / "Player.log"
+    tracker.parser.log_path = str(log_path)
+    log_path.write_text(
+        json.dumps(
+            {
+                "fromSceneName": "Home",
+                "toSceneName": "EventLanding",
+                "context": "MWM_Momir",
+            }
+        ),
+        encoding="utf-8",
+    )
+    tracker._pending_event_format = "Play"
+
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+
+    assert tracker.game_state.format_str == "Play"
+    assert not tracker._is_untracked_match()
+
+
+def test_momir_game_summary_is_not_persisted_or_counted(capsys, tmp_path):
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "analytics.sqlite3"
+    tracker.session_start_time = datetime(2026, 7, 15, 22, 43, 18)
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.game_start_time = datetime(2026, 7, 15, 22, 51, 32)
+    tracker.game_state.game_end_time = datetime(2026, 7, 15, 23, 0, 24)
+    tracker.game_state.winner_seat = 2
+    tracker.game_state.player_display_name = "Tapps"
+    tracker.game_state.opponent_display_name = "Rival123"
+    tracker.game_state.format_str = "MWM_Momir"
+
+    tracker._print_game_summary()
+    capsys.readouterr()
+
+    assert tracker.session_games_played == 0
+    assert tracker.session_losses == 0
+    assert not tracker._console_db_path.exists()
 
 
 def test_match_started_block_prints_commanders_when_known(capsys):
@@ -3949,7 +4027,7 @@ def test_parse_match_metadata_prefers_explicit_set_deck_v3_event():
     assert tracker._active_deck_candidate_key == "3c24e959-f8ef-405a-9a27-21b7ff080540"
     assert tracker.game_state.format_str == "Play"
     assert tracker.game_state.match_type == "best_of_1"
-    assert tracker._friendly_format_label() == "Standard Best-of-1"
+    assert tracker._friendly_format_label() == "Standard Best-of-1 (Unranked)"
 
 
 def test_new_game_tracking_clears_stale_midweek_format():
@@ -4958,6 +5036,7 @@ def test_reset_new_game_tracking_clears_previous_opening_hand_state():
     tracker.game_state.mulligan_count = 1
     tracker.game_state._hand_before_mulligan = ["Cached Old Card"]
     tracker.game_state._hand_before_mulligan_ids = [123]
+    tracker.game_state._hand_before_mulligan_instance_ids = [456]
     tracker.game_state._hand_before_mulligan_events = [CardEvent("Cached Old Card", "player")]
     tracker.game_state.opening_hand_capture_closed = True
     tracker.game_state.opening_keep_confirmed = True
@@ -4972,6 +5051,7 @@ def test_reset_new_game_tracking_clears_previous_opening_hand_state():
     assert tracker.game_state.mulligan_count == 0
     assert tracker.game_state._hand_before_mulligan == []
     assert tracker.game_state._hand_before_mulligan_ids == []
+    assert tracker.game_state._hand_before_mulligan_instance_ids == []
     assert tracker.game_state._hand_before_mulligan_events == []
     assert tracker.game_state.opening_hand_capture_closed is False
     assert tracker.game_state.opening_keep_confirmed is False
@@ -5121,6 +5201,88 @@ def test_capture_opening_hand_counts_one_london_mulligan_with_two_sevens_then_si
     assert len(tracker.game_state.starting_hand) == 6
     assert tracker.game_state.mulligan_count == 1
     assert tracker.session_total_mulligans == 1
+
+
+def test_london_mulligan_bottom_selection_finalizes_six_card_starting_hand():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.card_db.names.update(
+        {
+            6001: "Gloomlake Verge",
+            6002: "Tinybones Joins Up",
+            6003: "Kaito, Bane of Nightmares",
+            6004: "Fear of Isolation",
+            6005: "Stormchaser's Talent",
+            6006: "Stormchaser's Talent",
+            6007: "Gloomlake Verge",
+        }
+    )
+
+    tracker._handle_client_gre_payload(
+        {
+            "data": {
+                "type": "ClientMessageType_MulliganResp",
+                "mulliganResp": {"decision": "MulliganOption_Mulligan"},
+            }
+        }
+    )
+    second_seven = {
+        "players": [
+            {"systemSeatNumber": 1, "pendingMessageType": "ClientMessageType_MulliganResp"}
+        ],
+        "zones": [
+            {
+                "type": "ZoneType_Hand",
+                "ownerSeatId": 1,
+                "objectInstanceIds": [101, 102, 103, 104, 105, 106, 107],
+            }
+        ],
+        "gameObjects": [
+            {"instanceId": 101, "grpId": 6001},
+            {"instanceId": 102, "grpId": 6002},
+            {"instanceId": 103, "grpId": 6003},
+            {"instanceId": 104, "grpId": 6004},
+            {"instanceId": 105, "grpId": 6005},
+            {"instanceId": 106, "grpId": 6006},
+            {"instanceId": 107, "grpId": 6007},
+        ],
+    }
+    tracker._capture_opening_hand(second_seven)
+    tracker._handle_client_gre_payload(
+        {
+            "data": {
+                "type": "ClientMessageType_MulliganResp",
+                "mulliganResp": {"decision": "MulliganOption_AcceptHand"},
+            }
+        }
+    )
+
+    assert tracker.game_state.starting_hand == []
+    assert tracker.game_state.opening_hand_capture_closed is False
+
+    tracker._handle_client_gre_payload(
+        {
+            "data": {
+                "type": "ClientMessageType_SelectNResp",
+                "selectNResp": {"selectedObjectIds": [103]},
+            }
+        }
+    )
+
+    assert tracker.game_state.starting_hand == [
+        "Gloomlake Verge",
+        "Tinybones Joins Up",
+        "Fear of Isolation",
+        "Stormchaser's Talent",
+        "Stormchaser's Talent",
+        "Gloomlake Verge",
+    ]
+    assert "Kaito, Bane of Nightmares" not in tracker.game_state.starting_hand
+    assert tracker.game_state.initial_hand_size == 6
+    assert tracker.game_state.mulligan_count == 1
+    assert tracker.game_state.opening_hand_capture_closed is True
 
 
 def test_capture_opening_hand_ignores_post_action_hand_six_without_mulligan_prompt():

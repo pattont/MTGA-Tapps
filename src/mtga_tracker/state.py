@@ -82,6 +82,7 @@ class GameState:
         self.initial_hand_size = 7
         self._hand_before_mulligan: List[str] = []
         self._hand_before_mulligan_ids: List[int] = []
+        self._hand_before_mulligan_instance_ids: List[int] = []
         self._hand_before_mulligan_events: List[CardEvent] = []
         self.opening_hand_capture_closed = False
         self.opening_mulligan_prompt_seen = False

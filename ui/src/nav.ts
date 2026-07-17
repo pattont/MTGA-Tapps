@@ -8,15 +8,12 @@ export interface AppNavItem {
 export const dashboardNavItems: AppNavItem[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'trend', label: 'Win Rate Trend' },
+  { id: 'recent-games', label: 'Recent Games' },
   { id: 'decks', label: 'Decks' },
   { id: 'formats', label: 'Formats' },
-  { id: 'play-draw', label: 'Play / Draw' },
   { id: 'deck-play-draw', label: 'Deck Play / Draw' },
-  { id: 'draw-quality', label: 'Draw Quality' },
   { id: 'visible-drawn-cards', label: 'Visible Drawn Cards' },
-  { id: 'momentum', label: 'Momentum' },
-  { id: 'recent-games', label: 'Recent Games' },
-  { id: 'matches', label: 'Matches' },
+  { id: 'matches', label: 'Bo3 Matches' },
   { id: 'sessions', label: 'Sessions' },
 ];
 
@@ -33,6 +30,7 @@ export const deckNavItems: AppNavItem[] = [
 export const gameNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
   { id: 'game-summary', label: 'Summary' },
+  { id: 'game-draw-quality', label: 'Draw Quality' },
   { id: 'game-life', label: 'Life Totals' },
   { id: 'game-opening-hand', label: 'Opening Hand' },
   { id: 'game-draws', label: 'Drawn Cards' },
@@ -43,6 +41,7 @@ export const gameNavItems: AppNavItem[] = [
 export const cardNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
   { id: 'card-summary', label: 'Card Summary' },
-  { id: 'card-decks', label: 'Decks' },
+  { id: 'card-usage-by-side', label: 'Usage by Side' },
+  { id: 'card-decks', label: 'Your Decks' },
   { id: 'card-opener-impact', label: 'Opening Hand Impact' },
 ];

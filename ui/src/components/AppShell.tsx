@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { dashboardNavItems, type AppNavItem } from '../nav';
 import type { ThemeName } from '../theme';
+import { CardSearch } from './CardSearch';
 
 interface AppShellProps {
   theme: ThemeName;
@@ -13,8 +14,10 @@ interface AppShellProps {
 }
 
 function scrollToSection(id: string) {
-  // Instant scroll: smooth behavior is silently dropped by some browsers
-  // (e.g. with reduced motion), which would leave the click doing nothing.
+  if (id === 'overview') {
+    window.scrollTo({ top: 0, left: 0 });
+    return;
+  }
   document.getElementById(id)?.scrollIntoView?.({ block: 'start' });
 }
 
@@ -30,9 +33,6 @@ export function AppShell({
   const [activeSection, setActiveSection] = useState<string | null>(null);
 
   useEffect(() => {
-    if (typeof IntersectionObserver === 'undefined') {
-      return;
-    }
     const sectionIds = navItems.filter((item) => !item.route).map((item) => item.id);
     const sections = sectionIds
       .map((id) => document.getElementById(id))
@@ -41,31 +41,48 @@ export function AppShell({
       return;
     }
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
-        if (visible?.target.id) {
-          setActiveSection(visible.target.id);
+    function updateActiveSection() {
+      if (window.scrollY <= 1) {
+        setActiveSection(sections[0].id);
+        return;
+      }
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) {
+        setActiveSection(sections[sections.length - 1].id);
+        return;
+      }
+
+      const marker = 120;
+      let nextSection = sections[0].id;
+      for (const section of sections) {
+        if (section.getBoundingClientRect().top > marker) {
+          break;
         }
-      },
-      { rootMargin: '-20% 0px -70% 0px', threshold: [0, 0.2, 0.8] },
-    );
-    sections.forEach((section) => observer.observe(section));
-    return () => observer.disconnect();
+        nextSection = section.id;
+      }
+      setActiveSection(nextSection);
+    }
+
+    updateActiveSection();
+    window.addEventListener('scroll', updateActiveSection, { passive: true });
+    window.addEventListener('resize', updateActiveSection);
+    return () => {
+      window.removeEventListener('scroll', updateActiveSection);
+      window.removeEventListener('resize', updateActiveSection);
+    };
   }, [navItems, children]);
 
   return (
     <div className="app-layout">
       <aside className="sidebar">
         <div className="brand-row">
-          <div className="brand-mark" aria-hidden="true">
-            A
-          </div>
           <div>
-            <h1>MTGA Tracker</h1>
+            <h1 className="brand-wordmark">MTGA Tracker</h1>
             <p>Local analytics dashboard</p>
+            <div className="mana-row" aria-hidden="true">
+              {['W', 'U', 'B', 'R', 'G'].map((color) => (
+                <img key={color} alt="" className="mana-pip" height={20} src={`/icons/${color}.webp`} width={20} />
+              ))}
+            </div>
           </div>
         </div>
         <nav aria-label="Dashboard sections">
@@ -81,6 +98,7 @@ export function AppShell({
                 href={`#${item.id}`}
                 onClick={(event) => {
                   event.preventDefault();
+                  setActiveSection(item.id);
                   scrollToSection(item.id);
                 }}
               >
@@ -96,9 +114,12 @@ export function AppShell({
             <span className="eyebrow">{eyebrow}</span>
             <h2>{heading}</h2>
           </div>
-          <button className="theme-toggle" type="button" onClick={onToggleTheme}>
-            Switch to {nextTheme} mode
-          </button>
+          <div className="topbar-actions">
+            <CardSearch />
+            <button className="theme-toggle" type="button" onClick={onToggleTheme}>
+              Switch to {nextTheme} mode
+            </button>
+          </div>
         </header>
         {children}
       </main>
