@@ -56,6 +56,65 @@ python -m mtga_tracker.main
 
 The tracker will monitor your MTGA log file and output card events to the console.
 
+Audit the analytics database for suspicious rows:
+```bash
+python -m mtga_tracker.db_audit
+python -m mtga_tracker.db_audit --repair
+```
+
+Audit recent draw quality from opening hands and known visible draws:
+```bash
+python -m mtga_tracker.draw_quality --card "Llanowar Elves" --land-rate 0.37
+```
+
+### Local dashboard UI
+
+The tracker includes a separate frontend app in `ui/`. Build it once, then run the Python dashboard server:
+
+```bash
+cd ui && npm install && npm run build
+cd ..
+venv/bin/python -m mtga_tracker.dashboard
+```
+
+Open `http://127.0.0.1:8765`. During UI development, run the Python dashboard API and the Vite dev server separately:
+
+```bash
+venv/bin/python -m mtga_tracker.dashboard
+cd ui && npm run dev
+```
+
+The dashboard reads only the local SQLite tracker database. The browser may request Scryfall art URLs for deck and card visuals when a card name is available; the tracker itself does not depend on network card resolution.
+
+Dashboard routes and endpoints:
+
+- `#/deck/<deck name>`: deck drill-down with card performance, opening hands, mulligans, formats, recent games, and filtered trends.
+- `#/game/<game id>`: game detail with draw quality/flood detection, life chart, opening hand, drawn cards, played cards, and timeline filter.
+- `#/card/<card name>`: card drill-down with by-deck performance and opening-hand impact.
+- `GET /api/snapshot?deck=&format=&days=`: dashboard aggregates, matches, sessions, trend, and filter options.
+- `GET /api/cards?q=&limit=`: partial-name search across cards used by either side in tracked games.
+- `GET /api/deck?name=&format=&days=`, `GET /api/game?id=`, and `GET /api/card?name=`: detail payloads for the hash routes.
+
+Stop the dashboard from the terminal where it is running:
+```text
+Ctrl+C
+```
+
+If port `8765` is already in use, choose another port:
+```bash
+python -m mtga_tracker.dashboard --port 8766
+```
+
+If you lost the terminal running the dashboard on macOS, stop the process using the port:
+```bash
+lsof -ti tcp:8765 | xargs kill
+```
+
+Common SQL reports live in `data/_queries`, for example:
+```bash
+sqlite3 data/mtga_tracker.sqlite3 < data/_queries/WinRateByDeck.sql
+```
+
 ## Project Structure
 
 ```
@@ -65,7 +124,10 @@ MTGA-Tapps/
 │       ├── __init__.py
 │       ├── main.py           # Entry point
 │       ├── log_parser.py     # MTGA log file parser
-│       └── tracker.py        # Card tracking logic
+│       ├── tracker.py        # Thin CardTracker composition class
+│       ├── db_audit.py       # SQLite consistency audit/repair command
+│       ├── dashboard.py      # Dependency-free local analytics dashboard
+│       └── format_normalizer.py # Queue/format label normalization
 ├── tests/                    # Unit tests
 ├── data/                     # Data files and cache
 ├── logs/                     # Application logs
