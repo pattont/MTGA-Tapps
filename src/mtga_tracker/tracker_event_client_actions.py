@@ -214,3 +214,4 @@ class TrackerClientActionsMixin:
                 continue
         if parsed_ids:
             self.game_state.opening_select_n_ids = parsed_ids
+            self._finalize_opening_hand_after_bottom_selection()

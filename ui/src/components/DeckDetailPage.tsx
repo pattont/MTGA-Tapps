@@ -4,7 +4,6 @@ import {
   type CardPerformanceRow,
   type DeckDetail,
   type DeckGameRow,
-  type FormatRow,
   type MulliganRow,
   type OpeningHandRow,
   type SnapshotFilters,
@@ -15,9 +14,11 @@ import { gameRouteHash } from '../routes';
 import { Badge } from './Badge';
 import { CardLink } from './CardLink';
 import { DeckVisual } from './DeckVisual';
+import { FormatsTable } from './FormatsTable';
 import { MetricCard } from './MetricCard';
 import { SortableTable, type Column } from './SortableTable';
 import { TrendChart } from './TrendChart';
+import { TypeChip } from './TypeChip';
 import { WinRateBar } from './WinRateBar';
 
 const DETAIL_REFRESH_MS = 20_000;
@@ -41,7 +42,7 @@ const cardColumns: Column<CardPerformanceRow>[] = [
   {
     key: 'type_category',
     header: 'Type',
-    render: (row) => row.type_category ?? 'Other',
+    render: (row) => <TypeChip type={row.type_category} />,
     sortValue: (row) => row.type_category,
   },
   { key: 'games_seen', header: 'Games Seen', numeric: true },
@@ -68,7 +69,7 @@ const openerColumns: Column<OpeningHandRow>[] = [
   {
     key: 'type_category',
     header: 'Type',
-    render: (row) => row.type_category ?? 'Other',
+    render: (row) => <TypeChip type={row.type_category} />,
     sortValue: (row) => row.type_category,
   },
   { key: 'games_in_opener', header: 'Games In Opener', numeric: true },
@@ -88,24 +89,6 @@ const mulliganColumns: Column<MulliganRow>[] = [
   { key: 'games', header: 'Games', numeric: true },
   { key: 'wins', header: 'Wins', numeric: true },
   { key: 'losses', header: 'Losses', numeric: true },
-  {
-    key: 'win_rate',
-    header: 'Win Rate',
-    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
-    sortValue: (row) => row.win_rate,
-    numeric: true,
-  },
-];
-
-const formatColumns: Column<FormatRow>[] = [
-  { key: 'format_label', header: 'Format' },
-  {
-    key: 'raw_format',
-    header: 'Raw Queue',
-    render: (row) => row.raw_format ?? '—',
-    sortValue: (row) => row.raw_format,
-  },
-  { key: 'games', header: 'Games', numeric: true },
   {
     key: 'win_rate',
     header: 'Win Rate',
@@ -296,6 +279,7 @@ export function DeckDetailPage({
         <SortableTable
           caption="Card performance"
           columns={cardColumns}
+          initialSort={{ key: 'games_seen', direction: 'desc' }}
           getRowKey={(row) => `${row.display_name}-${row.type_category}`}
           rows={detail.card_performance}
         />
@@ -309,6 +293,7 @@ export function DeckDetailPage({
         <SortableTable
           caption="Opening hand performance"
           columns={openerColumns}
+          initialSort={{ key: 'games_in_opener', direction: 'desc' }}
           getRowKey={(row) => `${row.display_name}-${row.type_category}`}
           rows={detail.opening_hands}
         />
@@ -324,10 +309,9 @@ export function DeckDetailPage({
       </Section>
 
       <Section id="deck-formats" title="Formats">
-        <SortableTable
+        <FormatsTable
           caption="Format performance for this deck"
-          columns={formatColumns}
-          getRowKey={(row) => `${row.format_label}-${row.raw_format ?? 'unknown'}`}
+          midweekRows={detail.midweek_formats}
           rows={detail.formats}
         />
       </Section>
@@ -336,6 +320,7 @@ export function DeckDetailPage({
         <SortableTable
           caption="Recent games for this deck"
           columns={gameColumns}
+          initialSort={{ key: 'started_at', direction: 'desc' }}
           getRowKey={(row) => row.game_id}
           rows={detail.recent}
         />

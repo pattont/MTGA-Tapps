@@ -13,23 +13,32 @@ export interface Column<T extends object> {
   numeric?: boolean;
 }
 
+export interface InitialSort<T extends object> {
+  key: keyof T;
+  direction: SortDirection;
+}
+
 interface SortableTableProps<T extends object> {
   caption: string;
   columns: Column<T>[];
+  compact?: boolean;
   getRowKey: (row: T) => string | number;
   rows: T[];
+  initialSort?: InitialSort<T>;
 }
 
 export function SortableTable<T extends object>({
   caption,
   columns,
+  compact = false,
   getRowKey,
   rows,
+  initialSort,
 }: SortableTableProps<T>) {
   const sortableColumns = useMemo(() => columns.filter((column) => column.sortable !== false), [columns]);
   const firstSortableKey = sortableColumns[0]?.key ?? null;
-  const [sortKey, setSortKey] = useState<keyof T | null>(firstSortableKey);
-  const [direction, setDirection] = useState<SortDirection>('asc');
+  const [sortKey, setSortKey] = useState<keyof T | null>(initialSort?.key ?? firstSortableKey);
+  const [direction, setDirection] = useState<SortDirection>(initialSort?.direction ?? 'asc');
   const requestedSortColumn = sortableColumns.find((column) => column.key === sortKey) ?? null;
   const activeSortColumn = requestedSortColumn ?? sortableColumns[0] ?? null;
   const activeDirection = requestedSortColumn ? direction : 'asc';
@@ -63,7 +72,7 @@ export function SortableTable<T extends object>({
   }
 
   return (
-    <div className="table-wrap">
+    <div className={compact ? 'table-wrap table-wrap-compact' : 'table-wrap'}>
       <table>
         <caption>{caption}</caption>
         <thead>
@@ -81,9 +90,15 @@ export function SortableTable<T extends object>({
                   className={column.numeric ? 'num' : undefined}
                 >
                   {isSortable ? (
-                    <button className="table-sort" type="button" onClick={() => toggleSort(column.key)}>
+                    <button
+                      className={isActive ? 'table-sort table-sort-active' : 'table-sort'}
+                      type="button"
+                      onClick={() => toggleSort(column.key)}
+                    >
                       {column.header}
-                      {isActive ? <span aria-hidden="true">{activeDirection === 'asc' ? ' ↑' : ' ↓'}</span> : null}
+                      <span className="table-sort-icon" aria-hidden="true">
+                        {isActive ? (activeDirection === 'asc' ? '↑' : '↓') : '↕'}
+                      </span>
                     </button>
                   ) : (
                     column.header

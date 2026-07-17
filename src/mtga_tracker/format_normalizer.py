@@ -26,6 +26,11 @@ def normalize_match_text(value: Optional[str]) -> str:
     return "".join(ch for ch in value.lower() if ch.isalnum())
 
 
+def is_momir_format(value: Optional[str]) -> bool:
+    """Return True when Arena metadata identifies a Momir event or format."""
+    return "momir" in normalize_match_text(value)
+
+
 def friendly_midweek_label(raw_format: str) -> str:
     """Convert MWM event identifiers into readable Midweek Magic labels."""
     text = re.sub(r"^MWM[_-]?", "", raw_format.strip(), flags=re.IGNORECASE)
@@ -59,6 +64,11 @@ def friendly_limited_label(raw_format: str) -> str:
     return raw
 
 
+def _standard_label(best_of: int, *, ranked: bool) -> str:
+    tier = "Ranked" if ranked else "Unranked"
+    return f"Standard Best-of-{best_of} ({tier})"
+
+
 def normalize_match_format(
     raw_format: Optional[str], *, default_best_of: int = 1
 ) -> NormalizedFormat:
@@ -66,10 +76,11 @@ def normalize_match_format(
     raw = raw_format if isinstance(raw_format, str) and raw_format.strip() else "Unknown"
     normalized = normalize_match_text(raw)
     if not normalized or normalized == "unknown":
+        # Untagged queues are the Play queue in practice: unranked.
         best_of = 3 if default_best_of == 3 else 1
         return NormalizedFormat(
             raw="Unknown",
-            label=f"Standard Best-of-{best_of}",
+            label=_standard_label(best_of, ranked=False),
             family="standard",
             best_of=best_of,
         )
@@ -102,9 +113,17 @@ def normalize_match_format(
     if "brawl" in normalized:
         return NormalizedFormat(raw=raw, label="Brawl", family="brawl", best_of=1, is_brawl=True)
     if normalized in {"traditionalstandard", "constructedbestof3", "bestof3", "traditionalladder"}:
-        return NormalizedFormat(raw=raw, label="Standard Best-of-3", family="standard", best_of=3)
+        # "Ladder" queues are ranked; Constructed_BestOf3/Play are unranked.
+        ranked = "ladder" in normalized
+        return NormalizedFormat(
+            raw=raw, label=_standard_label(3, ranked=ranked), family="standard", best_of=3
+        )
     if normalized in {"standard", "ladder", "play", "constructedbestof1", "bestof1"}:
-        return NormalizedFormat(raw=raw, label="Standard Best-of-1", family="standard", best_of=1)
+        ranked = normalized == "ladder"
+        best_of = 3 if normalized == "ladder" and default_best_of == 3 else 1
+        return NormalizedFormat(
+            raw=raw, label=_standard_label(best_of, ranked=ranked), family="standard", best_of=best_of
+        )
     if normalized in {"historicplay", "historic"}:
         return NormalizedFormat(raw=raw, label="Historic", family="historic", best_of=1)
     if normalized in {"explorerplay", "explorer", "pioneerplay", "pioneer"}:
@@ -114,7 +133,10 @@ def normalize_match_format(
     if normalized == "alchemy":
         return NormalizedFormat(raw=raw, label="Alchemy", family="alchemy", best_of=1)
     if "traditionalstandard" in normalized:
-        return NormalizedFormat(raw=raw, label="Standard Best-of-3", family="standard", best_of=3)
+        ranked = "ladder" in normalized
+        return NormalizedFormat(
+            raw=raw, label=_standard_label(3, ranked=ranked), family="standard", best_of=3
+        )
     if "historic" in normalized and "brawl" not in normalized:
         return NormalizedFormat(raw=raw, label="Historic", family="historic", best_of=1)
     if "explorer" in normalized or "pioneer" in normalized:
@@ -123,8 +145,9 @@ def normalize_match_format(
         return NormalizedFormat(raw=raw, label="Timeless", family="timeless", best_of=1)
     if "standard" in normalized:
         best_of = 3 if "traditional" in normalized or "bestof3" in normalized else 1
+        ranked = "ladder" in normalized or "ranked" in normalized
         return NormalizedFormat(
-            raw=raw, label=f"Standard Best-of-{best_of}", family="standard", best_of=best_of
+            raw=raw, label=_standard_label(best_of, ranked=ranked), family="standard", best_of=best_of
         )
     return NormalizedFormat(raw=raw, label=raw, family="unknown", best_of=1)
 

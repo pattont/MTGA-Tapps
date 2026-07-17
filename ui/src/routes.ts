@@ -5,6 +5,11 @@ export interface DeckRoute {
   filters: SnapshotFilters;
 }
 
+export interface GameRoute {
+  id: string;
+  returnHash: string;
+}
+
 function routeQuery(filters: SnapshotFilters, includeDeck = false): string {
   const params = new URLSearchParams();
   if (includeDeck && filters.deck) {
@@ -28,8 +33,13 @@ export function deckRouteHashWithFilters(deckName: string, filters: SnapshotFilt
   return `#/deck/${encodeURIComponent(deckName)}${query ? `?${query}` : ''}`;
 }
 
-export function gameRouteHash(gameId: string): string {
-  return `#/game/${encodeURIComponent(gameId)}`;
+export function gameRouteHash(gameId: string, returnHash?: string): string {
+  const params = new URLSearchParams();
+  if (returnHash?.startsWith('#')) {
+    params.set('return', returnHash);
+  }
+  const query = params.toString();
+  return `#/game/${encodeURIComponent(gameId)}${query ? `?${query}` : ''}`;
 }
 
 export function cardRouteHash(cardName: string): string {
@@ -83,18 +93,22 @@ export function parseDeckRoute(hash: string): DeckRoute | null {
   }
 }
 
-export function parseGameRoute(hash: string): string | null {
+export function parseGameRoute(hash: string): GameRoute | null {
   if (!hash.startsWith('#/game/')) {
     return null;
   }
-  const encoded = hash.slice('#/game/'.length);
+  const route = hash.slice('#/game/'.length);
+  const [encoded, query = ''] = route.split('?');
   if (!encoded) {
     return null;
   }
+  const returnParam = new URLSearchParams(query).get('return');
+  const requestedReturnHash = returnParam?.startsWith('#') ? returnParam : '#overview';
+  const returnHash = requestedReturnHash === '#draw-quality' ? '#recent-games' : requestedReturnHash;
   try {
-    return decodeURIComponent(encoded);
+    return { id: decodeURIComponent(encoded), returnHash };
   } catch {
-    return encoded;
+    return { id: encoded, returnHash };
   }
 }
 

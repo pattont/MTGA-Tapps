@@ -5,14 +5,17 @@ import {
   type GameDrawnCardRow,
   type GameOpeningHandRow,
   type GamePlayedCardRow,
-  type GameTimelineRow,
 } from '../api';
+import { formatPercent } from '../dashboardData';
 import { formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone } from '../format';
 import { DeckLink } from './DeckLink';
+import { Badge } from './Badge';
 import { CardLink } from './CardLink';
 import { LifeChart } from './LifeChart';
 import { MetricCard } from './MetricCard';
 import { SortableTable, type Column } from './SortableTable';
+import { TimelineList } from './TimelineList';
+import { TypeChip } from './TypeChip';
 
 const DETAIL_REFRESH_MS = 20_000;
 
@@ -57,7 +60,12 @@ const openingColumns: Column<GameOpeningHandRow>[] = [
     render: (row) => <CardLink cardName={row.display_name} />,
     sortValue: (row) => row.display_name,
   },
-  { key: 'type_category', header: 'Type' },
+  {
+    key: 'type_category',
+    header: 'Type',
+    render: (row) => <TypeChip type={row.type_category} />,
+    sortValue: (row) => row.type_category,
+  },
   { key: 'copy_number', header: 'Copy', numeric: true },
 ];
 
@@ -76,7 +84,12 @@ const drawnColumns: Column<GameDrawnCardRow>[] = [
     render: (row) => <CardLink cardName={row.display_name} />,
     sortValue: (row) => row.display_name,
   },
-  { key: 'type_category', header: 'Type' },
+  {
+    key: 'type_category',
+    header: 'Type',
+    render: (row) => <TypeChip type={row.type_category} />,
+    sortValue: (row) => row.type_category,
+  },
 ];
 
 const playedColumns: Column<GamePlayedCardRow>[] = [
@@ -86,56 +99,17 @@ const playedColumns: Column<GamePlayedCardRow>[] = [
     render: (row) => <CardLink cardName={row.display_name} />,
     sortValue: (row) => row.display_name,
   },
-  { key: 'type_category', header: 'Type' },
+  {
+    key: 'type_category',
+    header: 'Type',
+    render: (row) => <TypeChip type={row.type_category} />,
+    sortValue: (row) => row.type_category,
+  },
   { key: 'played_count', header: 'Played', numeric: true },
 ];
 
-const timelineColumns: Column<GameTimelineRow>[] = [
-  {
-    key: 'turn_number',
-    header: 'Turn',
-    render: (row) => formatNumber(row.turn_number),
-    sortValue: (row) => row.turn_number,
-    numeric: true,
-  },
-  {
-    key: 'phase',
-    header: 'Phase',
-    render: (row) => row.phase ?? '—',
-    sortValue: (row) => row.phase,
-  },
-  {
-    key: 'event_type',
-    header: 'Type',
-    render: (row) => row.event_type ?? '—',
-    sortValue: (row) => row.event_type,
-  },
-  {
-    key: 'actor_role',
-    header: 'Actor',
-    render: (row) => row.actor_role ?? '—',
-    sortValue: (row) => row.actor_role,
-  },
-  { key: 'text', header: 'Event' },
-  {
-    key: 'player_life',
-    header: 'You',
-    render: (row) => formatNumber(row.player_life),
-    sortValue: (row) => row.player_life,
-    numeric: true,
-  },
-  {
-    key: 'opponent_life',
-    header: 'Opp',
-    render: (row) => formatNumber(row.opponent_life),
-    sortValue: (row) => row.opponent_life,
-    numeric: true,
-  },
-];
-
-export function GameDetailPage({ gameId }: { gameId: string }) {
+export function GameDetailPage({ gameId, backHref = '#overview' }: { gameId: string; backHref?: string }) {
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
-  const [eventType, setEventType] = useState<string>('');
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -187,7 +161,7 @@ export function GameDetailPage({ gameId }: { gameId: string }) {
     return (
       <div className="state-panel error-state" role="alert">
         <p>{loadState.message}</p>
-        <a className="back-link" href="#overview">
+        <a className="back-link" href={backHref}>
           ← Back to dashboard
         </a>
       </div>
@@ -196,6 +170,7 @@ export function GameDetailPage({ gameId }: { gameId: string }) {
 
   const { detail } = loadState;
   const playDraw = detail.player.went_first === 1 ? 'On the play' : detail.player.went_first === 0 ? 'On the draw' : 'Unknown';
+  const drawStatus = detail.draw_quality.total_draws === 0 ? 'No Draws' : detail.draw_quality.is_flood ? 'Flood' : 'Normal';
   const metricCards = [
     { label: 'Outcome', value: outcomeLabel(detail.game.outcome) },
     { label: 'Format', value: detail.game.format_label },
@@ -205,17 +180,10 @@ export function GameDetailPage({ gameId }: { gameId: string }) {
     { label: 'Duration', value: formatDuration(detail.game.duration_seconds) },
     { label: 'Final Life', value: `${formatNumber(detail.player.ending_life)} / ${formatNumber(detail.opponent.ending_life)}` },
   ];
-  const eventTypes = Array.from(
-    new Set(detail.timeline.map((row) => row.event_type).filter((value): value is string => Boolean(value))),
-  ).sort();
-  const filteredTimeline = eventType
-    ? detail.timeline.filter((row) => row.event_type === eventType)
-    : detail.timeline;
-
   return (
     <>
       <div className="deck-detail-header" id="game-summary">
-        <a className="back-link" href="#overview">
+        <a className="back-link" href={backHref}>
           ← Back to dashboard
         </a>
         <div className="deck-detail-title">
@@ -223,7 +191,10 @@ export function GameDetailPage({ gameId }: { gameId: string }) {
             {outcomeLabel(detail.game.outcome)}
           </div>
           <div>
-            <h2>Game {formatDateTime(detail.game.started_at)}</h2>
+            <div className="game-title-row">
+              <h2>Game {formatDateTime(detail.game.started_at)}</h2>
+              {detail.draw_quality.is_flood ? <Badge tone="loss">Flood</Badge> : null}
+            </div>
             <p>
               {detail.player.deck_name ? <DeckLink deckName={detail.player.deck_name} /> : 'Unknown deck'} ·{' '}
               {detail.game.format_label}
@@ -238,6 +209,24 @@ export function GameDetailPage({ gameId }: { gameId: string }) {
           <MetricCard key={metric.label} label={metric.label} value={metric.value} />
         ))}
       </section>
+
+      <Section
+        id="game-draw-quality"
+        title="Draw Quality"
+        description="Post-opening draws. A game is marked Flood when more than 50% of total draws were identified as lands."
+      >
+        <section className="metric-grid metric-grid-deck" aria-label="Game draw quality">
+          <MetricCard label="Total Cards Drawn" value={formatNumber(detail.draw_quality.total_draws)} />
+          <MetricCard label="Identified Draws" value={formatNumber(detail.draw_quality.identified_draws)} />
+          <MetricCard label="Lands Drawn" value={formatNumber(detail.draw_quality.land_draws)} />
+          <MetricCard label="Land Draw Percentage" value={formatPercent(detail.draw_quality.land_draw_pct)} />
+          <MetricCard
+            label="Draw Status"
+            value={drawStatus}
+            tone={detail.draw_quality.is_flood ? 'danger' : 'default'}
+          />
+        </section>
+      </Section>
 
       <Section id="game-life" title="Life Totals" description="Life-total changes captured from the game timeline.">
         <div className="trend-wrap">
@@ -272,26 +261,12 @@ export function GameDetailPage({ gameId }: { gameId: string }) {
         />
       </Section>
 
-      <Section id="game-timeline" title="Timeline" description="Structured event history captured from the tracker log.">
-        <div className="timeline-filter">
-          <label>
-            <span>Event Type</span>
-            <select value={eventType} onChange={(event) => setEventType(event.target.value)}>
-              <option value="">All events</option>
-              {eventTypes.map((type) => (
-                <option key={type} value={type}>
-                  {type}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <SortableTable
-          caption="Game timeline"
-          columns={timelineColumns}
-          getRowKey={(row) => `${row.turn_number ?? 'unknown'}-${row.event_type ?? 'event'}-${row.text}`}
-          rows={filteredTimeline}
-        />
+      <Section
+        id="game-timeline"
+        title="Timeline"
+        description="Turn-by-turn play history captured from the tracker log."
+      >
+        <TimelineList rows={detail.timeline} />
       </Section>
     </>
   );
