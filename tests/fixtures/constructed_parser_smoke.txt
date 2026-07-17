@@ -1,0 +1,17 @@
+DETAILED LOGS: ENABLED
+[UnityCrossThreadLogger]5/13/2026 10:00:00 PM matchGameRoomStateChangedEvent
+{"matchGameRoomStateChangedEvent":{"gameRoomInfo":{"stateType":"MatchGameRoomStateType_Playing","gameRoomConfig":{"matchId":"match-1","eventId":"Ladder","reservedPlayers":[{"systemSeatId":1,"eventId":"Ladder"},{"systemSeatId":2,"eventId":"Ladder"}]}}}}
+[UnityCrossThreadLogger]5/13/2026 10:00:01 PM greToClientEvent
+{"greToClientEvent":{"greToClientMessages":[{"type":"GREMessageType_GameStateMessage","msgId":1,"gameStateId":1,"gameStateMessage":{"turnInfo":{"turnNumber":1,"activePlayer":1},"zones":[],"gameObjects":[]}}]}}
+[UnityCrossThreadLogger]5/13/2026 10:00:02 PM ClientToGREMessage
+{"clientToMatchServiceMessageType":"ClientToMatchServiceMessageType_ClientToGREMessage","payload":{"type":"ClientMessageType_MulliganResp","mulliganResp":{"decision":"MulliganOption_AcceptHand"}}}
+[UnityCrossThreadLogger]STATE CHANGED {"old":"Connecting","new":"Connected"}
+[UnityCrossThreadLogger]Client.TcpConnection.Close {"status":"Closed"}
+[UnityCrossThreadLogger]GREConnection.HandleWebSocketClosed {"reason":"normal"}
+[UnityCrossThreadLogger]TcpConnection.ProcessRead.Exception {"exception":"boom"}
+[UnityCrossThreadLogger]5/13/2026 10:00:07 PM <== RankGetCombinedRankInfo(abc)
+{"constructedClass":"Gold","constructedLevel":2}
+[UnityCrossThreadLogger]5/13/2026 10:00:08 PM <== EventJoin
+{"eventId":"Ladder"}
+[UnityCrossThreadLogger]5/13/2026 10:00:09 PM <== StartHook(abc)
+{"InventoryInfo":{"gold":1000}}

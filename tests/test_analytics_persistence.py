@@ -6,6 +6,7 @@ from mtga_tracker.analytics_persistence import (
     analytics_card_power_toughness,
     persist_card_summary,
     persist_commanders,
+    persist_drawn_cards,
     persist_opening_hand,
 )
 from mtga_tracker.state import CardEvent
@@ -54,7 +55,9 @@ def test_persist_card_summary_opening_hand_and_commanders(tmp_path):
             [
                 CardEvent("Island (Land)", "player", card_type_category="Land"),
                 CardEvent("Island (Land)", "player", card_type_category="Land"),
-                CardEvent("Likeness Looter (Creature 1/1)", "player", card_type_category="Creature"),
+                CardEvent(
+                    "Likeness Looter (Creature 1/1)", "player", card_type_category="Creature"
+                ),
             ],
             refresh_display_name=lambda name: name,
         )
@@ -75,6 +78,19 @@ def test_persist_card_summary_opening_hand_and_commanders(tmp_path):
             ["Niv-Mizzet, Parun"],
             refresh_display_name=lambda name: name,
         )
+        draw_one = CardEvent("Island", "player", card_type_category="Land")
+        draw_one.turn_number = 2
+        draw_two = CardEvent(
+            "Likeness Looter (Creature 1/1)", "player", card_type_category="Creature"
+        )
+        draw_two.turn_number = 3
+        persist_drawn_cards(
+            conn,
+            "game-1",
+            "participant-1",
+            [draw_one, draw_two],
+            refresh_display_name=lambda name: name,
+        )
     store.close()
 
     with sqlite3.connect(db_path) as check:
@@ -84,8 +100,16 @@ def test_persist_card_summary_opening_hand_and_commanders(tmp_path):
         opening_hand = check.execute(
             "select display_name, hand_position, copy_number from game_opening_hand_cards order by hand_position"
         ).fetchall()
+        drawn_cards = check.execute(
+            """
+            select display_name, draw_position, turn_number, copy_number
+            from game_drawn_cards
+            order by draw_position
+            """
+        ).fetchall()
         commander = check.execute("select card_name from participant_commanders").fetchone()
 
     assert summary == [("Island (Land)", 2), ("Likeness Looter (Creature 1/1)", 1)]
     assert opening_hand == [("Island", 1, 1), ("Island", 2, 2)]
+    assert drawn_cards == [("Island", 1, 2, 1), ("Likeness Looter (Creature 1/1)", 2, 3, 1)]
     assert commander == ("Niv-Mizzet, Parun",)

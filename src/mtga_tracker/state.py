@@ -71,6 +71,7 @@ class GameState:
         self.last_turn_announced = 0
         self.last_player_turn_number = 0
         self.last_opponent_turn_number = 0
+        self.turns_taken_by_seat: Dict[int, Set[int]] = {1: set(), 2: set()}
         self.player_seat_id: Optional[int] = None
         self.opponent_seat_id: Optional[int] = None
         self.my_user_id: Optional[str] = None
@@ -81,19 +82,24 @@ class GameState:
         self.initial_hand_size = 7
         self._hand_before_mulligan: List[str] = []
         self._hand_before_mulligan_ids: List[int] = []
+        self._hand_before_mulligan_instance_ids: List[int] = []
         self._hand_before_mulligan_events: List[CardEvent] = []
         self.opening_hand_capture_closed = False
         self.opening_mulligan_prompt_seen = False
         self.explicit_mulligan_count = 0
         self.opening_keep_confirmed = False
         self.opening_select_n_ids: List[int] = []
+        self.submitted_deck_cards: List[int] = []
+        self.submitted_sideboard_cards: List[int] = []
 
         self.instance_roots: Dict[int, int] = {}
         self.pending_spell_roots: Dict[int, Dict[str, Any]] = {}
         self.stack_items: Dict[int, Dict[str, Any]] = {}
         self.ability_instance_sources: Dict[int, int] = {}
+        self.instance_target_ids: Dict[int, List[int]] = {}
         self.logged_ability_actions: Set[tuple] = set()
         self.logged_ability_resolutions: Set[tuple] = set()
+        self.logged_tap_untap_events: Set[tuple] = set()
         self.ability_instance_action_texts: Dict[int, str] = {}
         self.logged_identity_changes: Set[tuple] = set()
         self.logged_unhandled_annotations: Set[tuple] = set()
@@ -115,12 +121,15 @@ class GameState:
         self.combat_loss_events_counted: Set[tuple] = set()
         self.match_stats = self._new_match_stats()
         self.stack_stats = self._new_stack_stats()
+        self.drawn_card_events: Dict[int, List[CardEvent]] = {1: [], 2: []}
 
         self.game_start_time: Optional[datetime] = None
         self.game_end_time: Optional[datetime] = None
         self.winner_seat: Optional[int] = None
         self.winner_priority = 0
         self.winner_reason = ""
+        self.result_type: Optional[str] = None
+        self.result_reason: Optional[str] = None
         self.first_player_seat: Optional[int] = None
         self.pending_player_turn_header: Optional[tuple] = None
         self.pending_opponent_turn_header: Optional[tuple] = None

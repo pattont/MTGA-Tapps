@@ -117,3 +117,25 @@ def test_find_log_path_error_handling():
     except FileNotFoundError as e:
         # Expected if MTGA is not installed
         assert "not found" in str(e).lower()
+
+
+def test_constructed_parser_smoke_fixture_routes_expected_entries():
+    fixture = Path(__file__).parent / "fixtures" / "constructed_parser_smoke.txt"
+    parser = MTGALogParser(str(fixture))
+
+    entries = list(parser.read_new_entries())
+    categories = [parser.route_entry(entry).category for entry in entries]
+
+    assert categories == [
+        "metadata",
+        "match_state",
+        "gre",
+        "client_action",
+        "connection_state",
+        "tcp_connection_close",
+        "websocket_closed",
+        "connection_error",
+        "rank",
+        "event_lifecycle",
+        "inventory",
+    ]

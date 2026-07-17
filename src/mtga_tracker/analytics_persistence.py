@@ -70,7 +70,9 @@ def persist_card_summary(
 
     for display_name, data in counts.items():
         type_category = data.get("type_category")
-        card_id = upsert_card(conn, display_name, type_category if isinstance(type_category, str) else None)
+        card_id = upsert_card(
+            conn, display_name, type_category if isinstance(type_category, str) else None
+        )
         conn.execute(
             """
             INSERT INTO game_card_summary (
@@ -114,7 +116,9 @@ def persist_opening_hand(
     )
     source_events = starting_hand_events
     if not source_events and starting_hand:
-        source_events = [CardEvent(card, "player", card_type_category=None) for card in starting_hand]
+        source_events = [
+            CardEvent(card, "player", card_type_category=None) for card in starting_hand
+        ]
 
     copy_counts: Dict[str, int] = {}
     for index, event in enumerate(source_events, start=1):
@@ -144,6 +148,54 @@ def persist_opening_hand(
                 display_name,
                 type_category,
                 index,
+                copy_counts[display_name],
+            ),
+        )
+
+
+def persist_drawn_cards(
+    conn: sqlite3.Connection,
+    game_id: str,
+    participant_id: str,
+    events: List[CardEvent],
+    *,
+    refresh_display_name: Callable[[str], str],
+) -> None:
+    """Persist visible drawn-card identities as one row per draw slot."""
+    conn.execute(
+        "DELETE FROM game_drawn_cards WHERE game_id = ? AND participant_id = ?",
+        (game_id, participant_id),
+    )
+    copy_counts: Dict[str, int] = {}
+    for index, event in enumerate(events, start=1):
+        display_name = refresh_display_name(event.card_name)
+        if not display_name:
+            continue
+        copy_counts[display_name] = copy_counts.get(display_name, 0) + 1
+        type_category = event.card_type_category
+        card_id = upsert_card(conn, display_name, type_category)
+        conn.execute(
+            """
+            INSERT INTO game_drawn_cards (
+                game_id,
+                participant_id,
+                card_id,
+                display_name,
+                type_category,
+                draw_position,
+                turn_number,
+                copy_number
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                game_id,
+                participant_id,
+                card_id,
+                display_name,
+                type_category,
+                index,
+                getattr(event, "turn_number", None),
                 copy_counts[display_name],
             ),
         )
