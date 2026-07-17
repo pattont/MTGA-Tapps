@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from .log_sanitize import scrub_raw_log
+
 
 @dataclass(frozen=True)
 class SessionSnapshot:
@@ -17,6 +19,7 @@ class SessionSnapshot:
     wins: int
     losses: int
     unknown_results: int
+    draws: int = 0
     runtime_seconds: Optional[int] = None
 
 
@@ -66,6 +69,7 @@ class AnalyticsStore:
                 games_played INTEGER NOT NULL DEFAULT 0,
                 wins INTEGER NOT NULL DEFAULT 0,
                 losses INTEGER NOT NULL DEFAULT 0,
+                draws INTEGER NOT NULL DEFAULT 0,
                 unknown_results INTEGER NOT NULL DEFAULT 0,
                 runtime_seconds INTEGER NOT NULL DEFAULT 0
             );
@@ -95,6 +99,8 @@ class AnalyticsStore:
                 ended_at TEXT,
                 duration_seconds INTEGER,
                 total_turns INTEGER,
+                player_turns INTEGER,
+                opponent_turns INTEGER,
                 outcome TEXT,
                 outcome_reason TEXT,
                 winner_participant_id TEXT,
@@ -170,6 +176,22 @@ class AnalyticsStore:
                 hand_position INTEGER NOT NULL,
                 copy_number INTEGER NOT NULL DEFAULT 1,
                 UNIQUE(game_id, participant_id, hand_position),
+                FOREIGN KEY(game_id) REFERENCES games(id),
+                FOREIGN KEY(participant_id) REFERENCES participants(id),
+                FOREIGN KEY(card_id) REFERENCES cards(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS game_drawn_cards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id TEXT NOT NULL,
+                participant_id TEXT NOT NULL,
+                card_id INTEGER,
+                display_name TEXT NOT NULL,
+                type_category TEXT,
+                draw_position INTEGER NOT NULL,
+                turn_number INTEGER,
+                copy_number INTEGER NOT NULL DEFAULT 1,
+                UNIQUE(game_id, participant_id, draw_position),
                 FOREIGN KEY(game_id) REFERENCES games(id),
                 FOREIGN KEY(participant_id) REFERENCES participants(id),
                 FOREIGN KEY(card_id) REFERENCES cards(id)
@@ -290,6 +312,12 @@ class AnalyticsStore:
             CREATE INDEX IF NOT EXISTS idx_opening_hand_card
             ON game_opening_hand_cards(display_name);
 
+            CREATE INDEX IF NOT EXISTS idx_drawn_cards_game_participant
+            ON game_drawn_cards(game_id, participant_id);
+
+            CREATE INDEX IF NOT EXISTS idx_drawn_cards_card
+            ON game_drawn_cards(display_name);
+
             CREATE INDEX IF NOT EXISTS idx_game_events_session_time
             ON game_events(session_id, event_time);
 
@@ -304,6 +332,64 @@ class AnalyticsStore:
         AnalyticsStore.ensure_table_column(conn, "game_events", "opponent_life", "INTEGER")
         AnalyticsStore.ensure_table_column(conn, "participants", "opening_hand_size", "INTEGER")
         AnalyticsStore.ensure_table_column(conn, "participants", "mulligans", "INTEGER")
+        AnalyticsStore.ensure_table_column(
+            conn, "tracker_sessions", "draws", "INTEGER NOT NULL DEFAULT 0"
+        )
+        AnalyticsStore.ensure_table_column(conn, "games", "player_turns", "INTEGER")
+        AnalyticsStore.ensure_table_column(conn, "games", "opponent_turns", "INTEGER")
+        AnalyticsStore.backfill_game_turn_counts(conn)
+
+    @staticmethod
+    def backfill_game_turn_counts(conn: sqlite3.Connection) -> None:
+        """Backfill player/opponent turn counts from persisted turn header events."""
+        conn.execute(
+            """
+            UPDATE games
+            SET
+                player_turns = COALESCE((
+                    SELECT COUNT(DISTINCT ge.turn_number)
+                    FROM game_events ge
+                    WHERE ge.game_id = games.id
+                      AND ge.text LIKE 'Turn % - YOUR TURN'
+                ), 0),
+                opponent_turns = COALESCE((
+                    SELECT COUNT(DISTINCT ge.turn_number)
+                    FROM game_events ge
+                    WHERE ge.game_id = games.id
+                      AND ge.text LIKE "Turn % - OPPONENT'S TURN"
+                ), 0)
+            WHERE player_turns IS NULL OR opponent_turns IS NULL
+            """
+        )
+        conn.execute(
+            """
+            UPDATE games
+            SET total_turns = player_turns + opponent_turns
+            WHERE player_turns IS NOT NULL
+              AND opponent_turns IS NOT NULL
+              AND player_turns + opponent_turns > 0
+            """
+        )
+        conn.execute(
+            """
+            UPDATE games
+            SET
+                player_turns = CASE
+                    WHEN COALESCE(p.went_first, 0) = 1 THEN (COALESCE(games.total_turns, 0) + 1) / 2
+                    ELSE COALESCE(games.total_turns, 0) / 2
+                END,
+                opponent_turns = CASE
+                    WHEN COALESCE(p.went_first, 0) = 1 THEN COALESCE(games.total_turns, 0) / 2
+                    ELSE (COALESCE(games.total_turns, 0) + 1) / 2
+                END
+            FROM participants p
+            WHERE p.game_id = games.id
+              AND p.role = 'player'
+              AND COALESCE(games.total_turns, 0) > 0
+              AND COALESCE(games.player_turns, 0) = 0
+              AND COALESCE(games.opponent_turns, 0) = 0
+            """
+        )
 
     @staticmethod
     def ensure_table_column(
@@ -334,14 +420,15 @@ class AnalyticsStore:
         conn.execute(
             """
             INSERT INTO tracker_sessions (
-                id, started_at, ended_at, app_version, games_played, wins, losses, unknown_results, runtime_seconds
+                id, started_at, ended_at, app_version, games_played, wins, losses, draws, unknown_results, runtime_seconds
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 ended_at = excluded.ended_at,
                 games_played = excluded.games_played,
                 wins = excluded.wins,
                 losses = excluded.losses,
+                draws = excluded.draws,
                 unknown_results = excluded.unknown_results,
                 runtime_seconds = excluded.runtime_seconds
             """,
@@ -353,6 +440,7 @@ class AnalyticsStore:
                 session.games_played,
                 session.wins,
                 session.losses,
+                session.draws,
                 session.unknown_results,
                 runtime_seconds,
             ),
@@ -404,6 +492,44 @@ class AnalyticsStore:
                 text,
                 player_life,
                 opponent_life,
+            ),
+        )
+        conn.commit()
+
+    def record_raw_payload(
+        self,
+        *,
+        session_id: str,
+        created_at: Optional[datetime],
+        payload_type: Optional[str],
+        payload_json: str,
+        match_id: Optional[str] = None,
+        game_id: Optional[str] = None,
+    ) -> None:
+        """Persist a sanitized raw payload snapshot for parser diagnostics/replay."""
+        conn = self.connect()
+        if conn is None:
+            return
+        now = created_at or datetime.now()
+        conn.execute(
+            """
+            INSERT INTO raw_game_payloads (
+                session_id,
+                match_id,
+                game_id,
+                created_at,
+                payload_type,
+                payload_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                match_id,
+                game_id,
+                now.isoformat(),
+                payload_type,
+                scrub_raw_log(payload_json),
             ),
         )
         conn.commit()

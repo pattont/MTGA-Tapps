@@ -56,6 +56,34 @@ python -m mtga_tracker.main
 python src/mtga_tracker/main.py
 ```
 
+## Running the Dashboard
+
+Start the local analytics dashboard:
+
+```bash
+python -m mtga_tracker.dashboard
+```
+
+Open `http://127.0.0.1:8765/` in your browser.
+
+Stop the dashboard from the terminal where it is running:
+
+```text
+Ctrl+C
+```
+
+If port `8765` is already in use, choose another port:
+
+```bash
+python -m mtga_tracker.dashboard --port 8766
+```
+
+If you lost the terminal running the dashboard on macOS, stop the process using the port:
+
+```bash
+lsof -ti tcp:8765 | xargs kill
+```
+
 ## What to Expect
 
 When you run the tracker, you'll see:

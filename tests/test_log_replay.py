@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -102,3 +103,51 @@ def test_replay_persists_opening_hand_without_keep_response(capsys, tmp_path):
     assert hand_rows[0] == ("Card9001", "Land", 1)
     assert hand_rows[-1] == ("Card9007", "Creature", 7)
     assert game == ("win",)
+
+
+def test_replay_uses_source_timestamps_for_elapsed_output(capsys):
+    tracker = make_tracker()
+
+    start_line = _game_state_line(
+        {
+            "gameStateId": 1,
+            "turnInfo": {"turnNumber": 1, "activePlayer": 1},
+            "zones": [
+                {"type": "ZoneType_Hand", "ownerSeatId": 1, "objectInstanceIds": [101]},
+                {"type": "ZoneType_Hand", "ownerSeatId": 2, "objectInstanceIds": [201]},
+            ],
+            "gameObjects": [{"instanceId": 101, "grpId": 9001, "cardTypes": ["CardType_Land"]}],
+        }
+    )
+    draw_line = _game_state_line(
+        {
+            "gameStateId": 2,
+            "turnInfo": {"turnNumber": 1, "activePlayer": 1},
+            "annotations": [
+                {
+                    "type": ["AnnotationType_ZoneTransfer"],
+                    "affectedIds": [102],
+                    "details": [
+                        {"key": "zone_src", "valueInt32": [11]},
+                        {"key": "zone_dest", "valueInt32": [12]},
+                        {"key": "category", "valueString": ["Draw"]},
+                    ],
+                }
+            ],
+            "zones": [{"zoneId": 12, "type": "ZoneType_Hand", "ownerSeatId": 1}],
+            "gameObjects": [
+                {
+                    "instanceId": 102,
+                    "grpId": 9002,
+                    "ownerSeatId": 1,
+                    "cardTypes": ["CardType_Land"],
+                }
+            ],
+        }
+    )
+
+    tracker._process_line(start_line, timestamp=datetime(2026, 5, 8, 22, 15, 0))
+    tracker._process_line(draw_line, timestamp=datetime(2026, 5, 8, 22, 15, 7))
+
+    out = capsys.readouterr().out
+    assert "[0:07] You: drew a card" in out

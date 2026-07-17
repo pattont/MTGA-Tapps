@@ -31,6 +31,8 @@ ENV/
 .vscode/
 .idea/
 .claude/
+.superpowers/
+.worktrees/
 *.swp
 *.swo
 *~

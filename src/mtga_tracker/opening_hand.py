@@ -55,6 +55,7 @@ def visible_opening_hand_snapshots(
 
         hand_cards: List[str] = []
         hand_grp_ids: List[int] = []
+        hand_instance_ids: List[int] = []
         hand_events: List[CardEvent] = []
         for obj_id in obj_ids:
             obj = objects_by_id.get(obj_id) or object_snapshots.get(obj_id) or {}
@@ -66,6 +67,7 @@ def visible_opening_hand_snapshots(
                 type_category = type_category_for_card_types(card_types)
                 hand_cards.append(card_name)
                 hand_grp_ids.append(grp_id)
+                hand_instance_ids.append(int(obj_id))
                 hand_events.append(CardEvent(card_name, "player", card_type_category=type_category))
 
         if not hand_grp_ids:
@@ -79,6 +81,7 @@ def visible_opening_hand_snapshots(
                 "owner_seat": owner_seat,
                 "hand_cards": hand_cards,
                 "hand_grp_ids": hand_grp_ids,
+                "hand_instance_ids": hand_instance_ids,
                 "hand_events": hand_events,
             }
         )

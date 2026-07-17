@@ -6,9 +6,13 @@ Parses the MTGA Player.log file to extract game events.
 import json
 import os
 import platform
-import re
 from pathlib import Path
 from typing import Optional, Generator, Dict, Any, List, Tuple
+
+from .log_entry import LineBuffer, LogEntry
+from .log_json import parse_json_from_body
+from .event_router import EventRouter, RoutedLogEvent
+from .client_actions import parse_client_action
 
 
 class MTGALogParser:
@@ -23,6 +27,12 @@ class MTGALogParser:
         """
         self.log_path = log_path or self._find_log_path()
         self.last_position = 0
+        self._line_buffer = LineBuffer()
+        self.event_router = EventRouter()
+
+    def route_entry(self, entry: LogEntry) -> RoutedLogEvent:
+        """Classify a complete log entry and update parser health counters."""
+        return self.event_router.route(entry)
 
     @staticmethod
     def _find_log_path() -> str:
@@ -61,73 +71,36 @@ class MTGALogParser:
 
         return str(log_path)
 
+    def read_new_entries(self) -> Generator[LogEntry, None, None]:
+        """Read complete log entries from the log file since last read."""
+        yield from self._read_new_entries()
+
     def read_new_lines(self) -> Generator[str, None, None]:
-        """Read new lines from the log file since last read.
+        """Read new complete-entry strings from the log file since last read.
 
         Yields:
-            New lines from the log file.
+            New complete log entries rendered as strings.
         """
+        for entry in self._read_new_entries():
+            yield self._entry_to_legacy_line(entry)
+
+    def _read_new_entries(self) -> Generator[LogEntry, None, None]:
+        """Read complete entries from the log file since last read."""
         try:
             with open(self.log_path, "r", encoding="utf-8", errors="ignore") as f:
                 # If file was truncated or rotated (e.g. new match, MTGA restart), start from beginning
                 file_size = f.seek(0, 2)
                 if file_size < self.last_position:
                     self.last_position = 0
+                    self._line_buffer.reset()
                 f.seek(self.last_position)
 
-                pending_prefix: Optional[str] = None
-                json_lines: List[str] = []
                 for raw_line in f:
-                    line = raw_line.rstrip("\n")
-                    stripped = line.strip()
+                    for entry in self._line_buffer.push_line(raw_line):
+                        yield entry
 
-                    if json_lines:
-                        json_lines.append(line)
-                        parsed, compact = self._try_parse_json_blob(json_lines)
-                        if parsed is None or compact is None:
-                            continue
-                        if pending_prefix:
-                            yield f"{pending_prefix} {compact}"
-                        else:
-                            yield compact
-                        pending_prefix = None
-                        json_lines = []
-                        continue
-
-                    if stripped.startswith("{"):
-                        if pending_prefix is not None:
-                            json_lines = [line]
-                            parsed, compact = self._try_parse_json_blob(json_lines)
-                            if parsed is not None and compact is not None:
-                                yield f"{pending_prefix} {compact}"
-                                pending_prefix = None
-                                json_lines = []
-                            continue
-                        json_lines = [line]
-                        parsed, compact = self._try_parse_json_blob(json_lines)
-                        if parsed is not None and compact is not None:
-                            yield compact
-                            json_lines = []
-                        continue
-
-                    if pending_prefix is not None:
-                        yield pending_prefix
-                        pending_prefix = None
-
-                    if self._looks_like_json_prefix(line):
-                        pending_prefix = line
-                        continue
-
-                    yield line
-
-                if json_lines:
-                    combined = "\n".join(json_lines)
-                    if pending_prefix:
-                        yield f"{pending_prefix} {combined}"
-                    else:
-                        yield combined
-                elif pending_prefix is not None:
-                    yield pending_prefix
+                for entry in self._line_buffer.flush():
+                    yield entry
 
                 # Update position
                 self.last_position = f.tell()
@@ -149,6 +122,21 @@ class MTGALogParser:
         if not isinstance(data, dict):
             return None, None
         return data, json.dumps(data, separators=(",", ":"))
+
+    @classmethod
+    def _entry_to_legacy_line(cls, entry: LogEntry) -> str:
+        """Return an entry body in the compact line shape existing callers expect."""
+        lines = entry.body.splitlines()
+        if len(lines) <= 1:
+            return entry.body
+        for index, line in enumerate(lines):
+            if line.strip().startswith("{"):
+                parsed, compact = cls._try_parse_json_blob(lines[index:])
+                if parsed is not None and compact is not None:
+                    prefix = " ".join(part.strip() for part in lines[:index] if part.strip())
+                    return f"{prefix} {compact}".strip()
+                break
+        return entry.body
 
     @staticmethod
     def _looks_like_json_prefix(line: str) -> bool:
@@ -175,17 +163,8 @@ class MTGALogParser:
         Returns:
             Parsed JSON data as a dictionary, or None if no valid JSON found.
         """
-        # Try to find JSON in the line
-        # MTGA logs often have format: [timestamp] message {json...}
-        json_match = re.search(r'\{.*\}', line)
-        if json_match:
-            try:
-                json_str = json_match.group(0)
-                return json.loads(json_str)
-            except json.JSONDecodeError:
-                pass
-
-        return None
+        data = parse_json_from_body(line)
+        return data if isinstance(data, dict) else None
 
     def extract_game_state_events(self, line: str) -> List[Dict[str, Any]]:
         """Extract ordered game-state events from one log line.
@@ -263,28 +242,18 @@ class MTGALogParser:
             return []
 
         payloads: List[Dict[str, Any]] = []
-        direct = data.get("clientToGreMessage")
-        if isinstance(direct, dict):
-            direct_payload = direct.get("payload")
-            if isinstance(direct_payload, dict):
-                payloads.append({"type": "client_gre_message", "data": direct_payload})
-            elif direct.get("type"):
-                payloads.append({"type": "client_gre_message", "data": direct})
-
-        service_type = data.get("clientToMatchServiceMessageType")
-        payload = data.get("payload")
-        if (
-            service_type == "ClientToMatchServiceMessageType_ClientToGREMessage"
-            and isinstance(payload, dict)
-        ):
-            payloads.append(
-                {
-                    "type": "client_gre_message",
-                    "data": payload,
-                    "service_type": service_type,
-                }
-            )
-
+        normalized = parse_client_action(data)
+        if normalized is not None:
+            raw_payload = normalized.get("raw")
+            if isinstance(raw_payload, dict):
+                payloads.append(
+                    {
+                        "type": "client_gre_message",
+                        "data": raw_payload,
+                        "normalized": normalized,
+                        "service_type": data.get("clientToMatchServiceMessageType"),
+                    }
+                )
         return payloads
 
     def extract_card_events(self, line: str) -> Optional[Dict[str, Any]]:
