@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchCardDetail, type CardByDeckRow, type CardDetail } from '../api';
+import { fetchCardDetail, type CardByDeckRow, type CardByRoleRow, type CardDetail } from '../api';
 import { formatPercent } from '../dashboardData';
 import { formatNumber } from '../format';
 import { DeckLink } from './DeckLink';
@@ -56,6 +56,26 @@ const deckColumns: Column<CardByDeckRow>[] = [
   {
     key: 'win_rate',
     header: 'Win Rate',
+    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
+    sortValue: (row) => row.win_rate,
+    numeric: true,
+  },
+];
+
+const roleColumns: Column<CardByRoleRow>[] = [
+  { key: 'side_label', header: 'Card Used By' },
+  { key: 'games_seen', header: 'Games', numeric: true },
+  { key: 'total_played', header: 'Plays', numeric: true },
+  {
+    key: 'wins',
+    header: 'User Record',
+    render: (row) => `${row.wins}–${row.losses}`,
+    sortValue: (row) => row.wins - row.losses,
+    numeric: true,
+  },
+  {
+    key: 'win_rate',
+    header: 'User Win Rate',
     render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
     sortValue: (row) => row.win_rate,
     numeric: true,
@@ -125,12 +145,12 @@ export function CardDetailPage({ cardName }: { cardName: string }) {
 
   const { detail } = loadState;
   const metrics = [
-    { label: 'Games Seen', value: formatNumber(detail.summary.games_seen) },
-    { label: 'Played', value: formatNumber(detail.summary.total_played) },
-    { label: 'Record', value: `${detail.summary.wins}–${detail.summary.losses}` },
-    { label: 'Win Rate', value: formatPercent(detail.summary.win_rate) },
-    { label: 'In Opener', value: formatNumber(detail.opener_impact.games_in_opener) },
-    { label: 'Visible Draws', value: formatNumber(detail.opener_impact.times_drawn) },
+    { label: 'Games Appeared', value: formatNumber(detail.all_usage.games_seen) },
+    { label: 'Total Plays', value: formatNumber(detail.all_usage.total_played) },
+    { label: 'Your Plays', value: formatNumber(detail.all_usage.player_played) },
+    { label: 'Opponent Plays', value: formatNumber(detail.all_usage.opponent_played) },
+    { label: 'Your Games', value: formatNumber(detail.all_usage.player_games_seen) },
+    { label: 'Opponent Games', value: formatNumber(detail.all_usage.opponent_games_seen) },
   ];
   const canShowImage = Boolean(detail.image_url) && failedImageCard !== detail.card_name;
 
@@ -155,7 +175,7 @@ export function CardDetailPage({ cardName }: { cardName: string }) {
           <div>
             <span className="eyebrow">Card drill-down</span>
             <h2>{detail.card_name}</h2>
-            <p>Performance whenever this card was visible in tracked games.</p>
+            <p>Usage by either player whenever this card appeared in a tracked game.</p>
           </div>
         </div>
       </div>
@@ -168,10 +188,25 @@ export function CardDetailPage({ cardName }: { cardName: string }) {
         </section>
       </Section>
 
-      <Section id="card-decks" title="Decks" description="Deck results in games where this card appeared.">
+      <Section
+        id="card-usage-by-side"
+        title="Usage by Side"
+        description="Every tracked appearance. Record and win rate are from the card user's perspective."
+      >
+        <SortableTable
+          caption="Card usage by player and opponent"
+          columns={roleColumns}
+          compact
+          getRowKey={(row) => row.role}
+          rows={detail.by_role}
+        />
+      </Section>
+
+      <Section id="card-decks" title="Your Decks" description="Your results in games where you used this card.">
         <SortableTable
           caption="Card performance by deck"
           columns={deckColumns}
+          compact
           getRowKey={(row) => row.deck_name}
           rows={detail.by_deck}
         />

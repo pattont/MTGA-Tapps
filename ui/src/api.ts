@@ -25,7 +25,8 @@ export interface DeckRow {
 
 export interface FormatRow {
   format_label: string;
-  raw_format: string | null;
+  /** Comma-joined raw queue identifiers, kept for debugging (not displayed). */
+  raw_formats: string;
   games: number;
   wins: number;
   losses: number;
@@ -141,6 +142,7 @@ export interface DashboardSnapshot {
   summary: Summary;
   decks: DeckRow[];
   formats: FormatRow[];
+  midweek_formats: FormatRow[];
   play_draw: PlayDrawRow[];
   deck_play_draw: DeckPlayDrawRow[];
   draw_quality: DrawQualityRow[];
@@ -206,6 +208,7 @@ export interface DeckDetail {
   summary: Summary;
   profile: DeckProfile;
   formats: FormatRow[];
+  midweek_formats: FormatRow[];
   card_performance: CardPerformanceRow[];
   opening_hands: OpeningHandRow[];
   mulligans: MulliganRow[];
@@ -280,12 +283,21 @@ export interface LifePoint {
   opponent_life: number;
 }
 
+export interface GameDrawQuality {
+  total_draws: number;
+  identified_draws: number;
+  land_draws: number;
+  land_draw_pct: number | null;
+  is_flood: boolean;
+}
+
 export interface GameDetail {
   game: GameHeader;
   player: GameParticipant;
   opponent: GameParticipant;
   opening_hand: GameOpeningHandRow[];
   drawn: GameDrawnCardRow[];
+  draw_quality: GameDrawQuality;
   cards_played: GamePlayedCardRow[];
   timeline: GameTimelineRow[];
   life_curve: LifePoint[];
@@ -308,6 +320,25 @@ export interface CardByDeckRow {
   win_rate: number | null;
 }
 
+export interface CardAllUsage {
+  games_seen: number;
+  total_played: number;
+  player_games_seen: number;
+  player_played: number;
+  opponent_games_seen: number;
+  opponent_played: number;
+}
+
+export interface CardByRoleRow {
+  role: 'player' | 'opponent';
+  side_label: string;
+  games_seen: number;
+  total_played: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+}
+
 export interface CardOpenerImpact {
   games_in_opener: number;
   wins: number;
@@ -320,8 +351,19 @@ export interface CardDetail {
   card_name: string;
   image_url: string | null;
   summary: CardSummary;
+  all_usage: CardAllUsage;
+  by_role: CardByRoleRow[];
   by_deck: CardByDeckRow[];
   opener_impact: CardOpenerImpact;
+}
+
+export interface CardSearchResult {
+  card_name: string;
+  type_category: string;
+  games_seen: number;
+  deck_count: number;
+  total_played: number;
+  last_seen_at: string | null;
 }
 
 export async function fetchDeckDetail(
@@ -368,6 +410,19 @@ export async function fetchCardDetail(cardName: string, signal?: AbortSignal): P
     throw new Error(`Dashboard API returned ${response.status}`);
   }
   return response.json() as Promise<CardDetail>;
+}
+
+export async function fetchCardSearch(
+  query: string,
+  signal?: AbortSignal,
+  limit = 8,
+): Promise<CardSearchResult[]> {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  const response = await fetch(`/api/cards?${params.toString()}`, { signal });
+  if (!response.ok) {
+    throw new Error(`Card search API returned ${response.status}`);
+  }
+  return response.json() as Promise<CardSearchResult[]>;
 }
 
 export function snapshotQueryString(filters: SnapshotFilters): string {

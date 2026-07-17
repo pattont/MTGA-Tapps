@@ -969,6 +969,17 @@ class TrackerOpeningDeckMixin:
             return
         line_lower = line.lower()
         format_updated = False
+        scene_context = data.get("context")
+        scene_target = data.get("toSceneName")
+        if (
+            isinstance(scene_context, str)
+            and scene_target == "EventLanding"
+            and self._is_trusted_queue_event_name(scene_context)
+        ):
+            self._pending_event_format = scene_context
+            if self._set_match_format(scene_context):
+                format_updated = True
+            self._format_from_backfill = from_backfill
         # Your screen name from authenticateResponse (seen when connecting). Try multiple keys.
         if "authenticateResponse" in data and self.game_state.player_display_name is None:
             auth = data.get("authenticateResponse")
@@ -1022,6 +1033,8 @@ class TrackerOpeningDeckMixin:
                 elif len(unique_event_ids) == 1:
                     fmt = next(iter(unique_event_ids))
             if trust_match_room_format and isinstance(fmt, str) and fmt:
+                if not from_backfill:
+                    self._pending_event_format = fmt
                 if self._set_match_format(fmt):
                     format_updated = True
                 self._format_from_backfill = from_backfill
@@ -1097,7 +1110,7 @@ class TrackerOpeningDeckMixin:
         )
         if opponent_name_known:
             player_label = g.player_display_name or "You"
-            suffix = " (Log Not Saved to DB)" if self._is_bot_match() else ""
+            suffix = " (Log Not Saved to DB)" if self._is_untracked_match() else ""
             self._print_line(
                 f"   Players: {player_label} vs {g.opponent_display_name.strip()}{suffix}"
             )
@@ -1143,7 +1156,8 @@ class TrackerOpeningDeckMixin:
             self.game_state.explicit_mulligan_count,
             7 - len(hand_cards),
         )
-        self.session_total_mulligans += self.game_state.mulligan_count
+        if not self._is_untracked_match():
+            self.session_total_mulligans += self.game_state.mulligan_count
         self._resolve_player_deck_from_hand_ids(hand_grp_ids)
         if self.game_state._hand_before_mulligan:
             thrown = [c for c in self.game_state._hand_before_mulligan if c not in hand_cards]
@@ -1155,6 +1169,7 @@ class TrackerOpeningDeckMixin:
             )
         self.game_state._hand_before_mulligan = []
         self.game_state._hand_before_mulligan_ids = []
+        self.game_state._hand_before_mulligan_instance_ids = []
         self.game_state._hand_before_mulligan_events = []
         self.game_state.opening_hand_capture_closed = True
         self.game_state.opening_keep_confirmed = False
@@ -1180,7 +1195,56 @@ class TrackerOpeningDeckMixin:
             return
         if len(hand_events) != len(hand_cards):
             hand_events = [CardEvent(card_name, "player") for card_name in hand_cards]
+        if (
+            len(hand_cards) == 7
+            and (self.game_state.explicit_mulligan_count > 0 or self.game_state.mulligan_count > 0)
+            and not self.game_state.opening_select_n_ids
+        ):
+            return
         self._finalize_starting_hand(hand_cards, hand_grp_ids, hand_events)
+
+    def _finalize_opening_hand_after_bottom_selection(self) -> None:
+        """Finalize a London mulligan hand after Arena reports selected bottom cards."""
+        if self.game_state.starting_hand or self.game_state.opening_hand_capture_closed:
+            return
+        selected_ids = set(self.game_state.opening_select_n_ids)
+        if not selected_ids:
+            return
+        hand_cards = self.game_state._hand_before_mulligan
+        hand_grp_ids = self.game_state._hand_before_mulligan_ids
+        hand_instance_ids = self.game_state._hand_before_mulligan_instance_ids
+        hand_events = self.game_state._hand_before_mulligan_events
+        if not hand_cards or len(hand_cards) != len(hand_grp_ids):
+            return
+        if len(hand_events) != len(hand_cards):
+            hand_events = [CardEvent(card_name, "player") for card_name in hand_cards]
+        if len(hand_instance_ids) != len(hand_cards):
+            hand_instance_ids = []
+
+        selected_indexes = {
+            index
+            for index, instance_id in enumerate(hand_instance_ids)
+            if int(instance_id) in selected_ids
+        }
+        if not selected_indexes:
+            remaining_selected_ids = set(selected_ids)
+            for index, grp_id in enumerate(hand_grp_ids):
+                if int(grp_id) in remaining_selected_ids:
+                    selected_indexes.add(index)
+                    remaining_selected_ids.remove(int(grp_id))
+
+        if not selected_indexes:
+            return
+        kept_cards = [
+            card for index, card in enumerate(hand_cards) if index not in selected_indexes
+        ]
+        kept_grp_ids = [
+            grp_id for index, grp_id in enumerate(hand_grp_ids) if index not in selected_indexes
+        ]
+        kept_events = [
+            event for index, event in enumerate(hand_events) if index not in selected_indexes
+        ]
+        self._finalize_starting_hand(kept_cards, kept_grp_ids, kept_events)
 
     def _finalize_cached_opening_hand_if_safe(self) -> bool:
         """Finalize a cached seven-card opening hand once gameplay proves it was kept."""
@@ -1192,6 +1256,10 @@ class TrackerOpeningDeckMixin:
         if len(hand_cards) != 7 or len(hand_grp_ids) != 7:
             return False
         if not self.game_state.opening_keep_confirmed and (
+            self.game_state.explicit_mulligan_count > 0 or self.game_state.mulligan_count > 0
+        ):
+            return False
+        if (
             self.game_state.explicit_mulligan_count > 0 or self.game_state.mulligan_count > 0
         ):
             return False
@@ -1276,6 +1344,7 @@ class TrackerOpeningDeckMixin:
         """Apply mulligan/opening-hand inference for one visible hand snapshot."""
         hand_cards = chosen_hand["hand_cards"]
         hand_grp_ids = chosen_hand["hand_grp_ids"]
+        hand_instance_ids = chosen_hand.get("hand_instance_ids", [])
         hand_events = chosen_hand["hand_events"]
 
         if len(hand_cards) > 7:
@@ -1292,14 +1361,22 @@ class TrackerOpeningDeckMixin:
                     return
                 self.game_state._hand_before_mulligan = hand_cards
                 self.game_state._hand_before_mulligan_ids = hand_grp_ids
+                self.game_state._hand_before_mulligan_instance_ids = hand_instance_ids
                 self.game_state._hand_before_mulligan_events = hand_events
             elif current_sig == previous_sig and turn_num and turn_num >= 1:
+                if self.game_state.explicit_mulligan_count > 0 or self.game_state.mulligan_count > 0:
+                    self.game_state._hand_before_mulligan = hand_cards
+                    self.game_state._hand_before_mulligan_ids = hand_grp_ids
+                    self.game_state._hand_before_mulligan_instance_ids = hand_instance_ids
+                    self.game_state._hand_before_mulligan_events = hand_events
+                    return
                 self._finalize_starting_hand(hand_cards, hand_grp_ids, hand_events)
                 return
             elif current_sig != previous_sig:
                 self.game_state.mulligan_count += 1
                 self.game_state._hand_before_mulligan = hand_cards
                 self.game_state._hand_before_mulligan_ids = hand_grp_ids
+                self.game_state._hand_before_mulligan_instance_ids = hand_instance_ids
                 self.game_state._hand_before_mulligan_events = hand_events
             return
 

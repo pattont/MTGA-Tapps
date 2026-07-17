@@ -21,7 +21,8 @@ const snapshot = {
       },
     },
   ],
-  formats: [{ format_label: 'Standard Best-of-1', raw_format: 'Play', games: 2, wins: 1, losses: 1, win_rate: 50 }],
+  formats: [{ format_label: 'Standard Best-of-1 (Unranked)', raw_formats: 'Play, Unknown', games: 2, wins: 1, losses: 1, win_rate: 50 }],
+  midweek_formats: [{ format_label: 'Midweek Magic - Slow Start', raw_formats: 'MWM_SlowStart_20260602', games: 1, wins: 1, losses: 0, win_rate: 100 }],
   play_draw: [{ play_draw: 'On the play', games: 1, wins: 1, losses: 0, win_rate: 100 }],
   deck_play_draw: [{ deck_name: 'Boros Mouse', play_draw: 'On the play', games: 1, wins: 1, losses: 0, win_rate: 100 }],
   draw_quality: [
@@ -35,6 +36,17 @@ const snapshot = {
       land_seen_pct: 37.5,
       opening_cards: 7,
       known_draws: 1,
+    },
+    {
+      game_id: 'game-2',
+      started_at: '2026-06-04T00:10:00',
+      deck_name: 'Boros Mouse',
+      outcome: 'loss',
+      cards_seen: 10,
+      lands_seen: 7,
+      land_seen_pct: 70,
+      opening_cards: 7,
+      known_draws: 3,
     },
   ],
   drawn_cards: [
@@ -56,15 +68,15 @@ const snapshot = {
     {
       match_id: 'match-1',
       started_at: '2026-06-04T00:01:00',
-      raw_format: 'Play',
-      format_label: 'Standard Best-of-1',
-      best_of: 1,
+      raw_format: 'TraditionalLadder',
+      format_label: 'Standard Best-of-3 (Ranked)',
+      best_of: 3,
       deck_name: 'Boros Mouse',
-      games: 2,
-      wins: 1,
+      games: 3,
+      wins: 2,
       losses: 1,
-      record: '1-1',
-      outcome: 'draw',
+      record: '2-1',
+      outcome: 'win',
     },
   ],
   sessions: [
@@ -106,7 +118,8 @@ const deckDetail = {
   },
   summary: { games: 2, wins: 1, losses: 1, draws: 0, win_rate: 50 },
   profile: { avg_duration_seconds: 270, avg_turns: 9, avg_mulligans: 0.5, on_play_pct: 50 },
-  formats: [{ format_label: 'Standard Best-of-1', raw_format: 'Play', games: 2, wins: 1, losses: 1, win_rate: 50 }],
+  formats: [{ format_label: 'Standard Best-of-1 (Unranked)', raw_formats: 'Play, Unknown', games: 2, wins: 1, losses: 1, win_rate: 50 }],
+  midweek_formats: [{ format_label: 'Midweek Magic - Slow Start', raw_formats: 'MWM_SlowStart_20260602', games: 1, wins: 1, losses: 0, win_rate: 100 }],
   card_performance: [
     {
       display_name: 'Mouse Mentor',
@@ -174,6 +187,13 @@ const gameDetail = {
   drawn: [
     { display_name: 'Llanowar Elves', type_category: 'Creature', turn_number: 2, draw_position: 1, copy_number: 1 },
   ],
+  draw_quality: {
+    total_draws: 10,
+    identified_draws: 9,
+    land_draws: 7,
+    land_draw_pct: 70,
+    is_flood: true,
+  },
   cards_played: [{ display_name: 'Mouse Mentor', type_category: 'Creature', played_count: 2 }],
   timeline: [
     {
@@ -207,6 +227,18 @@ const cardDetail = {
   card_name: 'Mouse Mentor',
   image_url: 'https://api.scryfall.com/cards/named?fuzzy=Mouse%20Mentor&format=image&version=art_crop',
   summary: { games_seen: 2, total_played: 3, wins: 1, losses: 1, win_rate: 50 },
+  all_usage: {
+    games_seen: 4,
+    total_played: 6,
+    player_games_seen: 2,
+    player_played: 3,
+    opponent_games_seen: 2,
+    opponent_played: 3,
+  },
+  by_role: [
+    { role: 'player', side_label: 'You', games_seen: 2, total_played: 3, wins: 1, losses: 1, win_rate: 50 },
+    { role: 'opponent', side_label: 'Opponent', games_seen: 2, total_played: 3, wins: 1, losses: 1, win_rate: 50 },
+  ],
   by_deck: [
     { deck_name: 'Boros Mouse', games_seen: 2, total_played: 3, wins: 1, losses: 1, win_rate: 50 },
   ],
@@ -239,15 +271,12 @@ describe('App', () => {
     [
       ['Overview', '#overview'],
       ['Win Rate Trend', '#trend'],
+      ['Recent Games', '#recent-games'],
       ['Decks', '#decks'],
       ['Formats', '#formats'],
-      ['Play / Draw', '#play-draw'],
       ['Deck Play / Draw', '#deck-play-draw'],
-      ['Draw Quality', '#draw-quality'],
       ['Visible Drawn Cards', '#visible-drawn-cards'],
-      ['Momentum', '#momentum'],
-      ['Recent Games', '#recent-games'],
-      ['Matches', '#matches'],
+      ['Bo3 Matches', '#matches'],
       ['Sessions', '#sessions'],
     ].forEach(([label, href]) => {
       expect(screen.getByRole('link', { name: label })).toHaveAttribute('href', href);
@@ -259,17 +288,52 @@ describe('App', () => {
       'Formats',
       'Play / Draw',
       'Deck Play / Draw',
-      'Draw Quality',
       'Visible Drawn Cards',
       'Momentum',
       'Recent Games',
-      'Matches',
+      'Best-of-3 Matches',
       'Sessions',
     ].forEach((sectionName) => {
       expect(screen.getByRole('heading', { name: sectionName })).toBeInTheDocument();
     });
-    expect(screen.getByRole('table', { name: 'Recent matches' })).toBeInTheDocument();
+    expect(screen.getByRole('table', { name: 'Best-of-3 matches' })).toBeInTheDocument();
     expect(screen.getByRole('table', { name: 'Tracker sessions' })).toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: 'Draw quality by game' })).not.toBeInTheDocument();
+    const dashboardNav = screen.getByRole('navigation', { name: 'Dashboard sections' });
+    expect(within(dashboardNav).getAllByRole('link').slice(0, 3).map((link) => link.textContent)).toEqual([
+      'Overview',
+      'Win Rate Trend',
+      'Recent Games',
+    ]);
+    expect(
+      Array.from(document.querySelectorAll<HTMLElement>('.dashboard-main > section[id]')).map(
+        (section) => section.id,
+      ),
+    ).toEqual([
+      'overview',
+      'trend',
+      'recent-games',
+      'decks',
+      'formats',
+      'deck-play-draw',
+      'visible-drawn-cards',
+      'matches',
+      'sessions',
+    ]);
+    const overviewSection = document.getElementById('overview');
+    expect(overviewSection).not.toBeNull();
+    expect(within(overviewSection as HTMLElement).getByRole('table', { name: 'Play and draw performance' })).toBeInTheDocument();
+    expect(within(overviewSection as HTMLElement).getByRole('table', { name: 'Momentum splits' })).toBeInTheDocument();
+    expect(within(dashboardNav).queryByRole('link', { name: 'Play / Draw' })).not.toBeInTheDocument();
+    expect(within(dashboardNav).queryByRole('link', { name: 'Momentum' })).not.toBeInTheDocument();
+
+    const trendLink = within(dashboardNav).getByRole('link', { name: 'Win Rate Trend' });
+    await user.click(trendLink);
+    expect(trendLink).toHaveClass('active');
+    const overviewLink = within(dashboardNav).getByRole('link', { name: 'Overview' });
+    await user.click(overviewLink);
+    expect(overviewLink).toHaveClass('active');
+    expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0 });
 
     await user.click(screen.getByRole('button', { name: /switch to light mode/i }));
     await waitFor(() => expect(document.documentElement.dataset.theme).toBe('light'));
@@ -280,9 +344,9 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
-    // Decks table, Best Deck metric, Deck Play / Draw, Draw Quality, Recent Games, and Matches.
+    // Decks table, Best Deck metric, Deck Play / Draw, Recent Games, and Matches.
     const deckLinks = screen.getAllByRole('link', { name: 'Boros Mouse' });
-    expect(deckLinks.length).toBe(6);
+    expect(deckLinks.length).toBe(5);
     deckLinks.forEach((link) => {
       expect(link).toHaveAttribute('href', '#/deck/Boros%20Mouse');
     });
@@ -452,7 +516,51 @@ describe('App', () => {
 
     expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
 
-    expect(screen.getByRole('link', { name: /Jun 4.*12:10 AM/i })).toHaveAttribute('href', '#/game/game-2');
+    expect(screen.getByRole('link', { name: /Jun 4.*12:10 AM/i })).toHaveAttribute(
+      'href',
+      '#/game/game-2?return=%23recent-games',
+    );
+    const recentTable = screen.getByRole('table', { name: 'Recent games' });
+    expect(within(recentTable).getByRole('columnheader', { name: /Cards Seen/i })).toBeInTheDocument();
+    expect(within(recentTable).getByRole('columnheader', { name: /Lands Seen/i })).toBeInTheDocument();
+    expect(within(recentTable).getByText('70%')).toBeInTheDocument();
+  });
+
+  it('returns from a game to the dashboard section that opened it', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).startsWith('/api/game')) {
+        return new Response(JSON.stringify(gameDetail), { status: 200 });
+      }
+      return new Response(JSON.stringify(snapshot), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    });
+
+    try {
+      render(<App />);
+      const recentTable = await screen.findByRole('table', { name: 'Recent games' });
+      await user.click(within(recentTable).getByRole('link', { name: /Jun 4.*12:10 AM/i }));
+
+      expect(await screen.findByRole('heading', { name: /Game Jun 4/i })).toBeInTheDocument();
+      const backLinks = screen.getAllByRole('link', { name: '← Back to dashboard' });
+      backLinks.forEach((link) => expect(link).toHaveAttribute('href', '#recent-games'));
+      await user.click(backLinks[0]);
+
+      await waitFor(() => expect(window.location.hash).toBe('#recent-games'));
+      expect(await screen.findByRole('table', { name: 'Recent games' })).toBeInTheDocument();
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start' }));
+    } finally {
+      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+        configurable: true,
+        value: originalScrollIntoView,
+      });
+    }
   });
 
   it('routes to the game detail page and renders game sections', async () => {
@@ -470,9 +578,11 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: /Game Jun 4/i })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/game?id=game-1', expect.anything());
     expect(document.title).toContain('Game Jun 4');
-    ['Life Totals', 'Opening Hand', 'Drawn Cards', 'Cards Played', 'Timeline'].forEach((sectionName) => {
+    ['Draw Quality', 'Life Totals', 'Opening Hand', 'Drawn Cards', 'Cards Played', 'Timeline'].forEach((sectionName) => {
       expect(screen.getByRole('heading', { name: sectionName })).toBeInTheDocument();
     });
+    expect(screen.getByText('70%')).toBeInTheDocument();
+    expect(screen.getAllByText('Flood').length).toBeGreaterThan(0);
     expect(screen.getByText('Turn 1 begins')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Boros Mouse' })).toHaveAttribute('href', '#/deck/Boros%20Mouse');
   });
@@ -484,6 +594,47 @@ describe('App', () => {
     expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
 
     expect(screen.getByRole('link', { name: 'Llanowar Elves' })).toHaveAttribute('href', '#/card/Llanowar%20Elves');
+  });
+
+  it('searches all tracked cards and opens the selected card detail', async () => {
+    const shelteredDetail = {
+      ...cardDetail,
+      card_name: 'Sheltered by Ghosts',
+      image_url: null,
+    };
+    const searchResults = [
+      {
+        card_name: 'Sheltered by Ghosts',
+        type_category: 'Enchantment',
+        games_seen: 12,
+        deck_count: 2,
+        total_played: 9,
+        last_seen_at: '2026-06-04T00:10:00',
+      },
+    ];
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).startsWith('/api/cards')) {
+        return new Response(JSON.stringify(searchResults), { status: 200 });
+      }
+      if (String(url).startsWith('/api/card')) {
+        return new Response(JSON.stringify(shelteredDetail), { status: 200 });
+      }
+      return new Response(JSON.stringify(snapshot), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText('MTGA Tracker');
+    await user.type(screen.getByRole('combobox', { name: 'Search by card name' }), 'Sheltered by Ghosts');
+
+    const result = await screen.findByRole('option', { name: /Sheltered by Ghosts.*12 games.*9 played/i });
+    expect(result).toHaveAttribute('href', '#/card/Sheltered%20by%20Ghosts');
+    await user.click(result);
+
+    expect((await screen.findAllByRole('heading', { name: 'Sheltered by Ghosts' })).length).toBeGreaterThan(0);
+    expect(screen.getByRole('heading', { name: 'Card Summary' })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith('/api/card?name=Sheltered+by+Ghosts', expect.anything());
   });
 
   it('routes to the card detail page and renders card sections', async () => {
@@ -501,7 +652,7 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: 'Mouse Mentor' })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/card?name=Mouse+Mentor', expect.anything());
     expect(document.title).toBe('Mouse Mentor – MTGA Tracker');
-    ['Card Summary', 'Decks', 'Opening Hand Impact'].forEach((sectionName) => {
+    ['Card Summary', 'Usage by Side', 'Your Decks', 'Opening Hand Impact'].forEach((sectionName) => {
       expect(screen.getByRole('heading', { name: sectionName })).toBeInTheDocument();
     });
     expect(screen.getByRole('link', { name: 'Boros Mouse' })).toHaveAttribute('href', '#/deck/Boros%20Mouse');

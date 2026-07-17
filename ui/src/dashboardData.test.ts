@@ -30,6 +30,7 @@ describe('metricCards', () => {
         },
       ],
       formats: [],
+      midweek_formats: [],
       play_draw: [],
       deck_play_draw: [],
       draw_quality: [],

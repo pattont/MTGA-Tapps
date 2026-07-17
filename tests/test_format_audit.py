@@ -2,15 +2,26 @@ import sqlite3
 
 from mtga_tracker.analytics import AnalyticsStore
 from mtga_tracker.db_audit import audit_database, repair_database
-from mtga_tracker.format_normalizer import format_label, normalize_match_format
+from mtga_tracker.format_normalizer import format_label, is_momir_format, normalize_match_format
 
 
 def test_format_normalizer_labels_constructed_queues():
-    assert format_label("Play") == "Standard Best-of-1"
-    assert format_label("TraditionalStandard") == "Standard Best-of-3"
+    assert format_label("Play") == "Standard Best-of-1 (Unranked)"
+    assert format_label("Unknown") == "Standard Best-of-1 (Unranked)"
+    assert format_label("Ladder") == "Standard Best-of-1 (Ranked)"
+    assert format_label("Ladder", default_best_of=3) == "Standard Best-of-3 (Ranked)"
+    assert format_label("Constructed_BestOf3") == "Standard Best-of-3 (Unranked)"
+    assert format_label("TraditionalLadder") == "Standard Best-of-3 (Ranked)"
+    assert format_label("TraditionalStandard") == "Standard Best-of-3 (Unranked)"
     assert format_label("MWM_SlowStart_20260602") == "Midweek Magic - Slow Start"
     assert normalize_match_format("Play").best_of == 1
     assert normalize_match_format("TraditionalStandard").best_of == 3
+
+
+def test_momir_format_detection_handles_midweek_and_plain_labels():
+    assert is_momir_format("MWM_Momir")
+    assert is_momir_format("Midweek Magic - Momir")
+    assert not is_momir_format("MWM_SlowStart_20260602")
 
 
 def test_audit_database_finds_safe_format_queue_mismatch(tmp_path):

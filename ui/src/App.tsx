@@ -6,7 +6,6 @@ import {
   type DeckRow,
   type DrawQualityRow,
   type DrawnCardRow,
-  type FormatRow,
   type MatchRow,
   type MomentumRow,
   type PlayDrawRow,
@@ -21,10 +20,12 @@ import { DeckDetailPage } from './components/DeckDetailPage';
 import { DeckLink } from './components/DeckLink';
 import { DeckVisual } from './components/DeckVisual';
 import { FilterBar } from './components/FilterBar';
+import { FormatsTable } from './components/FormatsTable';
 import { GameDetailPage } from './components/GameDetailPage';
 import { MetricCard } from './components/MetricCard';
 import { SortableTable, type Column } from './components/SortableTable';
 import { TrendChart } from './components/TrendChart';
+import { TypeChip } from './components/TypeChip';
 import { WinRateBar } from './components/WinRateBar';
 import { AppShell } from './components/AppShell';
 import { formatPercent, metricCards } from './dashboardData';
@@ -39,6 +40,9 @@ type LoadState =
   | { status: 'loading' }
   | { status: 'loaded'; snapshot: DashboardSnapshot; lastUpdated: string; refreshError?: string }
   | { status: 'error'; message: string };
+
+type RecentGameWithDrawQuality = RecentGameRow &
+  Pick<DrawQualityRow, 'cards_seen' | 'lands_seen' | 'land_seen_pct'>;
 
 const SNAPSHOT_REFRESH_MS = 20_000;
 
@@ -129,24 +133,6 @@ const deckColumns: Column<DeckRow>[] = [
   },
 ];
 
-const formatColumns: Column<FormatRow>[] = [
-  { key: 'format_label', header: 'Format' },
-  {
-    key: 'raw_format',
-    header: 'Raw Queue',
-    render: (row) => row.raw_format ?? '—',
-    sortValue: (row) => row.raw_format,
-  },
-  { key: 'games', header: 'Games', numeric: true },
-  {
-    key: 'win_rate',
-    header: 'Win Rate',
-    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
-    sortValue: (row) => row.win_rate,
-    numeric: true,
-  },
-];
-
 const playDrawColumns: Column<PlayDrawRow>[] = [
   {
     key: 'play_draw',
@@ -191,62 +177,6 @@ const deckPlayDrawColumns: Column<DeckPlayDrawRow>[] = [
   },
 ];
 
-const drawQualityColumns: Column<DrawQualityRow>[] = [
-  {
-    key: 'started_at',
-    header: 'Started',
-    render: (row) => <a href={gameRouteHash(row.game_id)}>{formatDateTime(row.started_at)}</a>,
-    sortValue: (row) => row.started_at,
-  },
-  {
-    key: 'deck_name',
-    header: 'Deck',
-    render: (row) => <DeckLink deckName={row.deck_name} />,
-    sortValue: (row) => row.deck_name,
-  },
-  {
-    key: 'outcome',
-    header: 'Outcome',
-    render: (row) => <Badge tone={outcomeTone(row.outcome)}>{outcomeLabel(row.outcome)}</Badge>,
-    sortValue: (row) => row.outcome,
-  },
-  {
-    key: 'cards_seen',
-    header: 'Cards Seen',
-    render: (row) => formatNumber(row.cards_seen),
-    sortValue: (row) => row.cards_seen,
-    numeric: true,
-  },
-  {
-    key: 'lands_seen',
-    header: 'Lands Seen',
-    render: (row) => formatNumber(row.lands_seen),
-    sortValue: (row) => row.lands_seen,
-    numeric: true,
-  },
-  {
-    key: 'land_seen_pct',
-    header: 'Land Seen',
-    render: (row) => formatPercent(row.land_seen_pct),
-    sortValue: (row) => row.land_seen_pct,
-    numeric: true,
-  },
-  {
-    key: 'opening_cards',
-    header: 'Opening',
-    render: (row) => formatNumber(row.opening_cards),
-    sortValue: (row) => row.opening_cards,
-    numeric: true,
-  },
-  {
-    key: 'known_draws',
-    header: 'Known Draws',
-    render: (row) => formatNumber(row.known_draws),
-    sortValue: (row) => row.known_draws,
-    numeric: true,
-  },
-];
-
 const drawnCardColumns: Column<DrawnCardRow>[] = [
   {
     key: 'display_name',
@@ -257,7 +187,7 @@ const drawnCardColumns: Column<DrawnCardRow>[] = [
   {
     key: 'type_category',
     header: 'Type',
-    render: (row) => row.type_category ?? 'Other',
+    render: (row) => <TypeChip type={row.type_category} />,
     sortValue: (row) => row.type_category,
   },
   { key: 'times_drawn', header: 'Times Drawn', numeric: true },
@@ -299,11 +229,11 @@ const momentumColumns: Column<MomentumRow>[] = [
   },
 ];
 
-const recentColumns: Column<RecentGameRow>[] = [
+const recentColumns: Column<RecentGameWithDrawQuality>[] = [
   {
     key: 'started_at',
     header: 'Started',
-    render: (row) => <a href={gameRouteHash(row.game_id)}>{formatDateTime(row.started_at)}</a>,
+    render: (row) => <a href={gameRouteHash(row.game_id, '#recent-games')}>{formatDateTime(row.started_at)}</a>,
     sortValue: (row) => row.started_at,
   },
   {
@@ -318,6 +248,27 @@ const recentColumns: Column<RecentGameRow>[] = [
     header: 'Outcome',
     render: (row) => <Badge tone={outcomeTone(row.outcome)}>{outcomeLabel(row.outcome)}</Badge>,
     sortValue: (row) => row.outcome,
+  },
+  {
+    key: 'cards_seen',
+    header: 'Cards Seen',
+    render: (row) => formatNumber(row.cards_seen),
+    sortValue: (row) => row.cards_seen,
+    numeric: true,
+  },
+  {
+    key: 'lands_seen',
+    header: 'Lands Seen',
+    render: (row) => formatNumber(row.lands_seen),
+    sortValue: (row) => row.lands_seen,
+    numeric: true,
+  },
+  {
+    key: 'land_seen_pct',
+    header: 'Land Seen',
+    render: (row) => formatPercent(row.land_seen_pct),
+    sortValue: (row) => row.land_seen_pct,
+    numeric: true,
   },
   {
     key: 'mulligans',
@@ -401,6 +352,7 @@ export default function App() {
   const gameRoute = useMemo(() => parseGameRoute(routeHash), [routeHash]);
   const cardRoute = useMemo(() => parseCardRoute(routeHash), [routeHash]);
   const deckName = deckRoute?.name ?? null;
+  const gameId = gameRoute?.id ?? null;
   const deckRouteFilters = deckRoute?.filters ?? {};
   const activeRouteFilters = deckRoute ? deckRouteFilters : filters;
   const deckBackHref = deckRoute ? dashboardRouteHash(deckRoute.filters) : '#overview';
@@ -412,6 +364,15 @@ export default function App() {
           )
         : deckNavItems,
     [deckRoute],
+  );
+  const gamePageNavItems = useMemo(
+    () =>
+      gameRoute
+        ? gameNavItems.map((item) =>
+            item.id === 'back-to-dashboard' ? { ...item, route: gameRoute.returnHash } : item,
+          )
+        : gameNavItems,
+    [gameRoute],
   );
 
   useEffect(() => {
@@ -432,6 +393,18 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
+    if (deckRoute || gameRoute || cardRoute || loadState.status !== 'loaded' || !routeHash.startsWith('#')) {
+      return;
+    }
+    const sectionId = routeHash.slice(1).split('?')[0];
+    if (sectionId === 'overview') {
+      window.scrollTo({ top: 0, left: 0 });
+    } else if (sectionId && !sectionId.startsWith('/')) {
+      document.getElementById(sectionId)?.scrollIntoView?.({ block: 'start' });
+    }
+  }, [cardRoute, deckRoute, gameRoute, loadState.status, routeHash]);
+
+  useEffect(() => {
     document.title = deckRoute
       ? `${deckRoute.name} – MTGA Tracker`
       : gameRoute
@@ -442,7 +415,7 @@ export default function App() {
   }, [deckRoute, gameRoute, cardRoute]);
 
   useEffect(() => {
-    if (deckName || gameRoute || cardRoute) {
+    if (deckName || gameId || cardRoute) {
       return;
     }
     let ignore = false;
@@ -480,7 +453,7 @@ export default function App() {
       activeController?.abort();
       window.clearInterval(refreshId);
     };
-  }, [filters, deckName, gameRoute, cardRoute]);
+  }, [filters, deckName, gameId, cardRoute]);
 
   function toggleTheme() {
     setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
@@ -491,14 +464,14 @@ export default function App() {
       <AppShell
         theme={theme}
         onToggleTheme={toggleTheme}
-        navItems={cardRoute ? cardNavItems : gameRoute ? gameNavItems : deckName ? deckPageNavItems : undefined}
+        navItems={cardRoute ? cardNavItems : gameId ? gamePageNavItems : deckName ? deckPageNavItems : undefined}
         eyebrow={cardRoute ? 'Card breakdown' : gameRoute ? 'Game breakdown' : deckName ? 'Deck breakdown' : 'SQLite analytics'}
         heading={cardRoute ?? (gameRoute ? 'Game detail' : deckName ?? 'Performance overview')}
       >
         {cardRoute ? (
           <CardDetailPage key={cardRoute} cardName={cardRoute} />
         ) : gameRoute ? (
-          <GameDetailPage key={gameRoute} gameId={gameRoute} />
+          <GameDetailPage key={gameRoute.id} backHref={gameRoute.returnHash} gameId={gameRoute.id} />
         ) : deckName ? (
           <DeckDetailPage
             key={`${deckName}-${deckBackHref}`}
@@ -559,6 +532,18 @@ function Dashboard({
     }
     return snapshot.drawn_cards.filter((row) => row.display_name.toLocaleLowerCase().includes(query));
   }, [drawnCardSearch, snapshot.drawn_cards]);
+  const recentGames = useMemo(() => {
+    const qualityByGame = new Map(snapshot.draw_quality.map((row) => [row.game_id, row]));
+    return snapshot.recent.map((row) => {
+      const quality = qualityByGame.get(row.game_id);
+      return {
+        ...row,
+        cards_seen: quality?.cards_seen ?? null,
+        lands_seen: quality?.lands_seen ?? null,
+        land_seen_pct: quality?.land_seen_pct ?? null,
+      };
+    });
+  }, [snapshot.draw_quality, snapshot.recent]);
 
   return (
     <>
@@ -574,10 +559,43 @@ function Dashboard({
         <>
       <FilterBar filters={filters} onChange={onFiltersChange} options={snapshot.filter_options} />
 
-      <section className="metric-grid" id="overview" aria-label="Overview metrics">
-        {metricCards(snapshot, filters).map((metric) => (
-          <MetricCard key={metric.label} href={metric.href} label={metric.label} value={metric.value} />
-        ))}
+      <section className="overview-section" id="overview" aria-label="Overview">
+        <section className="metric-grid" aria-label="Overview metrics">
+          {metricCards(snapshot, filters).map((metric) => (
+            <MetricCard key={metric.label} href={metric.href} label={metric.label} value={metric.value} />
+          ))}
+        </section>
+        <div className="overview-analytics">
+          <section className="overview-panel" aria-labelledby="overview-play-draw-title">
+            <div className="section-heading">
+              <div>
+                <h3 id="overview-play-draw-title">Play / Draw</h3>
+              </div>
+            </div>
+            <SortableTable
+              caption="Play and draw performance"
+              columns={playDrawColumns}
+              getRowKey={(row) => row.play_draw ?? 'unknown'}
+              rows={snapshot.play_draw}
+            />
+          </section>
+          <section className="overview-panel" aria-labelledby="overview-momentum-title">
+            <div className="section-heading">
+              <div>
+                <h3 id="overview-momentum-title">Momentum</h3>
+                <p className="section-description">
+                  Next-game results after wins and losses, including mulligans and on-play percentage.
+                </p>
+              </div>
+            </div>
+            <SortableTable
+              caption="Momentum splits"
+              columns={momentumColumns}
+              getRowKey={(row) => row.split}
+              rows={snapshot.momentum}
+            />
+          </section>
+        </div>
       </section>
 
       <Section
@@ -588,6 +606,20 @@ function Dashboard({
         <div className="trend-wrap">
           <TrendChart rows={snapshot.trend} />
         </div>
+      </Section>
+
+      <Section
+        id="recent-games"
+        title="Recent Games"
+        description="Recent results with opening-hand and known-draw land distribution."
+      >
+        <SortableTable
+          caption="Recent games"
+          columns={recentColumns}
+          getRowKey={(row) => row.game_id}
+          initialSort={{ key: 'started_at', direction: 'desc' }}
+          rows={recentGames}
+        />
       </Section>
 
       <Section id="decks" title="Decks">
@@ -602,25 +634,17 @@ function Dashboard({
             />
           </label>
         </div>
-        <SortableTable caption="Deck performance" columns={deckColumns} getRowKey={(row) => row.deck_name} rows={filteredDecks} />
+        <SortableTable
+          caption="Deck performance"
+          columns={deckColumns}
+          getRowKey={(row) => row.deck_name}
+          initialSort={{ key: 'games', direction: 'desc' }}
+          rows={filteredDecks}
+        />
       </Section>
 
       <Section id="formats" title="Formats">
-        <SortableTable
-          caption="Format performance"
-          columns={formatColumns}
-          getRowKey={(row) => `${row.format_label}-${row.raw_format ?? 'unknown'}`}
-          rows={snapshot.formats}
-        />
-      </Section>
-
-      <Section id="play-draw" title="Play / Draw">
-        <SortableTable
-          caption="Play and draw performance"
-          columns={playDrawColumns}
-          getRowKey={(row) => row.play_draw ?? 'unknown'}
-          rows={snapshot.play_draw}
-        />
+        <FormatsTable caption="Format performance" midweekRows={snapshot.midweek_formats} rows={snapshot.formats} />
       </Section>
 
       <Section id="deck-play-draw" title="Deck Play / Draw">
@@ -629,19 +653,6 @@ function Dashboard({
           columns={deckPlayDrawColumns}
           getRowKey={(row) => `${row.deck_name}-${row.play_draw ?? 'unknown'}`}
           rows={snapshot.deck_play_draw}
-        />
-      </Section>
-
-      <Section
-        id="draw-quality"
-        title="Draw Quality"
-        description="Opening hands plus known visible draws. Older games may only have opening-hand data."
-      >
-        <SortableTable
-          caption="Draw quality by game"
-          columns={drawQualityColumns}
-          getRowKey={(row) => row.game_id}
-          rows={snapshot.draw_quality}
         />
       </Section>
 
@@ -661,32 +672,21 @@ function Dashboard({
           caption="Visible drawn card frequency"
           columns={drawnCardColumns}
           getRowKey={(row) => `${row.display_name}-${row.type_category ?? 'unknown'}`}
+          initialSort={{ key: 'times_drawn', direction: 'desc' }}
           rows={filteredDrawnCards}
         />
       </Section>
 
       <Section
-        id="momentum"
-        title="Momentum"
-        description="Next-game results after wins and losses, including mulligans and on-play percentage."
+        id="matches"
+        title="Best-of-3 Matches"
+        description="Multi-game matches with the game record inside each match. Single-game (Bo1) play lives in Recent Games."
       >
-        <SortableTable caption="Momentum splits" columns={momentumColumns} getRowKey={(row) => row.split} rows={snapshot.momentum} />
-      </Section>
-
-      <Section id="recent-games" title="Recent Games">
         <SortableTable
-          caption="Recent games"
-          columns={recentColumns}
-          getRowKey={(row) => row.game_id}
-          rows={snapshot.recent}
-        />
-      </Section>
-
-      <Section id="matches" title="Matches" description="Recent match recaps grouped across games in the same match.">
-        <SortableTable
-          caption="Recent matches"
+          caption="Best-of-3 matches"
           columns={matchColumns}
           getRowKey={(row) => row.match_id}
+          initialSort={{ key: 'started_at', direction: 'desc' }}
           rows={snapshot.matches}
         />
       </Section>
@@ -696,6 +696,7 @@ function Dashboard({
           caption="Tracker sessions"
           columns={sessionColumns}
           getRowKey={(row) => row.session_id}
+          initialSort={{ key: 'started_at', direction: 'desc' }}
           rows={snapshot.sessions}
         />
       </Section>

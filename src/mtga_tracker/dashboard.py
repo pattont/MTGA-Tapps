@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from .format_normalizer import format_label
+from .format_normalizer import format_label, normalize_match_format
 from .paths import DATA_DIR
 
 
@@ -53,7 +53,13 @@ def _games_filter(
     deck: Optional[str], fmt: Optional[str], days: Optional[int]
 ) -> Tuple[str, List[Any]]:
     """WHERE fragment (referencing games alias `g`) plus bound params."""
-    clauses = ["1=1"]
+    # Jump In games are intentionally untracked; hide them from every aggregate.
+    clauses = [
+        """NOT EXISTS (
+          SELECT 1 FROM matches mj
+          WHERE mj.id = g.match_id AND mj.format LIKE 'Jump!_In%' ESCAPE '!'
+        )"""
+    ]
     params: List[Any] = []
     if deck:
         clauses.append(
@@ -77,6 +83,74 @@ def _games_filter(
         clauses.append("COALESCE(g.started_at, g.ended_at) >= ?")
         params.append(cutoff)
     return " AND ".join(clauses), params
+
+
+def _win_rate(wins: int, losses: int) -> Optional[float]:
+    decided = wins + losses
+    return round(100.0 * wins / decided, 1) if decided else None
+
+
+def _grouped_format_rows(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Format performance grouped by display label.
+
+    Returns (top_level_rows, midweek_breakdown_rows). All Midweek Magic events
+    collapse into a single top-level "Midweek Magic" row; the per-event split is
+    reported separately. Raw queue identifiers are kept on each row (comma
+    joined) for debugging but are not meant for display.
+    """
+    raw_rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              COALESCE(m.format, '(unknown)') AS raw_format,
+              COALESCE(m.best_of, 1) AS best_of,
+              COUNT(*) AS games,
+              SUM(g.outcome = 'win') AS wins,
+              SUM(g.outcome = 'loss') AS losses
+            FROM games g
+            JOIN matches m ON m.id = g.match_id
+            WHERE {where}
+            GROUP BY m.format, m.best_of
+            """,
+            params,
+        )
+    )
+    top: Dict[str, Dict[str, Any]] = {}
+    midweek: Dict[str, Dict[str, Any]] = {}
+
+    def _accumulate(bucket: Dict[str, Dict[str, Any]], label: str, row: Dict[str, Any]) -> None:
+        entry = bucket.setdefault(
+            label,
+            {"format_label": label, "games": 0, "wins": 0, "losses": 0, "raw_formats": []},
+        )
+        entry["games"] += int(row["games"] or 0)
+        entry["wins"] += int(row["wins"] or 0)
+        entry["losses"] += int(row["losses"] or 0)
+        if row["raw_format"] not in entry["raw_formats"]:
+            entry["raw_formats"].append(row["raw_format"])
+
+    for row in raw_rows:
+        normalized = normalize_match_format(
+            row["raw_format"], default_best_of=int(row["best_of"] or 1)
+        )
+        if normalized.is_midweek:
+            _accumulate(top, "Midweek Magic", row)
+            _accumulate(midweek, normalized.label, row)
+        else:
+            _accumulate(top, normalized.label, row)
+
+    def _finish(bucket: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+        rows = []
+        for entry in bucket.values():
+            entry["win_rate"] = _win_rate(entry["wins"], entry["losses"])
+            entry["raw_formats"] = ", ".join(sorted(entry["raw_formats"]))
+            rows.append(entry)
+        rows.sort(key=lambda item: (-item["games"], item["format_label"]))
+        return rows
+
+    return _finish(top)[:20], _finish(midweek)
 
 
 def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
@@ -228,25 +302,7 @@ def dashboard_snapshot(
                 params,
             )
         )
-        format_rows = _dict_rows(
-            conn.execute(
-                f"""
-                SELECT
-                  COALESCE(m.format, '(unknown)') AS raw_format,
-                  COUNT(*) AS games,
-                  SUM(g.outcome = 'win') AS wins,
-                  SUM(g.outcome = 'loss') AS losses,
-                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
-                FROM games g
-                JOIN matches m ON m.id = g.match_id
-                WHERE {where}
-                GROUP BY m.format
-                ORDER BY games DESC
-                LIMIT 20
-                """,
-                params,
-            )
-        )
+        format_rows, midweek_rows = _grouped_format_rows(conn, where, params)
         play_draw_rows = _dict_rows(
             conn.execute(
                 f"""
@@ -384,6 +440,7 @@ def dashboard_snapshot(
                   g.outcome,
                   g.duration_seconds,
                   m.format AS raw_format,
+                  m.best_of,
                   COALESCE(p.deck_name, '(unknown)') AS deck_name,
                   p.mulligans
                 FROM games g
@@ -435,7 +492,7 @@ def dashboard_snapshot(
                 FROM matches m
                 JOIN games g ON g.match_id = m.id
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-                WHERE {where}
+                WHERE {where} AND COALESCE(m.best_of, 1) >= 3
                 GROUP BY m.id
                 ORDER BY COALESCE(m.started_at, MIN(COALESCE(g.started_at, g.ended_at))) DESC, m.id DESC
                 LIMIT 25
@@ -478,11 +535,16 @@ def dashboard_snapshot(
             )
         ]
         format_options = [
-            {"raw_format": row[0], "format_label": format_label(row[0])}
+            {
+                "raw_format": row[0],
+                "format_label": format_label(row[0], default_best_of=int(row[1] or 1)),
+            }
             for row in conn.execute(
                 """
-                SELECT DISTINCT COALESCE(format, '(unknown)') AS raw_format
+                SELECT COALESCE(format, '(unknown)') AS raw_format, MAX(COALESCE(best_of, 1))
                 FROM matches
+                WHERE COALESCE(format, '(unknown)') NOT LIKE 'Jump!_In%' ESCAPE '!'
+                GROUP BY raw_format
                 ORDER BY raw_format COLLATE NOCASE
                 """
             )
@@ -503,17 +565,20 @@ def dashboard_snapshot(
     for row in drawn_card_rows:
         games_seen = row.get("games_seen") or 0
         row["pct_of_games"] = round(100.0 * games_seen / total_games, 1) if total_games else None
-    for row in format_rows:
-        row["format_label"] = format_label(row.get("raw_format"))
     for row in recent_rows:
-        row["format_label"] = format_label(row.get("raw_format"))
+        row["format_label"] = format_label(
+            row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
+        )
     for row in match_rows:
-        row["format_label"] = format_label(row.get("raw_format"))
+        row["format_label"] = format_label(
+            row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
+        )
         row["record"] = f"{int(row.get('wins') or 0)}-{int(row.get('losses') or 0)}"
     return {
         "summary": summary_dict,
         "decks": deck_rows,
         "formats": format_rows,
+        "midweek_formats": midweek_rows,
         "play_draw": play_draw_rows,
         "deck_play_draw": deck_play_draw_rows,
         "draw_quality": draw_quality_rows,
@@ -573,25 +638,7 @@ def deck_detail(
             """,
             params,
         ).fetchone()
-        format_rows = _dict_rows(
-            conn.execute(
-                f"""
-                SELECT
-                  COALESCE(m.format, '(unknown)') AS raw_format,
-                  COUNT(*) AS games,
-                  SUM(g.outcome = 'win') AS wins,
-                  SUM(g.outcome = 'loss') AS losses,
-                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
-                FROM games g
-                JOIN matches m ON m.id = g.match_id
-                WHERE {where}
-                GROUP BY m.format
-                ORDER BY games DESC
-                LIMIT 20
-                """,
-                params,
-            )
-        )
+        format_rows, midweek_rows = _grouped_format_rows(conn, where, params)
         card_rows = _dict_rows(
             conn.execute(
                 f"""
@@ -686,6 +733,7 @@ def deck_detail(
                   g.duration_seconds,
                   g.total_turns,
                   m.format AS raw_format,
+                  m.best_of,
                   p.mulligans,
                   CASE p.went_first WHEN 1 THEN 'On the play' WHEN 0 THEN 'On the draw' ELSE NULL END AS play_draw
                 FROM games g
@@ -716,10 +764,10 @@ def deck_detail(
         trend_rows.reverse()
         deck_visuals = _deck_visuals(conn)
 
-    for row in format_rows:
-        row["format_label"] = format_label(row.get("raw_format"))
     for row in recent_rows:
-        row["format_label"] = format_label(row.get("raw_format"))
+        row["format_label"] = format_label(
+            row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
+        )
     for row in card_rows:
         row["display_name"] = _clean_card_name(row.get("display_name"))
         row["times_drawn"] = drawn_counts.get(row["display_name"], 0)
@@ -742,6 +790,7 @@ def deck_detail(
             "on_play_pct": profile[3],
         },
         "formats": format_rows,
+        "midweek_formats": midweek_rows,
         "card_performance": card_rows,
         "opening_hands": opener_rows,
         "mulligans": mulligan_rows,
@@ -788,7 +837,9 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         if not game_rows:
             raise LookupError(f"No recorded game for id: {game_id}")
         game = game_rows[0]
-        game["format_label"] = format_label(game.get("raw_format"))
+        game["format_label"] = format_label(
+            game.get("raw_format"), default_best_of=int(game.get("best_of") or 1)
+        )
 
         participant_rows = _dict_rows(
             conn.execute(
@@ -837,6 +888,30 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                 (game_id, player_participant_id),
             )
         )
+        stats_drawn_row = conn.execute(
+            """
+            SELECT cards_drawn
+            FROM game_participant_stats
+            WHERE game_id = ? AND participant_id = ?
+            """,
+            (game_id, player_participant_id),
+        ).fetchone()
+        recorded_draws = int(stats_drawn_row[0] or 0) if stats_drawn_row else 0
+        total_draws = max(recorded_draws, len(drawn))
+        land_draws = sum(
+            1
+            for row in drawn
+            if str(row.get("type_category") or "").casefold() == "land"
+            or str(row.get("display_name") or "").rstrip().endswith("(Land)")
+        )
+        land_draw_pct = round(100.0 * land_draws / total_draws, 1) if total_draws else None
+        draw_quality = {
+            "total_draws": total_draws,
+            "identified_draws": len(drawn),
+            "land_draws": land_draws,
+            "land_draw_pct": land_draw_pct,
+            "is_flood": land_draw_pct is not None and land_draw_pct > 50.0,
+        }
         cards_played = _dict_rows(
             conn.execute(
                 """
@@ -887,6 +962,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         "opponent": opponent or {},
         "opening_hand": opening_hand,
         "drawn": drawn,
+        "draw_quality": draw_quality,
         "cards_played": cards_played,
         "timeline": timeline,
         "life_curve": life_curve,
@@ -896,7 +972,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
 def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[str, Any]:
     """Return drill-down analytics for one clean card name.
 
-    Raises LookupError when the card has no player summary rows.
+    Raises LookupError when the card has no summary rows for either participant.
     """
     clean_name = _clean_card_name(card_name) or card_name
     db_path = Path(db_path).expanduser()
@@ -906,6 +982,20 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
         match_params = (clean_name, f"{clean_name} (%")
+        all_usage = conn.execute(
+            """
+            SELECT
+              COUNT(DISTINCT g.id) AS games_seen,
+              COALESCE(SUM(s.played_count), 0) AS total_played
+            FROM game_card_summary s
+            JOIN participants p ON p.id = s.participant_id
+            JOIN games g ON g.id = s.game_id
+            WHERE s.display_name = ? OR s.display_name LIKE ?
+            """,
+            match_params,
+        ).fetchone()
+        if not all_usage or not all_usage[0]:
+            raise LookupError(f"No recorded card for name: {clean_name}")
         summary = conn.execute(
             """
             SELECT
@@ -921,8 +1011,48 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
             """,
             match_params,
         ).fetchone()
-        if not summary or not summary[0]:
-            raise LookupError(f"No recorded card for name: {clean_name}")
+        by_role = _dict_rows(
+            conn.execute(
+                """
+                SELECT
+                  p.role,
+                  CASE p.role WHEN 'player' THEN 'You' ELSE 'Opponent' END AS side_label,
+                  COUNT(DISTINCT g.id) AS games_seen,
+                  COALESCE(SUM(s.played_count), 0) AS total_played,
+                  SUM(
+                    CASE
+                      WHEN p.role = 'player' AND g.outcome = 'win' THEN 1
+                      WHEN p.role = 'opponent' AND g.outcome = 'loss' THEN 1
+                      ELSE 0
+                    END
+                  ) AS wins,
+                  SUM(
+                    CASE
+                      WHEN p.role = 'player' AND g.outcome = 'loss' THEN 1
+                      WHEN p.role = 'opponent' AND g.outcome = 'win' THEN 1
+                      ELSE 0
+                    END
+                  ) AS losses,
+                  ROUND(
+                    100.0 * SUM(
+                      CASE
+                        WHEN p.role = 'player' AND g.outcome = 'win' THEN 1
+                        WHEN p.role = 'opponent' AND g.outcome = 'loss' THEN 1
+                        ELSE 0
+                      END
+                    ) / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0),
+                    1
+                  ) AS win_rate
+                FROM game_card_summary s
+                JOIN participants p ON p.id = s.participant_id
+                JOIN games g ON g.id = s.game_id
+                WHERE s.display_name = ? OR s.display_name LIKE ?
+                GROUP BY p.role
+                ORDER BY CASE p.role WHEN 'player' THEN 0 ELSE 1 END
+                """,
+                match_params,
+            )
+        )
         by_deck = _dict_rows(
             conn.execute(
                 """
@@ -978,6 +1108,27 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
             "losses": int(summary[3] or 0),
             "win_rate": summary[4],
         },
+        "all_usage": {
+            "games_seen": int(all_usage[0] or 0),
+            "total_played": int(all_usage[1] or 0),
+            "player_games_seen": next(
+                (int(row["games_seen"] or 0) for row in by_role if row["role"] == "player"),
+                0,
+            ),
+            "player_played": next(
+                (int(row["total_played"] or 0) for row in by_role if row["role"] == "player"),
+                0,
+            ),
+            "opponent_games_seen": next(
+                (int(row["games_seen"] or 0) for row in by_role if row["role"] == "opponent"),
+                0,
+            ),
+            "opponent_played": next(
+                (int(row["total_played"] or 0) for row in by_role if row["role"] == "opponent"),
+                0,
+            ),
+        },
+        "by_role": by_role,
         "by_deck": by_deck,
         "opener_impact": {
             "games_in_opener": int(opener[0] or 0) if opener else 0,
@@ -987,6 +1138,99 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
             "times_drawn": int(drawn[0] or 0) if drawn else 0,
         },
     }
+
+
+def search_cards(
+    db_path: Path = DEFAULT_DB_PATH, query: str = "", limit: int = 8
+) -> List[Dict[str, Any]]:
+    """Return cards seen on either side of locally tracked games."""
+    clean_query = (_clean_card_name(query) or "").strip()
+    if not clean_query:
+        return []
+
+    db_path = Path(db_path).expanduser()
+    if not db_path.is_file():
+        raise FileNotFoundError(f"Dashboard database not found: {db_path}")
+
+    escaped_query = (
+        clean_query.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+    )
+    db_uri = db_path.resolve().as_uri() + "?mode=ro"
+    with sqlite3.connect(db_uri, uri=True) as conn:
+        conn.execute("PRAGMA query_only = ON")
+        rows = _dict_rows(
+            conn.execute(
+                """
+                SELECT
+                  s.game_id,
+                  s.display_name,
+                  s.type_category,
+                  s.played_count,
+                  p.role,
+                  COALESCE(p.deck_name, '(unknown)') AS deck_name,
+                  COALESCE(g.started_at, g.ended_at) AS seen_at
+                FROM game_card_summary s
+                JOIN participants p ON p.id = s.participant_id
+                JOIN games g ON g.id = s.game_id
+                WHERE s.display_name LIKE ? ESCAPE '!' COLLATE NOCASE
+                  AND NOT EXISTS (
+                    SELECT 1 FROM matches mj
+                    WHERE mj.id = g.match_id AND mj.format LIKE 'Jump!_In%' ESCAPE '!'
+                  )
+                """,
+                (f"%{escaped_query}%",),
+            )
+        )
+
+    matches: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        card_name = _clean_card_name(row.get("display_name")) or row["display_name"]
+        key = card_name.casefold()
+        entry = matches.setdefault(
+            key,
+            {
+                "card_name": card_name,
+                "type_category": row.get("type_category") or "Other",
+                "game_ids": set(),
+                "deck_names": set(),
+                "total_played": 0,
+                "last_seen_at": None,
+            },
+        )
+        entry["game_ids"].add(row["game_id"])
+        if row["role"] == "player" and row["deck_name"] != "(unknown)":
+            entry["deck_names"].add(row["deck_name"])
+        entry["total_played"] += int(row.get("played_count") or 0)
+        if row.get("seen_at") and (
+            entry["last_seen_at"] is None or row["seen_at"] > entry["last_seen_at"]
+        ):
+            entry["last_seen_at"] = row["seen_at"]
+
+    query_folded = clean_query.casefold()
+    ranked = sorted(
+        matches.values(),
+        key=lambda item: (
+            0
+            if item["card_name"].casefold() == query_folded
+            else 1
+            if item["card_name"].casefold().startswith(query_folded)
+            else 2,
+            -len(item["game_ids"]),
+            -item["total_played"],
+            item["card_name"].casefold(),
+        ),
+    )
+    return [
+        {
+            "card_name": item["card_name"],
+            "type_category": item["type_category"],
+            "games_seen": len(item["game_ids"]),
+            "deck_count": len(item["deck_names"]),
+            "total_played": item["total_played"],
+            "last_seen_at": item["last_seen_at"],
+        }
+        for item in ranked[: max(1, min(limit, 25))]
+    ]
 
 
 def _table(headers: List[str], rows: List[Dict[str, Any]]) -> str:
@@ -1022,7 +1266,7 @@ def render_dashboard_html(snapshot: Dict[str, Any]) -> str:
     format_rows = [
         {
             "Format": row["format_label"],
-            "Raw": row["raw_format"],
+            "Raw": row["raw_formats"],
             "Games": row["games"],
             "WR": row["win_rate"],
         }
@@ -1332,6 +1576,45 @@ class DashboardHandler(BaseHTTPRequestHandler):
             try:
                 body = render_snapshot_json(card_detail(self.db_path, name))
             except (FileNotFoundError, LookupError) as exc:
+                _send_bytes(
+                    self,
+                    404,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            except Exception as exc:
+                _send_bytes(
+                    self,
+                    500,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
+        if request_path == "/api/cards":
+            query = parse_qs(parsed.query)
+            search_query = query.get("q", [None])[0]
+            limit_raw = query.get("limit", [None])[0]
+            if not search_query:
+                _send_bytes(
+                    self,
+                    400,
+                    b"Missing required query parameter: q",
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            try:
+                limit = int(limit_raw) if limit_raw else 8
+            except ValueError:
+                limit = 8
+            try:
+                body = render_snapshot_json(search_cards(self.db_path, search_query, limit))
+            except FileNotFoundError as exc:
                 _send_bytes(
                     self,
                     404,
