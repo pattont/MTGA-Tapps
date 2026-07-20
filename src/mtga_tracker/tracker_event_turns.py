@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
 
@@ -158,6 +159,45 @@ class TrackerTurnStateMixin:
                 self._flush_pending_player_turn_header()
                 self.game_state.pending_opponent_turn_header = header
 
+    def _start_turn_timer(
+        self, turn_num: Optional[int], active_player: Optional[int], started_at: datetime
+    ) -> None:
+        """Start timing a newly observed turn when Arena identifies its active seat."""
+        if turn_num is None or active_player not in (1, 2):
+            return
+        self.game_state.turn_started_at = started_at
+        self.game_state.turn_started_number = int(turn_num)
+        self.game_state.turn_started_seat = int(active_player)
+
+    def _finish_active_turn_timer(self, ended_at: datetime) -> None:
+        """Close the active turn and retain its duration for summary and persistence."""
+        started_at = self.game_state.turn_started_at
+        turn_num = self.game_state.turn_started_number
+        seat_id = self.game_state.turn_started_seat
+        if started_at is None or turn_num is None or seat_id not in (1, 2):
+            return
+        duration_seconds = max(0, int((ended_at - started_at).total_seconds()))
+        self.game_state.turn_time_seconds_by_seat[int(seat_id)] = (
+            self.game_state.turn_time_seconds_by_seat.get(int(seat_id), 0) + duration_seconds
+        )
+        self.game_state.completed_turns.append(
+            {
+                "turn_number": int(turn_num),
+                "seat_id": int(seat_id),
+                "started_at": started_at,
+                "ended_at": ended_at,
+                "duration_seconds": duration_seconds,
+            }
+        )
+        self.game_state.turn_started_at = None
+        self.game_state.turn_started_number = None
+        self.game_state.turn_started_seat = None
+
+    def _finalize_turn_timing(self) -> None:
+        """Close the final active turn at game end."""
+        end_time = self.game_state.game_end_time or self._now()
+        self._finish_active_turn_timer(end_time)
+
     def _update_turn_context(self, data: Dict[str, Any]) -> tuple[bool, bool]:
         """Update turn, phase, and deferred-header state."""
         if "turnInfo" not in data:
@@ -172,6 +212,8 @@ class TrackerTurnStateMixin:
             2,
         ) and self.game_state.opponent_seat_id in (1, 2)
         turn_changed = self._detect_turn_change(turn_num, active_player)
+        if turn_changed:
+            self._finish_active_turn_timer(self._now())
 
         if turn_num is not None:
             self.game_state.turn_number = turn_num
@@ -201,6 +243,8 @@ class TrackerTurnStateMixin:
 
         if turn_changed and seats_known:
             self._queue_turn_header(int(turn_num), active_player)
+        if turn_changed:
+            self._start_turn_timer(turn_num, active_player, self._now())
 
         return turn_changed, exited_combat_this_update
 
@@ -232,21 +276,58 @@ class TrackerTurnStateMixin:
             self._apply_life_updates(life_updates, late_life_turn_override)
 
     def _turn_header_snapshot(self, turn_num: int, active_player: Optional[int]) -> tuple:
-        """Capture the visible life totals at the moment a turn header is queued."""
+        """Capture life totals and the just-completed turn when a header is queued."""
+        previous_turn = (
+            self.game_state.completed_turns[-1].copy()
+            if self.game_state.completed_turns
+            else None
+        )
         return (
             turn_num,
             active_player,
             self.game_state.player_life,
             self.game_state.opponent_life,
+            previous_turn,
         )
 
-    def _pending_turn_header_parts(self, pending: tuple) -> tuple[int, Optional[int], int, int]:
+    def _pending_turn_header_parts(
+        self, pending: tuple
+    ) -> tuple[int, Optional[int], int, int, Optional[Dict[str, Any]]]:
         """Return pending-header fields, accepting legacy two-field test tuples."""
         turn_num = pending[0]
         active_player = pending[1] if len(pending) > 1 else None
         player_life = pending[2] if len(pending) > 2 else self.game_state.player_life
         opponent_life = pending[3] if len(pending) > 3 else self.game_state.opponent_life
-        return turn_num, active_player, player_life, opponent_life
+        previous_turn = pending[4] if len(pending) > 4 and isinstance(pending[4], dict) else None
+        return turn_num, active_player, player_life, opponent_life, previous_turn
+
+    def _print_previous_turn_duration(self, previous_turn: Optional[Dict[str, Any]]) -> None:
+        """Render the elapsed duration for the turn that immediately preceded this header."""
+        if not previous_turn:
+            return
+        seat_id = previous_turn.get("seat_id")
+        duration_seconds = previous_turn.get("duration_seconds")
+        if seat_id not in (1, 2) or not isinstance(duration_seconds, int):
+            return
+        self._print_line(
+            f"Previous Turn ({self._seat_label(seat_id)}): "
+            f"{self._format_turn_header_duration(duration_seconds)}"
+        )
+
+    @staticmethod
+    def _format_turn_header_duration(total_seconds: int) -> str:
+        """Format a turn duration as compact human-readable units."""
+        total_seconds = max(0, int(total_seconds))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        parts = []
+        if hours:
+            parts.append(f"{hours}h")
+        if minutes:
+            parts.append(f"{minutes}m")
+        if seconds or not parts:
+            parts.append(f"{seconds}s")
+        return " ".join(parts)
 
     def _flush_pending_opponent_turn_header(self) -> None:
         """Print and clear deferred 'Turn N - OPPONENT'S TURN' header if set.
@@ -258,8 +339,8 @@ class TrackerTurnStateMixin:
         pending = self.game_state.pending_opponent_turn_header
         if not pending:
             return
-        turn_num, active_player, player_life, opponent_life = self._pending_turn_header_parts(
-            pending
+        turn_num, active_player, player_life, opponent_life, previous_turn = (
+            self._pending_turn_header_parts(pending)
         )
         self.game_state.pending_opponent_turn_header = None
         self.game_state.last_turn_announced = turn_num
@@ -271,6 +352,7 @@ class TrackerTurnStateMixin:
         self._print_line(f"\n{'='*75}")
         self._print_event(f"Turn {turn_num} - OPPONENT'S TURN", "turn")
         self._print_line(f"Life: You {player_life} - {opponent_life} Opponent")
+        self._print_previous_turn_duration(previous_turn)
         self._print_line(f"{'='*75}\n")
 
     def _flush_pending_player_turn_header(self) -> None:
@@ -278,8 +360,8 @@ class TrackerTurnStateMixin:
         pending = self.game_state.pending_player_turn_header
         if not pending:
             return
-        turn_num, active_player, player_life, opponent_life = self._pending_turn_header_parts(
-            pending
+        turn_num, active_player, player_life, opponent_life, previous_turn = (
+            self._pending_turn_header_parts(pending)
         )
         self.game_state.pending_player_turn_header = None
         self.game_state.last_turn_announced = turn_num
@@ -291,6 +373,7 @@ class TrackerTurnStateMixin:
         self._print_line(f"\n{'='*75}")
         self._print_event(f"Turn {turn_num} - YOUR TURN", "turn")
         self._print_line(f"Life: You {player_life} - {opponent_life} Opponent")
+        self._print_previous_turn_duration(previous_turn)
         self._print_line(f"{'='*75}\n")
 
     def _flush_pending_turn_header_for_seat(self, seat_id: Optional[int]) -> None:

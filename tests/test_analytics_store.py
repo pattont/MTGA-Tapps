@@ -120,3 +120,67 @@ def test_tracker_raw_payload_snapshot_uses_current_match_context(tmp_path):
     assert row[2] == "connection_error"
     assert "Player#123" not in row[3]
     assert "/Users/travispatton/" not in row[3]
+
+
+def test_backfill_estimated_game_turn_times_is_idempotent_and_preserves_live_rows(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    store = AnalyticsStore(db_path)
+    conn = store.connect()
+    assert conn is not None
+    conn.execute(
+        "INSERT INTO tracker_sessions (id, started_at) VALUES ('session-1', '2026-07-01T12:00:00')"
+    )
+    conn.execute(
+        "INSERT INTO matches (id, session_id) VALUES ('match-1', 'session-1')"
+    )
+    conn.execute(
+        """
+        INSERT INTO games (id, session_id, match_id, ended_at, total_turns)
+        VALUES ('game-1', 'session-1', 'match-1', '2026-07-01T12:03:00', 3)
+        """
+    )
+    conn.executemany(
+        """
+        INSERT INTO participants (id, game_id, seat_id, role)
+        VALUES (?, 'game-1', ?, ?)
+        """,
+        (("player-1", 2, "player"), ("opponent-1", 1, "opponent")),
+    )
+    conn.executemany(
+        """
+        INSERT INTO game_events (
+            session_id, game_id, event_time, turn_number, text
+        ) VALUES ('session-1', 'game-1', ?, ?, ?)
+        """,
+        (
+            ("2026-07-01T12:00:10", 1, "Turn 1 - YOUR TURN"),
+            ("2026-07-01T12:00:50", 2, "Turn 2 - OPPONENT'S TURN"),
+            ("2026-07-01T12:02:00", 3, "Turn 3 - YOUR TURN"),
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO game_turns (
+            game_id, turn_number, seat_id, duration_seconds, timing_source
+        ) VALUES ('game-1', 1, 2, 5, 'live')
+        """
+    )
+
+    inserted = AnalyticsStore.backfill_estimated_game_turn_times(conn)
+    inserted_again = AnalyticsStore.backfill_estimated_game_turn_times(conn)
+    rows = conn.execute(
+        """
+        SELECT turn_number, seat_id, duration_seconds, timing_source
+        FROM game_turns
+        ORDER BY turn_number
+        """
+    ).fetchall()
+    store.close()
+
+    assert inserted == 2
+    assert inserted_again == 0
+    assert rows == [
+        (1, 2, 5, "live"),
+        (2, 1, 70, "estimated_header_events"),
+        (3, 2, 60, "estimated_header_events"),
+    ]

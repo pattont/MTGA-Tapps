@@ -4,7 +4,7 @@ Tracks cards played by the player and opponents.
 """
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from .log_parser import MTGALogParser
 from .card_database import CardDatabase
 from .paths import DATA_DIR
@@ -81,6 +81,7 @@ class CardTracker(
         self.session_player_went_first = 0
         self.session_opponent_went_first = 0
         self.session_first_unknown = 0
+        self.session_deck_records: Dict[str, Dict[str, Any]] = {}
         self.session_id = datetime.now().strftime("%Y%m%dT%H%M%S%f")
         self._session_stats_recorded_this_game = False
         self._deck_candidates: Dict[str, Dict[str, Any]] = {}

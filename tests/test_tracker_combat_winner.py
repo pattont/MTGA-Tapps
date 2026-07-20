@@ -1396,6 +1396,72 @@ def test_session_runtime_includes_active_game_time_only():
     assert tracker._session_play_runtime_seconds() < 455
 
 
+def test_turn_timing_tracks_each_turn_and_closes_final_turn():
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+
+    tracker._current_event_time = datetime(2026, 7, 19, 20, 0, 0)
+    tracker._update_game_state({"turnInfo": {"turnNumber": 1, "activePlayer": 1}})
+    tracker._current_event_time = datetime(2026, 7, 19, 20, 0, 42)
+    tracker._update_game_state({"turnInfo": {"turnNumber": 2, "activePlayer": 2}})
+    tracker._current_event_time = datetime(2026, 7, 19, 20, 1, 0)
+    tracker._update_game_state({"turnInfo": {"turnNumber": 3, "activePlayer": 1}})
+    tracker.game_state.game_end_time = datetime(2026, 7, 19, 20, 1, 15)
+    tracker._finalize_turn_timing()
+
+    assert tracker.game_state.turn_time_seconds_by_seat == {1: 57, 2: 18}
+    assert [turn["duration_seconds"] for turn in tracker.game_state.completed_turns] == [42, 18, 15]
+    assert [turn["seat_id"] for turn in tracker.game_state.completed_turns] == [1, 2, 1]
+
+
+def test_turn_header_shows_the_previous_turn_duration(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+
+    tracker._current_event_time = datetime(2026, 7, 19, 20, 0, 0)
+    tracker._update_game_state({"turnInfo": {"turnNumber": 1, "activePlayer": 1}})
+    tracker._current_event_time = datetime(2026, 7, 19, 20, 0, 42)
+    tracker._update_game_state({"turnInfo": {"turnNumber": 2, "activePlayer": 2}})
+    tracker._current_event_time = datetime(2026, 7, 19, 20, 1, 0)
+    tracker._update_game_state({"turnInfo": {"turnNumber": 3, "activePlayer": 1}})
+    capsys.readouterr()
+
+    tracker._flush_pending_player_turn_header()
+    out = capsys.readouterr().out
+
+    assert "Turn 3 - YOUR TURN" in out
+    assert "Previous Turn (Opponent): 18s" in out
+
+
+def test_turn_header_duration_uses_compact_minutes_and_seconds():
+    tracker = make_tracker()
+
+    assert tracker._format_turn_header_duration(42) == "42s"
+    assert tracker._format_turn_header_duration(209) == "3m 29s"
+
+
+def test_session_deck_records_track_each_deck_and_render_at_game_end(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.player_deck_id = "deck-a"
+    tracker.game_state.player_deck_name = "Azorius Control"
+
+    tracker._record_session_outcome("win")
+    tracker._session_stats_recorded_this_game = False
+    tracker.game_state.player_deck_id = "deck-b"
+    tracker.game_state.player_deck_name = "Mono-Red Aggro"
+    tracker._record_session_outcome("loss")
+
+    tracker._print_result_summary("loss", "Test result", "3:00")
+    out = capsys.readouterr().out
+
+    assert "Deck Session: Azorius Control: 1-0 (100.0%)" in out
+    assert "Deck Session: Mono-Red Aggro: 0-1 (0.0%)" in out
+
+
 def test_print_summary_uses_session_totals_not_last_game_state(capsys):
     tracker = make_tracker()
     tracker.session_games_played = 6
@@ -1438,6 +1504,11 @@ def test_game_summary_prints_first_player_and_session_split(capsys):
     tracker.game_state.game_start_time = datetime(2026, 6, 11, 20, 0, 0)
     tracker.game_state.game_end_time = datetime(2026, 6, 11, 20, 5, 0)
     tracker.game_state.winner_seat = 2
+    tracker.game_state.completed_turns = [
+        {"turn_number": 1, "seat_id": 1, "duration_seconds": 90},
+        {"turn_number": 2, "seat_id": 2, "duration_seconds": 60},
+    ]
+    tracker.game_state.turn_time_seconds_by_seat = {1: 90, 2: 60}
     tracker.session_player_went_first = 4
     tracker.session_opponent_went_first = 6
 
@@ -1446,6 +1517,7 @@ def test_game_summary_prints_first_player_and_session_split(capsys):
 
     assert "Went First This Game: Opponent" in out
     assert "Went First: You 4/11 (36.4%), Opponent 7/11 (63.6%)" in out
+    assert "Turn Time: You 1:30 across 1 turn(s) (1:30 avg), Opponent 1:00 across 1 turn(s) (1:00 avg)" in out
 
 
 def test_seatless_concede_req_does_not_override_structured_winner():
@@ -4325,6 +4397,23 @@ def test_game_summary_persists_normalized_sqlite_analytics(capsys, tmp_path):
     tracker.game_state.game_start_time = datetime(2026, 4, 22, 12, 0, 0)
     tracker.game_state.game_end_time = datetime(2026, 4, 22, 12, 7, 30)
     tracker.game_state.winner_seat = 1
+    tracker.game_state.completed_turns = [
+        {
+            "turn_number": 1,
+            "seat_id": 1,
+            "started_at": datetime(2026, 4, 22, 12, 0, 0),
+            "ended_at": datetime(2026, 4, 22, 12, 0, 45),
+            "duration_seconds": 45,
+        },
+        {
+            "turn_number": 2,
+            "seat_id": 2,
+            "started_at": datetime(2026, 4, 22, 12, 0, 45),
+            "ended_at": datetime(2026, 4, 22, 12, 1, 15),
+            "duration_seconds": 30,
+        },
+    ]
+    tracker.game_state.turn_time_seconds_by_seat = {1: 45, 2: 30}
     tracker.game_state.player_display_name = "Tester"
     tracker.game_state.opponent_display_name = "Arena Opponent"
     tracker.game_state.player_deck_name = "Dimir Tests"
@@ -4429,6 +4518,9 @@ def test_game_summary_persists_normalized_sqlite_analytics(capsys, tmp_path):
             ("test-session",),
         ).fetchone()
         console_rows = conn.execute("SELECT COUNT(*) FROM console_logs").fetchone()[0]
+        turn_timings = conn.execute(
+            "SELECT turn_number, seat_id, duration_seconds FROM game_turns ORDER BY turn_number"
+        ).fetchall()
 
     assert game == ("win", "Opponent reached 0 life", 450, 8, 4, 4)
     assert participants["player"] == ("Tester", "Dimir Tests", 60, "metadata", 12, 1)
@@ -4443,6 +4535,7 @@ def test_game_summary_persists_normalized_sqlite_analytics(capsys, tmp_path):
     assert opening_hand[-1] == ("Island", 7, 2)
     assert session == (1, 1, 0, 450)
     assert console_rows > 0
+    assert turn_timings == [(1, 1, 45), (2, 2, 30)]
 
 
 def test_sparky_game_summary_is_not_persisted_to_sqlite(capsys, tmp_path):
