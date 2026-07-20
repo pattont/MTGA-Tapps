@@ -248,6 +248,19 @@ class AnalyticsStore:
                 FOREIGN KEY(participant_id) REFERENCES participants(id)
             );
 
+            CREATE TABLE IF NOT EXISTS game_turns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id TEXT NOT NULL,
+                turn_number INTEGER NOT NULL,
+                seat_id INTEGER,
+                started_at TEXT,
+                ended_at TEXT,
+                duration_seconds INTEGER NOT NULL DEFAULT 0,
+                timing_source TEXT NOT NULL DEFAULT 'live',
+                UNIQUE(game_id, turn_number),
+                FOREIGN KEY(game_id) REFERENCES games(id)
+            );
+
             CREATE TABLE IF NOT EXISTS session_participant_stats (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL,
@@ -303,6 +316,9 @@ class AnalyticsStore:
             CREATE INDEX IF NOT EXISTS idx_game_participant_stats_game
             ON game_participant_stats(game_id);
 
+            CREATE INDEX IF NOT EXISTS idx_game_turns_game
+            ON game_turns(game_id);
+
             CREATE INDEX IF NOT EXISTS idx_game_card_summary_game_participant
             ON game_card_summary(game_id, participant_id);
 
@@ -337,7 +353,95 @@ class AnalyticsStore:
         )
         AnalyticsStore.ensure_table_column(conn, "games", "player_turns", "INTEGER")
         AnalyticsStore.ensure_table_column(conn, "games", "opponent_turns", "INTEGER")
+        AnalyticsStore.ensure_table_column(
+            conn, "game_turns", "timing_source", "TEXT NOT NULL DEFAULT 'live'"
+        )
         AnalyticsStore.backfill_game_turn_counts(conn)
+
+    @staticmethod
+    def backfill_estimated_game_turn_times(conn: sqlite3.Connection) -> int:
+        """Estimate missing turn durations from adjacent historical turn-header events.
+
+        Only adjacent turn numbers are used. The last observed header is used only
+        when it matches the game's stored total-turn count. Existing rows are never
+        overwritten, so exact live timings remain authoritative.
+        """
+        changes_before = conn.total_changes
+        conn.execute(
+            """
+            WITH header_events AS (
+                SELECT
+                    ge.game_id,
+                    ge.turn_number,
+                    MIN(ge.event_time) AS started_at,
+                    CASE
+                        WHEN MAX(CASE WHEN ge.text LIKE 'Turn % - YOUR TURN' THEN 1 ELSE 0 END) = 1
+                        THEN 'player'
+                        ELSE 'opponent'
+                    END AS role
+                FROM game_events ge
+                WHERE ge.game_id IS NOT NULL
+                  AND ge.turn_number IS NOT NULL
+                  AND (
+                      ge.text LIKE 'Turn % - YOUR TURN'
+                      OR ge.text LIKE "Turn % - OPPONENT'S TURN"
+                  )
+                GROUP BY ge.game_id, ge.turn_number
+            ), ordered_headers AS (
+                SELECT
+                    game_id,
+                    turn_number,
+                    started_at,
+                    role,
+                    LEAD(turn_number) OVER (
+                        PARTITION BY game_id ORDER BY turn_number, started_at
+                    ) AS next_turn_number,
+                    LEAD(started_at) OVER (
+                        PARTITION BY game_id ORDER BY turn_number, started_at
+                    ) AS next_started_at
+                FROM header_events
+            ), estimable_turns AS (
+                SELECT
+                    h.game_id,
+                    h.turn_number,
+                    p.seat_id,
+                    h.started_at,
+                    CASE
+                        WHEN h.next_turn_number = h.turn_number + 1 THEN h.next_started_at
+                        WHEN h.next_turn_number IS NULL AND h.turn_number = g.total_turns
+                        THEN g.ended_at
+                    END AS ended_at
+                FROM ordered_headers h
+                JOIN games g ON g.id = h.game_id
+                LEFT JOIN participants p
+                  ON p.game_id = h.game_id AND p.role = h.role
+            )
+            INSERT OR IGNORE INTO game_turns (
+                game_id,
+                turn_number,
+                seat_id,
+                started_at,
+                ended_at,
+                duration_seconds,
+                timing_source
+            )
+            SELECT
+                game_id,
+                turn_number,
+                seat_id,
+                started_at,
+                ended_at,
+                CAST(MAX(0, ROUND((julianday(ended_at) - julianday(started_at)) * 86400.0)) AS INTEGER),
+                'estimated_header_events'
+            FROM estimable_turns
+            WHERE ended_at IS NOT NULL
+              AND julianday(started_at) IS NOT NULL
+              AND julianday(ended_at) IS NOT NULL
+              AND julianday(ended_at) > julianday(started_at)
+              AND ROUND((julianday(ended_at) - julianday(started_at)) * 86400.0) > 0
+            """
+        )
+        return conn.total_changes - changes_before
 
     @staticmethod
     def backfill_game_turn_counts(conn: sqlite3.Connection) -> None:

@@ -72,6 +72,11 @@ class GameState:
         self.last_player_turn_number = 0
         self.last_opponent_turn_number = 0
         self.turns_taken_by_seat: Dict[int, Set[int]] = {1: set(), 2: set()}
+        self.turn_started_at: Optional[datetime] = None
+        self.turn_started_number: Optional[int] = None
+        self.turn_started_seat: Optional[int] = None
+        self.turn_time_seconds_by_seat: Dict[int, int] = {1: 0, 2: 0}
+        self.completed_turns: List[Dict[str, Any]] = []
         self.player_seat_id: Optional[int] = None
         self.opponent_seat_id: Optional[int] = None
         self.my_user_id: Optional[str] = None

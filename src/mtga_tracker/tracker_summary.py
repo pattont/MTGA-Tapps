@@ -43,6 +43,80 @@ class TrackerSummaryMixin:
         opponent_last = int(self.game_state.last_opponent_turn_number or 0)
         return (1 if player_last else 0), (1 if opponent_last else 0)
 
+    def _turn_time_summary(self, seat_id: Optional[int]) -> tuple[int, int]:
+        """Return total timed seconds and completed turns for one seat."""
+        if seat_id not in (1, 2):
+            return 0, 0
+        total_seconds = int(self.game_state.turn_time_seconds_by_seat.get(int(seat_id), 0))
+        turn_count = sum(
+            1 for turn in self.game_state.completed_turns if turn.get("seat_id") == seat_id
+        )
+        return total_seconds, turn_count
+
+    def _turn_time_display(self, seat_id: Optional[int]) -> str:
+        """Format total and average timed turn length for a participant."""
+        total_seconds, turn_count = self._turn_time_summary(seat_id)
+        if turn_count == 0:
+            return "not available"
+        average_seconds = total_seconds // turn_count
+        return (
+            f"{self._format_duration(total_seconds)} across {turn_count} turn(s) "
+            f"({self._format_duration(average_seconds)} avg)"
+        )
+
+    def _current_deck_session_key(self) -> tuple[str, str]:
+        """Return a stable session key and display name for the active player deck."""
+        if not self.game_state.player_deck_name:
+            self._resolve_player_deck_from_candidates()
+        deck_id = str(self.game_state.player_deck_id or "").strip()
+        deck_name = str(self.game_state.player_deck_name or "").strip()
+        if deck_id:
+            return f"id:{deck_id}", deck_name or "Unnamed deck"
+        if deck_name:
+            return f"name:{deck_name.casefold()}", deck_name
+        return "unknown", "Unknown deck"
+
+    def _record_session_deck_outcome(self, outcome: str) -> None:
+        """Accumulate one completed game result under the active player deck."""
+        key, display_name = self._current_deck_session_key()
+        records = getattr(self, "session_deck_records", None)
+        if not isinstance(records, dict):
+            records = {}
+            self.session_deck_records = records
+        record = records.setdefault(
+            key,
+            {"display_name": display_name, "wins": 0, "losses": 0, "draws": 0, "unknown": 0},
+        )
+        record["display_name"] = display_name
+        if outcome == "win":
+            record["wins"] += 1
+        elif outcome == "loss":
+            record["losses"] += 1
+        elif outcome == "draw":
+            record["draws"] += 1
+        else:
+            record["unknown"] += 1
+
+    def _session_deck_record_lines(self) -> List[str]:
+        """Render per-deck session win/loss records in stable display order."""
+        records = getattr(self, "session_deck_records", {}) or {}
+        lines = []
+        for record in sorted(records.values(), key=lambda item: str(item["display_name"]).casefold()):
+            wins = int(record.get("wins", 0))
+            losses = int(record.get("losses", 0))
+            known = wins + losses
+            win_rate = (wins / known * 100.0) if known else 0.0
+            suffixes = []
+            if record.get("draws"):
+                suffixes.append(f"{record['draws']} draw(s)")
+            if record.get("unknown"):
+                suffixes.append(f"{record['unknown']} unknown")
+            suffix = f"; {', '.join(suffixes)}" if suffixes else ""
+            lines.append(
+                f"{record['display_name']}: {wins}-{losses} ({win_rate:.1f}%){suffix}"
+            )
+        return lines
+
     def _first_player_label_for_current_game(self) -> str:
         """Return user-facing first-player label for the current game."""
         if (
@@ -66,6 +140,10 @@ class TrackerSummaryMixin:
         self._print_line(f"   Total Turns: {self._turns_completed()}")
         player_turns, opponent_turns = self._participant_turn_counts()
         self._print_line(f"   Turns: You {player_turns}, Opponent {opponent_turns}")
+        self._print_line(
+            f"   Turn Time: You {self._turn_time_display(self.game_state.player_seat_id)}, "
+            f"Opponent {self._turn_time_display(self.game_state.opponent_seat_id)}"
+        )
         self._print_line(f"   Went First This Game: {self._first_player_label_for_current_game()}")
         self._print_line(f"   {self._session_first_split_line()}")
         for seat_id, label in (
@@ -136,6 +214,8 @@ class TrackerSummaryMixin:
         self._print_line(f"Format: {self._friendly_format_label()}")
         self._print_line(f"Duration: {duration_display}")
         self._print_line(f"Session Stats: {self._session_stats_line()}")
+        for line in self._session_deck_record_lines():
+            self._print_line(f"Deck Session: {line}")
         self._print_line("=" * 75)
 
     def _print_best_of_three_status(self) -> None:
@@ -290,6 +370,7 @@ class TrackerSummaryMixin:
     def _print_game_summary(self):
         """Print summary when game ends."""
         self._try_resolve_winner_from_log_tail()
+        self._finalize_turn_timing()
         duration_display = self._game_duration_display()
         outcome, reason = self._resolve_game_outcome()
         self._record_session_outcome(outcome)

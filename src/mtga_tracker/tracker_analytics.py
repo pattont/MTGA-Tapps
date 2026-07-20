@@ -678,6 +678,29 @@ class TrackerAnalyticsMixin:
         )
         self._refresh_session_participant_stats(conn)
 
+    def _persist_turn_timings(self, conn: sqlite3.Connection, game_id: str) -> None:
+        """Persist one timing row for each observed turn in the completed game."""
+        conn.execute("DELETE FROM game_turns WHERE game_id = ?", (game_id,))
+        for turn in self.game_state.completed_turns:
+            started_at = turn.get("started_at")
+            ended_at = turn.get("ended_at")
+            conn.execute(
+                """
+                INSERT INTO game_turns (
+                    game_id, turn_number, seat_id, started_at, ended_at, duration_seconds,
+                    timing_source
+                ) VALUES (?, ?, ?, ?, ?, ?, 'live')
+                """,
+                (
+                    game_id,
+                    int(turn.get("turn_number", 0)),
+                    turn.get("seat_id"),
+                    started_at.isoformat() if isinstance(started_at, datetime) else None,
+                    ended_at.isoformat() if isinstance(ended_at, datetime) else None,
+                    int(turn.get("duration_seconds", 0)),
+                ),
+            )
+
     def _persist_game_analytics(self, outcome: str, reason: str) -> None:
         """Persist dashboard-ready summary data for a completed game."""
         if self._is_untracked_match():
@@ -740,5 +763,6 @@ class TrackerAnalyticsMixin:
                     player_participant_id,
                     opponent_participant_id,
                 )
+                self._persist_turn_timings(conn, game_id)
         except sqlite3.Error:
             return

@@ -100,6 +100,8 @@ Important tables:
 - `game_drawn_cards`: one row per visible player/opponent drawn card identity when Arena exposes it.
 - `game_card_summary`: cards played by each participant.
 - `game_participant_stats`: combat, damage/life, cards drawn/discarded/milled/exiled, stack stats.
+- `game_turns`: observed turn start/end timestamps and duration by active seat; `timing_source`
+  distinguishes exact `live` rows from `estimated_header_events` historical backfills.
 - `game_events`: structured event history where available.
 - `console_logs`: rendered console log lines for later dashboard/query work.
 - `raw_game_payloads`: raw payload persistence when enabled/available.
@@ -122,6 +124,7 @@ High-risk areas needing tests:
 - Opening hand and mulligan capture, especially stale seat correction.
 - Draw/discard/mill/exile/life/damage stats for both sides.
 - Stack ordering, countered/fizzled spells, and ability costs.
+- Per-turn timing and final player/opponent time totals.
 - State-based actions and zone transfers.
 - Copy-state/transform handling.
 - SQLite persistence for new summary fields.
