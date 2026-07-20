@@ -838,6 +838,7 @@ class TrackerLifecycleMixin:
             self.session_draws = getattr(self, "session_draws", 0) + 1
         else:
             self.session_unknown += 1
+        self._record_session_deck_outcome(outcome)
         self._session_stats_recorded_this_game = True
 
     def _try_resolve_winner_from_log_tail(self) -> None:
