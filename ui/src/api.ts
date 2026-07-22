@@ -88,6 +88,8 @@ export interface RecentGameRow {
   outcome: string | null;
   mulligans: number | null;
   duration_seconds: number | null;
+  player_avg_turn_seconds: number | null;
+  opponent_avg_turn_seconds: number | null;
 }
 
 export interface MatchRow {
@@ -196,6 +198,8 @@ export interface DeckGameRow {
   outcome: string | null;
   duration_seconds: number | null;
   total_turns: number | null;
+  player_avg_turn_seconds: number | null;
+  opponent_avg_turn_seconds: number | null;
   raw_format: string | null;
   format_label: string;
   mulligans: number | null;
@@ -291,6 +295,22 @@ export interface GameDrawQuality {
   is_flood: boolean;
 }
 
+export interface TurnTimingSummary {
+  total_seconds: number | null;
+  turns_timed: number;
+  avg_seconds: number | null;
+}
+
+export interface GameTurnTimingRow {
+  turn_number: number;
+  seat_id: number | null;
+  role: 'player' | 'opponent' | 'unknown';
+  started_at: string | null;
+  ended_at: string | null;
+  duration_seconds: number;
+  timing_source: 'live' | 'estimated_header_events' | string;
+}
+
 export interface GameDetail {
   game: GameHeader;
   player: GameParticipant;
@@ -298,6 +318,11 @@ export interface GameDetail {
   opening_hand: GameOpeningHandRow[];
   drawn: GameDrawnCardRow[];
   draw_quality: GameDrawQuality;
+  turn_timing: {
+    player: TurnTimingSummary;
+    opponent: TurnTimingSummary;
+  };
+  turns: GameTurnTimingRow[];
   cards_played: GamePlayedCardRow[];
   timeline: GameTimelineRow[];
   life_curve: LifePoint[];

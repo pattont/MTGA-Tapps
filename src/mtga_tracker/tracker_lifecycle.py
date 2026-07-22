@@ -433,7 +433,6 @@ class TrackerLifecycleMixin:
 
     def _reset_new_game_tracking(self, *, opening_mulligan_prompt_seen: bool) -> None:
         """Initialize tracking fields for a newly detected game."""
-        pending_event_format = getattr(self, "_pending_event_format", None)
         self.game_state.format_str = "Unknown"
         self.game_state.match_type = "best_of_1"
         self._format_from_backfill = False
@@ -470,9 +469,10 @@ class TrackerLifecycleMixin:
         self._backfill_recent_match_metadata(
             max_lines=1800, force=True, trust_match_room_format=False
         )
-        pending_event_format = pending_event_format or getattr(self, "_pending_event_format", None)
-        if pending_event_format:
-            self._set_match_format(pending_event_format)
+        if not self._refresh_current_match_room_metadata():
+            self.game_state.format_str = "Unknown"
+            self.game_state.match_type = "best_of_1"
+            self._format_from_backfill = False
         self._pending_event_format = None
         self._require_explicit_game_start = False
 

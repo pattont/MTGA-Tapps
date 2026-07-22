@@ -74,3 +74,7 @@ class TrackerRuntimeMixin:
         """Stop tracking cards."""
         self.running = False
         self.analytics.close()
+
+    def request_stop(self) -> None:
+        """Ask the polling loop to stop and let its owning thread close resources."""
+        self.running = False

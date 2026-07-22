@@ -4,7 +4,8 @@ Tracks cards played by the player and opponents.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+import sys
+from typing import Any, Dict, List, Optional, TextIO
 from .log_parser import MTGALogParser
 from .card_database import CardDatabase
 from .paths import DATA_DIR
@@ -46,6 +47,7 @@ class CardTracker(
         log_parser: Optional[MTGALogParser] = None,
         card_db: Optional[CardDatabase] = None,
         mtga_data_dir: Optional[str] = None,
+        output_stream: Optional[TextIO] = None,
     ):
         """Initialize the card tracker.
 
@@ -53,8 +55,10 @@ class CardTracker(
             log_parser: Optional MTGALogParser instance. If not provided, creates one.
             card_db: Optional CardDatabase instance. If not provided, creates one.
             mtga_data_dir: Optional path to MTGA data root for local card DB (Raw_CardDatabase_*.mtga).
+            output_stream: Optional destination for the live tracker log. Defaults to stdout.
         """
         self.parser = log_parser or MTGALogParser()
+        self.output_stream = output_stream or sys.stdout
         self.card_db = card_db or CardDatabase(
             log_path=self.parser.log_path,
             mtga_data_dir=mtga_data_dir,

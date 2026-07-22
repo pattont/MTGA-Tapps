@@ -25,11 +25,8 @@ OUTPUT_FORMAT = 'simple'
 # Example: ['Creature', 'Instant', 'Sorcery']
 TRACKED_CARD_TYPES = []
 
-# Future GUI settings
-GUI_ENABLED = False
-GUI_THEME = 'dark'  # 'dark' or 'light'
-GUI_POSITION = (100, 100)  # (x, y) position on screen
-GUI_SIZE = (800, 600)  # (width, height)
+# Desktop window settings live in data/settings.json when running from source,
+# or in the installed app's data folder. Use "Open Data Folder" from the menu bar.
 
 # Database settings for future features
 DB_PATH = 'data/mtga_tracker.db'

@@ -58,6 +58,7 @@ Common runtime files:
 
 - Arena log: `~/Library/Logs/Wizards Of The Coast/MTGA/Player.log`
 - Analytics DB: `data/mtga_tracker.sqlite3`
+- Desktop settings: `data/settings.json` from source or the installed app data folder
 - Unhandled annotation log: `data/mtga_tracker_unhandled_annotations.log`
 - Local card DB source: MTGA `Raw_CardDatabase_*.mtga` under the MTGA install/download folders, or `MTGA_DATA_DIR`.
 
@@ -79,6 +80,8 @@ Arena logs are not a simple chronological event stream. Be careful with inferred
 
 - Local player seat can be stale or unknown early in a match. A complete visible hand identifies the local player; opponent hand is hidden.
 - Seat IDs can change between games. Never assume the local player is seat 1.
+- Re-resolve the format for every game from the latest active match-room metadata. Never carry
+  a scene/event hint across games or map missing format metadata to a guessed queue.
 - Winner detection must validate against the local player seat. Concession/disconnect messages are especially easy to invert.
 - Costs can appear before/after the ability text in raw log order. For activated abilities, paid costs such as discard/tap should be associated with the activation.
 - MTGA uses last-in-first-out stack resolution. A card can be cast/activated, then another spell/ability can be added above it and resolve first.
@@ -110,7 +113,7 @@ When adding stats, persist both player and opponent perspectives when the log ca
 
 Use `format_normalizer.py` for queue labels and best-of inference. Do not duplicate string-matching format logic in tracker mixins or reports.
 
-Run `mtga_tracker.db_audit` after suspected tracker inconsistencies. Safe repairs currently include format/queue mismatches and turn-count aggregate mismatches; unresolved deck names and `Card #...` labels are reported for manual follow-up.
+Run `mtga_tracker.db_audit` after suspected tracker inconsistencies. Safe repairs currently include format/queue mismatches, turn-count aggregate mismatches, timestamp-based game-event reassignment, and deletion of empty unknown-result game artifacts; unresolved deck names and `Card #...` labels are reported for manual follow-up.
 
 ## Testing Expectations
 

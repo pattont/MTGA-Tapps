@@ -6,8 +6,10 @@ import argparse
 import html
 import json
 import mimetypes
+import os
 import re
 import sqlite3
+import sys
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -19,7 +21,19 @@ from .paths import DATA_DIR
 
 
 DEFAULT_DB_PATH = DATA_DIR / "mtga_tracker.sqlite3"
-DEFAULT_STATIC_DIR = DATA_DIR.parent / "ui" / "dist"
+
+
+def _default_static_dir() -> Path:
+    override = os.getenv("MTGA_TRACKER_UI_DIR")
+    if override:
+        return Path(override).expanduser()
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root:
+        return Path(bundle_root) / "ui" / "dist"
+    return DATA_DIR.parent / "ui" / "dist"
+
+
+DEFAULT_STATIC_DIR = _default_static_dir()
 
 
 def _dict_rows(cursor: sqlite3.Cursor) -> List[Dict[str, Any]]:
@@ -439,6 +453,20 @@ def dashboard_snapshot(
                   g.started_at,
                   g.outcome,
                   g.duration_seconds,
+                  (
+                    SELECT ROUND(AVG(gt.duration_seconds), 1)
+                    FROM game_turns gt
+                    WHERE gt.game_id = g.id AND gt.seat_id = p.seat_id
+                  ) AS player_avg_turn_seconds,
+                  (
+                    SELECT ROUND(AVG(gt.duration_seconds), 1)
+                    FROM game_turns gt
+                    JOIN participants timing_opponent
+                      ON timing_opponent.game_id = gt.game_id
+                     AND timing_opponent.role = 'opponent'
+                     AND timing_opponent.seat_id = gt.seat_id
+                    WHERE gt.game_id = g.id
+                  ) AS opponent_avg_turn_seconds,
                   m.format AS raw_format,
                   m.best_of,
                   COALESCE(p.deck_name, '(unknown)') AS deck_name,
@@ -732,6 +760,20 @@ def deck_detail(
                   g.outcome,
                   g.duration_seconds,
                   g.total_turns,
+                  (
+                    SELECT ROUND(AVG(gt.duration_seconds), 1)
+                    FROM game_turns gt
+                    WHERE gt.game_id = g.id AND gt.seat_id = p.seat_id
+                  ) AS player_avg_turn_seconds,
+                  (
+                    SELECT ROUND(AVG(gt.duration_seconds), 1)
+                    FROM game_turns gt
+                    JOIN participants timing_opponent
+                      ON timing_opponent.game_id = gt.game_id
+                     AND timing_opponent.role = 'opponent'
+                     AND timing_opponent.seat_id = gt.seat_id
+                    WHERE gt.game_id = g.id
+                  ) AS opponent_avg_turn_seconds,
                   m.format AS raw_format,
                   m.best_of,
                   p.mulligans,
@@ -866,6 +908,52 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         opponent = next((row for row in participant_rows if row.get("role") == "opponent"), None)
         player_participant_id = player.get("id") if player else None
 
+        turn_timings = _dict_rows(
+            conn.execute(
+                """
+                SELECT
+                  turn_number,
+                  seat_id,
+                  started_at,
+                  ended_at,
+                  duration_seconds,
+                  timing_source
+                FROM game_turns
+                WHERE game_id = ?
+                ORDER BY turn_number
+                """,
+                (game_id,),
+            )
+        )
+        player_seat_id = player.get("seat_id") if player else None
+        opponent_seat_id = opponent.get("seat_id") if opponent else None
+        for row in turn_timings:
+            if player_seat_id is not None and row.get("seat_id") == player_seat_id:
+                row["role"] = "player"
+            elif opponent_seat_id is not None and row.get("seat_id") == opponent_seat_id:
+                row["role"] = "opponent"
+            else:
+                row["role"] = "unknown"
+
+        def timing_summary(role: str) -> Dict[str, Any]:
+            durations = [
+                int(row.get("duration_seconds") or 0)
+                for row in turn_timings
+                if row.get("role") == role
+            ]
+            if not durations:
+                return {"total_seconds": None, "turns_timed": 0, "avg_seconds": None}
+            return {
+                "total_seconds": sum(durations),
+                "turns_timed": len(durations),
+                "avg_seconds": round(sum(durations) / len(durations), 1),
+            }
+
+        turn_timing_summary = {
+            "player": timing_summary("player"),
+            "opponent": timing_summary("opponent"),
+        }
+
         opening_hand = _dict_rows(
             conn.execute(
                 """
@@ -963,6 +1051,8 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         "opening_hand": opening_hand,
         "drawn": drawn,
         "draw_quality": draw_quality,
+        "turn_timing": turn_timing_summary,
+        "turns": turn_timings,
         "cards_played": cards_played,
         "timeline": timeline,
         "life_curve": life_curve,
@@ -1449,6 +1539,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
     db_path: Path = DEFAULT_DB_PATH
     static_dir: Path | None = DEFAULT_STATIC_DIR if DEFAULT_STATIC_DIR.exists() else None
 
+    def log_message(self, message_format: str, *args: Any) -> None:
+        """Avoid writing request logs when a windowed build has no stderr stream."""
+        if sys.stderr is not None:
+            super().log_message(message_format, *args)
+
     def do_GET(self) -> None:  # noqa: N802 - http.server API
         parsed = urlparse(self.path)
         request_path = parsed.path
@@ -1656,6 +1751,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
         _send_bytes(self, 200, body, "text/html; charset=utf-8")
 
 
+def create_dashboard_server(
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    static_dir: Path | None = None,
+) -> ThreadingHTTPServer:
+    """Create a configured dashboard server without mutating global handler state."""
+    resolved_static_dir = static_dir if static_dir is not None else DEFAULT_STATIC_DIR
+    handler_class = type(
+        "ConfiguredDashboardHandler",
+        (DashboardHandler,),
+        {
+            "db_path": Path(db_path).expanduser(),
+            "static_dir": resolved_static_dir if resolved_static_dir.exists() else None,
+        },
+    )
+    return ThreadingHTTPServer((host, port), handler_class)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run a local MTGA tracker dashboard.")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH, help="SQLite DB path.")
@@ -1663,13 +1778,14 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765, help="Bind port.")
     args = parser.parse_args()
 
-    DashboardHandler.db_path = args.db
-    server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
+    server = create_dashboard_server(args.host, args.port, db_path=args.db)
     print(f"Dashboard: http://{args.host}:{args.port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nExiting dashboard...")
+    finally:
+        server.server_close()
 
 
 if __name__ == "__main__":

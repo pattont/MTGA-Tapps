@@ -38,7 +38,9 @@ class TrackerRenderingMixin:
         """Print one console line and persist the same logical output for dashboards."""
         raw_text = "" if text is None else str(text)
         self._record_console_log(raw_text, style=style)
-        sys.stdout.write(self._style(raw_text, style) + "\n")
+        output_stream = getattr(self, "output_stream", sys.stdout)
+        output_stream.write(self._style(raw_text, style) + "\n")
+        output_stream.flush()
 
     def _print_event(self, text: str, style: Optional[str] = None) -> None:
         """Print an event line with optional style."""
