@@ -5,6 +5,7 @@ Automatically detects project paths and provides global variables for file locat
 
 import os
 import platform
+import sys
 from pathlib import Path
 from typing import List, Optional
 
@@ -78,9 +79,35 @@ def _find_project_root() -> Path:
 # Detect project root
 PROJECT_ROOT = _find_project_root()
 
-# Common paths
-DATA_DIR = PROJECT_ROOT / 'data'
-LOGS_DIR = PROJECT_ROOT / 'logs'
+
+def _installed_app_data_dir() -> Path:
+    """Return a writable per-user data directory for a frozen desktop build."""
+    system = platform.system()
+    if system == "Darwin":
+        return Path.home() / "Library" / "Application Support" / "MTGA Tracker"
+    if system == "Windows":
+        local_app_data = os.getenv("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / "MTGA Tracker"
+        return Path.home() / "AppData" / "Local" / "MTGA Tracker"
+    xdg_data_home = os.getenv("XDG_DATA_HOME")
+    if xdg_data_home:
+        return Path(xdg_data_home) / "mtga-tracker"
+    return Path.home() / ".local" / "share" / "mtga-tracker"
+
+
+def _default_data_dir() -> Path:
+    override = os.getenv("MTGA_TRACKER_DATA_DIR")
+    if override:
+        return Path(override).expanduser()
+    if getattr(sys, "frozen", False):
+        return _installed_app_data_dir()
+    return PROJECT_ROOT / "data"
+
+
+# Common paths. Frozen builds must never write inside the signed application bundle.
+DATA_DIR = _default_data_dir()
+LOGS_DIR = DATA_DIR / "logs" if getattr(sys, "frozen", False) else PROJECT_ROOT / "logs"
 
 # Ensure directories exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)

@@ -36,3 +36,16 @@ def test_get_mtga_raw_card_db_folders_override_dir_takes_priority(tmp_path, monk
 
     assert paths_mod.get_mtga_raw_card_db_folders(str(override)) == [override]
 
+
+def test_installed_app_data_dir_uses_macos_application_support(monkeypatch):
+    monkeypatch.setattr(paths_mod.platform, "system", lambda: "Darwin")
+
+    assert paths_mod._installed_app_data_dir() == (
+        Path.home() / "Library" / "Application Support" / "MTGA Tracker"
+    )
+
+
+def test_default_data_dir_honors_environment_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("MTGA_TRACKER_DATA_DIR", str(tmp_path))
+
+    assert paths_mod._default_data_dir() == tmp_path

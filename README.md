@@ -44,17 +44,28 @@ venv\Scripts\activate
 
 3. Install dependencies:
 ```bash
-pip install -r requirements.txt
+pip install -e '.[dev,gui]'
 ```
 
 ## Usage
 
-Run the tracker:
+Run the tracker and dashboard together with the menu-bar application:
 ```bash
-python -m mtga_tracker.main
+pip install -e '.[gui]'
+mtga-tracker-app
 ```
 
-The tracker will monitor your MTGA log file and output card events to the console.
+The application starts tracking, opens the Live Tracker Log window, serves the dashboard locally, and opens it in your default browser. Its menu includes **Open Dashboard**, **Show Live Tracker Log**, **Start/Stop Tracking**, **Open Data Folder**, and **Quit**. The live-log window shows the same running event output as the console tracker.
+
+For a one-terminal launcher without the native menu bar:
+```bash
+mtga-tracker-app --no-gui
+```
+
+The original tracker-only console command remains available:
+```bash
+mtga-tracker
+```
 
 Audit the analytics database for suspicious rows:
 ```bash
@@ -105,6 +116,28 @@ If port `8765` is already in use, choose another port:
 python -m mtga_tracker.dashboard --port 8766
 ```
 
+### macOS application and installer
+
+Build the menu-bar `.app` bundle:
+
+```bash
+scripts/build_macos_app.sh
+open "dist/MTGA Tracker.app"
+```
+
+Build a drag-to-Applications DMG:
+
+```bash
+scripts/build_macos_installer.sh
+open dist/MTGA-Tracker.dmg
+```
+
+Release builds compile `ui/dist`, install the GUI/build dependencies, and package the Python tracker and dashboard together. Installed builds store the database and logs under `~/Library/Application Support/MTGA Tracker`.
+
+The installed app has an independent database and does not modify the repository database. To carry existing history into the app, quit both tracker versions and copy `data/mtga_tracker.sqlite3` to `~/Library/Application Support/MTGA Tracker/mtga_tracker.sqlite3` before launching the installed app.
+
+The generated application is currently unsigned. macOS distribution outside the development machine will require an Apple Developer ID signature and notarization.
+
 If you lost the terminal running the dashboard on macOS, stop the process using the port:
 ```bash
 lsof -ti tcp:8765 | xargs kill
@@ -152,6 +185,24 @@ The tracker loads card names from MTGA’s local SQLite file so it can resolve c
 - **Override:** set `MTGA_DATA_DIR` in `config.py` or the `MTGA_DATA_DIR` env var to the folder that contains the file
 
 The Steam path is checked first (most up to date); the newest matching file is used.
+
+### Desktop settings
+
+The menu-bar app creates `settings.json` in its writable data folder. Use **Open Data Folder**
+from the menu-bar menu to find it. The live tracker window size can be changed and takes effect
+the next time the app starts:
+
+```json
+{
+  "live_log_window": {
+    "width": 1400,
+    "height": 1020
+  }
+}
+```
+
+When running from source, the file is `data/settings.json`. Installed macOS builds use
+`~/Library/Application Support/MTGA Tracker/settings.json`.
 
 ## Future UI Considerations
 

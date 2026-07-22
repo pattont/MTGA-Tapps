@@ -1,0 +1,50 @@
+import json
+
+from mtga_tracker.settings import AppSettings, load_app_settings
+
+
+def test_load_app_settings_creates_default_file(tmp_path):
+    settings_path = tmp_path / "settings.json"
+
+    settings = load_app_settings(settings_path)
+
+    assert settings == AppSettings(live_log_width=1400, live_log_height=1020)
+    assert json.loads(settings_path.read_text(encoding="utf-8")) == {
+        "live_log_window": {"width": 1400, "height": 1020}
+    }
+
+
+def test_load_app_settings_uses_custom_window_size(tmp_path):
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps({"live_log_window": {"width": 1440, "height": 900}}),
+        encoding="utf-8",
+    )
+
+    settings = load_app_settings(settings_path)
+
+    assert settings.live_log_width == 1440
+    assert settings.live_log_height == 900
+
+
+def test_load_app_settings_bounds_dimensions_and_handles_invalid_values(tmp_path):
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps({"live_log_window": {"width": 400, "height": "large"}}),
+        encoding="utf-8",
+    )
+
+    settings = load_app_settings(settings_path)
+
+    assert settings.live_log_width == 820
+    assert settings.live_log_height == 1020
+
+
+def test_load_app_settings_preserves_invalid_file(tmp_path):
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("not-json", encoding="utf-8")
+
+    settings = load_app_settings(settings_path)
+
+    assert settings == AppSettings()
+    assert settings_path.read_text(encoding="utf-8") == "not-json"

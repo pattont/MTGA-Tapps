@@ -92,6 +92,21 @@ def _sample_dashboard_db(tmp_path):
             values ('opponent-2', 'game-2', 2, 'opponent', 'Opponent', 20, 7)
             """
         )
+        conn.executemany(
+            """
+            insert into game_turns (
+                game_id, turn_number, seat_id, duration_seconds, timing_source
+            ) values (?, ?, ?, ?, ?)
+            """,
+            [
+                ("game-1", 1, 1, 40, "live"),
+                ("game-1", 2, 2, 30, "live"),
+                ("game-1", 3, 1, 20, "estimated_header_events"),
+                ("game-2", 1, 2, 45, "live"),
+                ("game-2", 2, 1, 25, "live"),
+                ("game-2", 3, 2, 35, "live"),
+            ],
+        )
         conn.execute(
             """
             insert into game_opening_hand_cards (
@@ -170,6 +185,8 @@ def test_dashboard_snapshot_and_html_render_latest_game(tmp_path):
     assert snapshot["draw_quality"][1]["known_draws"] == 1
     assert snapshot["drawn_cards"][0]["display_name"] == "Llanowar Elves"
     assert snapshot["momentum"][0]["split"] == "After a win"
+    assert snapshot["recent"][0]["player_avg_turn_seconds"] == 25.0
+    assert snapshot["recent"][0]["opponent_avg_turn_seconds"] == 40.0
     # Bo1 matches duplicate Recent Games rows, so the matches section is Bo3-only.
     assert snapshot["matches"] == []
     assert snapshot["sessions"][0]["session_id"] == "session-1"
@@ -475,12 +492,11 @@ def test_dashboard_snapshot_groups_formats_and_excludes_jump_in(tmp_path):
     assert all("Jump" not in opt["raw_format"] for opt in snapshot["filter_options"]["formats"])
 
     by_label = {row["format_label"]: row for row in snapshot["formats"]}
-    # Play + Unknown merge into one unranked bucket; Ladder is ranked.
-    assert by_label["Standard Best-of-1 (Unranked)"]["games"] == 3
-    assert sorted(by_label["Standard Best-of-1 (Unranked)"]["raw_formats"].split(", ")) == [
-        "Play",
-        "Unknown",
-    ]
+    # Missing metadata remains unknown rather than being assumed to be Play.
+    assert by_label["Standard Best-of-1 (Unranked)"]["games"] == 2
+    assert by_label["Standard Best-of-1 (Unranked)"]["raw_formats"] == "Play"
+    assert by_label["Unknown"]["games"] == 1
+    assert by_label["Unknown"]["raw_formats"] == "Unknown"
     assert by_label["Standard Best-of-1 (Ranked)"]["games"] == 1
     assert by_label["Standard Best-of-3 (Ranked)"]["games"] == 2
     # Midweek Magic rolls up into a single category with a separate breakdown.
@@ -734,6 +750,39 @@ def test_game_detail_reports_header_cards_and_timeline(tmp_path):
         "land_draw_pct": 0.0,
         "is_flood": False,
     }
+    assert detail["turn_timing"] == {
+        "player": {"total_seconds": 60, "turns_timed": 2, "avg_seconds": 30.0},
+        "opponent": {"total_seconds": 30, "turns_timed": 1, "avg_seconds": 30.0},
+    }
+    assert detail["turns"] == [
+        {
+            "turn_number": 1,
+            "seat_id": 1,
+            "started_at": None,
+            "ended_at": None,
+            "duration_seconds": 40,
+            "timing_source": "live",
+            "role": "player",
+        },
+        {
+            "turn_number": 2,
+            "seat_id": 2,
+            "started_at": None,
+            "ended_at": None,
+            "duration_seconds": 30,
+            "timing_source": "live",
+            "role": "opponent",
+        },
+        {
+            "turn_number": 3,
+            "seat_id": 1,
+            "started_at": None,
+            "ended_at": None,
+            "duration_seconds": 20,
+            "timing_source": "estimated_header_events",
+            "role": "player",
+        },
+    ]
     assert detail["cards_played"] == [
         {"display_name": "Mouse Mentor", "type_category": "Creature", "played_count": 2}
     ]

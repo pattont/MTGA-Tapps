@@ -1,0 +1,299 @@
+"""PyQt menu-bar controller for the unified MTGA tracker application."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Any
+
+from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import (
+    QAction,
+    QCloseEvent,
+    QColor,
+    QCursor,
+    QDesktopServices,
+    QFont,
+    QFontDatabase,
+    QIcon,
+    QTextCharFormat,
+    QTextCursor,
+)
+from PyQt6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QPlainTextEdit,
+    QStyle,
+    QSystemTrayIcon,
+)
+
+from .app import CallbackTextStream, UnifiedLauncher
+from .paths import DATA_DIR
+from .settings import AppSettings, load_app_settings
+
+
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_ASSET_DIR = Path(__file__).resolve().parent / "assets"
+_XTERM_BASE_COLORS = (
+    "#000000",
+    "#800000",
+    "#008000",
+    "#808000",
+    "#000080",
+    "#800080",
+    "#008080",
+    "#c0c0c0",
+    "#808080",
+    "#ff0000",
+    "#00ff00",
+    "#ffff00",
+    "#0000ff",
+    "#ff00ff",
+    "#00ffff",
+    "#ffffff",
+)
+
+
+def _xterm_color(index: int) -> QColor:
+    """Convert an xterm 256-color index to a Qt color."""
+    index = max(0, min(255, index))
+    if index < 16:
+        return QColor(_XTERM_BASE_COLORS[index])
+    if index < 232:
+        cube_index = index - 16
+        levels = (0, 95, 135, 175, 215, 255)
+        red = levels[cube_index // 36]
+        green = levels[(cube_index // 6) % 6]
+        blue = levels[cube_index % 6]
+        return QColor(red, green, blue)
+    gray = 8 + (index - 232) * 10
+    return QColor(gray, gray, gray)
+
+
+class AppSignals(QObject):
+    log_text = pyqtSignal(str)
+    status_changed = pyqtSignal(str)
+
+
+class LiveLogWindow(QMainWindow):
+    """Read-only window containing the current tracker session output."""
+
+    def __init__(
+        self,
+        window_icon: QIcon | None = None,
+        settings: AppSettings | None = None,
+    ) -> None:
+        super().__init__()
+        settings = settings or AppSettings()
+        self.setWindowTitle("MTGA Tracker - Live Log")
+        if window_icon is not None:
+            self.setWindowIcon(window_icon)
+        self.resize(settings.live_log_width, settings.live_log_height)
+        self.setMinimumSize(820, 560)
+        self.log_view = QPlainTextEdit(self)
+        self.log_view.setReadOnly(True)
+        self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.log_view.document().setMaximumBlockCount(5000)
+        log_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        log_font.setPointSize(max(12, log_font.pointSize()))
+        self.log_view.setFont(log_font)
+        self.setCentralWidget(self.log_view)
+        self._text_format = QTextCharFormat()
+
+    def _apply_ansi_sequence(self, sequence: str) -> None:
+        if not sequence.endswith("m"):
+            return
+        try:
+            codes = [int(value) if value else 0 for value in sequence[2:-1].split(";")]
+        except ValueError:
+            return
+        index = 0
+        while index < len(codes):
+            code = codes[index]
+            if code == 0:
+                self._text_format = QTextCharFormat()
+            elif code == 1:
+                self._text_format.setFontWeight(QFont.Weight.Bold)
+            elif code == 22:
+                self._text_format.setFontWeight(QFont.Weight.Normal)
+            elif code == 38 and codes[index : index + 2] == [38, 5] and index + 2 < len(codes):
+                self._text_format.setForeground(_xterm_color(codes[index + 2]))
+                index += 2
+            elif code == 39:
+                self._text_format.clearForeground()
+            index += 1
+
+    def append_text(self, text: str) -> None:
+        cursor = self.log_view.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        text_start = 0
+        for match in _ANSI_ESCAPE.finditer(text):
+            if match.start() > text_start:
+                cursor.insertText(text[text_start : match.start()], self._text_format)
+            self._apply_ansi_sequence(match.group(0))
+            text_start = match.end()
+        if text_start < len(text):
+            cursor.insertText(text[text_start:], self._text_format)
+        self.log_view.setTextCursor(cursor)
+        self.log_view.ensureCursorVisible()
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API
+        event.ignore()
+        self.hide()
+
+
+class MenuBarController(QObject):
+    """Coordinate the native menu, tracker worker, dashboard, and log window."""
+
+    STATUS_LABELS = {
+        "tracker-starting": "Tracker: Starting",
+        "tracker-running": "Tracker: Running",
+        "tracker-stopped": "Tracker: Stopped",
+        "tracker-error": "Tracker: Error",
+        "dashboard-running": "Dashboard: Running",
+        "dashboard-stopped": "Dashboard: Stopped",
+    }
+
+    def __init__(self, app: QApplication, args: Any):
+        super().__init__()
+        self.app = app
+        self.args = args
+        self.signals = AppSignals()
+        self.app_icon = QIcon(str(_ASSET_DIR / "app-icon.png"))
+        self.settings = load_app_settings()
+        self.log_window = LiveLogWindow(self.app_icon, self.settings)
+        self.log_stream = CallbackTextStream(self.signals.log_text.emit)
+        self.launcher = UnifiedLauncher(
+            host=args.host,
+            port=args.port,
+            db_path=args.db,
+            log_path=args.log_path,
+            output_stream=self.log_stream,
+            status_callback=self.signals.status_changed.emit,
+            use_colors=True,
+        )
+        self._shutting_down = False
+
+        self.tray = QSystemTrayIcon(self._tray_icon(), self)
+        self.tray.setToolTip("MTGA Tracker")
+        self.menu = QMenu()
+
+        self.status_action = QAction("Tracker: Starting", self)
+        self.status_action.setEnabled(False)
+        self.menu.addAction(self.status_action)
+        self.menu.addSeparator()
+
+        self.open_dashboard_action = QAction("Open Dashboard", self)
+        self.open_dashboard_action.triggered.connect(self.open_dashboard)
+        self.menu.addAction(self.open_dashboard_action)
+
+        self.show_log_action = QAction("Show Live Tracker Log", self)
+        self.show_log_action.triggered.connect(self.show_live_log)
+        self.menu.addAction(self.show_log_action)
+
+        self.open_data_action = QAction("Open Data Folder", self)
+        self.open_data_action.triggered.connect(self.open_data_folder)
+        self.menu.addAction(self.open_data_action)
+
+        self.menu.addSeparator()
+        self.toggle_tracker_action = QAction("Stop Tracking", self)
+        self.toggle_tracker_action.triggered.connect(self.toggle_tracker)
+        self.menu.addAction(self.toggle_tracker_action)
+
+        self.menu.addSeparator()
+        self.quit_action = QAction("Quit MTGA Tracker", self)
+        self.quit_action.triggered.connect(self.app.quit)
+        self.menu.addAction(self.quit_action)
+
+        self.tray.setContextMenu(self.menu)
+        self.tray.activated.connect(self._tray_activated)
+        self.signals.log_text.connect(self.log_window.append_text)
+        self.signals.status_changed.connect(self._update_status)
+        self.app.aboutToQuit.connect(self.shutdown)
+
+    def _tray_icon(self) -> QIcon:
+        icon = QIcon(str(_ASSET_DIR / "tray-iconTemplate.svg"))
+        if not icon.isNull():
+            return icon
+        return self.app.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+
+    def start(self) -> None:
+        self.tray.show()
+        self.show_live_log()
+        try:
+            url = self.launcher.start_dashboard()
+            self.log_window.append_text(f"Dashboard: {url}\n")
+            self.launcher.start_tracker(background=True)
+            if not self.args.no_browser:
+                QTimer.singleShot(350, self.open_dashboard)
+        except Exception as exc:
+            self.log_window.append_text(f"Application startup failed: {exc}\n")
+            self.log_window.show()
+            QMessageBox.critical(self.log_window, "MTGA Tracker", str(exc))
+
+    def open_dashboard(self) -> None:
+        try:
+            self.launcher.open_dashboard()
+        except Exception as exc:
+            self.log_window.append_text(f"Could not open dashboard: {exc}\n")
+            self.show_live_log()
+
+    def show_live_log(self) -> None:
+        self.log_window.show()
+        self.log_window.raise_()
+        self.log_window.activateWindow()
+
+    def open_data_folder(self) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(DATA_DIR)))
+
+    def toggle_tracker(self) -> None:
+        if self.launcher.tracker_is_running:
+            self.toggle_tracker_action.setEnabled(False)
+            self.launcher.stop_tracker()
+        else:
+            self.toggle_tracker_action.setEnabled(False)
+            self.launcher.start_tracker(background=True)
+
+    def _update_status(self, status: str) -> None:
+        if status.startswith("tracker-"):
+            self.status_action.setText(self.STATUS_LABELS.get(status, status))
+            running = status in {"tracker-starting", "tracker-running"}
+            self.toggle_tracker_action.setText("Stop Tracking" if running else "Start Tracking")
+            self.toggle_tracker_action.setEnabled(status not in {"tracker-starting"})
+            if status == "tracker-error":
+                self.tray.showMessage(
+                    "MTGA Tracker",
+                    "Tracking stopped. Open the live log for details.",
+                    QSystemTrayIcon.MessageIcon.Warning,
+                    5000,
+                )
+
+    def _tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self.menu.popup(QCursor.pos())
+
+    def shutdown(self) -> None:
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+        self.toggle_tracker_action.setEnabled(False)
+        self.launcher.shutdown()
+        self.tray.hide()
+
+
+def run_menu_app(args: Any) -> int:
+    QApplication.setApplicationName("MTGA Tracker")
+    QApplication.setOrganizationName("MTGA Tracker")
+    app = QApplication.instance() or QApplication([])
+    app.setApplicationName("MTGA Tracker")
+    app.setApplicationDisplayName("MTGA Tracker")
+    app.setOrganizationName("MTGA Tracker")
+    app_icon = QIcon(str(_ASSET_DIR / "app-icon.png"))
+    if not app_icon.isNull():
+        app.setWindowIcon(app_icon)
+    app.setQuitOnLastWindowClosed(False)
+    controller = MenuBarController(app, args)
+    controller.start()
+    return app.exec()

@@ -23,6 +23,19 @@ export function formatDuration(seconds: number | null | undefined): string {
   return `${minutes} min`;
 }
 
+export function formatTurnDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined) {
+    return '—';
+  }
+  const roundedSeconds = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(roundedSeconds / 60);
+  const remainingSeconds = roundedSeconds % 60;
+  if (minutes === 0) {
+    return `${remainingSeconds} sec`;
+  }
+  return `${minutes}m ${String(remainingSeconds).padStart(2, '0')}s`;
+}
+
 export function outcomeTone(outcome: string | null | undefined): 'neutral' | 'win' | 'loss' | 'draw' {
   if (outcome === 'win' || outcome === 'loss' || outcome === 'draw') {
     return outcome;

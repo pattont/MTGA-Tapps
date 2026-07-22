@@ -62,6 +62,8 @@ const snapshot = {
       outcome: 'loss',
       mulligans: 1,
       duration_seconds: 300,
+      player_avg_turn_seconds: 25,
+      opponent_avg_turn_seconds: 40,
     },
   ],
   matches: [
@@ -143,6 +145,8 @@ const deckDetail = {
       outcome: 'win',
       duration_seconds: 240,
       total_turns: 8,
+      player_avg_turn_seconds: 30,
+      opponent_avg_turn_seconds: 30,
       raw_format: 'Play',
       format_label: 'Standard Best-of-1',
       mulligans: 0,
@@ -194,6 +198,39 @@ const gameDetail = {
     land_draw_pct: 70,
     is_flood: true,
   },
+  turn_timing: {
+    player: { total_seconds: 60, turns_timed: 2, avg_seconds: 30 },
+    opponent: { total_seconds: 30, turns_timed: 1, avg_seconds: 30 },
+  },
+  turns: [
+    {
+      turn_number: 1,
+      seat_id: 1,
+      role: 'player',
+      started_at: '2026-06-04T00:01:00',
+      ended_at: '2026-06-04T00:01:40',
+      duration_seconds: 40,
+      timing_source: 'live',
+    },
+    {
+      turn_number: 2,
+      seat_id: 2,
+      role: 'opponent',
+      started_at: '2026-06-04T00:01:40',
+      ended_at: '2026-06-04T00:02:10',
+      duration_seconds: 30,
+      timing_source: 'estimated_header_events',
+    },
+    {
+      turn_number: 3,
+      seat_id: 1,
+      role: 'player',
+      started_at: '2026-06-04T00:02:10',
+      ended_at: '2026-06-04T00:02:30',
+      duration_seconds: 20,
+      timing_source: 'live',
+    },
+  ],
   cards_played: [{ display_name: 'Mouse Mentor', type_category: 'Creature', played_count: 2 }],
   timeline: [
     {
@@ -523,6 +560,10 @@ describe('App', () => {
     const recentTable = screen.getByRole('table', { name: 'Recent games' });
     expect(within(recentTable).getByRole('columnheader', { name: /Cards Seen/i })).toBeInTheDocument();
     expect(within(recentTable).getByRole('columnheader', { name: /Lands Seen/i })).toBeInTheDocument();
+    expect(within(recentTable).getByRole('columnheader', { name: /Your Avg Turn/i })).toBeInTheDocument();
+    expect(within(recentTable).getByRole('columnheader', { name: /Opp\. Avg Turn/i })).toBeInTheDocument();
+    expect(within(recentTable).getByText('25 sec')).toBeInTheDocument();
+    expect(within(recentTable).getByText('40 sec')).toBeInTheDocument();
     expect(within(recentTable).getByText('70%')).toBeInTheDocument();
   });
 
@@ -578,9 +619,11 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: /Game Jun 4/i })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/game?id=game-1', expect.anything());
     expect(document.title).toContain('Game Jun 4');
-    ['Draw Quality', 'Life Totals', 'Opening Hand', 'Drawn Cards', 'Cards Played', 'Timeline'].forEach((sectionName) => {
+    ['Turn Timing', 'Draw Quality', 'Life Totals', 'Opening Hand', 'Drawn Cards', 'Cards Played', 'Timeline'].forEach((sectionName) => {
       expect(screen.getByRole('heading', { name: sectionName })).toBeInTheDocument();
     });
+    expect(screen.getByRole('table', { name: 'Turn timing' })).toBeInTheDocument();
+    expect(screen.getByText('Estimated')).toBeInTheDocument();
     expect(screen.getByText('70%')).toBeInTheDocument();
     expect(screen.getAllByText('Flood').length).toBeGreaterThan(0);
     expect(screen.getByText('Turn 1 begins')).toBeInTheDocument();

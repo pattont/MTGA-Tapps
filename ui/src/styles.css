@@ -644,6 +644,11 @@ td {
   font-size: 0.9rem;
 }
 
+.turn-duration-value {
+  color: var(--accent-strong);
+  font-variant-numeric: tabular-nums;
+}
+
 th.num,
 td.num {
   width: 1%;

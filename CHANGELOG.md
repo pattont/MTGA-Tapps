@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added user-editable `settings.json` sizing for the desktop live-log window and increased its default size to 1400 by 1020.
+- Enlarged the desktop live-log window, enabled its colored event output by default, and made menu-bar icon clicks open only the menu instead of relaunching the dashboard.
+- Fixed live event rows using the previous game's analytics ID, added timestamp-based historical event reassignment, and made DB repair remove empty unknown-result game artifacts.
+
 ### Dashboard UI
 
 - Added game detail routes with life charts, opening hand, drawn cards, played cards, and filterable event timeline.
@@ -15,6 +19,15 @@
 - Merged Draw Quality into Recent Games and moved Recent Games directly below Win Rate Trend in dashboard navigation.
 - Reordered dashboard content so its top-to-bottom section sequence exactly matches sidebar navigation.
 - Consolidated Play / Draw and Momentum into Overview and replaced intersection-based navigation highlighting with position-based scroll tracking.
+- Added game length and average turn pace to Recent Games and deck history, plus sortable per-turn timing with player/opponent totals and live/estimated provenance in Game Detail.
+
+### Desktop Launcher
+
+- Added a unified tracker/dashboard launcher with automatic browser opening and free-port fallback.
+- Added a macOS menu-bar controller with tracker status, start/stop controls, dashboard access, a bounded live tracker log, and clean coordinated shutdown.
+- Added PyInstaller app-bundle and DMG build scripts with bundled frontend assets and per-user Application Support storage.
+- Added original card-analytics app and menu-bar icons, corrected the native application display name, and made the Live Tracker Log window open automatically with the dashboard.
+- Added matching ICO, PNG, and Apple touch favicons to the web dashboard.
 
 ## v0.4.0 - Complete Game Tracking & Auto-Summary (2025-11-19)
 

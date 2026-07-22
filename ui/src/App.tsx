@@ -29,7 +29,7 @@ import { TypeChip } from './components/TypeChip';
 import { WinRateBar } from './components/WinRateBar';
 import { AppShell } from './components/AppShell';
 import { formatPercent, metricCards } from './dashboardData';
-import { formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone } from './format';
+import { formatDateTime, formatDuration, formatNumber, formatTurnDuration, outcomeLabel, outcomeTone } from './format';
 import { cardNavItems, deckNavItems, gameNavItems } from './nav';
 import { RouteFiltersContext } from './routeFilters';
 import { dashboardRouteHash, gameRouteHash, parseCardRoute, parseDashboardRouteFilters, parseDeckRoute, parseGameRoute } from './routes';
@@ -279,9 +279,23 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
   },
   {
     key: 'duration_seconds',
-    header: 'Duration',
+    header: 'Game Time',
     render: (row) => formatDuration(row.duration_seconds),
     sortValue: (row) => row.duration_seconds,
+    numeric: true,
+  },
+  {
+    key: 'player_avg_turn_seconds',
+    header: 'Your Avg Turn',
+    render: (row) => formatTurnDuration(row.player_avg_turn_seconds),
+    sortValue: (row) => row.player_avg_turn_seconds,
+    numeric: true,
+  },
+  {
+    key: 'opponent_avg_turn_seconds',
+    header: 'Opp. Avg Turn',
+    render: (row) => formatTurnDuration(row.opponent_avg_turn_seconds),
+    sortValue: (row) => row.opponent_avg_turn_seconds,
     numeric: true,
   },
 ];
@@ -611,7 +625,7 @@ function Dashboard({
       <Section
         id="recent-games"
         title="Recent Games"
-        description="Recent results with opening-hand and known-draw land distribution."
+        description="Recent results with draw distribution, total game time, and average turn pace."
       >
         <SortableTable
           caption="Recent games"

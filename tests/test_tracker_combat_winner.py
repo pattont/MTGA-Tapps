@@ -1672,6 +1672,55 @@ def test_put_before_first_turn_is_suppressed(capsys):
     assert out == ""
 
 
+def test_put_into_hand_uses_destination_zone_and_source_spell(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 2
+    tracker.game_state.opponent_seat_id = 1
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 3
+    tracker.game_state.active_player = 2
+    tracker.game_state.last_turn_announced = 3
+    tracker.game_state.last_player_turn_number = 3
+    tracker.card_db.names[96625] = "Consult the Star Charts"
+    tracker.card_db.names[98527] = "Ashling's Command"
+
+    annotation = {
+        "type": ["AnnotationType_ZoneTransfer"],
+        "affectorId": 292,
+        "affectedIds": [295],
+        "details": [
+            {"key": "zone_src", "valueInt32": [36]},
+            {"key": "zone_dest", "valueInt32": [35]},
+            {"key": "category", "valueString": ["Put"]},
+        ],
+    }
+    game_objects = [
+        {
+            "instanceId": 292,
+            "grpId": 96625,
+            "ownerSeatId": 2,
+            "controllerSeatId": 2,
+        },
+        {
+            "instanceId": 295,
+            "grpId": 98527,
+            "zoneId": 35,
+            "ownerSeatId": 2,
+            "controllerSeatId": 2,
+        },
+    ]
+    zones_by_id = {
+        35: {"zoneId": 35, "type": "ZoneType_Hand", "ownerSeatId": 2},
+        36: {"zoneId": 36, "type": "ZoneType_Library", "ownerSeatId": 2},
+    }
+
+    tracker._process_annotation(annotation, game_objects, zones_by_id=zones_by_id)
+    out = capsys.readouterr().out
+
+    assert "You: [Consult the Star Charts] put [Ashling's Command] into your hand" in out
+    assert "onto battlefield" not in out
+
+
 def test_cast_spell_uses_snapshot_when_gameobjects_diff_omits_spell(capsys):
     tracker = make_tracker()
     tracker.game_state.player_seat_id = 1
@@ -3298,7 +3347,7 @@ def test_game_start_does_not_use_stale_backfilled_traditional_format(tmp_path, c
     out = capsys.readouterr().out
     assert tracker.game_state.match_type == "best_of_1"
     assert tracker.game_state.format_str == "Unknown"
-    assert "Format: Standard Best-of-1" in out
+    assert "Format: Unknown" in out
     assert "Format: Standard Best-of-3" not in out
 
 
@@ -3368,7 +3417,7 @@ def test_deck_metadata_traditional_standard_does_not_set_match_best_of_three_wit
     assert tracker.game_state.player_deck_name == "Standard Deck"
     assert tracker.game_state.format_str == "Unknown"
     assert tracker.game_state.match_type == "best_of_1"
-    assert tracker._friendly_format_label() == "Standard Best-of-1 (Unranked)"
+    assert tracker._friendly_format_label() == "Unknown"
 
 
 def test_explicit_traditional_standard_deck_event_does_not_set_best_of_three_without_live_format():
@@ -3384,7 +3433,7 @@ def test_explicit_traditional_standard_deck_event_does_not_set_best_of_three_wit
     assert tracker.game_state.player_deck_name == "Standard Deck"
     assert tracker.game_state.format_str == "Unknown"
     assert tracker.game_state.match_type == "best_of_1"
-    assert tracker._friendly_format_label() == "Standard Best-of-1 (Unranked)"
+    assert tracker._friendly_format_label() == "Unknown"
 
 
 def test_parse_match_metadata_sets_player_commander_from_command_zone():
@@ -3517,21 +3566,28 @@ def test_match_started_block_marks_momir_games_not_saved(capsys):
     assert "Players: Tapps vs Rival123 (Log Not Saved to DB)" in out
 
 
-def test_momir_scene_context_survives_game_start_reset(tmp_path):
+def test_active_momir_match_room_survives_game_start_reset(tmp_path):
     tracker = make_tracker()
     log_path = tmp_path / "Player.log"
     tracker.parser.log_path = str(log_path)
-    scene_line = json.dumps(
+    room_line = json.dumps(
         {
-            "fromSceneName": "Home",
-            "toSceneName": "EventLanding",
-            "initiator": "User",
-            "context": "MWM_Momir",
+            "matchGameRoomStateChangedEvent": {
+                "gameRoomInfo": {
+                    "stateType": "MatchGameRoomStateType_Playing",
+                    "gameRoomConfig": {
+                        "matchId": "momir-match",
+                        "reservedPlayers": [
+                            {"systemSeatId": 1, "eventId": "MWM_Momir"},
+                            {"systemSeatId": 2, "eventId": "MWM_Momir"},
+                        ],
+                    },
+                }
+            }
         }
     )
-    log_path.write_text(scene_line, encoding="utf-8")
+    log_path.write_text(room_line, encoding="utf-8")
 
-    tracker._parse_match_metadata(scene_line)
     tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
 
     assert tracker.game_state.format_str == "MWM_Momir"
@@ -3543,21 +3599,115 @@ def test_live_queue_format_wins_over_stale_backfilled_momir_context(tmp_path):
     log_path = tmp_path / "Player.log"
     tracker.parser.log_path = str(log_path)
     log_path.write_text(
-        json.dumps(
-            {
-                "fromSceneName": "Home",
-                "toSceneName": "EventLanding",
-                "context": "MWM_Momir",
-            }
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "fromSceneName": "Home",
+                        "toSceneName": "EventLanding",
+                        "context": "MWM_Momir",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "matchGameRoomStateChangedEvent": {
+                            "gameRoomInfo": {
+                                "stateType": "MatchGameRoomStateType_Playing",
+                                "gameRoomConfig": {
+                                    "matchId": "play-match",
+                                    "reservedPlayers": [
+                                        {"systemSeatId": 1, "eventId": "Play"},
+                                        {"systemSeatId": 2, "eventId": "Play"},
+                                    ],
+                                },
+                            }
+                        }
+                    }
+                ),
+            ]
         ),
         encoding="utf-8",
     )
-    tracker._pending_event_format = "Play"
+    tracker._pending_event_format = "MWM_Momir"
 
     tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
 
     assert tracker.game_state.format_str == "Play"
     assert not tracker._is_untracked_match()
+
+
+def test_each_game_rechecks_latest_active_match_room(tmp_path):
+    tracker = make_tracker()
+    log_path = tmp_path / "Player.log"
+    tracker.parser.log_path = str(log_path)
+
+    def room_line(state_type, match_id, event_id):
+        return json.dumps(
+            {
+                "matchGameRoomStateChangedEvent": {
+                    "gameRoomInfo": {
+                        "stateType": state_type,
+                        "gameRoomConfig": {
+                            "matchId": match_id,
+                            "reservedPlayers": [
+                                {"systemSeatId": 1, "eventId": event_id},
+                                {"systemSeatId": 2, "eventId": event_id},
+                            ],
+                        },
+                    }
+                }
+            }
+        )
+
+    log_path.write_text(
+        room_line("MatchGameRoomStateType_Playing", "first-match", "MWM_Momir"),
+        encoding="utf-8",
+    )
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+    assert tracker.game_state.format_str == "MWM_Momir"
+
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(
+            "\n"
+            + room_line(
+                "MatchGameRoomStateType_MatchCompleted", "first-match", "MWM_Momir"
+            )
+        )
+        f.write("\n" + room_line("MatchGameRoomStateType_Playing", "second-match", "Play"))
+
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+    assert tracker.game_state.format_str == "Play"
+
+
+def test_returning_home_clears_stale_midweek_event_format(tmp_path):
+    tracker = make_tracker()
+    log_path = tmp_path / "Player.log"
+    tracker.parser.log_path = str(log_path)
+    scene_lines = [
+        json.dumps(
+            {
+                "fromSceneName": "Home",
+                "toSceneName": "EventLanding",
+                "context": "MWM_BrawlBuilder",
+            }
+        ),
+        json.dumps(
+            {
+                "fromSceneName": "EventLanding",
+                "toSceneName": "Home",
+                "context": "Landing Page 'Home'",
+            }
+        ),
+    ]
+    log_path.write_text("\n".join(scene_lines), encoding="utf-8")
+
+    for scene_line in scene_lines:
+        tracker._parse_match_metadata(scene_line)
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+
+    assert tracker.game_state.format_str == "Unknown"
+    assert tracker._friendly_format_label() == "Unknown"
+    assert tracker._pending_event_format is None
 
 
 def test_momir_game_summary_is_not_persisted_or_counted(capsys, tmp_path):

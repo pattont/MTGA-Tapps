@@ -159,7 +159,10 @@ class TrackerAnalyticsMixin:
 
     def _current_game_ordinal(self) -> int:
         """Return stable 1-based game ordinal for DB ids."""
-        return max(1, int(self.session_games_played or 1))
+        completed_games = int(self.session_games_played or 0)
+        if self.game_state.in_match and not self._session_stats_recorded_this_game:
+            return completed_games + 1
+        return max(1, completed_games)
 
     def _current_match_ordinal(self) -> int:
         """Return stable 1-based match ordinal for DB ids."""
