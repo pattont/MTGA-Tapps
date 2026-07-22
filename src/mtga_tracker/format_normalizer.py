@@ -76,12 +76,11 @@ def normalize_match_format(
     raw = raw_format if isinstance(raw_format, str) and raw_format.strip() else "Unknown"
     normalized = normalize_match_text(raw)
     if not normalized or normalized == "unknown":
-        # Untagged queues are the Play queue in practice: unranked.
         best_of = 3 if default_best_of == 3 else 1
         return NormalizedFormat(
             raw="Unknown",
-            label=_standard_label(best_of, ranked=False),
-            family="standard",
+            label="Unknown",
+            family="unknown",
             best_of=best_of,
         )
     if normalized.startswith("mwm") or normalized.startswith("midweekmagic"):

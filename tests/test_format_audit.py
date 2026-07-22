@@ -7,7 +7,7 @@ from mtga_tracker.format_normalizer import format_label, is_momir_format, normal
 
 def test_format_normalizer_labels_constructed_queues():
     assert format_label("Play") == "Standard Best-of-1 (Unranked)"
-    assert format_label("Unknown") == "Standard Best-of-1 (Unranked)"
+    assert format_label("Unknown") == "Unknown"
     assert format_label("Ladder") == "Standard Best-of-1 (Ranked)"
     assert format_label("Ladder", default_best_of=3) == "Standard Best-of-3 (Ranked)"
     assert format_label("Constructed_BestOf3") == "Standard Best-of-3 (Unranked)"
@@ -87,3 +87,115 @@ def test_repair_database_updates_safe_format_mismatch_only(tmp_path):
         ("match-ok", "MWM_SlowStart_20260602"),
         ("match-safe", "Play"),
     ]
+
+
+def test_repair_database_reassigns_events_to_game_time_interval(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            "INSERT INTO tracker_sessions (id, started_at) VALUES ('session-1', '2026-07-01T12:00:00')"
+        )
+        conn.executemany(
+            "INSERT INTO matches (id, session_id) VALUES (?, 'session-1')",
+            (("match-1",), ("match-2",)),
+        )
+        conn.executemany(
+            """
+            INSERT INTO games (id, session_id, match_id, started_at, ended_at, outcome)
+            VALUES (?, 'session-1', ?, ?, ?, 'win')
+            """,
+            (
+                ("game-1", "match-1", "2026-07-01T12:00:00", "2026-07-01T12:05:00"),
+                ("game-2", "match-2", "2026-07-01T12:10:00", "2026-07-01T12:15:00"),
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO game_events (
+                session_id, match_id, game_id, event_time, actor_role, participant_id, text
+            ) VALUES (
+                'session-1', 'match-1', 'game-1', '2026-07-01T12:11:00',
+                'player', 'game-1:participant:player', 'You: cast [Opt]'
+            )
+            """
+        )
+
+    findings = audit_database(db_path)
+    assert any(finding.code == "GAME_EVENT_ASSIGNMENT_MISMATCH" for finding in findings)
+
+    result = repair_database(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT match_id, game_id, participant_id FROM game_events"
+        ).fetchone()
+    assert result.repaired_count == 1
+    assert row == ("match-2", "game-2", "game-2:participant:player")
+
+
+def test_repair_database_deletes_only_empty_unknown_game(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            """
+            INSERT INTO tracker_sessions (
+                id, started_at, games_played, wins, unknown_results
+            ) VALUES ('session-1', '2026-07-01T12:00:00', 2, 1, 1)
+            """
+        )
+        conn.executemany(
+            "INSERT INTO matches (id, session_id, games_played) VALUES (?, 'session-1', 1)",
+            (("match-empty",), ("match-valid",)),
+        )
+        conn.executemany(
+            """
+            INSERT INTO games (
+                id, session_id, match_id, started_at, ended_at, total_turns, outcome
+            ) VALUES (?, 'session-1', ?, ?, ?, ?, ?)
+            """,
+            (
+                (
+                    "game-empty",
+                    "match-empty",
+                    "2026-07-01T12:00:00",
+                    "2026-07-01T12:00:02",
+                    1,
+                    "unknown",
+                ),
+                (
+                    "game-valid",
+                    "match-valid",
+                    "2026-07-01T12:10:00",
+                    "2026-07-01T12:10:02",
+                    1,
+                    "win",
+                ),
+            ),
+        )
+        conn.executemany(
+            "INSERT INTO participants (id, game_id, role) VALUES (?, ?, 'player')",
+            (("empty-player", "game-empty"), ("valid-player", "game-valid")),
+        )
+        conn.executemany(
+            "INSERT INTO game_participant_stats (game_id, participant_id) VALUES (?, ?)",
+            (("game-empty", "empty-player"), ("game-valid", "valid-player")),
+        )
+
+    findings = audit_database(db_path)
+    empty_findings = [finding for finding in findings if finding.code == "EMPTY_GAME_RECORD"]
+    assert [finding.row_id for finding in empty_findings] == ["game-empty"]
+
+    result = repair_database(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        games = conn.execute("SELECT id FROM games ORDER BY id").fetchall()
+        matches = conn.execute("SELECT id FROM matches ORDER BY id").fetchall()
+        session = conn.execute(
+            "SELECT games_played, wins, unknown_results FROM tracker_sessions"
+        ).fetchone()
+    assert result.repaired_count == 1
+    assert games == [("game-valid",)]
+    assert matches == [("match-valid",)]
+    assert session == (1, 1, 0)

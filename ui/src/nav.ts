@@ -30,6 +30,7 @@ export const deckNavItems: AppNavItem[] = [
 export const gameNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
   { id: 'game-summary', label: 'Summary' },
+  { id: 'game-turn-timing', label: 'Turn Timing' },
   { id: 'game-draw-quality', label: 'Draw Quality' },
   { id: 'game-life', label: 'Life Totals' },
   { id: 'game-opening-hand', label: 'Opening Hand' },

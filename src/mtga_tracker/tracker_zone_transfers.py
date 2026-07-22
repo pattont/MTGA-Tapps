@@ -342,10 +342,12 @@ class TrackerZoneTransferMixin:
         card_obj: Dict[str, Any],
         annotation: Dict[str, Any],
         game_objects_by_id: Dict[int, Dict[str, Any]],
+        zones_by_id: Optional[Dict[int, Dict[str, Any]]],
+        zone_dest: Optional[int],
         source_id: Optional[int],
         affector_id: Optional[int],
     ) -> None:
-        """Handle battlefield return/put zone transfers and combat-swap inference."""
+        """Handle return/put zone transfers and combat-swap inference."""
         self.game_state.pending_spell_roots.pop(canonical_instance_id, None)
         if not card_obj:
             return
@@ -424,6 +426,50 @@ class TrackerZoneTransferMixin:
                     }
                 )
                 self.game_state.recent_combat_returns = self.game_state.recent_combat_returns[-6:]
+            return
+
+        destination_zone = (
+            (zones_by_id or {}).get(int(zone_dest)) if zone_dest is not None else None
+        )
+        destination_type = (
+            destination_zone.get("type") if isinstance(destination_zone, dict) else None
+        )
+        if destination_type == "ZoneType_Hand":
+            if pre_turn_zone_noise:
+                return
+            source_obj = {}
+            for candidate_id in (source_id, affector_id):
+                if candidate_id is None:
+                    continue
+                source_obj = self._lookup_object(int(candidate_id), game_objects_by_id)
+                if source_obj:
+                    break
+            source_seat = source_obj.get("controllerSeatId") if source_obj else None
+            if source_seat is None and source_obj:
+                source_seat = source_obj.get("ownerSeatId")
+            source_name = (
+                self._object_display_name(source_obj, source_obj.get("instanceId") or affector_id)
+                if source_obj
+                else None
+            )
+            hand_owner = (
+                "your" if determining_seat == self.game_state.player_seat_id else "opponent's"
+            )
+            if source_name and self._is_tracked_seat(source_seat):
+                message = f"[{source_name}] put [{card_name}] into {hand_owner} hand"
+                actor_seat = source_seat
+            else:
+                message = f"put [{card_name}] into {hand_owner} hand"
+                actor_seat = determining_seat
+            self._print_event(
+                self._format_actor_event(
+                    "",
+                    actor_seat,
+                    message,
+                    turn_override=turn_for_display,
+                ),
+                "zone",
+            )
             return
 
         attack_state = str(card_obj.get("attackState", ""))
@@ -831,6 +877,8 @@ class TrackerZoneTransferMixin:
                 card_obj,
                 annotation,
                 game_objects_by_id,
+                zones_by_id,
+                zone_dest,
                 source_id,
                 affector_id,
             )

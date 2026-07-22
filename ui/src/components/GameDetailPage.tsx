@@ -5,9 +5,10 @@ import {
   type GameDrawnCardRow,
   type GameOpeningHandRow,
   type GamePlayedCardRow,
+  type GameTurnTimingRow,
 } from '../api';
 import { formatPercent } from '../dashboardData';
-import { formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone } from '../format';
+import { formatDateTime, formatDuration, formatNumber, formatTurnDuration, outcomeLabel, outcomeTone } from '../format';
 import { DeckLink } from './DeckLink';
 import { Badge } from './Badge';
 import { CardLink } from './CardLink';
@@ -106,6 +107,43 @@ const playedColumns: Column<GamePlayedCardRow>[] = [
     sortValue: (row) => row.type_category,
   },
   { key: 'played_count', header: 'Played', numeric: true },
+];
+
+function timingRoleLabel(role: GameTurnTimingRow['role']): string {
+  if (role === 'player') {
+    return 'You';
+  }
+  if (role === 'opponent') {
+    return 'Opponent';
+  }
+  return 'Unknown';
+}
+
+function timingSourceLabel(source: string): string {
+  return source === 'live' ? 'Live' : source === 'estimated_header_events' ? 'Estimated' : source;
+}
+
+const turnTimingColumns: Column<GameTurnTimingRow>[] = [
+  { key: 'turn_number', header: 'Turn', numeric: true },
+  {
+    key: 'role',
+    header: 'Player',
+    render: (row) => timingRoleLabel(row.role),
+    sortValue: (row) => timingRoleLabel(row.role),
+  },
+  {
+    key: 'duration_seconds',
+    header: 'Duration',
+    render: (row) => <strong className="turn-duration-value">{formatTurnDuration(row.duration_seconds)}</strong>,
+    sortValue: (row) => row.duration_seconds,
+    numeric: true,
+  },
+  {
+    key: 'timing_source',
+    header: 'Timing',
+    render: (row) => <Badge>{timingSourceLabel(row.timing_source)}</Badge>,
+    sortValue: (row) => timingSourceLabel(row.timing_source),
+  },
 ];
 
 export function GameDetailPage({ gameId, backHref = '#overview' }: { gameId: string; backHref?: string }) {
@@ -209,6 +247,25 @@ export function GameDetailPage({ gameId, backHref = '#overview' }: { gameId: str
           <MetricCard key={metric.label} label={metric.label} value={metric.value} />
         ))}
       </section>
+
+      <Section
+        id="game-turn-timing"
+        title="Turn Timing"
+        description="Time spent on each player’s turns. Estimated rows come from historical turn-header timestamps; live rows were captured directly by the tracker."
+      >
+        <section className="metric-grid metric-grid-deck" aria-label="Turn timing summary">
+          <MetricCard label="Your Turn Time" value={formatTurnDuration(detail.turn_timing.player.total_seconds)} />
+          <MetricCard label="Your Avg Turn" value={formatTurnDuration(detail.turn_timing.player.avg_seconds)} />
+          <MetricCard label="Opponent Turn Time" value={formatTurnDuration(detail.turn_timing.opponent.total_seconds)} />
+          <MetricCard label="Opponent Avg Turn" value={formatTurnDuration(detail.turn_timing.opponent.avg_seconds)} />
+        </section>
+        <SortableTable
+          caption="Turn timing"
+          columns={turnTimingColumns}
+          getRowKey={(row) => row.turn_number}
+          rows={detail.turns}
+        />
+      </Section>
 
       <Section
         id="game-draw-quality"

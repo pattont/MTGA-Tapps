@@ -956,6 +956,37 @@ class TrackerOpeningDeckMixin:
         finally:
             self._parsing_backfilled_metadata = False
 
+    def _refresh_current_match_room_metadata(self) -> bool:
+        """Re-read the latest match-room state and apply it only when it is active."""
+        try:
+            with open(self.parser.log_path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+        except Exception:
+            return False
+
+        for raw_line in reversed(lines):
+            if "matchGameRoomStateChangedEvent" not in raw_line:
+                continue
+            line = raw_line.rstrip("\n")
+            data = self.parser.parse_json_from_line(line)
+            if not isinstance(data, dict):
+                continue
+            event = data.get("matchGameRoomStateChangedEvent")
+            if not isinstance(event, dict):
+                continue
+            room = event.get("gameRoomInfo")
+            if not isinstance(room, dict):
+                return False
+            if room.get("stateType") != "MatchGameRoomStateType_Playing":
+                return False
+            self._parse_match_metadata(
+                line,
+                from_backfill=True,
+                trust_match_room_format=True,
+            )
+            return self.game_state.format_str != "Unknown"
+        return False
+
     def _parse_match_metadata(
         self,
         line: str,
@@ -971,8 +1002,17 @@ class TrackerOpeningDeckMixin:
         format_updated = False
         scene_context = data.get("context")
         scene_target = data.get("toSceneName")
+        if scene_target == "Home":
+            # Entering Home abandons the previously visited event queue. Without
+            # clearing this, a later Play match can inherit a stale Midweek label.
+            self._pending_event_format = None
+            if from_backfill:
+                self.game_state.format_str = "Unknown"
+                self.game_state.match_type = "best_of_1"
+                self._format_from_backfill = False
         if (
-            isinstance(scene_context, str)
+            trust_match_room_format
+            and isinstance(scene_context, str)
             and scene_target == "EventLanding"
             and self._is_trusted_queue_event_name(scene_context)
         ):

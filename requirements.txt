@@ -3,9 +3,8 @@ watchdog>=3.0.0  # File system monitoring for log watching
 python-dateutil>=2.8.2  # Date parsing for log timestamps
 ijson>=3.2.0  # Stream parsing for large JSON (e.g. Scryfall bulk data)
 
-# Optional UI dependencies (install when ready for GUI)
-# PyQt6>=6.6.0  # Cross-platform GUI framework
-# pyqt6-tools>=6.6.0  # Additional Qt tools
+# Optional UI/build dependencies are managed by the pyproject extras:
+# pip install -e '.[gui,build]'
 
 # Development dependencies
 pytest>=7.4.0

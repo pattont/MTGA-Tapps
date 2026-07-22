@@ -9,7 +9,7 @@ import {
   type SnapshotFilters,
 } from '../api';
 import { formatPercent } from '../dashboardData';
-import { formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone } from '../format';
+import { formatDateTime, formatDuration, formatNumber, formatTurnDuration, outcomeLabel, outcomeTone } from '../format';
 import { gameRouteHash } from '../routes';
 import { Badge } from './Badge';
 import { CardLink } from './CardLink';
@@ -134,9 +134,23 @@ const gameColumns: Column<DeckGameRow>[] = [
   },
   {
     key: 'duration_seconds',
-    header: 'Duration',
+    header: 'Game Time',
     render: (row) => formatDuration(row.duration_seconds),
     sortValue: (row) => row.duration_seconds,
+    numeric: true,
+  },
+  {
+    key: 'player_avg_turn_seconds',
+    header: 'Your Avg Turn',
+    render: (row) => formatTurnDuration(row.player_avg_turn_seconds),
+    sortValue: (row) => row.player_avg_turn_seconds,
+    numeric: true,
+  },
+  {
+    key: 'opponent_avg_turn_seconds',
+    header: 'Opp. Avg Turn',
+    render: (row) => formatTurnDuration(row.opponent_avg_turn_seconds),
+    sortValue: (row) => row.opponent_avg_turn_seconds,
     numeric: true,
   },
 ];
@@ -316,7 +330,7 @@ export function DeckDetailPage({
         />
       </Section>
 
-      <Section id="deck-games" title="Recent Games">
+      <Section id="deck-games" title="Recent Games" description="Game length and average turn pace for both players.">
         <SortableTable
           caption="Recent games for this deck"
           columns={gameColumns}

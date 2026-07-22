@@ -122,6 +122,22 @@ def test_tracker_raw_payload_snapshot_uses_current_match_context(tmp_path):
     assert "/Users/travispatton/" not in row[3]
 
 
+def test_current_game_id_is_stable_before_and_after_outcome_is_counted():
+    from tests.test_tracker_combat_winner import make_tracker
+
+    tracker = make_tracker()
+    tracker.session_games_played = 3
+    tracker.game_state.in_match = True
+    tracker.game_state.game_number = 1
+
+    active_game_id = tracker._current_game_id()
+    tracker.session_games_played = 4
+    tracker._session_stats_recorded_this_game = True
+
+    assert active_game_id == "test-session:match:4:game:1"
+    assert tracker._current_game_id() == active_game_id
+
+
 def test_backfill_estimated_game_turn_times_is_idempotent_and_preserves_live_rows(tmp_path):
     db_path = tmp_path / "analytics.sqlite3"
     store = AnalyticsStore(db_path)
