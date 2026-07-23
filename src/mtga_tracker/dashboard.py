@@ -21,6 +21,14 @@ from .paths import DATA_DIR
 
 
 DEFAULT_DB_PATH = DATA_DIR / "mtga_tracker.sqlite3"
+_CONSTRUCTED_RANK_ORDER = {
+    "Bronze": 0,
+    "Silver": 1,
+    "Gold": 2,
+    "Platinum": 3,
+    "Diamond": 4,
+    "Mythic": 5,
+}
 
 
 def _default_static_dir() -> Path:
@@ -102,6 +110,15 @@ def _games_filter(
 def _win_rate(wins: int, losses: int) -> Optional[float]:
     decided = wins + losses
     return round(100.0 * wins / decided, 1) if decided else None
+
+
+def _rank_score(rank_class: str, rank_level: int, rank_step: int, rank_steps: int) -> int:
+    """Return a chartable score across Bronze through Mythic."""
+    class_index = _CONSTRUCTED_RANK_ORDER.get(rank_class, 0)
+    if rank_class == "Mythic":
+        return class_index * 4 * rank_steps
+    level_progress = max(0, min(3, 4 - rank_level))
+    return class_index * 4 * rank_steps + level_progress * rank_steps + rank_step
 
 
 def _grouped_format_rows(
@@ -497,6 +514,39 @@ def dashboard_snapshot(
             )
         )
         trend_rows.reverse()
+        rank_progress_rows = _dict_rows(
+            conn.execute(
+                """
+                SELECT
+                  r.id,
+                  r.captured_at,
+                  r.season_ordinal,
+                  r.rank_class,
+                  r.rank_level,
+                  r.rank_step,
+                  r.rank_steps,
+                  r.matches_won,
+                  r.matches_lost,
+                  r.mythic_percentile,
+                  r.mythic_rank,
+                  r.game_id,
+                  g.outcome,
+                  m.best_of,
+                  p.deck_name
+                FROM rank_snapshots r
+                LEFT JOIN games g ON g.id = r.game_id
+                LEFT JOIN matches m ON m.id = r.match_id
+                LEFT JOIN participants p ON p.game_id = r.game_id AND p.role = 'player'
+                WHERE r.rank_format = 'constructed'
+                  AND r.season_ordinal = (
+                    SELECT MAX(season_ordinal)
+                    FROM rank_snapshots
+                    WHERE rank_format = 'constructed'
+                  )
+                ORDER BY r.captured_at, r.id
+                """
+            )
+        )
         match_rows = _dict_rows(
             conn.execute(
                 f"""
@@ -602,6 +652,19 @@ def dashboard_snapshot(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )
         row["record"] = f"{int(row.get('wins') or 0)}-{int(row.get('losses') or 0)}"
+    for row in rank_progress_rows:
+        rank_class = str(row.get("rank_class") or "Bronze")
+        rank_level = int(row.get("rank_level") or 1)
+        rank_step = int(row.get("rank_step") or 0)
+        rank_steps = int(row.get("rank_steps") or 6)
+        row["rank_score"] = _rank_score(rank_class, rank_level, rank_step, rank_steps)
+        row["rank_label"] = (
+            f"{rank_class} {rank_level} ({rank_step}/{rank_steps})"
+            if rank_class != "Mythic"
+            else f"Mythic #{row['mythic_rank']}"
+            if row.get("mythic_rank")
+            else "Mythic"
+        )
     return {
         "summary": summary_dict,
         "decks": deck_rows,
@@ -614,6 +677,7 @@ def dashboard_snapshot(
         "momentum": momentum_rows,
         "recent": recent_rows,
         "trend": trend_rows,
+        "rank_progress": rank_progress_rows,
         "matches": match_rows,
         "sessions": session_rows,
         "filters": {"deck": deck, "format": fmt, "days": days},
@@ -907,6 +971,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         player = next((row for row in participant_rows if row.get("role") == "player"), None)
         opponent = next((row for row in participant_rows if row.get("role") == "opponent"), None)
         player_participant_id = player.get("id") if player else None
+        opponent_participant_id = opponent.get("id") if opponent else None
 
         turn_timings = _dict_rows(
             conn.execute(
@@ -1013,6 +1078,36 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         )
         for row in cards_played:
             row["display_name"] = _clean_card_name(row.get("display_name"))
+        opponent_cards = _dict_rows(
+            conn.execute(
+                """
+                SELECT
+                  display_name,
+                  COALESCE(type_category, 'Other') AS type_category,
+                  played_count,
+                  drawn_count,
+                  discarded_count,
+                  milled_count,
+                  exiled_count
+                FROM game_card_summary
+                WHERE game_id = ?
+                  AND participant_id = ?
+                  AND (
+                    played_count > 0
+                    OR drawn_count > 0
+                    OR discarded_count > 0
+                    OR milled_count > 0
+                    OR exiled_count > 0
+                  )
+                ORDER BY
+                  played_count + drawn_count + discarded_count + milled_count + exiled_count DESC,
+                  display_name
+                """,
+                (game_id, opponent_participant_id),
+            )
+        )
+        for row in opponent_cards:
+            row["display_name"] = _clean_card_name(row.get("display_name"))
 
         timeline = _dict_rows(
             conn.execute(
@@ -1054,8 +1149,89 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         "turn_timing": turn_timing_summary,
         "turns": turn_timings,
         "cards_played": cards_played,
+        "opponent_cards": opponent_cards,
         "timeline": timeline,
         "life_curve": life_curve,
+    }
+
+
+def opponent_detail(db_path: Path = DEFAULT_DB_PATH, opponent_name: str = "") -> Dict[str, Any]:
+    """Return head-to-head history for one exact Arena opponent name."""
+    db_path = Path(db_path).expanduser()
+    if not db_path.is_file():
+        raise FileNotFoundError(f"Dashboard database not found: {db_path}")
+    requested_name = str(opponent_name or "").strip()
+    if not requested_name:
+        raise LookupError("Opponent name is required")
+    db_uri = db_path.resolve().as_uri() + "?mode=ro"
+    with sqlite3.connect(db_uri, uri=True) as conn:
+        conn.execute("PRAGMA query_only = ON")
+        summary = conn.execute(
+            """
+            SELECT
+              COUNT(*) AS games,
+              SUM(g.outcome = 'win') AS wins,
+              SUM(g.outcome = 'loss') AS losses,
+              SUM(g.outcome = 'draw') AS draws,
+              ROUND(
+                100.0 * SUM(g.outcome = 'win')
+                / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0),
+                1
+              ) AS win_rate,
+              MAX(o.display_name) AS display_name
+            FROM games g
+            JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
+            WHERE o.display_name = ? COLLATE NOCASE
+            """,
+            (requested_name,),
+        ).fetchone()
+        if not summary or not summary[0]:
+            raise LookupError(f"No recorded games against opponent: {requested_name}")
+        game_rows = _dict_rows(
+            conn.execute(
+                """
+                SELECT
+                  g.id AS game_id,
+                  g.started_at,
+                  g.outcome,
+                  g.duration_seconds,
+                  g.total_turns,
+                  g.player_turns,
+                  g.opponent_turns,
+                  m.format AS raw_format,
+                  m.best_of,
+                  COALESCE(p.deck_name, '(unknown)') AS deck_name,
+                  CASE p.went_first
+                    WHEN 1 THEN 'On the play'
+                    WHEN 0 THEN 'On the draw'
+                    ELSE 'Unknown'
+                  END AS play_draw,
+                  p.ending_life AS player_final_life,
+                  o.ending_life AS opponent_final_life
+                FROM games g
+                JOIN matches m ON m.id = g.match_id
+                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
+                WHERE o.display_name = ? COLLATE NOCASE
+                ORDER BY g.started_at DESC, g.id DESC
+                """,
+                (requested_name,),
+            )
+        )
+    for row in game_rows:
+        row["format_label"] = format_label(
+            row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
+        )
+    return {
+        "opponent_name": summary[5] or requested_name,
+        "summary": {
+            "games": int(summary[0] or 0),
+            "wins": int(summary[1] or 0),
+            "losses": int(summary[2] or 0),
+            "draws": int(summary[3] or 0),
+            "win_rate": summary[4],
+        },
+        "games": game_rows,
     }
 
 
@@ -1636,6 +1812,40 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             try:
                 body = render_snapshot_json(game_detail(self.db_path, game_id))
+            except (FileNotFoundError, LookupError) as exc:
+                _send_bytes(
+                    self,
+                    404,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            except Exception as exc:
+                _send_bytes(
+                    self,
+                    500,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
+        if request_path == "/api/opponent":
+            query = parse_qs(parsed.query)
+            name = query.get("name", [None])[0]
+            if not name:
+                _send_bytes(
+                    self,
+                    400,
+                    b"Missing required query parameter: name",
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            try:
+                body = render_snapshot_json(opponent_detail(self.db_path, name))
             except (FileNotFoundError, LookupError) as exc:
                 _send_bytes(
                     self,

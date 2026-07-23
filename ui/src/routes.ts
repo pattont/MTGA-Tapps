@@ -46,6 +46,10 @@ export function cardRouteHash(cardName: string): string {
   return `#/card/${encodeURIComponent(cardName)}`;
 }
 
+export function opponentRouteHash(opponentName: string): string {
+  return `#/opponent/${encodeURIComponent(opponentName)}`;
+}
+
 export function dashboardRouteHash(filters: SnapshotFilters = {}): string {
   const query = routeQuery(filters, true);
   return `#overview${query ? `?${query}` : ''}`;
@@ -117,6 +121,21 @@ export function parseCardRoute(hash: string): string | null {
     return null;
   }
   const encoded = hash.slice('#/card/'.length);
+  if (!encoded) {
+    return null;
+  }
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return encoded;
+  }
+}
+
+export function parseOpponentRoute(hash: string): string | null {
+  if (!hash.startsWith('#/opponent/')) {
+    return null;
+  }
+  const encoded = hash.slice('#/opponent/'.length).split('?')[0];
   if (!encoded) {
     return null;
   }

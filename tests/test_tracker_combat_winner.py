@@ -5,6 +5,7 @@ import re
 import sqlite3
 from datetime import datetime
 
+from mtga_tracker.analytics import AnalyticsStore
 from mtga_tracker.tracker import CardEvent, CardTracker, GameState
 
 
@@ -1413,6 +1414,63 @@ def test_turn_timing_tracks_each_turn_and_closes_final_turn():
     assert tracker.game_state.turn_time_seconds_by_seat == {1: 57, 2: 18}
     assert [turn["duration_seconds"] for turn in tracker.game_state.completed_turns] == [42, 18, 15]
     assert [turn["seat_id"] for turn in tracker.game_state.completed_turns] == [1, 2, 1]
+
+
+def test_repeated_turn_one_state_does_not_split_turn_timing():
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+
+    tracker._current_event_time = datetime(2026, 7, 23, 20, 0, 0)
+    tracker._update_game_state({"turnInfo": {"turnNumber": 1, "activePlayer": 1}})
+    tracker._current_event_time = datetime(2026, 7, 23, 20, 0, 10)
+    tracker._update_game_state({"turnInfo": {"turnNumber": 1, "activePlayer": 1}})
+    tracker._current_event_time = datetime(2026, 7, 23, 20, 0, 30)
+    tracker._update_game_state({"turnInfo": {"turnNumber": 2, "activePlayer": 2}})
+
+    assert len(tracker.game_state.completed_turns) == 1
+    assert tracker.game_state.completed_turns[0]["turn_number"] == 1
+    assert tracker.game_state.completed_turns[0]["duration_seconds"] == 30
+
+
+def test_turn_timing_persistence_coalesces_duplicate_turn_segments(tmp_path):
+    tracker = make_tracker()
+    tracker.game_state.completed_turns = [
+        {
+            "turn_number": 1,
+            "seat_id": 1,
+            "started_at": datetime(2026, 7, 23, 20, 0, 0),
+            "ended_at": datetime(2026, 7, 23, 20, 0, 10),
+            "duration_seconds": 10,
+        },
+        {
+            "turn_number": 1,
+            "seat_id": 1,
+            "started_at": datetime(2026, 7, 23, 20, 0, 10),
+            "ended_at": datetime(2026, 7, 23, 20, 0, 30),
+            "duration_seconds": 20,
+        },
+    ]
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        tracker._persist_turn_timings(conn, "game-1")
+        rows = conn.execute(
+            """
+            SELECT turn_number, seat_id, started_at, ended_at, duration_seconds
+            FROM game_turns
+            """
+        ).fetchall()
+
+    assert rows == [
+        (
+            1,
+            1,
+            "2026-07-23T20:00:00",
+            "2026-07-23T20:00:30",
+            30,
+        )
+    ]
 
 
 def test_turn_header_shows_the_previous_turn_duration(capsys):
@@ -4686,6 +4744,30 @@ def test_game_summary_persists_normalized_sqlite_analytics(capsys, tmp_path):
     assert session == (1, 1, 0, 450)
     assert console_rows > 0
     assert turn_timings == [(1, 1, 45), (2, 2, 30)]
+
+
+def test_game_core_persists_when_optional_detail_write_fails(capsys, tmp_path):
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "analytics.sqlite3"
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.game_start_time = datetime(2026, 7, 22, 12, 0, 0)
+    tracker.game_state.game_end_time = datetime(2026, 7, 22, 12, 3, 0)
+
+    def fail_detail(*_args):
+        raise sqlite3.IntegrityError("invalid optional detail")
+
+    tracker._persist_game_detail_analytics = fail_detail
+    tracker._persist_game_analytics("win", "Opponent conceded")
+
+    with sqlite3.connect(tracker._console_db_path) as conn:
+        game = conn.execute("SELECT outcome, outcome_reason FROM games").fetchone()
+        participants = conn.execute("SELECT COUNT(*) FROM participants").fetchone()[0]
+
+    assert game == ("win", "Opponent conceded")
+    assert participants == 2
+    assert "could not save game details" in capsys.readouterr().out
 
 
 def test_sparky_game_summary_is_not_persisted_to_sqlite(capsys, tmp_path):

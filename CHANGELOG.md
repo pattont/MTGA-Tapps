@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Prevent repeated turn-one state messages from creating duplicate timing rows, and coalesce duplicate timing segments defensively during persistence.
+- Prevent optional analytics failures from removing completed games and recover missing Recent Games rows from local event and console history.
+- Prevent source and packaged desktop launchers from running simultaneously; the packaged app supplies the native MTGA Tracker identity while source launches retain Python runtime metadata.
 - Added user-editable `settings.json` sizing for the desktop live-log window and increased its default size to 1400 by 1020.
 - Enlarged the desktop live-log window, enabled its colored event output by default, and made menu-bar icon clicks open only the menu instead of relaunching the dashboard.
 - Fixed live event rows using the previous game's analytics ID, added timestamp-based historical event reassignment, and made DB repair remove empty unknown-result game artifacts.
@@ -20,6 +23,9 @@
 - Reordered dashboard content so its top-to-bottom section sequence exactly matches sidebar navigation.
 - Consolidated Play / Draw and Momentum into Overview and replaced intersection-based navigation highlighting with position-based scroll tracking.
 - Added game length and average turn pace to Recent Games and deck history, plus sortable per-turn timing with player/opponent totals and live/estimated provenance in Game Detail.
+- Added every identified opponent card to Game Detail with played, revealed-draw, discarded, milled, and exiled counts.
+- Added linked opponent names to Game Detail with a sortable head-to-head game history for each Arena player.
+- Added current-season constructed rank tracking and a Bronze-to-Mythic progress chart shared by ranked Standard Best-of-1 and Best-of-3, including existing-log backfill.
 
 ### Desktop Launcher
 
@@ -28,6 +34,7 @@
 - Added PyInstaller app-bundle and DMG build scripts with bundled frontend assets and per-user Application Support storage.
 - Added original card-analytics app and menu-bar icons, corrected the native application display name, and made the Live Tracker Log window open automatically with the dashboard.
 - Added matching ICO, PNG, and Apple touch favicons to the web dashboard.
+- Fixed custom database selection so the tracker and dashboard always read and write the same SQLite file.
 
 ## v0.4.0 - Complete Game Tracking & Auto-Summary (2025-11-19)
 

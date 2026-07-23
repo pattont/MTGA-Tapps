@@ -4,6 +4,7 @@ import {
   type GameDetail,
   type GameDrawnCardRow,
   type GameOpeningHandRow,
+  type OpponentVisibleCardRow,
   type GamePlayedCardRow,
   type GameTurnTimingRow,
 } from '../api';
@@ -14,6 +15,7 @@ import { Badge } from './Badge';
 import { CardLink } from './CardLink';
 import { LifeChart } from './LifeChart';
 import { MetricCard } from './MetricCard';
+import { OpponentLink } from './OpponentLink';
 import { SortableTable, type Column } from './SortableTable';
 import { TimelineList } from './TimelineList';
 import { TypeChip } from './TypeChip';
@@ -107,6 +109,26 @@ const playedColumns: Column<GamePlayedCardRow>[] = [
     sortValue: (row) => row.type_category,
   },
   { key: 'played_count', header: 'Played', numeric: true },
+];
+
+const opponentCardColumns: Column<OpponentVisibleCardRow>[] = [
+  {
+    key: 'display_name',
+    header: 'Card',
+    render: (row) => <CardLink cardName={row.display_name} />,
+    sortValue: (row) => row.display_name,
+  },
+  {
+    key: 'type_category',
+    header: 'Type',
+    render: (row) => <TypeChip type={row.type_category} />,
+    sortValue: (row) => row.type_category,
+  },
+  { key: 'played_count', header: 'Played', numeric: true },
+  { key: 'drawn_count', header: 'Revealed Draws', numeric: true },
+  { key: 'discarded_count', header: 'Discarded', numeric: true },
+  { key: 'milled_count', header: 'Milled', numeric: true },
+  { key: 'exiled_count', header: 'Exiled', numeric: true },
 ];
 
 function timingRoleLabel(role: GameTurnTimingRow['role']): string {
@@ -238,6 +260,11 @@ export function GameDetailPage({ gameId, backHref = '#overview' }: { gameId: str
               {detail.game.format_label}
               {detail.game.best_of ? ` · Best-of-${detail.game.best_of}` : ''}
             </p>
+            {detail.opponent.display_name ? (
+              <p>
+                vs. <OpponentLink opponentName={detail.opponent.display_name} />
+              </p>
+            ) : null}
           </div>
         </div>
       </div>
@@ -315,6 +342,20 @@ export function GameDetailPage({ gameId, backHref = '#overview' }: { gameId: str
           columns={playedColumns}
           getRowKey={(row) => `${row.display_name}-${row.type_category}`}
           rows={detail.cards_played}
+        />
+      </Section>
+
+      <Section
+        id="game-opponent-cards"
+        title="Opponent Revealed Cards"
+        description="Every identified opponent card exposed through play, a visible draw, discard, mill, or exile."
+      >
+        <SortableTable
+          caption="Opponent revealed cards"
+          columns={opponentCardColumns}
+          getRowKey={(row) => `${row.display_name}-${row.type_category}`}
+          initialSort={{ key: 'played_count', direction: 'desc' }}
+          rows={detail.opponent_cards ?? []}
         />
       </Section>
 

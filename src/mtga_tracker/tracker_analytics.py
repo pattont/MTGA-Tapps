@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -15,6 +16,7 @@ from .analytics_persistence import (
     persist_opening_hand,
 )
 from .format_normalizer import is_momir_format, normalize_match_format
+from .rank_progress import iter_constructed_rank_snapshots, parse_constructed_rank_snapshot
 from .state import CardEvent
 
 
@@ -100,6 +102,48 @@ class TrackerAnalyticsMixin:
                 match_id=match_id,
                 game_id=game_id,
             )
+        except (OSError, sqlite3.Error, TypeError, ValueError):
+            return
+
+    def _process_rank_progress(self, line: str) -> None:
+        """Persist a changed constructed-rank response, linked to a ranked game when possible."""
+        snapshot = parse_constructed_rank_snapshot(line)
+        if snapshot is None:
+            return
+        match_id = None
+        game_id = None
+        if self.game_state.game_start_time and self.game_state.match_complete:
+            normalized = normalize_match_format(
+                self.game_state.format_str,
+                default_best_of=3 if self.game_state.match_type == "best_of_3" else 1,
+            )
+            if normalized.family == "standard" and "(Ranked)" in normalized.label:
+                match_id = self._current_match_id()
+                game_id = self._current_game_id()
+        try:
+            self._analytics_store().record_rank_snapshot(
+                self._session_snapshot(),
+                captured_at=self._now(),
+                match_id=match_id,
+                game_id=game_id,
+                **snapshot,
+            )
+        except (OSError, sqlite3.Error, TypeError, ValueError):
+            return
+
+    def _backfill_rank_progress(self) -> None:
+        """Import changed rank snapshots already present in the current Arena log."""
+        log_path = getattr(self.parser, "log_path", None)
+        if not log_path:
+            return
+        try:
+            store = self._analytics_store()
+            for captured_at, snapshot in iter_constructed_rank_snapshots(log_path):
+                store.record_rank_snapshot(
+                    self._session_snapshot(),
+                    captured_at=captured_at,
+                    **snapshot,
+                )
         except (OSError, sqlite3.Error, TypeError, ValueError):
             return
 
@@ -684,7 +728,31 @@ class TrackerAnalyticsMixin:
     def _persist_turn_timings(self, conn: sqlite3.Connection, game_id: str) -> None:
         """Persist one timing row for each observed turn in the completed game."""
         conn.execute("DELETE FROM game_turns WHERE game_id = ?", (game_id,))
+        turns_by_number: Dict[int, Dict[str, Any]] = {}
         for turn in self.game_state.completed_turns:
+            turn_number = int(turn.get("turn_number", 0))
+            existing = turns_by_number.get(turn_number)
+            if existing is None:
+                turns_by_number[turn_number] = dict(turn)
+                continue
+            started_at = turn.get("started_at")
+            ended_at = turn.get("ended_at")
+            if isinstance(started_at, datetime) and (
+                not isinstance(existing.get("started_at"), datetime)
+                or started_at < existing["started_at"]
+            ):
+                existing["started_at"] = started_at
+            if isinstance(ended_at, datetime) and (
+                not isinstance(existing.get("ended_at"), datetime)
+                or ended_at > existing["ended_at"]
+            ):
+                existing["ended_at"] = ended_at
+            existing["duration_seconds"] = int(existing.get("duration_seconds", 0)) + int(
+                turn.get("duration_seconds", 0)
+            )
+
+        for turn_number in sorted(turns_by_number):
+            turn = turns_by_number[turn_number]
             started_at = turn.get("started_at")
             ended_at = turn.get("ended_at")
             conn.execute(
@@ -696,7 +764,7 @@ class TrackerAnalyticsMixin:
                 """,
                 (
                     game_id,
-                    int(turn.get("turn_number", 0)),
+                    turn_number,
                     turn.get("seat_id"),
                     started_at.isoformat() if isinstance(started_at, datetime) else None,
                     ended_at.isoformat() if isinstance(ended_at, datetime) else None,
@@ -743,6 +811,9 @@ class TrackerAnalyticsMixin:
                 game_id, "opponent", self.game_state.opponent_seat_id
             )
 
+            # Keep the dashboard's core game record independent from optional
+            # card/stat detail. One malformed detail row must not erase a
+            # completed game from Recent Games.
             with conn:
                 self._upsert_session_row(conn)
                 self._upsert_match_analytics(
@@ -760,12 +831,37 @@ class TrackerAnalyticsMixin:
                     winner_participant_id,
                 )
                 self._upsert_participant_analytics(conn, [player, opponent])
-                self._persist_game_detail_analytics(
-                    conn,
-                    game_id,
-                    player_participant_id,
-                    opponent_participant_id,
-                )
-                self._persist_turn_timings(conn, game_id)
-        except sqlite3.Error:
-            return
+
+            try:
+                with conn:
+                    self._persist_game_detail_analytics(
+                        conn,
+                        game_id,
+                        player_participant_id,
+                        opponent_participant_id,
+                    )
+            except sqlite3.Error as exc:
+                self._report_analytics_persistence_error("game details", game_id, exc)
+
+            try:
+                with conn:
+                    self._persist_turn_timings(conn, game_id)
+            except sqlite3.Error as exc:
+                self._report_analytics_persistence_error("turn timings", game_id, exc)
+        except sqlite3.Error as exc:
+            game_id = locals().get("game_id", "unknown")
+            self._report_analytics_persistence_error("core game", game_id, exc)
+
+    def _report_analytics_persistence_error(
+        self, stage: str, game_id: str, error: sqlite3.Error
+    ) -> None:
+        """Write persistence failures without recursively writing to SQLite."""
+        output_stream = getattr(self, "output_stream", sys.stdout)
+        output_stream.write(
+            self._style(
+                f"Analytics warning: could not save {stage} for {game_id}: {error}",
+                "warning",
+            )
+            + "\n"
+        )
+        output_stream.flush()

@@ -36,6 +36,7 @@ class TrackerRuntimeMixin:
 
         # Deck metadata is often logged before startup; backfill from recent lines once.
         self._backfill_recent_match_metadata()
+        self._backfill_rank_progress()
 
         # Start from current end of file
         self.parser.reset_position()

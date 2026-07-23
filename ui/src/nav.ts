@@ -8,6 +8,7 @@ export interface AppNavItem {
 export const dashboardNavItems: AppNavItem[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'trend', label: 'Win Rate Trend' },
+  { id: 'rank-progress', label: 'Ranked Progress' },
   { id: 'recent-games', label: 'Recent Games' },
   { id: 'decks', label: 'Decks' },
   { id: 'formats', label: 'Formats' },
@@ -36,6 +37,7 @@ export const gameNavItems: AppNavItem[] = [
   { id: 'game-opening-hand', label: 'Opening Hand' },
   { id: 'game-draws', label: 'Drawn Cards' },
   { id: 'game-played', label: 'Cards Played' },
+  { id: 'game-opponent-cards', label: 'Opponent Cards' },
   { id: 'game-timeline', label: 'Timeline' },
 ];
 
@@ -45,4 +47,10 @@ export const cardNavItems: AppNavItem[] = [
   { id: 'card-usage-by-side', label: 'Usage by Side' },
   { id: 'card-decks', label: 'Your Decks' },
   { id: 'card-opener-impact', label: 'Opening Hand Impact' },
+];
+
+export const opponentNavItems: AppNavItem[] = [
+  { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#recent-games' },
+  { id: 'opponent-summary', label: 'Summary' },
+  { id: 'opponent-games', label: 'Game History' },
 ];
