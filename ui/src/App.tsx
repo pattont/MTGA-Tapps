@@ -23,6 +23,8 @@ import { FilterBar } from './components/FilterBar';
 import { FormatsTable } from './components/FormatsTable';
 import { GameDetailPage } from './components/GameDetailPage';
 import { MetricCard } from './components/MetricCard';
+import { OpponentDetailPage } from './components/OpponentDetailPage';
+import { RankProgressChart } from './components/RankProgressChart';
 import { SortableTable, type Column } from './components/SortableTable';
 import { TrendChart } from './components/TrendChart';
 import { TypeChip } from './components/TypeChip';
@@ -30,9 +32,17 @@ import { WinRateBar } from './components/WinRateBar';
 import { AppShell } from './components/AppShell';
 import { formatPercent, metricCards } from './dashboardData';
 import { formatDateTime, formatDuration, formatNumber, formatTurnDuration, outcomeLabel, outcomeTone } from './format';
-import { cardNavItems, deckNavItems, gameNavItems } from './nav';
+import { cardNavItems, deckNavItems, gameNavItems, opponentNavItems } from './nav';
 import { RouteFiltersContext } from './routeFilters';
-import { dashboardRouteHash, gameRouteHash, parseCardRoute, parseDashboardRouteFilters, parseDeckRoute, parseGameRoute } from './routes';
+import {
+  dashboardRouteHash,
+  gameRouteHash,
+  parseCardRoute,
+  parseDashboardRouteFilters,
+  parseDeckRoute,
+  parseGameRoute,
+  parseOpponentRoute,
+} from './routes';
 import './styles.css';
 import { getInitialTheme, persistTheme, type ThemeName } from './theme';
 
@@ -365,6 +375,7 @@ export default function App() {
   const deckRoute = useMemo(() => parseDeckRoute(routeHash), [routeHash]);
   const gameRoute = useMemo(() => parseGameRoute(routeHash), [routeHash]);
   const cardRoute = useMemo(() => parseCardRoute(routeHash), [routeHash]);
+  const opponentRoute = useMemo(() => parseOpponentRoute(routeHash), [routeHash]);
   const deckName = deckRoute?.name ?? null;
   const gameId = gameRoute?.id ?? null;
   const deckRouteFilters = deckRoute?.filters ?? {};
@@ -407,7 +418,14 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    if (deckRoute || gameRoute || cardRoute || loadState.status !== 'loaded' || !routeHash.startsWith('#')) {
+    if (
+      deckRoute
+      || gameRoute
+      || cardRoute
+      || opponentRoute
+      || loadState.status !== 'loaded'
+      || !routeHash.startsWith('#')
+    ) {
       return;
     }
     const sectionId = routeHash.slice(1).split('?')[0];
@@ -416,7 +434,7 @@ export default function App() {
     } else if (sectionId && !sectionId.startsWith('/')) {
       document.getElementById(sectionId)?.scrollIntoView?.({ block: 'start' });
     }
-  }, [cardRoute, deckRoute, gameRoute, loadState.status, routeHash]);
+  }, [cardRoute, deckRoute, gameRoute, loadState.status, opponentRoute, routeHash]);
 
   useEffect(() => {
     document.title = deckRoute
@@ -425,11 +443,13 @@ export default function App() {
         ? 'Game – MTGA Tracker'
         : cardRoute
           ? `${cardRoute} – MTGA Tracker`
-          : 'MTGA Tracker Dashboard';
-  }, [deckRoute, gameRoute, cardRoute]);
+          : opponentRoute
+            ? `${opponentRoute} – MTGA Tracker`
+            : 'MTGA Tracker Dashboard';
+  }, [deckRoute, gameRoute, cardRoute, opponentRoute]);
 
   useEffect(() => {
-    if (deckName || gameId || cardRoute) {
+    if (deckName || gameId || cardRoute || opponentRoute) {
       return;
     }
     let ignore = false;
@@ -467,7 +487,7 @@ export default function App() {
       activeController?.abort();
       window.clearInterval(refreshId);
     };
-  }, [filters, deckName, gameId, cardRoute]);
+  }, [filters, deckName, gameId, cardRoute, opponentRoute]);
 
   function toggleTheme() {
     setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
@@ -478,9 +498,29 @@ export default function App() {
       <AppShell
         theme={theme}
         onToggleTheme={toggleTheme}
-        navItems={cardRoute ? cardNavItems : gameId ? gamePageNavItems : deckName ? deckPageNavItems : undefined}
-        eyebrow={cardRoute ? 'Card breakdown' : gameRoute ? 'Game breakdown' : deckName ? 'Deck breakdown' : 'SQLite analytics'}
-        heading={cardRoute ?? (gameRoute ? 'Game detail' : deckName ?? 'Performance overview')}
+        navItems={
+          cardRoute
+            ? cardNavItems
+            : gameId
+              ? gamePageNavItems
+              : deckName
+                ? deckPageNavItems
+                : opponentRoute
+                  ? opponentNavItems
+                  : undefined
+        }
+        eyebrow={
+          cardRoute
+            ? 'Card breakdown'
+            : gameRoute
+              ? 'Game breakdown'
+              : deckName
+                ? 'Deck breakdown'
+                : opponentRoute
+                  ? 'Opponent history'
+                  : 'SQLite analytics'
+        }
+        heading={cardRoute ?? (gameRoute ? 'Game detail' : deckName ?? opponentRoute ?? 'Performance overview')}
       >
         {cardRoute ? (
           <CardDetailPage key={cardRoute} cardName={cardRoute} />
@@ -493,6 +533,8 @@ export default function App() {
             deckName={deckName}
             filters={deckRouteFilters}
           />
+        ) : opponentRoute ? (
+          <OpponentDetailPage key={opponentRoute} opponentName={opponentRoute} />
         ) : (
           <>
             {loadState.status === 'loading' ? <p className="state-panel">Loading dashboard snapshot...</p> : null}
@@ -619,6 +661,16 @@ function Dashboard({
       >
         <div className="trend-wrap">
           <TrendChart rows={snapshot.trend} />
+        </div>
+      </Section>
+
+      <Section
+        id="rank-progress"
+        title="Ranked Progress"
+        description="Constructed ladder progress for the current season. Ranked Standard Best-of-1 and Best-of-3 share this rank."
+      >
+        <div className="trend-wrap">
+          <RankProgressChart rows={snapshot.rank_progress ?? []} />
         </div>
       </Section>
 

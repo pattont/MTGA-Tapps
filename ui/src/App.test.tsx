@@ -102,6 +102,27 @@ const snapshot = {
     { game_id: 'game-5', started_at: '2026-06-04T00:40:00', outcome: 'loss' },
     { game_id: 'game-6', started_at: '2026-06-04T00:50:00', outcome: 'win' },
   ],
+  rank_progress: [
+    {
+      id: 1,
+      captured_at: '2026-06-04T00:05:01',
+      season_ordinal: 91,
+      rank_class: 'Platinum',
+      rank_level: 3,
+      rank_step: 3,
+      rank_steps: 6,
+      rank_score: 81,
+      rank_label: 'Platinum 3 (3/6)',
+      matches_won: 60,
+      matches_lost: 43,
+      mythic_percentile: null,
+      mythic_rank: null,
+      game_id: 'game-1',
+      outcome: 'win',
+      best_of: 1,
+      deck_name: 'Boros Mouse',
+    },
+  ],
   filters: { deck: null, format: null, days: null },
   filter_options: {
     decks: ['Boros Mouse', 'Izzet Wizards'],
@@ -184,6 +205,7 @@ const gameDetail = {
   },
   opponent: {
     role: 'opponent',
+    display_name: 'Opponent',
     starting_life: 20,
     ending_life: 0,
   },
@@ -232,6 +254,17 @@ const gameDetail = {
     },
   ],
   cards_played: [{ display_name: 'Mouse Mentor', type_category: 'Creature', played_count: 2 }],
+  opponent_cards: [
+    {
+      display_name: 'Graveyard Trespasser',
+      type_category: 'Creature',
+      played_count: 1,
+      drawn_count: 0,
+      discarded_count: 1,
+      milled_count: 0,
+      exiled_count: 1,
+    },
+  ],
   timeline: [
     {
       turn_number: 1,
@@ -257,6 +290,45 @@ const gameDetail = {
   life_curve: [
     { turn_number: 1, player_life: 20, opponent_life: 20 },
     { turn_number: 4, player_life: 12, opponent_life: 0 },
+  ],
+};
+
+const opponentDetail = {
+  opponent_name: 'Opponent',
+  summary: { games: 2, wins: 1, losses: 1, draws: 0, win_rate: 50 },
+  games: [
+    {
+      game_id: 'game-2',
+      started_at: '2026-06-04T00:10:00',
+      outcome: 'loss',
+      duration_seconds: 300,
+      total_turns: 10,
+      player_turns: 5,
+      opponent_turns: 5,
+      raw_format: 'Play',
+      format_label: 'Standard Best-of-1 (Unranked)',
+      best_of: 1,
+      deck_name: 'Boros Mouse',
+      play_draw: 'On the draw',
+      player_final_life: 0,
+      opponent_final_life: 7,
+    },
+    {
+      game_id: 'game-1',
+      started_at: '2026-06-04T00:01:00',
+      outcome: 'win',
+      duration_seconds: 240,
+      total_turns: 8,
+      player_turns: 4,
+      opponent_turns: 4,
+      raw_format: 'Play',
+      format_label: 'Standard Best-of-1 (Unranked)',
+      best_of: 1,
+      deck_name: 'Boros Mouse',
+      play_draw: 'On the play',
+      player_final_life: 12,
+      opponent_final_life: 0,
+    },
   ],
 };
 
@@ -337,9 +409,10 @@ describe('App', () => {
     expect(screen.getByRole('table', { name: 'Tracker sessions' })).toBeInTheDocument();
     expect(screen.queryByRole('table', { name: 'Draw quality by game' })).not.toBeInTheDocument();
     const dashboardNav = screen.getByRole('navigation', { name: 'Dashboard sections' });
-    expect(within(dashboardNav).getAllByRole('link').slice(0, 3).map((link) => link.textContent)).toEqual([
+    expect(within(dashboardNav).getAllByRole('link').slice(0, 4).map((link) => link.textContent)).toEqual([
       'Overview',
       'Win Rate Trend',
+      'Ranked Progress',
       'Recent Games',
     ]);
     expect(
@@ -349,6 +422,7 @@ describe('App', () => {
     ).toEqual([
       'overview',
       'trend',
+      'rank-progress',
       'recent-games',
       'decks',
       'formats',
@@ -619,7 +693,7 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: /Game Jun 4/i })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/game?id=game-1', expect.anything());
     expect(document.title).toContain('Game Jun 4');
-    ['Turn Timing', 'Draw Quality', 'Life Totals', 'Opening Hand', 'Drawn Cards', 'Cards Played', 'Timeline'].forEach((sectionName) => {
+    ['Turn Timing', 'Draw Quality', 'Life Totals', 'Opening Hand', 'Drawn Cards', 'Cards Played', 'Opponent Revealed Cards', 'Timeline'].forEach((sectionName) => {
       expect(screen.getByRole('heading', { name: sectionName })).toBeInTheDocument();
     });
     expect(screen.getByRole('table', { name: 'Turn timing' })).toBeInTheDocument();
@@ -628,6 +702,26 @@ describe('App', () => {
     expect(screen.getAllByText('Flood').length).toBeGreaterThan(0);
     expect(screen.getByText('Turn 1 begins')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Boros Mouse' })).toHaveAttribute('href', '#/deck/Boros%20Mouse');
+    expect(screen.getByRole('link', { name: 'Opponent' })).toHaveAttribute('href', '#/opponent/Opponent');
+  });
+
+  it('renders sortable head-to-head history for an opponent route', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).startsWith('/api/opponent')) {
+        return new Response(JSON.stringify(opponentDetail), { status: 200 });
+      }
+      return new Response(JSON.stringify(snapshot), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    window.location.hash = '#/opponent/Opponent';
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Opponent' })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith('/api/opponent?name=Opponent', expect.anything());
+    expect(screen.getByRole('table', { name: 'Games against Opponent' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Game History' })).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: 'Boros Mouse' })).toHaveLength(2);
   });
 
   it('links card names to the card detail page', async () => {

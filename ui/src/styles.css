@@ -589,6 +589,44 @@ a {
   font-size: 0.76rem;
 }
 
+.rank-chart-grid {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  gap: 8px;
+  align-items: stretch;
+}
+
+.rank-chart-grid svg {
+  height: 180px;
+}
+
+.rank-scale {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 0 0 1px;
+  color: var(--subtle);
+  font-size: 0.7rem;
+  line-height: 1;
+  text-align: right;
+}
+
+.rank-progress-line {
+  stroke: var(--accent-strong);
+  stroke-width: 2.5;
+}
+
+.rank-progress-point {
+  fill: var(--accent-strong);
+  stroke: var(--surface);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.rank-progress-axis {
+  margin-left: 76px;
+}
+
 .table-wrap {
   width: 100%;
   overflow-x: auto;
@@ -725,7 +763,8 @@ tbody tr:hover {
 }
 
 .deck-link,
-.card-link {
+.card-link,
+.table-link {
   color: var(--accent-strong);
   text-decoration: none;
 }
@@ -733,7 +772,9 @@ tbody tr:hover {
 .deck-link:hover,
 .deck-link:focus-visible,
 .card-link:hover,
-.card-link:focus-visible {
+.card-link:focus-visible,
+.table-link:hover,
+.table-link:focus-visible {
   text-decoration: underline;
   outline: none;
 }
@@ -795,8 +836,13 @@ tbody tr:hover {
   align-items: center;
 }
 
+.opponent-detail-title {
+  min-width: 0;
+}
+
 .deck-detail-title h2,
-.card-detail-title h2 {
+.card-detail-title h2,
+.opponent-detail-title h2 {
   margin: 0;
   font-size: 1.45rem;
   line-height: 1.2;
@@ -811,10 +857,17 @@ tbody tr:hover {
 }
 
 .deck-detail-title p,
-.card-detail-title p {
+.card-detail-title p,
+.opponent-detail-title p {
   margin: 4px 0 0;
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+.opponent-detail-title .detail-eyebrow {
+  color: var(--accent-strong);
+  font-size: 0.72rem;
+  font-weight: 800;
 }
 
 .metric-grid-deck {

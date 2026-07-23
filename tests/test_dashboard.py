@@ -13,6 +13,7 @@ from mtga_tracker.dashboard import (
     dashboard_snapshot,
     deck_detail,
     game_detail,
+    opponent_detail,
     render_dashboard_html,
     search_cards,
 )
@@ -109,6 +110,18 @@ def _sample_dashboard_db(tmp_path):
         )
         conn.execute(
             """
+            insert into rank_snapshots (
+                session_id, match_id, game_id, captured_at, season_ordinal,
+                rank_class, rank_level, rank_step, rank_steps, raw_step,
+                matches_won, matches_lost
+            ) values (
+                'session-1', 'match-1', 'game-1', '2026-06-04T00:05:01', 91,
+                'Platinum', 3, 3, 6, 4, 60, 43
+            )
+            """
+        )
+        conn.execute(
+            """
             insert into game_opening_hand_cards (
                 game_id, participant_id, display_name, type_category, hand_position, copy_number
             )
@@ -187,6 +200,8 @@ def test_dashboard_snapshot_and_html_render_latest_game(tmp_path):
     assert snapshot["momentum"][0]["split"] == "After a win"
     assert snapshot["recent"][0]["player_avg_turn_seconds"] == 25.0
     assert snapshot["recent"][0]["opponent_avg_turn_seconds"] == 40.0
+    assert snapshot["rank_progress"][0]["rank_label"] == "Platinum 3 (3/6)"
+    assert snapshot["rank_progress"][0]["rank_score"] == 81
     # Bo1 matches duplicate Recent Games rows, so the matches section is Bo3-only.
     assert snapshot["matches"] == []
     assert snapshot["sessions"][0]["session_id"] == "session-1"
@@ -716,6 +731,15 @@ def test_game_detail_reports_header_cards_and_timeline(tmp_path):
             values ('game-1', 'player-1', 101, 'Mouse Mentor (Creature 2/1)', 'Creature', 2)
             """
         )
+        conn.execute(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category,
+                played_count, discarded_count, exiled_count
+            )
+            values ('game-1', 'opponent-1', 102, 'Graveyard Trespasser (Creature)', 'Creature', 1, 1, 1)
+            """
+        )
 
     detail = game_detail(db_path, "game-1")
 
@@ -786,11 +810,48 @@ def test_game_detail_reports_header_cards_and_timeline(tmp_path):
     assert detail["cards_played"] == [
         {"display_name": "Mouse Mentor", "type_category": "Creature", "played_count": 2}
     ]
+    assert detail["opponent_cards"] == [
+        {
+            "display_name": "Graveyard Trespasser",
+            "type_category": "Creature",
+            "played_count": 1,
+            "drawn_count": 0,
+            "discarded_count": 1,
+            "milled_count": 0,
+            "exiled_count": 1,
+        }
+    ]
     assert [row["event_type"] for row in detail["timeline"]] == ["turn", "damage"]
     assert detail["life_curve"] == [
         {"turn_number": 1, "player_life": 20, "opponent_life": 20},
         {"turn_number": 4, "player_life": 12, "opponent_life": 0},
     ]
+
+
+def test_opponent_detail_reports_head_to_head_history(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+
+    detail = opponent_detail(db_path, "opponent")
+
+    assert detail["opponent_name"] == "Opponent"
+    assert detail["summary"] == {
+        "games": 2,
+        "wins": 1,
+        "losses": 1,
+        "draws": 0,
+        "win_rate": 50.0,
+    }
+    assert [row["game_id"] for row in detail["games"]] == ["game-2", "game-1"]
+    assert detail["games"][0]["deck_name"] == "Boros Mouse"
+    assert detail["games"][0]["play_draw"] == "On the draw"
+    assert detail["games"][0]["format_label"] == "Standard Best-of-1 (Unranked)"
+
+
+def test_opponent_detail_rejects_unknown_name(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+
+    with pytest.raises(LookupError, match="No recorded games against opponent"):
+        opponent_detail(db_path, "Missing Opponent")
 
 
 def test_game_detail_marks_flood_when_over_half_of_draws_are_lands(tmp_path):

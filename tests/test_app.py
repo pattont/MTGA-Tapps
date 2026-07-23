@@ -1,6 +1,7 @@
 import io
 import socket
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from http.client import HTTPConnection
 
@@ -95,12 +96,19 @@ def test_unified_launcher_records_tracker_startup_errors(tmp_path):
 
 
 def test_unified_launcher_can_force_colors_for_gui_stream(monkeypatch):
-    tracker = SimpleNamespace(use_colors=False)
+    analytics = SimpleNamespace(close=lambda: None)
+    tracker = SimpleNamespace(use_colors=False, analytics=analytics, _console_db_path=None)
     monkeypatch.setattr("mtga_tracker.app.MTGALogParser", lambda: object())
     monkeypatch.setattr("mtga_tracker.app.CardTracker", lambda *args, **kwargs: tracker)
-    launcher = UnifiedLauncher(output_stream=io.StringIO(), use_colors=True)
+    launcher = UnifiedLauncher(
+        db_path=Path("/tmp/selected-tracker.sqlite3"),
+        output_stream=io.StringIO(),
+        use_colors=True,
+    )
 
     built_tracker = launcher._build_tracker()
 
     assert built_tracker is tracker
     assert tracker.use_colors is True
+    assert tracker._console_db_path == Path("/tmp/selected-tracker.sqlite3")
+    assert tracker.analytics.path == Path("/tmp/selected-tracker.sqlite3")

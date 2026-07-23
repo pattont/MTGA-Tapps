@@ -199,3 +199,93 @@ def test_repair_database_deletes_only_empty_unknown_game(tmp_path):
     assert games == [("game-valid",)]
     assert matches == [("match-valid",)]
     assert session == (1, 1, 0)
+
+
+def test_repair_database_recovers_completed_missing_game_but_not_incomplete_game(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            """
+            INSERT INTO tracker_sessions (id, started_at, games_played, wins)
+            VALUES ('session-1', '2026-07-22T12:00:00', 1, 1)
+            """
+        )
+        conn.executemany(
+            """
+            INSERT INTO game_events (
+                session_id, match_id, game_id, event_time, turn_number,
+                actor_role, seat_id, text
+            ) VALUES ('session-1', ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (
+                    "match-1",
+                    "game-1",
+                    "2026-07-22T12:00:10",
+                    1,
+                    "player",
+                    2,
+                    "Turn 1 - YOUR TURN",
+                ),
+                (
+                    "match-2",
+                    "game-incomplete",
+                    "2026-07-22T12:10:10",
+                    1,
+                    "player",
+                    2,
+                    "Turn 1 - YOUR TURN",
+                ),
+            ),
+        )
+        completed_logs = (
+            ("2026-07-22T12:00:00", "   Players: Tapps vs Opponent", None, 20, 20),
+            ("2026-07-22T12:00:10", "Turn 1 - YOUR TURN", 1, 20, 20),
+            ("2026-07-22T12:03:00", "GAME ENDED - YOU WON", 1, 18, 0),
+            ("2026-07-22T12:03:01", "Reason: Opponent reached 0 life", 1, 18, 0),
+            ("2026-07-22T12:03:02", "Format: Standard Best-of-1 (Ranked)", 1, 18, 0),
+            ("2026-07-22T12:03:03", "   Your Deck: Boros Dragons", 1, 18, 0),
+            ("2026-07-22T12:03:04", "   Mulligans: 1", 1, 18, 0),
+        )
+        conn.executemany(
+            """
+            INSERT INTO console_logs (
+                session_id, created_at, match_started_at, text, turn_number,
+                player_life, opponent_life
+            ) VALUES ('session-1', ?, '2026-07-22T12:00:00', ?, ?, ?, ?)
+            """,
+            completed_logs,
+        )
+        conn.execute(
+            """
+            INSERT INTO console_logs (
+                session_id, created_at, match_started_at, text, turn_number
+            ) VALUES (
+                'session-1', '2026-07-22T12:10:10',
+                '2026-07-22T12:10:00', 'Turn 1 - YOUR TURN', 1
+            )
+            """
+        )
+
+    findings = audit_database(db_path)
+    missing = [f.row_id for f in findings if f.code == "MISSING_COMPLETED_GAME_RECORD"]
+    assert missing == ["game-1"]
+
+    repair_database(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        game = conn.execute(
+            """
+            SELECT id, duration_seconds, outcome, outcome_reason, total_turns
+            FROM games
+            """
+        ).fetchone()
+        player = conn.execute(
+            """
+            SELECT display_name, deck_name, mulligans, ending_life, went_first
+            FROM participants WHERE role = 'player'
+            """
+        ).fetchone()
+    assert game == ("game-1", 180, "win", "Opponent reached 0 life", 1)
+    assert player == ("Tapps", "Boros Dragons", 1, 18, 1)

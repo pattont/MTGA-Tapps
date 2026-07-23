@@ -124,6 +124,26 @@ export interface TrendRow {
   outcome: string;
 }
 
+export interface RankProgressRow {
+  id: number;
+  captured_at: string;
+  season_ordinal: number;
+  rank_class: string;
+  rank_level: number;
+  rank_step: number;
+  rank_steps: number;
+  rank_score: number;
+  rank_label: string;
+  matches_won: number | null;
+  matches_lost: number | null;
+  mythic_percentile: number | null;
+  mythic_rank: number | null;
+  game_id: string | null;
+  outcome: string | null;
+  best_of: number | null;
+  deck_name: string | null;
+}
+
 export interface FormatOption {
   raw_format: string;
   format_label: string;
@@ -154,6 +174,7 @@ export interface DashboardSnapshot {
   matches: MatchRow[];
   sessions: SessionRow[];
   trend: TrendRow[];
+  rank_progress?: RankProgressRow[];
   filter_options: FilterOptions;
 }
 
@@ -270,6 +291,13 @@ export interface GamePlayedCardRow extends GameCardRow {
   played_count: number;
 }
 
+export interface OpponentVisibleCardRow extends GamePlayedCardRow {
+  drawn_count: number;
+  discarded_count: number;
+  milled_count: number;
+  exiled_count: number;
+}
+
 export interface GameTimelineRow {
   turn_number: number | null;
   phase: string | null;
@@ -324,8 +352,32 @@ export interface GameDetail {
   };
   turns: GameTurnTimingRow[];
   cards_played: GamePlayedCardRow[];
+  opponent_cards: OpponentVisibleCardRow[];
   timeline: GameTimelineRow[];
   life_curve: LifePoint[];
+}
+
+export interface OpponentGameRow {
+  game_id: string;
+  started_at: string;
+  outcome: string | null;
+  duration_seconds: number | null;
+  total_turns: number | null;
+  player_turns: number | null;
+  opponent_turns: number | null;
+  raw_format: string | null;
+  format_label: string;
+  best_of: number | null;
+  deck_name: string;
+  play_draw: string;
+  player_final_life: number | null;
+  opponent_final_life: number | null;
+}
+
+export interface OpponentDetail {
+  opponent_name: string;
+  summary: Summary;
+  games: OpponentGameRow[];
 }
 
 export interface CardSummary {
@@ -423,6 +475,18 @@ export async function fetchGameDetail(gameId: string, signal?: AbortSignal): Pro
     throw new Error(`Dashboard API returned ${response.status}`);
   }
   return response.json() as Promise<GameDetail>;
+}
+
+export async function fetchOpponentDetail(opponentName: string, signal?: AbortSignal): Promise<OpponentDetail> {
+  const params = new URLSearchParams({ name: opponentName });
+  const response = await fetch(`/api/opponent?${params.toString()}`, { signal });
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error(`No recorded games against opponent: ${opponentName}`);
+    }
+    throw new Error(`Dashboard API returned ${response.status}`);
+  }
+  return response.json() as Promise<OpponentDetail>;
 }
 
 export async function fetchCardDetail(cardName: string, signal?: AbortSignal): Promise<CardDetail> {

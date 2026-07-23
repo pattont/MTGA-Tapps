@@ -294,6 +294,7 @@ class TrackerLifecycleMixin:
         prior_event_time = getattr(self, "_current_event_time", None)
         self._current_event_time = timestamp
         try:
+            self._process_rank_progress(line)
             # Always try to pick up match metadata (format, player name) from any line
             self._parse_match_metadata(line)
             for message in self._extract_gre_messages(line):

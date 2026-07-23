@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import ctypes
+import os
 import re
+import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QLockFile, QObject, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
     QCloseEvent,
@@ -70,6 +74,33 @@ def _xterm_color(index: int) -> QColor:
         return QColor(red, green, blue)
     gray = 8 + (index - 232) * 10
     return QColor(gray, gray, gray)
+
+
+def _set_macos_process_name(name: str) -> None:
+    """Set the Unix process label used by diagnostics such as Activity Monitor."""
+    if sys.platform != "darwin":
+        return
+    try:
+        setprogname = ctypes.CDLL(None).setprogname
+        setprogname.argtypes = [ctypes.c_char_p]
+        setprogname.restype = None
+        setprogname(name.encode("utf-8"))
+    except (AttributeError, OSError):
+        return
+
+
+def _instance_lock_path() -> Path:
+    """Return one per-user lock path shared by source and packaged launches."""
+    user_id = str(os.getuid()) if hasattr(os, "getuid") else os.getenv("USERNAME", "user")
+    return Path(tempfile.gettempdir()) / f"mtga-tracker-{user_id}.lock"
+
+
+def _acquire_instance_lock() -> QLockFile | None:
+    """Keep duplicate source and packaged menu controllers from running together."""
+    lock = QLockFile(str(_instance_lock_path()))
+    if not lock.tryLock(0):
+        return None
+    return lock
 
 
 class AppSignals(QObject):
@@ -284,9 +315,16 @@ class MenuBarController(QObject):
 
 
 def run_menu_app(args: Any) -> int:
+    _set_macos_process_name("MTGA Tracker")
     QApplication.setApplicationName("MTGA Tracker")
     QApplication.setOrganizationName("MTGA Tracker")
     app = QApplication.instance() or QApplication([])
+    instance_lock = _acquire_instance_lock()
+    if instance_lock is None:
+        sys.stderr.write("MTGA Tracker is already running.\n")
+        return 0
+    # QApplication owns the lifetime of the lock for the complete event loop.
+    app._mtga_instance_lock = instance_lock
     app.setApplicationName("MTGA Tracker")
     app.setApplicationDisplayName("MTGA Tracker")
     app.setOrganizationName("MTGA Tracker")
