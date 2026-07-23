@@ -304,6 +304,29 @@ class AnalyticsStore:
                 FOREIGN KEY(session_id) REFERENCES tracker_sessions(id)
             );
 
+            CREATE TABLE IF NOT EXISTS rank_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                match_id TEXT,
+                game_id TEXT,
+                captured_at TEXT NOT NULL,
+                season_ordinal INTEGER NOT NULL,
+                rank_format TEXT NOT NULL DEFAULT 'constructed',
+                rank_class TEXT NOT NULL,
+                rank_level INTEGER NOT NULL,
+                rank_step INTEGER NOT NULL,
+                rank_steps INTEGER NOT NULL,
+                raw_step INTEGER,
+                matches_won INTEGER,
+                matches_lost INTEGER,
+                mythic_percentile INTEGER,
+                mythic_rank INTEGER,
+                UNIQUE(captured_at, season_ordinal, rank_format),
+                FOREIGN KEY(session_id) REFERENCES tracker_sessions(id),
+                FOREIGN KEY(match_id) REFERENCES matches(id),
+                FOREIGN KEY(game_id) REFERENCES games(id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_matches_session_id
             ON matches(session_id);
 
@@ -339,6 +362,9 @@ class AnalyticsStore:
 
             CREATE INDEX IF NOT EXISTS idx_console_logs_session_created
             ON console_logs(session_id, created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_rank_snapshots_season_time
+            ON rank_snapshots(rank_format, season_ordinal, captured_at);
 
             INSERT OR IGNORE INTO schema_migrations(version, applied_at)
             VALUES (1, datetime('now'));
@@ -637,3 +663,79 @@ class AnalyticsStore:
             ),
         )
         conn.commit()
+
+    def record_rank_snapshot(
+        self,
+        session: SessionSnapshot,
+        *,
+        captured_at: datetime,
+        season_ordinal: int,
+        rank_class: str,
+        rank_level: int,
+        rank_step: int,
+        rank_steps: int,
+        raw_step: Optional[int],
+        matches_won: Optional[int],
+        matches_lost: Optional[int],
+        mythic_percentile: Optional[int],
+        mythic_rank: Optional[int],
+        match_id: Optional[str] = None,
+        game_id: Optional[str] = None,
+    ) -> bool:
+        """Persist a changed constructed-rank snapshot and return whether it was added."""
+        conn = self.connect()
+        if conn is None:
+            return False
+        self.upsert_session_row(conn, session, now=captured_at)
+        previous = conn.execute(
+            """
+            SELECT rank_class, rank_level, rank_step, rank_steps, matches_won, matches_lost,
+                   mythic_percentile, mythic_rank
+            FROM rank_snapshots
+            WHERE rank_format = 'constructed' AND season_ordinal = ?
+            ORDER BY captured_at DESC, id DESC
+            LIMIT 1
+            """,
+            (season_ordinal,),
+        ).fetchone()
+        current = (
+            rank_class,
+            rank_level,
+            rank_step,
+            rank_steps,
+            matches_won,
+            matches_lost,
+            mythic_percentile,
+            mythic_rank,
+        )
+        if previous == current:
+            return False
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO rank_snapshots (
+                session_id, match_id, game_id, captured_at, season_ordinal, rank_format,
+                rank_class, rank_level, rank_step, rank_steps, raw_step,
+                matches_won, matches_lost, mythic_percentile, mythic_rank
+            )
+            VALUES (?, ?, ?, ?, ?, 'constructed', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session.session_id,
+                match_id,
+                game_id,
+                captured_at.isoformat(),
+                season_ordinal,
+                rank_class,
+                rank_level,
+                rank_step,
+                rank_steps,
+                raw_step,
+                matches_won,
+                matches_lost,
+                mythic_percentile,
+                mythic_rank,
+            ),
+        )
+        added = conn.execute("SELECT changes()").fetchone()[0] > 0
+        conn.commit()
+        return added

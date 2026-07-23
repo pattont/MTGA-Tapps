@@ -122,7 +122,10 @@ class TrackerTurnStateMixin:
             if self.game_state.active_player is None:
                 return True
         return bool(
-            turn_num == 1 and self.game_state.last_turn_announced < 1 and active_player is not None
+            turn_num == 1
+            and self.game_state.turn_number < 1
+            and self.game_state.last_turn_announced < 1
+            and active_player is not None
         )
 
     def _warn_on_missing_initial_turns(self, turn_num: Optional[int], seats_known: bool) -> None:

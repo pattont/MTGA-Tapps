@@ -133,6 +133,9 @@ class UnifiedLauncher:
             mtga_data_dir=_configured_mtga_data_dir(),
             output_stream=self.output_stream,
         )
+        tracker.analytics.close()
+        tracker._console_db_path = self.db_path
+        tracker.analytics = AnalyticsStore(self.db_path)
         if self.use_colors is not None:
             tracker.use_colors = self.use_colors
         elif self.output_stream is not sys.stdout:

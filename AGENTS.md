@@ -62,10 +62,17 @@ Common runtime files:
 - Unhandled annotation log: `data/mtga_tracker_unhandled_annotations.log`
 - Local card DB source: MTGA `Raw_CardDatabase_*.mtga` under the MTGA install/download folders, or `MTGA_DATA_DIR`.
 
+The unified launcher must pass its selected `--db` path to both `CardTracker` and the dashboard.
+Never allow those components to silently use separate default databases.
+
 ## Tracker Invariants
 
 Preserve these behaviors unless the user explicitly changes requirements:
 
+- Never stop or restart the active tracker or desktop app without explicit user approval. The
+  user may be in a live game even when the latest persisted log line appears idle.
+- Perform database inspection read-only first. Use SQLite's online backup API before a live
+  repair, and keep the tracker running unless the user explicitly authorizes downtime.
 - Console output should be readable and consistent: no emoji/icons in turn log lines or summaries.
 - Turn headers are the section boundary; individual log lines should use elapsed match time, not repeated turn labels.
 - Stack output should distinguish spells/abilities put on the stack from `[resolved]`, `[countered]`, or inferred no-resolution states.
@@ -108,12 +115,13 @@ Important tables:
 - `game_events`: structured event history where available.
 - `console_logs`: rendered console log lines for later dashboard/query work.
 - `raw_game_payloads`: raw payload persistence when enabled/available.
+- `rank_snapshots`: constructed rank changes by season, with optional ranked match/game linkage.
 
 When adding stats, persist both player and opponent perspectives when the log can support it.
 
 Use `format_normalizer.py` for queue labels and best-of inference. Do not duplicate string-matching format logic in tracker mixins or reports.
 
-Run `mtga_tracker.db_audit` after suspected tracker inconsistencies. Safe repairs currently include format/queue mismatches, turn-count aggregate mismatches, timestamp-based game-event reassignment, and deletion of empty unknown-result game artifacts; unresolved deck names and `Card #...` labels are reported for manual follow-up.
+Run `mtga_tracker.db_audit` after suspected tracker inconsistencies. Safe repairs currently include format/queue mismatches, turn-count aggregate mismatches, reconstruction of completed games missing their core row, timestamp-based game-event reassignment, and deletion of empty unknown-result game artifacts; unresolved deck names and `Card #...` labels are reported for manual follow-up.
 
 ## Testing Expectations
 
