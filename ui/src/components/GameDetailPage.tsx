@@ -292,7 +292,9 @@ export function GameDetailPage({
     longestLandStreak >= 4 ||
     (maxLandsInEightDraws !== null && maxLandsInEightDraws >= 6);
   const fallbackFloodReasons = [
-    ...(detail.draw_quality.land_draw_pct !== null && detail.draw_quality.land_draw_pct > 50
+    ...(detail.draw_quality.land_draw_pct !== null &&
+    detail.draw_quality.land_draw_pct > 50 &&
+    detail.draw_quality.total_draws >= 6
       ? [
           `${detail.draw_quality.land_draws} of ${detail.draw_quality.total_draws} post-opening draws were lands`,
         ]
