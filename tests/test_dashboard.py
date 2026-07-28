@@ -2074,3 +2074,15 @@ def test_audit_endpoint_reports_findings(tmp_path):
 
     assert "findings" in report and "total" in report and "by_code" in report
     assert report["total"] == len(report["findings"])
+
+
+def test_audit_report_works_while_a_writer_holds_the_lock(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    writer = sqlite3.connect(db_path)
+    writer.execute("BEGIN IMMEDIATE")
+    try:
+        report = audit_report(db_path)
+    finally:
+        writer.rollback()
+        writer.close()
+    assert "findings" in report

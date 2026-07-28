@@ -2806,7 +2806,7 @@ def audit_report(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
     """Database consistency findings from db_audit, JSON-friendly."""
     from .db_audit import audit_database
 
-    findings = audit_database(Path(db_path).expanduser())
+    findings = audit_database(Path(db_path).expanduser(), readonly=True)
     rows = [
         {
             "code": finding.code,
