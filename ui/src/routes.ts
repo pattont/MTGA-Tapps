@@ -14,6 +14,12 @@ export interface GameRoute {
 export interface CardRoute {
   name: string;
   returnHash: string;
+  filters: SnapshotFilters;
+}
+
+export interface OpponentRoute {
+  name: string;
+  filters: SnapshotFilters;
 }
 
 function routeQuery(filters: SnapshotFilters, includeDeck = false): string {
@@ -26,6 +32,15 @@ function routeQuery(filters: SnapshotFilters, includeDeck = false): string {
   }
   if (filters.days) {
     params.set('days', String(filters.days));
+  }
+  if (filters.season) {
+    params.set('season', String(filters.season));
+  }
+  if (filters.since) {
+    params.set('since', filters.since);
+  }
+  if (filters.until) {
+    params.set('until', filters.until);
   }
   return params.toString();
 }
@@ -73,6 +88,8 @@ export function dashboardRouteHash(filters: SnapshotFilters = {}): string {
   return `#overview${query ? `?${query}` : ''}`;
 }
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
 function parseFilters(query: string, includeDeck = false): SnapshotFilters {
   const params = new URLSearchParams(query);
   const filters: SnapshotFilters = {};
@@ -80,6 +97,10 @@ function parseFilters(query: string, includeDeck = false): SnapshotFilters {
   const format = params.get('format');
   const daysRaw = params.get('days');
   const days = daysRaw ? Number(daysRaw) : NaN;
+  const seasonRaw = params.get('season');
+  const season = seasonRaw ? Number(seasonRaw) : NaN;
+  const since = params.get('since');
+  const until = params.get('until');
   if (includeDeck && deck) {
     filters.deck = deck;
   }
@@ -88,6 +109,15 @@ function parseFilters(query: string, includeDeck = false): SnapshotFilters {
   }
   if (Number.isFinite(days) && days > 0) {
     filters.days = days;
+  }
+  if (Number.isFinite(season) && season > 0) {
+    filters.season = season;
+  }
+  if (since && ISO_DATE.test(since)) {
+    filters.since = since;
+  }
+  if (until && ISO_DATE.test(until)) {
+    filters.until = until;
   }
   return filters;
 }
@@ -146,24 +176,27 @@ export function parseCardRoute(hash: string): CardRoute | null {
   }
   const returnParam = new URLSearchParams(query).get('return');
   const returnHash = returnParam && parseGameRoute(returnParam) ? returnParam : '#overview';
+  const filters = parseFilters(query, true);
   try {
-    return { name: decodeURIComponent(encoded), returnHash };
+    return { name: decodeURIComponent(encoded), returnHash, filters };
   } catch {
-    return { name: encoded, returnHash };
+    return { name: encoded, returnHash, filters };
   }
 }
 
-export function parseOpponentRoute(hash: string): string | null {
+export function parseOpponentRoute(hash: string): OpponentRoute | null {
   if (!hash.startsWith('#/opponent/')) {
     return null;
   }
-  const encoded = hash.slice('#/opponent/'.length).split('?')[0];
+  const route = hash.slice('#/opponent/'.length);
+  const [encoded, query = ''] = route.split('?');
   if (!encoded) {
     return null;
   }
+  const filters = parseFilters(query, true);
   try {
-    return decodeURIComponent(encoded);
+    return { name: decodeURIComponent(encoded), filters };
   } catch {
-    return encoded;
+    return { name: encoded, filters };
   }
 }

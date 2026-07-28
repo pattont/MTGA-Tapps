@@ -9,7 +9,11 @@ export interface MetricDefinition {
 }
 
 export function formatPercent(value: number | null | undefined): string {
-  return value === null || value === undefined ? '—' : `${value}%`;
+  if (value === null || value === undefined) {
+    return '—';
+  }
+  const rounded = Math.round(value * 10) / 10;
+  return `${rounded}%`;
 }
 
 function confidenceAdjustedWinRate(deck: DeckRow): number {

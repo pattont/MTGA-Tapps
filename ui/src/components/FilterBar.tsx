@@ -5,6 +5,8 @@ interface FilterBarProps {
   filters: SnapshotFilters;
   options: FilterOptions;
   onChange: (filters: SnapshotFilters) => void;
+  /** Hide the deck selector (e.g. on a deck detail page). */
+  hideDeck?: boolean;
 }
 
 const DAY_CHOICES = [
@@ -13,24 +15,28 @@ const DAY_CHOICES = [
   { value: 90, label: 'Last 90 days' },
 ];
 
-export function FilterBar({ filters, options, onChange }: FilterBarProps) {
-  const hasFilters = Boolean(filters.deck || filters.format || filters.days);
+export function FilterBar({ filters, options, onChange, hideDeck = false }: FilterBarProps) {
+  const hasFilters = Boolean(
+    filters.deck || filters.format || filters.days || filters.since || filters.until,
+  );
   return (
     <div className="filter-bar" role="group" aria-label="Dashboard filters">
-      <label>
-        <span>Deck</span>
-        <select
-          value={filters.deck ?? ''}
-          onChange={(event) => onChange({ ...filters, deck: event.target.value || undefined })}
-        >
-          <option value="">All decks</option>
-          {options.decks.map((deck) => (
-            <option key={deck} value={deck}>
-              {deck}
-            </option>
-          ))}
-        </select>
-      </label>
+      {hideDeck ? null : (
+        <label>
+          <span>Deck</span>
+          <select
+            value={filters.deck ?? ''}
+            onChange={(event) => onChange({ ...filters, deck: event.target.value || undefined })}
+          >
+            <option value="">All decks</option>
+            {options.decks.map((deck) => (
+              <option key={deck} value={deck}>
+                {deck}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <label>
         <span>Format</span>
         <select
@@ -60,6 +66,22 @@ export function FilterBar({ filters, options, onChange }: FilterBarProps) {
             </option>
           ))}
         </select>
+      </label>
+      <label>
+        <span>From</span>
+        <input
+          type="date"
+          value={filters.since ?? ''}
+          onChange={(event) => onChange({ ...filters, since: event.target.value || undefined })}
+        />
+      </label>
+      <label>
+        <span>To</span>
+        <input
+          type="date"
+          value={filters.until ?? ''}
+          onChange={(event) => onChange({ ...filters, until: event.target.value || undefined })}
+        />
       </label>
       {hasFilters ? (
         <button className="filter-clear" type="button" onClick={() => onChange({})}>

@@ -15,6 +15,7 @@ from mtga_tracker.dashboard import (
     deck_detail,
     game_detail,
     opponent_detail,
+    global_search,
     render_dashboard_html,
     search_cards,
 )
@@ -540,7 +541,7 @@ def test_dashboard_snapshot_supports_deck_and_format_filters(tmp_path):
 
     unfiltered = dashboard_snapshot(db_path)
     assert unfiltered["summary"]["games"] == 3
-    assert unfiltered["filters"] == {"deck": None, "format": None, "days": None, "season": None}
+    assert unfiltered["filters"] == {"deck": None, "format": None, "days": None, "season": None, "since": None, "until": None}
     assert "Izzet Wizards" in unfiltered["filter_options"]["decks"]
     assert {"raw_format": "Play", "format_label": "Standard Best-of-1 (Unranked)"} in unfiltered[
         "filter_options"
@@ -691,7 +692,7 @@ def test_dashboard_handler_applies_snapshot_query_filters(tmp_path):
     assert response.status == 200
     payload = json.loads(body)
     assert payload["summary"]["games"] == 2
-    assert payload["filters"] == {"deck": "Boros Mouse", "format": "Play", "days": None, "season": None}
+    assert payload["filters"] == {"deck": "Boros Mouse", "format": "Play", "days": None, "season": None, "since": None, "until": None}
 
 
 def test_deck_detail_reports_cards_openers_and_mulligans(tmp_path):
@@ -1915,3 +1916,97 @@ def test_dashboard_snapshot_matchups_empty_without_archetypes(tmp_path):
     snapshot = dashboard_snapshot(db_path)
 
     assert snapshot["matchups"] == []
+
+
+def test_dashboard_snapshot_supports_custom_date_range(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+
+    # Both fixture games start on 2026-06-04.
+    inside = dashboard_snapshot(db_path, since="2026-06-04", until="2026-06-04")
+    assert inside["summary"]["games"] == 2
+
+    before = dashboard_snapshot(db_path, until="2026-06-03")
+    assert before["summary"]["games"] == 0
+
+    after = dashboard_snapshot(db_path, since="2026-06-05")
+    assert after["summary"]["games"] == 0
+
+
+def test_card_and_opponent_details_honor_filters(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            ) values (?, ?, NULL, 'Mountain', 'Land', 1)
+            """,
+            [("game-1", "player-1"), ("game-2", "player-2")],
+        )
+
+    unfiltered = card_detail(db_path, "Mountain")
+    assert unfiltered["summary"]["games_seen"] == 2
+
+    filtered = card_detail(db_path, "Mountain", until="2026-06-04")
+    assert filtered["summary"]["games_seen"] == 2
+
+    # No games in range -> the card lookup itself 404s.
+    try:
+        card_detail(db_path, "Mountain", since="2026-06-05")
+        raised = False
+    except LookupError:
+        raised = True
+    assert raised
+
+    opponent = opponent_detail(db_path, "Opponent")
+    assert opponent["summary"]["games"] == 2
+
+    try:
+        opponent_detail(db_path, "Opponent", since="2026-06-05")
+        opponent_raised = False
+    except LookupError:
+        opponent_raised = True
+    assert opponent_raised
+
+
+def test_global_search_returns_cards_decks_and_opponents(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            ) values ('game-1', 'player-1', NULL, 'Mouse Mentor (Creature 2/1)', 'Creature', 1)
+            """
+        )
+        conn.execute("update participants set display_name = 'MouseFan#12345' where id = 'opponent-1'")
+
+    result = global_search(db_path, "Mouse")
+
+    assert any(card["card_name"] == "Mouse Mentor" for card in result["cards"])
+    assert result["decks"][0]["deck_name"] == "Boros Mouse"
+    assert result["decks"][0]["games"] == 2
+    assert result["opponents"][0]["display_name"] == "MouseFan#12345"
+
+
+def test_search_endpoint_serves_global_results(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _dashboard_handler_for(db_path))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    conn = None
+    thread.start()
+    try:
+        conn = HTTPConnection("127.0.0.1", server.server_address[1])
+        conn.request("GET", "/api/search?q=Boros")
+        response = conn.getresponse()
+        assert response.status == 200
+        payload = json.loads(response.read().decode("utf-8"))
+    finally:
+        if conn is not None:
+            conn.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+    assert payload["decks"][0]["deck_name"] == "Boros Mouse"
+    assert "cards" in payload and "opponents" in payload

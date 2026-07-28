@@ -87,15 +87,23 @@ export function RankProgressChart({ rows }: { rows: RankProgressRow[] }) {
           viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
           preserveAspectRatio="none"
           role="img"
-          aria-label={`Latest rank ${latest.rank_label}`}
+          aria-label={`Rank progress across ${points.length} snapshots, currently ${latest.rank_label}`}
         >
           {[0, 24, 48, 72, 96, 120].map((score) => {
             const y = VIEW_HEIGHT - (score / MAX_RANK_SCORE) * VIEW_HEIGHT;
             return <line key={score} className="trend-guide" x1="0" y1={y} x2={VIEW_WIDTH} y2={y} />;
           })}
           {points.length > 1 ? <path className="trend-line rank-progress-line" d={line} /> : null}
+          {/* r kept small and stroke non-scaling: preserveAspectRatio="none" still stretches the fill slightly, which is acceptable at this size. */}
           {points.map((point) => (
-            <circle key={point.row.id} className="rank-progress-point" cx={point.x} cy={point.y} r="4">
+            <circle
+              key={point.row.id}
+              className="rank-progress-point"
+              cx={point.x}
+              cy={point.y}
+              r={3.5}
+              vectorEffect="non-scaling-stroke"
+            >
               <title>{`${point.row.rank_label} · ${formatDateTime(point.row.captured_at)}`}</title>
             </circle>
           ))}
