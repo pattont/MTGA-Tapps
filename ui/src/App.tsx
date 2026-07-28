@@ -28,6 +28,7 @@ import { DeckVisual } from './components/DeckVisual';
 import { FilterBar } from './components/FilterBar';
 import { FormatsTable } from './components/FormatsTable';
 import { GameDetailPage } from './components/GameDetailPage';
+import { GamesPage } from './components/GamesPage';
 import { MetricCard } from './components/MetricCard';
 import { AuditPage } from './components/AuditPage';
 import { OpponentDetailPage } from './components/OpponentDetailPage';
@@ -41,14 +42,17 @@ import { Section } from './components/Section';
 import { ManaReadinessTable } from './components/ManaReadinessTable';
 import { formatPercent, metricCards } from './dashboardData';
 import { formatCardName, formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone, shortFormatLabel } from './format';
-import { auditNavItems, cardNavItems, deckNavItems, gameNavItems, opponentNavItems } from './nav';
+import { auditNavItems, cardNavItems, deckNavItems, gameNavItems, gamesNavItems, opponentNavItems } from './nav';
+import { FORMAT_QUICK_FILTERS } from './quickFilters';
 import { RouteFiltersContext } from './routeFilters';
 import {
   dashboardRouteHash,
   deckRouteHashWithFilters,
   gameRouteHash,
+  gamesRouteHash,
   parseAuditRoute,
   parseCardRoute,
+  parseGamesRoute,
   parseDashboardRouteFilters,
   parseDeckRoute,
   parseGameRoute,
@@ -409,24 +413,6 @@ const matchupColumns: Column<MatchupRow>[] = [
   },
 ];
 
-const RECENT_QUICK_FILTERS: { id: string; label: string; matches: (label: string) => boolean }[] = [
-  { id: 'all', label: 'All', matches: () => true },
-  { id: 'bo1', label: 'BO1', matches: (label) => label.includes('best-of-1') },
-  { id: 'bo3', label: 'BO3', matches: (label) => label.includes('best-of-3') },
-  {
-    id: 'premier-draft',
-    label: 'Premier Draft',
-    matches: (label) => label.includes('premier draft') || (label.includes('draft') && !label.includes('traditional') && !label.includes('quick')),
-  },
-  {
-    id: 'sealed',
-    label: 'Sealed',
-    matches: (label) => label.includes('sealed') && !label.includes('traditional'),
-  },
-  { id: 'trad-draft', label: 'Traditional Draft', matches: (label) => label.includes('traditional') && label.includes('draft') },
-  { id: 'trad-sealed', label: 'Traditional Sealed', matches: (label) => label.includes('traditional') && label.includes('sealed') },
-];
-
 const recentColumns: Column<RecentGameWithDrawQuality>[] = [
   {
     key: 'started_at',
@@ -550,6 +536,7 @@ export default function App() {
   const cardRoute = useMemo(() => parseCardRoute(routeHash), [routeHash]);
   const opponentRoute = useMemo(() => parseOpponentRoute(routeHash), [routeHash]);
   const auditRoute = useMemo(() => parseAuditRoute(routeHash), [routeHash]);
+  const gamesRoute = useMemo(() => parseGamesRoute(routeHash), [routeHash]);
   const deckName = deckRoute?.name ?? null;
   const gameId = gameRoute?.id ?? null;
   const cardName = cardRoute?.name ?? null;
@@ -639,6 +626,7 @@ export default function App() {
       || cardRoute
       || opponentRoute
       || auditRoute
+      || gamesRoute
       || loadState.status !== 'loaded'
       || !routeHash.startsWith('#')
     ) {
@@ -650,7 +638,7 @@ export default function App() {
     } else if (sectionId && !sectionId.startsWith('/')) {
       document.getElementById(sectionId)?.scrollIntoView?.({ block: 'start' });
     }
-  }, [auditRoute, cardRoute, deckRoute, gameRoute, loadState.status, opponentRoute, routeHash]);
+  }, [auditRoute, cardRoute, deckRoute, gameRoute, gamesRoute, loadState.status, opponentRoute, routeHash]);
 
   useEffect(() => {
     document.title = deckRoute
@@ -663,11 +651,13 @@ export default function App() {
             ? pageTitle(opponentRoute.name)
             : auditRoute
               ? pageTitle('DB Health')
-              : pageTitle('Overview');
-  }, [auditRoute, deckRoute, gameRoute, cardRoute, opponentRoute]);
+              : gamesRoute
+                ? pageTitle('All Games')
+                : pageTitle('Overview');
+  }, [auditRoute, deckRoute, gameRoute, gamesRoute, cardRoute, opponentRoute]);
 
   useEffect(() => {
-    if (deckName || gameId || cardName || opponentRoute || auditRoute) {
+    if (deckName || gameId || cardName || opponentRoute || auditRoute || gamesRoute) {
       return;
     }
     let ignore = false;
@@ -705,7 +695,7 @@ export default function App() {
       activeController?.abort();
       window.clearInterval(refreshId);
     };
-  }, [filters, deckName, gameId, cardName, opponentRoute, auditRoute]);
+  }, [filters, deckName, gameId, cardName, opponentRoute, auditRoute, gamesRoute]);
 
   function toggleTheme() {
     themeChosenRef.current = true;
@@ -732,7 +722,9 @@ export default function App() {
         theme={theme}
         onToggleTheme={toggleTheme}
         navItems={
-          auditRoute
+          gamesRoute
+            ? gamesNavItems
+          : auditRoute
             ? auditNavItems
           : cardRoute
             ? cardPageNavItems
@@ -744,9 +736,16 @@ export default function App() {
                   ? opponentNavItems
                   : undefined
         }
-        heading={auditRoute ? 'Database Health' : cardName ? formatCardName(cardName) : (gameRoute ? 'Game Detail' : deckName ?? opponentRoute?.name ?? DASHBOARD_TITLE)}
+        heading={gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : cardName ? formatCardName(cardName) : (gameRoute ? 'Game Detail' : deckName ?? opponentRoute?.name ?? DASHBOARD_TITLE)}
       >
-        {auditRoute ? (
+        {gamesRoute ? (
+          <GamesPage
+            filters={gamesRoute.filters}
+            onFiltersChange={(nextFilters) => {
+              window.location.hash = gamesRouteHash(nextFilters);
+            }}
+          />
+        ) : auditRoute ? (
           <AuditPage />
         ) : cardRoute ? (
           <CardDetailPage
@@ -844,7 +843,7 @@ function Dashboard({
   }, [snapshot.draw_quality, snapshot.recent]);
 
   const filteredRecentGames = useMemo(() => {
-    const active = RECENT_QUICK_FILTERS.find((filter) => filter.id === recentQuickFilter);
+    const active = FORMAT_QUICK_FILTERS.find((filter) => filter.id === recentQuickFilter);
     if (!active || active.id === 'all') {
       return recentGames;
     }
@@ -959,7 +958,7 @@ function Dashboard({
         description="Recent results with draw distribution, flood or mana-screw status, total turns, and game time."
       >
         <div className="quick-filters" role="group" aria-label="Quick format filters">
-          {RECENT_QUICK_FILTERS.map((filter) => (
+          {FORMAT_QUICK_FILTERS.map((filter) => (
             <button
               key={filter.id}
               type="button"
@@ -980,6 +979,11 @@ function Dashboard({
           initialSort={{ key: 'started_at', direction: 'desc' }}
           rows={filteredRecentGames}
         />
+        <p className="section-footer-link">
+          <a className="table-link" href={gamesRouteHash(filters)}>
+            View all games →
+          </a>
+        </p>
       </Section>
 
       <Section

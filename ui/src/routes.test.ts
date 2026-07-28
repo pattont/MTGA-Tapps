@@ -62,3 +62,13 @@ describe('filter round-trips', () => {
     expect(parseDashboardRouteFilters('#overview?since=yesterday&until=2026-13-99x')).toEqual({});
   });
 });
+
+describe('all-games route', () => {
+  it('round-trips filters through the games route', async () => {
+    const { gamesRouteHash, parseGamesRoute } = await import('./routes');
+    expect(parseGamesRoute('#/games')).toEqual({ filters: {} });
+    const hash = gamesRouteHash({ deck: 'Boros Mouse', days: 30 });
+    expect(parseGamesRoute(hash)).toEqual({ filters: { deck: 'Boros Mouse', days: 30 } });
+    expect(parseGamesRoute('#/game/abc')).toBeNull();
+  });
+});
