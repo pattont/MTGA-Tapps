@@ -342,6 +342,8 @@ export interface DeckGameRow {
   game_id: string;
   started_at: string;
   outcome: string | null;
+  is_flood?: boolean;
+  is_screw?: boolean;
   duration_seconds: number | null;
   total_turns: number | null;
   player_avg_turn_seconds: number | null;
