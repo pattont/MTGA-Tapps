@@ -121,14 +121,24 @@ class TrackerZoneTransferMixin:
             return
         self._flush_pending_turn_header_for_seat(owner_seat)
         event_turn = self.game_state.turn_number if self.game_state.turn_number > 0 else None
+        grp_id = card_obj.get("grpId") if isinstance(card_obj, dict) else None
+        drawn_card_name = None
+        if grp_id:
+            resolved = self.card_db.get_card_name(grp_id)
+            if resolved and not str(resolved).startswith("Card #"):
+                drawn_card_name = str(resolved)
         self._print_event(
-            self._format_actor_event("📥", owner_seat, "drew a card", turn_override=event_turn),
+            self._format_actor_event(
+                "📥",
+                owner_seat,
+                f"drew [{drawn_card_name}]" if drawn_card_name else "drew a card",
+                turn_override=event_turn,
+            ),
             "draw",
         )
         stats = self._seat_stats(owner_seat)
         if stats is not None:
             stats["cards_drawn"] += 1
-        grp_id = card_obj.get("grpId") if isinstance(card_obj, dict) else None
         if grp_id:
             try:
                 seat_id = int(owner_seat)

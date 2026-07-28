@@ -50,7 +50,8 @@ describe('LifeChart', () => {
   it('renders min and max life axis labels', () => {
     const { container } = render(<LifeChart points={points} />);
 
-    const labels = Array.from(container.querySelectorAll('text.chart-value-label')).map(
+    // HTML floats, not SVG <text>: SVG text distorts under preserveAspectRatio="none".
+    const labels = Array.from(container.querySelectorAll('.chart-axis-float')).map(
       (node) => node.textContent,
     );
     expect(labels).toEqual(['20', '0']);

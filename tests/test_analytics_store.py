@@ -401,3 +401,74 @@ def test_migration_backfills_summary_drawn_counts(tmp_path):
     ).fetchone()
     assert row == (0, 1)
     store.close()
+
+
+def test_migration_backfills_drawn_card_names_in_events(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    store = AnalyticsStore(db_path)
+    conn = store.connect()
+
+    conn.execute(
+        "insert into participants (id, game_id, role) values ('p1', 'g1', 'player')"
+    )
+    conn.executemany(
+        """
+        insert into game_drawn_cards (
+            game_id, participant_id, display_name, type_category, draw_position,
+            turn_number, copy_number
+        ) values ('g1', 'p1', ?, 'Instant', ?, ?, 1)
+        """,
+        [("Opt", 1, 2), ("Consider", 2, 4)],
+    )
+    conn.executemany(
+        """
+        insert into game_events (
+            session_id, game_id, event_time, turn_number, actor_role, event_type, text
+        ) values ('s1', 'g1', ?, ?, 'player', 'draw', ?)
+        """,
+        [
+            ("2026-06-04T00:01:00", 2, "[0:31] You: drew a card"),
+            ("2026-06-04T00:02:00", 4, "[1:02] You: drew a card"),
+        ],
+    )
+    # Ambiguous game: two events, one recorded draw, different turn counts.
+    conn.execute(
+        "insert into participants (id, game_id, role) values ('p2', 'g2', 'player')"
+    )
+    conn.execute(
+        """
+        insert into game_drawn_cards (
+            game_id, participant_id, display_name, type_category, draw_position,
+            turn_number, copy_number
+        ) values ('g2', 'p2', 'Shock', 'Instant', 1, NULL, 1)
+        """
+    )
+    conn.executemany(
+        """
+        insert into game_events (
+            session_id, game_id, event_time, turn_number, actor_role, event_type, text
+        ) values ('s1', 'g2', ?, NULL, 'player', 'draw', ?)
+        """,
+        [
+            ("2026-06-04T00:03:00", "[0:10] You: drew a card"),
+            ("2026-06-04T00:04:00", "[0:20] You: drew a card"),
+        ],
+    )
+    conn.execute("DELETE FROM schema_migrations WHERE version = 5")
+    AnalyticsStore.apply_pending_migrations(conn)
+
+    texts = [
+        row[0]
+        for row in conn.execute(
+            "SELECT text FROM game_events WHERE game_id = 'g1' ORDER BY event_time"
+        )
+    ]
+    assert texts == ["[0:31] You: drew [Opt]", "[1:02] You: drew [Consider]"]
+    ambiguous = [
+        row[0]
+        for row in conn.execute(
+            "SELECT text FROM game_events WHERE game_id = 'g2' ORDER BY event_time"
+        )
+    ]
+    assert all("drew a card" in text for text in ambiguous)
+    store.close()

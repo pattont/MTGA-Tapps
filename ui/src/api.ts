@@ -368,8 +368,10 @@ export interface DeckCompositionRow {
   copies: number;
   games_in_deck: number;
   games_seen: number;
+  games_seen_multiple: number;
   times_seen: number;
   seen_pct: number | null;
+  multiple_pct: number | null;
   expected_seen: number;
   seen_delta: number;
   wins_when_seen: number;
