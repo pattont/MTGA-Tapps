@@ -76,6 +76,23 @@ const snapshot = {
       aggression_profile: 'Aggro' as const,
     },
   ],
+  schedule: {
+    by_weekday: [
+      { label: 'Thursday', weekday: 4, games: 2, wins: 1, losses: 1, win_rate: 50 },
+    ],
+    by_time_of_day: [
+      { label: 'Late Night (10pm–5am)', bucket: 3, games: 2, wins: 1, losses: 1, win_rate: 50 },
+    ],
+  },
+  fatigue: [{ bucket: 0, label: 'Games 1–2', games: 2, wins: 1, losses: 1, win_rate: 50 }],
+  streaks: {
+    games: 2,
+    current: { kind: 'loss', length: 1 },
+    longest_win: 1,
+    longest_loss: 1,
+  },
+  outcome_reasons: [{ reason: 'opponent_conceded', wins: 1, losses: 0, games: 1 }],
+  opener_lands: [{ lands: 1, label: '1 land', games: 1, wins: 1, losses: 0, win_rate: 100 }],
   mana_readiness: [
     {
       threshold: 2,
@@ -648,6 +665,8 @@ describe('App', () => {
       'decks',
       'combat',
       'land-drops',
+      'habits',
+      'outcomes',
       'formats',
       'visible-drawn-cards',
       'matches',
@@ -899,6 +918,11 @@ describe('App', () => {
       combat_decks: [],
       combat_split: [],
       mana_readiness: [],
+      schedule: { by_weekday: [], by_time_of_day: [] },
+      fatigue: [],
+      streaks: { games: 0, current: null, longest_win: 0, longest_loss: 0 },
+      outcome_reasons: [],
+      opener_lands: [],
       recent: [],
       matches: [],
       sessions: [],
