@@ -24,6 +24,11 @@ function snapshotWithDecks(decks: DashboardSnapshot['decks']): DashboardSnapshot
     combat_decks: [],
     combat_split: [],
     mana_readiness: [],
+    schedule: { by_weekday: [], by_time_of_day: [] },
+    fatigue: [],
+    streaks: { games: 0, current: null, longest_win: 0, longest_loss: 0 },
+    outcome_reasons: [],
+    opener_lands: [],
     recent: [],
     matches: [],
     sessions: [],
@@ -69,6 +74,11 @@ describe('metricCards', () => {
       combat_decks: [],
       combat_split: [],
       mana_readiness: [],
+      schedule: { by_weekday: [], by_time_of_day: [] },
+      fatigue: [],
+      streaks: { games: 0, current: null, longest_win: 0, longest_loss: 0 },
+      outcome_reasons: [],
+      opener_lands: [],
       recent: [],
       matches: [],
       sessions: [],
@@ -82,7 +92,7 @@ describe('metricCards', () => {
       { label: 'Losses', value: '1' },
       { label: 'Win Rate', value: '66.7%' },
       {
-        label: 'Best Deck',
+        label: 'Best Deck (small sample)',
         value: 'Boros Mouse',
         detail: '66.7% WR · 2–1 · 3 games',
         href: '#/deck/Boros%20Mouse',
@@ -139,6 +149,40 @@ describe('metricCards', () => {
     expect(metricCards(snapshot).find((metric) => metric.label === 'Best Deck')).toMatchObject({
       value: 'Strong Challenger',
       detail: '80% WR · 8–2 · 10 games',
+    });
+  });
+});
+
+
+describe('best deck minimum sample', () => {
+  const deckVisual = {
+    card_id: null,
+    card_name: 'Deck',
+    type_category: 'Creature',
+    image_url: null,
+    source: 'deck_name' as const,
+  };
+
+  it('prefers a deck with a credible sample over a hot 4-0 deck', () => {
+    const snapshot = snapshotWithDecks([
+      { deck_name: 'Hot Streak', games: 4, wins: 4, losses: 0, win_rate: 100, deck_visual: deckVisual },
+      { deck_name: 'Workhorse', games: 40, wins: 24, losses: 16, win_rate: 60, deck_visual: deckVisual },
+    ]);
+
+    expect(metricCards(snapshot).find((metric) => metric.label.startsWith('Best Deck'))).toMatchObject({
+      label: 'Best Deck',
+      value: 'Workhorse',
+    });
+  });
+
+  it('falls back to small samples when nothing has enough games, with a caveat', () => {
+    const snapshot = snapshotWithDecks([
+      { deck_name: 'Only Deck', games: 3, wins: 2, losses: 1, win_rate: 66.7, deck_visual: deckVisual },
+    ]);
+
+    expect(metricCards(snapshot).find((metric) => metric.label.startsWith('Best Deck'))).toMatchObject({
+      label: 'Best Deck (small sample)',
+      value: 'Only Deck',
     });
   });
 });

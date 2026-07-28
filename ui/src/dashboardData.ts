@@ -31,9 +31,22 @@ function confidenceAdjustedWinRate(deck: DeckRow): number {
   );
 }
 
+/**
+ * A deck must have this many decided games before it can be "Best Deck";
+ * a 4-0 weekend shouldn't outrank a 60%-over-80-games workhorse.
+ */
+export const BEST_DECK_MIN_DECIDED_GAMES = 8;
+
 function bestDeckFrom(decks: DeckRow[]): DeckRow | undefined {
-  return [...decks]
-    .filter((deck) => deck.deck_name !== '(unknown)' && deck.wins + deck.losses > 0)
+  const eligible = decks.filter(
+    (deck) =>
+      deck.deck_name !== '(unknown)' &&
+      deck.wins + deck.losses >= BEST_DECK_MIN_DECIDED_GAMES,
+  );
+  const pool = eligible.length
+    ? eligible
+    : decks.filter((deck) => deck.deck_name !== '(unknown)' && deck.wins + deck.losses > 0);
+  return [...pool]
     .sort((a, b) => {
       const scoreDelta = confidenceAdjustedWinRate(b) - confidenceAdjustedWinRate(a);
       const decidedGamesDelta = b.wins + b.losses - (a.wins + a.losses);
@@ -56,7 +69,10 @@ export function metricCards(snapshot: DashboardSnapshot, filters: SnapshotFilter
     { label: 'Win Rate', value: formatPercent(snapshot.summary.win_rate) },
     bestDeck
       ? {
-          label: 'Best Deck',
+          label:
+            bestDeck.wins + bestDeck.losses >= BEST_DECK_MIN_DECIDED_GAMES
+              ? 'Best Deck'
+              : 'Best Deck (small sample)',
           value: bestDeck.deck_name,
           detail: `${formatPercent(bestDeck.win_rate)} WR · ${bestDeck.wins}–${bestDeck.losses} · ${bestDeck.games} ${
             bestDeck.games === 1 ? 'game' : 'games'

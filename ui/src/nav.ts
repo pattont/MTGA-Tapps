@@ -13,6 +13,8 @@ export const dashboardNavItems: AppNavItem[] = [
   { id: 'decks', label: 'Decks' },
   { id: 'combat', label: 'Combat' },
   { id: 'land-drops', label: 'Land Availability' },
+  { id: 'habits', label: 'Habits & Schedule' },
+  { id: 'outcomes', label: 'Streaks & Outcomes' },
   { id: 'formats', label: 'Formats' },
   { id: 'visible-drawn-cards', label: 'Visible Drawn Cards' },
   { id: 'matches', label: 'Bo3 Matches' },
