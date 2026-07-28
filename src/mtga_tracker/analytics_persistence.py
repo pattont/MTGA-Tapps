@@ -26,6 +26,7 @@ def upsert_card(
     conn: sqlite3.Connection,
     display_name: str,
     type_category: Optional[str] = None,
+    arena_id: Optional[int] = None,
 ) -> Optional[int]:
     """Upsert a card dimension row and return its id."""
     base_name = analytics_card_base_name(display_name)
@@ -33,17 +34,33 @@ def upsert_card(
         return None
     power, toughness = analytics_card_power_toughness(display_name)
     now = datetime.now().isoformat()
-    conn.execute(
-        """
-        INSERT INTO cards (name, primary_type, power, toughness, first_seen_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(name) DO UPDATE SET
-            primary_type = COALESCE(excluded.primary_type, cards.primary_type),
-            power = COALESCE(excluded.power, cards.power),
-            toughness = COALESCE(excluded.toughness, cards.toughness)
-        """,
-        (base_name, type_category, power, toughness, now),
-    )
+    try:
+        conn.execute(
+            """
+            INSERT INTO cards (name, primary_type, power, toughness, first_seen_at, arena_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET
+                primary_type = COALESCE(excluded.primary_type, cards.primary_type),
+                power = COALESCE(excluded.power, cards.power),
+                toughness = COALESCE(excluded.toughness, cards.toughness),
+                arena_id = COALESCE(cards.arena_id, excluded.arena_id)
+            """,
+            (base_name, type_category, power, toughness, now, arena_id),
+        )
+    except sqlite3.IntegrityError:
+        # A different card name already owns this arena_id (UNIQUE constraint),
+        # e.g. split-card name variants. Keep the existing mapping.
+        conn.execute(
+            """
+            INSERT INTO cards (name, primary_type, power, toughness, first_seen_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET
+                primary_type = COALESCE(excluded.primary_type, cards.primary_type),
+                power = COALESCE(excluded.power, cards.power),
+                toughness = COALESCE(excluded.toughness, cards.toughness)
+            """,
+            (base_name, type_category, power, toughness, now),
+        )
     row = conn.execute("SELECT id FROM cards WHERE name = ?", (base_name,)).fetchone()
     return int(row[0]) if row else None
 
@@ -55,19 +72,47 @@ def persist_card_summary(
     events: List[CardEvent],
     *,
     refresh_display_name: Callable[[str], str],
+    drawn_events: Optional[List[CardEvent]] = None,
 ) -> None:
-    """Persist played-card counts by participant."""
+    """Persist played- and drawn-card counts by participant.
+
+    Played events keep their full display names (one row per display variant,
+    matching historical rows). Drawn events are matched to a played row by base
+    card name when possible so a card played and drawn stays one row; cards
+    drawn but never played get their own row with played_count = 0.
+    """
     counts: Dict[str, Dict[str, object]] = {}
+    base_to_display: Dict[str, str] = {}
     for event in events:
         display_name = refresh_display_name(event.card_name)
         if display_name not in counts:
             counts[display_name] = {
                 "played_count": 0,
+                "drawn_count": 0,
                 "type_category": event.card_type_category,
             }
         counts[display_name]["played_count"] = int(counts[display_name]["played_count"]) + 1
         if event.card_type_category and event.card_type_category != "Other":
             counts[display_name]["type_category"] = event.card_type_category
+        base_name = analytics_card_base_name(display_name)
+        if base_name and base_name not in base_to_display:
+            base_to_display[base_name] = display_name
+
+    for event in drawn_events or []:
+        display_name = refresh_display_name(event.card_name)
+        base_name = analytics_card_base_name(display_name)
+        target_name = base_to_display.get(base_name, display_name)
+        if target_name not in counts:
+            counts[target_name] = {
+                "played_count": 0,
+                "drawn_count": 0,
+                "type_category": event.card_type_category,
+            }
+        counts[target_name]["drawn_count"] = int(counts[target_name]["drawn_count"]) + 1
+        if event.card_type_category and event.card_type_category != "Other":
+            existing = counts[target_name].get("type_category")
+            if not existing or existing == "Other":
+                counts[target_name]["type_category"] = event.card_type_category
 
     for display_name, data in counts.items():
         type_category = data.get("type_category")
@@ -82,13 +127,15 @@ def persist_card_summary(
                 card_id,
                 display_name,
                 type_category,
-                played_count
+                played_count,
+                drawn_count
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(game_id, participant_id, display_name) DO UPDATE SET
                 card_id = excluded.card_id,
                 type_category = excluded.type_category,
-                played_count = excluded.played_count
+                played_count = excluded.played_count,
+                drawn_count = excluded.drawn_count
             """,
             (
                 game_id,
@@ -97,6 +144,7 @@ def persist_card_summary(
                 display_name,
                 type_category,
                 int(data["played_count"]),
+                int(data["drawn_count"]),
             ),
         )
 
@@ -122,7 +170,7 @@ def persist_submitted_deck(
             if not display_name:
                 continue
             type_category = resolve_type_category(arena_id) or "Other"
-            card_id = upsert_card(conn, display_name, type_category)
+            card_id = upsert_card(conn, display_name, type_category, arena_id=arena_id)
             conn.execute(
                 """
                 INSERT INTO game_deck_cards (

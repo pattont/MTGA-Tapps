@@ -57,3 +57,12 @@ data/*.sqlite3
 data/*.sqlite3.backup*
 data/*.sql
 !data/.gitkeep
+
+# Live analytics DB artifacts and local backups
+data/backups/
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Session scratch
+fable_src.tar.gz
+_to_delete/

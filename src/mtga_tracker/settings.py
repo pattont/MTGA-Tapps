@@ -11,6 +11,9 @@ from .paths import DATA_DIR
 
 
 SETTINGS_PATH = DATA_DIR / "settings.json"
+DEFAULT_DASHBOARD_PORT = 8765
+MIN_DASHBOARD_PORT = 1024
+MAX_DASHBOARD_PORT = 65535
 DEFAULT_LIVE_LOG_WIDTH = 1400
 DEFAULT_LIVE_LOG_HEIGHT = 1020
 MIN_LIVE_LOG_WIDTH = 820
@@ -25,6 +28,7 @@ class AppSettings:
 
     live_log_width: int = DEFAULT_LIVE_LOG_WIDTH
     live_log_height: int = DEFAULT_LIVE_LOG_HEIGHT
+    dashboard_port: int = DEFAULT_DASHBOARD_PORT
 
 
 def _default_document() -> Dict[str, Any]:
@@ -32,7 +36,10 @@ def _default_document() -> Dict[str, Any]:
         "live_log_window": {
             "width": DEFAULT_LIVE_LOG_WIDTH,
             "height": DEFAULT_LIVE_LOG_HEIGHT,
-        }
+        },
+        "dashboard": {
+            "port": DEFAULT_DASHBOARD_PORT,
+        },
     }
 
 
@@ -62,7 +69,10 @@ def load_app_settings(path: Path = SETTINGS_PATH, *, create: bool = True) -> App
         return AppSettings()
     window = document.get("live_log_window")
     if not isinstance(window, dict):
-        return AppSettings()
+        window = {}
+    dashboard = document.get("dashboard")
+    if not isinstance(dashboard, dict):
+        dashboard = {}
     return AppSettings(
         live_log_width=_bounded_dimension(
             window.get("width"),
@@ -75,5 +85,11 @@ def load_app_settings(path: Path = SETTINGS_PATH, *, create: bool = True) -> App
             default=DEFAULT_LIVE_LOG_HEIGHT,
             minimum=MIN_LIVE_LOG_HEIGHT,
             maximum=MAX_LIVE_LOG_HEIGHT,
+        ),
+        dashboard_port=_bounded_dimension(
+            dashboard.get("port"),
+            default=DEFAULT_DASHBOARD_PORT,
+            minimum=MIN_DASHBOARD_PORT,
+            maximum=MAX_DASHBOARD_PORT,
         ),
     )

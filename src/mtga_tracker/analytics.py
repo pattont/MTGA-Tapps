@@ -421,6 +421,109 @@ class AnalyticsStore:
             conn, "game_turns", "timing_source", "TEXT NOT NULL DEFAULT 'live'"
         )
         AnalyticsStore.backfill_game_turn_counts(conn)
+        AnalyticsStore.apply_pending_migrations(conn)
+
+    @staticmethod
+    def apply_pending_migrations(conn: sqlite3.Connection) -> None:
+        """Apply numbered one-time schema/data migrations in order.
+
+        The executescript baseline above is migration 1. Later migrations are
+        recorded in schema_migrations so each runs exactly once per database.
+        """
+        applied = {
+            int(row[0])
+            for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
+        }
+        migrations = (
+            (2, AnalyticsStore._migrate_v2_backfill_card_arena_ids),
+            (3, AnalyticsStore._migrate_v3_backfill_summary_drawn_counts),
+        )
+        for version, migrate in migrations:
+            if version in applied:
+                continue
+            migrate(conn)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) "
+                "VALUES (?, datetime('now'))",
+                (version,),
+            )
+        conn.commit()
+
+    @staticmethod
+    def _migrate_v2_backfill_card_arena_ids(conn: sqlite3.Connection) -> None:
+        """Copy authoritative Arena ids from submitted decklists into cards.
+
+        game_deck_cards.arena_id has always been populated while cards.arena_id
+        never was, forcing fuzzy name-based Scryfall image lookups. UPDATE OR
+        IGNORE skips the rare name variants that would collide on the UNIQUE
+        arena_id constraint.
+        """
+        conn.execute(
+            """
+            UPDATE OR IGNORE cards SET arena_id = (
+                SELECT gdc.arena_id
+                FROM game_deck_cards gdc
+                WHERE gdc.card_id = cards.id AND gdc.arena_id IS NOT NULL
+                ORDER BY gdc.id DESC
+                LIMIT 1
+            )
+            WHERE cards.arena_id IS NULL
+              AND EXISTS (
+                SELECT 1 FROM game_deck_cards gdc
+                WHERE gdc.card_id = cards.id AND gdc.arena_id IS NOT NULL
+              )
+            """
+        )
+
+    @staticmethod
+    def _migrate_v3_backfill_summary_drawn_counts(conn: sqlite3.Connection) -> None:
+        """Backfill game_card_summary.drawn_count from visible drawn-card rows.
+
+        drawn_count existed in the schema but was never written; the dashboard
+        already queries it. Existing summary rows get real counts (matched by
+        card_id) and drawn-but-never-played cards gain summary rows with
+        played_count = 0.
+        """
+        conn.execute(
+            """
+            UPDATE game_card_summary SET drawn_count = COALESCE(
+                (
+                    SELECT COUNT(*)
+                    FROM game_drawn_cards d
+                    WHERE d.game_id = game_card_summary.game_id
+                      AND d.participant_id = game_card_summary.participant_id
+                      AND d.card_id = game_card_summary.card_id
+                ),
+                0
+            )
+            WHERE game_card_summary.card_id IS NOT NULL
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category,
+                played_count, drawn_count
+            )
+            SELECT
+                d.game_id,
+                d.participant_id,
+                d.card_id,
+                d.display_name,
+                COALESCE(MAX(d.type_category), 'Other'),
+                0,
+                COUNT(*)
+            FROM game_drawn_cards d
+            WHERE d.card_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM game_card_summary s
+                WHERE s.game_id = d.game_id
+                  AND s.participant_id = d.participant_id
+                  AND (s.card_id = d.card_id OR s.display_name = d.display_name)
+              )
+            GROUP BY d.game_id, d.participant_id, d.card_id
+            """
+        )
 
     @staticmethod
     def backfill_estimated_game_turn_times(conn: sqlite3.Connection) -> int:

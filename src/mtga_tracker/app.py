@@ -228,10 +228,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--log-path", type=Path, help="Path to MTGA Player.log.")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH, help="SQLite DB path.")
     parser.add_argument("--host", default="127.0.0.1", help="Dashboard bind host.")
-    parser.add_argument("--port", type=int, default=8765, help="Preferred dashboard port.")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Preferred dashboard port (default: data/settings.json dashboard.port, else 8765).",
+    )
     parser.add_argument("--no-gui", action="store_true", help="Run in one terminal without the menu bar.")
     parser.add_argument("--no-browser", action="store_true", help="Do not open the dashboard automatically.")
     args = parser.parse_args(argv)
+    if args.port is None:
+        from .settings import load_app_settings
+
+        args.port = load_app_settings(create=False).dashboard_port
 
     if args.no_gui:
         return _run_without_gui(args)
