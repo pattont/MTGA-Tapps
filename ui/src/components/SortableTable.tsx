@@ -24,11 +24,6 @@ function readStoredSort(caption: string): StoredSort | null {
   }
 }
 
-function csvCell(value: unknown): string {
-  const text = value === null || value === undefined ? '' : String(value);
-  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
-}
-
 function storeSort(caption: string, sort: StoredSort): void {
   try {
     sessionStorage.setItem(`mtga-table-sort:${caption}`, JSON.stringify(sort));
@@ -133,23 +128,6 @@ export function SortableTable<T extends object>({
     setPagination({ key: paginationKey, page: Math.min(Math.max(page, 1), pageCount) });
   }
 
-  function exportCsv() {
-    const header = columns.map((column) => csvCell(column.header)).join(',');
-    const lines = sortedRows.map((row) =>
-      columns
-        .map((column) => csvCell(column.sortValue ? column.sortValue(row) : row[column.key]))
-        .join(','),
-    );
-    const blob = new Blob([`${header}\n${lines.join('\n')}\n`], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `${caption.toLocaleLowerCase().replaceAll(/[^a-z0-9]+/g, '-')}.csv`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
-  }
 
   if (rows.length === 0 || columns.length === 0) {
     return <p className="empty-state">No rows yet.</p>;
@@ -157,17 +135,6 @@ export function SortableTable<T extends object>({
 
   return (
     <div className={isPaginated ? 'table-container table-container-paginated' : 'table-container'}>
-      <div className="table-toolbar">
-        <button
-          type="button"
-          className="table-export"
-          aria-label="Download CSV"
-          title={`Download all rows of “${caption}” as CSV`}
-          onClick={exportCsv}
-        >
-          Download CSV
-        </button>
-      </div>
       <div
         className={compact ? 'table-wrap table-wrap-compact' : 'table-wrap'}
         role="region"
