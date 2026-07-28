@@ -684,7 +684,6 @@ describe('App', () => {
       'rank-progress',
       'recent-games',
       'decks',
-      'combat',
       'land-drops',
       'habits',
       'outcomes',
@@ -726,9 +725,9 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
-    // Decks table, Best Deck metric, Recent Games, Combat, Matchups, and Matches.
+    // Decks table, Best Deck metric, Recent Games, Matchups, and Matches.
     const deckLinks = screen.getAllByRole('link', { name: 'Boros Mouse' });
-    expect(deckLinks.length).toBe(6);
+    expect(deckLinks.length).toBe(5);
     deckLinks.forEach((link) => {
       expect(link).toHaveAttribute('href', '#/deck/Boros%20Mouse');
     });

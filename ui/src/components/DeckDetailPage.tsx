@@ -607,7 +607,7 @@ export function DeckDetailPage({
       <Section
         id="deck-combat"
         title="Combat Profile"
-        description="Per-game combat and resource telemetry for this deck. Trade Ratio is blockers killed per attacker lost."
+        description="Per-game combat and resource telemetry for this deck."
       >
         {detail.combat_profile ? (
           <section className="metric-grid metric-grid-deck" aria-label="Deck combat metrics">
@@ -630,14 +630,6 @@ export function DeckDetailPage({
             <MetricCard
               label="Attackers / Attack"
               value={formatNumber(detail.combat_profile.attackers_per_attack)}
-            />
-            <MetricCard
-              label="Trade Ratio"
-              value={
-                detail.combat_profile.trade_ratio === null
-                  ? '—'
-                  : formatNumber(detail.combat_profile.trade_ratio)
-              }
             />
             <MetricCard
               label="Life Gained / Game"

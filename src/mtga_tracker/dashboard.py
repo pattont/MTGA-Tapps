@@ -877,14 +877,21 @@ def _combat_deck_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -
         )
     )
     for row in rows:
+        # Aggression is judged by damage pace (damage dealt per one of your
+        # turns), not attack frequency: decks that close games through drain,
+        # burn, or a few big swings attack on well under half their turns but
+        # are still aggressive, while grindy decks can attack often and slowly.
         attacks = row.get("avg_attack_steps") or 0
         turns = row.get("avg_player_turns") or 0
-        ratio = (attacks / turns) if turns else None
-        if ratio is None:
+        damage = row.get("avg_damage_dealt") or 0
+        damage_per_turn = (damage / turns) if turns else None
+        attacks_per_turn = (attacks / turns) if turns else 0
+        row["damage_per_turn"] = round(damage_per_turn, 2) if damage_per_turn else None
+        if damage_per_turn is None:
             row["aggression_profile"] = None
-        elif ratio >= 0.6 and turns <= 9:
+        elif damage_per_turn >= 3.2 or (damage_per_turn >= 2.9 and turns <= 5.5):
             row["aggression_profile"] = "Aggro"
-        elif ratio <= 0.35:
+        elif damage_per_turn <= 2.4 or (attacks_per_turn <= 0.2 and damage_per_turn <= 2.7):
             row["aggression_profile"] = "Control"
         else:
             row["aggression_profile"] = "Midrange"
