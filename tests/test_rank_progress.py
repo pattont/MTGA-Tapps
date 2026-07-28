@@ -21,7 +21,7 @@ def test_parse_constructed_rank_snapshot_matches_arena_display_step():
         "season_ordinal": 91,
         "rank_class": "Platinum",
         "rank_level": 3,
-        "rank_step": 3,
+        "rank_step": 4,
         "rank_steps": 6,
         "raw_step": 4,
         "matches_won": 60,
@@ -29,6 +29,22 @@ def test_parse_constructed_rank_snapshot_matches_arena_display_step():
         "mythic_percentile": None,
         "mythic_rank": None,
     }
+
+
+def test_parse_constructed_rank_snapshot_keeps_first_filled_pip():
+    line = (
+        "[UnityCrossThreadLogger]7/26/2026 2:00:22 AM "
+        "<== RankGetCombinedRankInfo(request-id) "
+        '{"constructedSeasonOrdinal":91,"constructedClass":"Diamond",'
+        '"constructedLevel":4,"constructedStep":1,'
+        '"constructedMatchesWon":82,"constructedMatchesLost":62}'
+    )
+
+    snapshot = parse_constructed_rank_snapshot(line)
+
+    assert snapshot is not None
+    assert snapshot["rank_step"] == 1
+    assert snapshot["raw_step"] == 1
 
 
 def test_parse_constructed_rank_snapshot_ignores_outgoing_request():
@@ -64,7 +80,7 @@ def test_iter_constructed_rank_snapshots_reads_timestamped_responses(tmp_path):
         "2026-07-23T01:20:24",
         "2026-07-23T01:25:18",
     ]
-    assert [row[1]["rank_step"] for row in rows] == [2, 3]
+    assert [row[1]["rank_step"] for row in rows] == [3, 4]
 
 
 def test_rank_snapshot_store_deduplicates_unchanged_rank(tmp_path):
@@ -82,7 +98,7 @@ def test_rank_snapshot_store_deduplicates_unchanged_rank(tmp_path):
         "season_ordinal": 91,
         "rank_class": "Platinum",
         "rank_level": 3,
-        "rank_step": 3,
+        "rank_step": 4,
         "rank_steps": 6,
         "raw_step": 4,
         "matches_won": 60,

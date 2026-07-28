@@ -8,6 +8,7 @@ from mtga_tracker.analytics_persistence import (
     persist_commanders,
     persist_drawn_cards,
     persist_opening_hand,
+    persist_submitted_deck,
 )
 from mtga_tracker.state import CardEvent
 
@@ -113,3 +114,50 @@ def test_persist_card_summary_opening_hand_and_commanders(tmp_path):
     assert opening_hand == [("Island", 1, 1), ("Island", 2, 2)]
     assert drawn_cards == [("Island", 1, 2, 1), ("Likeness Looter (Creature 1/1)", 2, 3, 1)]
     assert commander == ("Niv-Mizzet, Parun",)
+
+
+def test_persist_submitted_deck_groups_main_deck_and_sideboard(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    store = AnalyticsStore(db_path)
+    conn = store.connect()
+    assert conn is not None
+    with conn:
+        conn.execute(
+            "insert into tracker_sessions (id, started_at) values ('session-1', '2026-07-27')"
+        )
+        conn.execute(
+            "insert into matches (id, session_id) values ('match-1', 'session-1')"
+        )
+        conn.execute(
+            "insert into games (id, session_id, match_id) values ('game-1', 'session-1', 'match-1')"
+        )
+        conn.execute(
+            "insert into participants (id, game_id, role) values ('player-1', 'game-1', 'player')"
+        )
+        names = {1: "Swamp", 2: "Unholy Annex // Ritual Chamber", 3: "Duress"}
+        types = {1: "Land", 2: "Enchantment", 3: "Sorcery"}
+        persist_submitted_deck(
+            conn,
+            "game-1",
+            "player-1",
+            deck_cards=[1, 1, 1, 2],
+            sideboard_cards=[3],
+            resolve_name=names.__getitem__,
+            resolve_type_category=types.get,
+        )
+    store.close()
+
+    with sqlite3.connect(db_path) as check:
+        rows = check.execute(
+            """
+            select arena_id, display_name, deck_zone, quantity
+            from game_deck_cards
+            order by deck_zone, arena_id
+            """
+        ).fetchall()
+
+    assert rows == [
+        (1, "Swamp", "deck", 3),
+        (2, "Unholy Annex // Ritual Chamber", "deck", 1),
+        (3, "Duress", "sideboard", 1),
+    ]

@@ -36,9 +36,9 @@ def parse_constructed_rank_snapshot(line: str) -> Optional[Dict[str, Any]]:
         except (TypeError, ValueError):
             return None
 
-    # Arena's response is one-based relative to the pips displayed in the UI:
-    # raw step 4 is rendered as 3/6.
-    display_step = max(0, raw_step - 1)
+    # Arena reports the number of filled pips shown in the client. A missing step
+    # is normalized to zero above; constructedStep 1 is displayed as 1/6.
+    display_step = max(0, raw_step)
     return {
         "season_ordinal": season_ordinal,
         "rank_class": rank_class,

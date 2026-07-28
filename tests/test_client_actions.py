@@ -114,3 +114,24 @@ def test_tracker_stores_submit_deck_response_for_sideboarding():
 
     assert tracker.game_state.submitted_deck_cards == [1, 2]
     assert tracker.game_state.submitted_sideboard_cards == [3]
+
+
+def test_tracker_captures_connect_response_deck_for_next_game():
+    tracker = make_tracker()
+
+    tracker._capture_submitted_deck_message(
+        {
+            "type": "GREMessageType_ConnectResp",
+            "connectResp": {
+                "deckMessage": {
+                    "deckCards": [10, 10, 20],
+                    "sideboardCards": [30],
+                }
+            },
+        }
+    )
+
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+
+    assert tracker.game_state.submitted_deck_cards == [10, 10, 20]
+    assert tracker.game_state.submitted_sideboard_cards == [30]

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import sqlite3
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .analytics import AnalyticsStore, SessionSnapshot
 from .analytics_persistence import (
@@ -14,6 +15,7 @@ from .analytics_persistence import (
     persist_commanders,
     persist_drawn_cards,
     persist_opening_hand,
+    persist_submitted_deck,
 )
 from .format_normalizer import is_momir_format, normalize_match_format
 from .rank_progress import iter_constructed_rank_snapshots, parse_constructed_rank_snapshot
@@ -161,6 +163,41 @@ class TrackerAnalyticsMixin:
     def _ensure_analytics_schema(self, conn: sqlite3.Connection) -> None:
         """Create dashboard-friendly analytics tables if needed."""
         AnalyticsStore.ensure_schema(conn)
+
+    @staticmethod
+    def _run_analytics_write(
+        conn: sqlite3.Connection,
+        operation: Callable[[], None],
+        *,
+        attempts: int = 3,
+    ) -> None:
+        """Run a SQLite write with bounded retries for transient lock contention."""
+        for attempt in range(attempts):
+            try:
+                with conn:
+                    operation()
+                return
+            except sqlite3.OperationalError as exc:
+                conn.rollback()
+                transient = "locked" in str(exc).lower() or "busy" in str(exc).lower()
+                if not transient or attempt + 1 >= attempts:
+                    raise
+                time.sleep(0.1 * (attempt + 1))
+
+    def _recover_missing_turn_timings(self) -> None:
+        """Recover persisted turn durations from durable console headers at startup."""
+        conn = self._analytics_connect()
+        if conn is None:
+            return
+        try:
+            self._run_analytics_write(
+                conn,
+                lambda: AnalyticsStore.backfill_recovered_game_turn_times(conn),
+            )
+        except sqlite3.Error as exc:
+            self._report_analytics_persistence_error(
+                "historical turn timing recovery", "startup", exc
+            )
 
     @staticmethod
     def _ensure_table_column(
@@ -688,6 +725,16 @@ class TrackerAnalyticsMixin:
             self.opponent_cards,
             refresh_display_name=self._refresh_fallback_name_text,
         )
+        if self.game_state.submitted_deck_cards:
+            persist_submitted_deck(
+                conn,
+                game_id,
+                player_participant_id,
+                deck_cards=self.game_state.submitted_deck_cards,
+                sideboard_cards=self.game_state.submitted_sideboard_cards,
+                resolve_name=self.card_db.get_card_name,
+                resolve_type_category=self.card_db.get_card_type_category,
+            )
         persist_opening_hand(
             conn,
             game_id,
@@ -772,6 +819,34 @@ class TrackerAnalyticsMixin:
                 ),
             )
 
+    def _persist_turn_timings_with_recovery(self, conn: sqlite3.Connection, game_id: str) -> None:
+        """Persist live timings and recover immediately if the write is incomplete."""
+        self._persist_turn_timings(conn, game_id)
+        observed_turns = len(
+            {
+                int(turn.get("turn_number", 0))
+                for turn in self.game_state.completed_turns
+                if int(turn.get("turn_number", 0)) > 0
+            }
+        )
+        total_turns = self._turns_completed()
+        persisted_turns = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM game_turns WHERE game_id = ?", (game_id,)
+            ).fetchone()[0]
+        )
+        if persisted_turns < total_turns:
+            AnalyticsStore.backfill_recovered_game_turn_times(conn, game_id)
+            persisted_turns = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM game_turns WHERE game_id = ?", (game_id,)
+                ).fetchone()[0]
+            )
+        if persisted_turns < observed_turns:
+            raise sqlite3.IntegrityError(
+                f"saved {persisted_turns} of {observed_turns} observed turn timing rows"
+            )
+
     def _persist_game_analytics(self, outcome: str, reason: str) -> None:
         """Persist dashboard-ready summary data for a completed game."""
         if self._is_untracked_match():
@@ -814,7 +889,7 @@ class TrackerAnalyticsMixin:
             # Keep the dashboard's core game record independent from optional
             # card/stat detail. One malformed detail row must not erase a
             # completed game from Recent Games.
-            with conn:
+            def persist_core() -> None:
                 self._upsert_session_row(conn)
                 self._upsert_match_analytics(
                     conn, match_id, started_at, ended_at, winner_participant_id
@@ -832,22 +907,37 @@ class TrackerAnalyticsMixin:
                 )
                 self._upsert_participant_analytics(conn, [player, opponent])
 
+            self._run_analytics_write(conn, persist_core)
+
             try:
-                with conn:
+
+                def persist_details() -> None:
                     self._persist_game_detail_analytics(
                         conn,
                         game_id,
                         player_participant_id,
                         opponent_participant_id,
                     )
+
+                self._run_analytics_write(conn, persist_details)
             except sqlite3.Error as exc:
                 self._report_analytics_persistence_error("game details", game_id, exc)
 
             try:
-                with conn:
-                    self._persist_turn_timings(conn, game_id)
+                self._run_analytics_write(
+                    conn, lambda: self._persist_turn_timings_with_recovery(conn, game_id)
+                )
             except sqlite3.Error as exc:
                 self._report_analytics_persistence_error("turn timings", game_id, exc)
+                try:
+                    self._run_analytics_write(
+                        conn,
+                        lambda: AnalyticsStore.backfill_recovered_game_turn_times(conn, game_id),
+                    )
+                except sqlite3.Error as recovery_exc:
+                    self._report_analytics_persistence_error(
+                        "turn timing recovery", game_id, recovery_exc
+                    )
         except sqlite3.Error as exc:
             game_id = locals().get("game_id", "unknown")
             self._report_analytics_persistence_error("core game", game_id, exc)

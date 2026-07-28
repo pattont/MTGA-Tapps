@@ -472,6 +472,13 @@ class TrackerZoneTransferMixin:
             )
             return
 
+        # "Put" is a generic Arena category used for several destinations, including
+        # the card bottomed after a London mulligan. Only describe it as entering the
+        # battlefield when the destination is actually the battlefield (or unavailable
+        # in older payloads that do not include zone metadata).
+        if destination_type not in (None, "ZoneType_Battlefield"):
+            return
+
         attack_state = str(card_obj.get("attackState", ""))
         put_in_attacking = "Attacking" in attack_state or bool(card_obj.get("attackInfo"))
         if pre_turn_zone_noise and not put_in_attacking:

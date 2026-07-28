@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { SortableTable } from './SortableTable';
@@ -133,5 +133,78 @@ describe('SortableTable', () => {
 
     await user.click(screen.getByRole('button', { name: /wr/i }));
     expect(screen.getAllByRole('row')[1]).toHaveTextContent('Azorius');
+  });
+
+  it('paginates after sorting and resets to the first page when sorting changes', async () => {
+    const user = userEvent.setup();
+    const pagedRows = Array.from({ length: 17 }, (_, index) => ({
+      deck: `Deck ${String(index + 1).padStart(2, '0')}`,
+      games: index + 1,
+      winRate: '50%',
+    }));
+
+    render(
+      <SortableTable
+        caption="Decks"
+        columns={[
+          { key: 'deck', header: 'Deck' },
+          { key: 'games', header: 'Games' },
+        ]}
+        getRowKey={(row) => row.deck}
+        initialSort={{ key: 'games', direction: 'desc' }}
+        pageSize={15}
+        rows={pagedRows}
+      />,
+    );
+
+    const table = screen.getByRole('table', { name: 'Decks' });
+    expect(within(table).getByText('Deck 17')).toBeInTheDocument();
+    expect(within(table).queryByText('Deck 01')).not.toBeInTheDocument();
+    expect(screen.getByText('Showing 1-15 of 17')).toBeInTheDocument();
+    expect(screen.getByText('Page 1 of 2')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(within(table).getByText('Deck 01')).toBeInTheDocument();
+    expect(within(table).queryByText('Deck 17')).not.toBeInTheDocument();
+    expect(screen.getByText('Showing 16-17 of 17')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /deck/i }));
+    expect(screen.getByText('Page 1 of 2')).toBeInTheDocument();
+    expect(within(table).getByText('Deck 01')).toBeInTheDocument();
+  });
+
+  it('returns to page one when the pagination key changes', async () => {
+    const user = userEvent.setup();
+    const pagedRows = Array.from({ length: 17 }, (_, index) => ({
+      deck: `Deck ${String(index + 1).padStart(2, '0')}`,
+      games: index + 1,
+      winRate: '50%',
+    }));
+    const { rerender } = render(
+      <SortableTable
+        caption="Decks"
+        columns={[{ key: 'deck', header: 'Deck' }]}
+        getRowKey={(row) => row.deck}
+        pageSize={15}
+        paginationKey=""
+        rows={pagedRows}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(screen.getByText('Page 2 of 2')).toBeInTheDocument();
+
+    rerender(
+      <SortableTable
+        caption="Decks"
+        columns={[{ key: 'deck', header: 'Deck' }]}
+        getRowKey={(row) => row.deck}
+        pageSize={15}
+        paginationKey="control"
+        rows={pagedRows}
+      />,
+    );
+
+    expect(screen.getByText('Page 1 of 2')).toBeInTheDocument();
   });
 });

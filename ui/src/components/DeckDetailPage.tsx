@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Check, Copy } from 'lucide-react';
 import {
   fetchDeckDetail,
   type CardPerformanceRow,
@@ -9,7 +10,15 @@ import {
   type SnapshotFilters,
 } from '../api';
 import { formatPercent } from '../dashboardData';
-import { formatDateTime, formatDuration, formatNumber, formatTurnDuration, outcomeLabel, outcomeTone } from '../format';
+import {
+  formatCardName,
+  formatDateTime,
+  formatDuration,
+  formatNumber,
+  formatTurnDuration,
+  outcomeLabel,
+  outcomeTone,
+} from '../format';
 import { gameRouteHash } from '../routes';
 import { Badge } from './Badge';
 import { CardLink } from './CardLink';
@@ -28,16 +37,70 @@ type LoadState =
   | { status: 'loaded'; detail: DeckDetail }
   | { status: 'error'; message: string };
 
+type DeckListPerformanceRow = CardPerformanceRow & {
+  quantity: number | null;
+  deck_section: 'Main Deck' | 'Sideboard' | null;
+};
+
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
 }
 
-const cardColumns: Column<CardPerformanceRow>[] = [
+function cardNameAliases(cardName: string): Set<string> {
+  const aliases = new Set([cardName]);
+  cardName.split(' // ').forEach((name) => aliases.add(name.trim()));
+  return aliases;
+}
+
+function deckListPerformanceRows(detail: DeckDetail): DeckListPerformanceRow[] {
+  if (!detail.deck_export.available) {
+    return detail.card_performance.map((row) => ({
+      ...row,
+      quantity: null,
+      deck_section: null,
+    }));
+  }
+
+  const performance = detail.card_performance.map((row) => ({
+    row,
+    aliases: cardNameAliases(row.display_name),
+  }));
+  return [
+    ...detail.deck_export.main_deck.map((card) => ({ card, deck_section: 'Main Deck' as const })),
+    ...detail.deck_export.sideboard.map((card) => ({ card, deck_section: 'Sideboard' as const })),
+  ].map(({ card, deck_section }) => {
+    const aliases = cardNameAliases(card.display_name);
+    const matchingPerformance = performance.find(({ aliases: performanceAliases }) =>
+      Array.from(aliases).some((name) => performanceAliases.has(name)),
+    )?.row;
+    return {
+      display_name: card.display_name,
+      type_category: matchingPerformance?.type_category ?? card.type_category,
+      quantity: card.quantity,
+      deck_section,
+      games_seen: matchingPerformance?.games_seen ?? 0,
+      times_played: matchingPerformance?.times_played ?? 0,
+      times_drawn: matchingPerformance?.times_drawn ?? 0,
+      wins_when_seen: matchingPerformance?.wins_when_seen ?? 0,
+      losses_when_seen: matchingPerformance?.losses_when_seen ?? 0,
+      win_rate_when_seen: matchingPerformance?.win_rate_when_seen ?? null,
+    };
+  });
+}
+
+const cardColumns: Column<DeckListPerformanceRow>[] = [
+  { key: 'quantity', header: 'Count', numeric: true },
   {
     key: 'display_name',
     header: 'Card',
     render: (row) => <CardLink cardName={row.display_name} />,
     sortValue: (row) => row.display_name,
+  },
+  {
+    key: 'deck_section',
+    header: 'Section',
+    render: (row) => row.deck_section ?? 'Unknown',
+    sortValue: (row) => row.deck_section,
   },
   {
     key: 'type_category',
@@ -189,6 +252,7 @@ export function DeckDetailPage({
   filters?: SnapshotFilters;
 }) {
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -244,6 +308,36 @@ export function DeckDetailPage({
   }
 
   const { detail } = loadState;
+  const deckExport = detail.deck_export;
+  const cardRows = deckListPerformanceRows(detail);
+
+  async function copyArenaDeck() {
+    if (!deckExport?.available || !deckExport.text) {
+      return;
+    }
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(deckExport.text);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = deckExport.text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const copied = document.execCommand('copy');
+        textarea.remove();
+        if (!copied) {
+          throw new Error('Clipboard copy failed');
+        }
+      }
+      setCopyStatus('copied');
+      window.setTimeout(() => setCopyStatus('idle'), 1800);
+    } catch {
+      setCopyStatus('error');
+    }
+  }
+
   const metrics = [
     { label: 'Games', value: String(detail.summary.games) },
     { label: 'Record', value: `${detail.summary.wins}–${detail.summary.losses}` },
@@ -262,13 +356,29 @@ export function DeckDetailPage({
         </a>
         <div className="deck-detail-title">
           <DeckVisual deckName={detail.deck_name} visual={detail.deck_visual} />
-          <div>
-            <h2>{detail.deck_name}</h2>
-            <p>
-              {detail.deck_visual.card_name && detail.deck_visual.source === 'local_metadata'
-                ? `Signature card: ${detail.deck_visual.card_name}`
-                : 'No card data yet'}
-            </p>
+          <div className="deck-detail-title-content">
+            <div>
+              <h2>{detail.deck_name}</h2>
+              <p>
+                {detail.deck_visual.card_name && detail.deck_visual.source === 'local_metadata'
+                  ? `Signature card: ${formatCardName(detail.deck_visual.card_name)}`
+                  : 'No card data yet'}
+              </p>
+            </div>
+            <button
+              className="deck-export-button"
+              disabled={!deckExport?.available}
+              onClick={() => void copyArenaDeck()}
+              title={
+                deckExport?.available
+                  ? 'Copy this deck in MTG Arena import format'
+                  : 'No exact submitted deck list has been captured yet'
+              }
+              type="button"
+            >
+              {copyStatus === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+              {copyStatus === 'copied' ? 'Copied' : copyStatus === 'error' ? 'Copy Failed' : 'Copy Arena Deck'}
+            </button>
           </div>
         </div>
       </div>
@@ -287,15 +397,19 @@ export function DeckDetailPage({
 
       <Section
         id="deck-cards"
-        title="Card Performance"
-        description="Win rate in games where each card showed up (played, drawn, or otherwise seen)."
+        title="Deck List & Card Performance"
+        description={
+          deckExport.available
+            ? 'Latest captured main deck and sideboard counts, with tracked performance for each card.'
+            : 'Tracked card performance. Exact deck counts are unavailable because no submitted deck list was captured.'
+        }
       >
         <SortableTable
-          caption="Card performance"
+          caption="Deck list and card performance"
           columns={cardColumns}
-          initialSort={{ key: 'games_seen', direction: 'desc' }}
+          initialSort={{ key: 'deck_section', direction: 'asc' }}
           getRowKey={(row) => `${row.display_name}-${row.type_category}`}
-          rows={detail.card_performance}
+          rows={cardRows}
         />
       </Section>
 
@@ -323,11 +437,7 @@ export function DeckDetailPage({
       </Section>
 
       <Section id="deck-formats" title="Formats">
-        <FormatsTable
-          caption="Format performance for this deck"
-          midweekRows={detail.midweek_formats}
-          rows={detail.formats}
-        />
+        <FormatsTable caption="Format performance for this deck" rows={detail.formats} />
       </Section>
 
       <Section id="deck-games" title="Recent Games" description="Game length and average turn pace for both players.">

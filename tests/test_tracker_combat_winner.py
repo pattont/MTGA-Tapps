@@ -1473,6 +1473,72 @@ def test_turn_timing_persistence_coalesces_duplicate_turn_segments(tmp_path):
     ]
 
 
+def test_incomplete_live_turn_write_recovers_from_console_headers(tmp_path):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.turns_taken_by_seat = {1: {1}, 2: {2}}
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            "INSERT INTO tracker_sessions (id, started_at) VALUES ('session-1', '2026-07-01T12:00:00')"
+        )
+        conn.execute("INSERT INTO matches (id, session_id) VALUES ('match-1', 'session-1')")
+        conn.execute(
+            """
+            INSERT INTO games (
+                id, session_id, match_id, started_at, ended_at, total_turns, outcome
+            ) VALUES (
+                'game-1', 'session-1', 'match-1',
+                '2026-07-01T12:00:00', '2026-07-01T12:01:30', 2, 'win'
+            )
+            """
+        )
+        conn.executemany(
+            """
+            INSERT INTO participants (id, game_id, seat_id, role)
+            VALUES (?, 'game-1', ?, ?)
+            """,
+            (("player-1", 1, "player"), ("opponent-1", 2, "opponent")),
+        )
+        conn.executemany(
+            """
+            INSERT INTO game_events (
+                session_id, game_id, event_time, turn_number, event_type, text
+            ) VALUES ('session-1', 'game-1', ?, ?, 'turn', ?)
+            """,
+            (
+                ("2026-07-01T12:00:10", 1, "Turn 1 - YOUR TURN"),
+                ("2026-07-01T12:00:40", 2, "Turn 2 - OPPONENT'S TURN"),
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO console_logs (
+                session_id, created_at, match_started_at, turn_number, text
+            ) VALUES (
+                'session-1', '2026-07-01T12:00:40',
+                '2026-07-01T12:00:00', 2, 'Previous Turn (You): 30s'
+            )
+            """
+        )
+
+        tracker._persist_turn_timings_with_recovery(conn, "game-1")
+        rows = conn.execute(
+            """
+            SELECT turn_number, seat_id, duration_seconds, timing_source
+            FROM game_turns
+            ORDER BY turn_number
+            """
+        ).fetchall()
+
+    assert rows == [
+        (1, 1, 30, "recovered_previous_turn_logs"),
+        (2, 2, 50, "recovered_previous_turn_logs"),
+    ]
+
+
 def test_turn_header_shows_the_previous_turn_duration(capsys):
     tracker = make_tracker()
     tracker.game_state.player_seat_id = 1
@@ -1575,7 +1641,10 @@ def test_game_summary_prints_first_player_and_session_split(capsys):
 
     assert "Went First This Game: Opponent" in out
     assert "Went First: You 4/11 (36.4%), Opponent 7/11 (63.6%)" in out
-    assert "Turn Time: You 1:30 across 1 turn(s) (1:30 avg), Opponent 1:00 across 1 turn(s) (1:00 avg)" in out
+    assert (
+        "Turn Time: You 1:30 across 1 turn(s) (1:30 avg), Opponent 1:00 across 1 turn(s) (1:00 avg)"
+        in out
+    )
 
 
 def test_seatless_concede_req_does_not_override_structured_winner():
@@ -1728,6 +1797,46 @@ def test_put_before_first_turn_is_suppressed(capsys):
     out = capsys.readouterr().out
 
     assert out == ""
+
+
+def test_london_mulligan_put_into_library_is_not_reported_as_battlefield(capsys):
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.in_match = True
+    tracker.game_state.turn_number = 1
+    tracker.game_state.active_player = 1
+    tracker.game_state.last_turn_announced = 1
+    tracker.card_db.names[95720] = "Jeskai Revelation"
+
+    annotation = {
+        "type": ["AnnotationType_ZoneTransfer"],
+        "affectorId": 1,
+        "affectedIds": [339],
+        "details": [
+            {"key": "zone_src", "valueInt32": [31]},
+            {"key": "zone_dest", "valueInt32": [32]},
+            {"key": "category", "valueString": ["Put"]},
+        ],
+    }
+    game_objects = [
+        {
+            "instanceId": 339,
+            "grpId": 95720,
+            "zoneId": 32,
+            "ownerSeatId": 1,
+            "controllerSeatId": 1,
+            "cardTypes": ["CardType_Instant"],
+        }
+    ]
+    zones_by_id = {
+        31: {"zoneId": 31, "type": "ZoneType_Hand", "ownerSeatId": 1},
+        32: {"zoneId": 32, "type": "ZoneType_Library", "ownerSeatId": 1},
+    }
+
+    tracker._process_annotation(annotation, game_objects, zones_by_id=zones_by_id)
+
+    assert capsys.readouterr().out == ""
 
 
 def test_put_into_hand_uses_destination_zone_and_source_spell(capsys):
@@ -3726,10 +3835,7 @@ def test_each_game_rechecks_latest_active_match_room(tmp_path):
 
     with log_path.open("a", encoding="utf-8") as f:
         f.write(
-            "\n"
-            + room_line(
-                "MatchGameRoomStateType_MatchCompleted", "first-match", "MWM_Momir"
-            )
+            "\n" + room_line("MatchGameRoomStateType_MatchCompleted", "first-match", "MWM_Momir")
         )
         f.write("\n" + room_line("MatchGameRoomStateType_Playing", "second-match", "Play"))
 
@@ -4787,6 +4893,7 @@ def test_sparky_game_summary_is_not_persisted_to_sqlite(capsys, tmp_path):
     capsys.readouterr()
 
     with sqlite3.connect(tracker._console_db_path) as conn:
+
         def table_count(table_name):
             exists = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -4824,9 +4931,7 @@ def test_game_summary_persists_brawl_starting_life(capsys, tmp_path):
     capsys.readouterr()
 
     with sqlite3.connect(tracker._console_db_path) as conn:
-        rows = conn.execute(
-            "SELECT role, starting_life FROM participants ORDER BY role"
-        ).fetchall()
+        rows = conn.execute("SELECT role, starting_life FROM participants ORDER BY role").fetchall()
 
     assert rows == [("opponent", 25), ("player", 25)]
 

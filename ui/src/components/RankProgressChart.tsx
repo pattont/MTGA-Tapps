@@ -7,15 +7,61 @@ const VIEW_HEIGHT = 150;
 const MAX_RANK_SCORE = 120;
 const RANK_LABELS = ['Mythic', 'Diamond', 'Platinum', 'Gold', 'Silver', 'Bronze'];
 
+function normalizedRankRows(rows: RankProgressRow[]): RankProgressRow[] {
+  const normalized: RankProgressRow[] = [];
+  rows.forEach((row) => {
+    if (row.rank_class === 'Mythic') {
+      normalized.push(row);
+      return;
+    }
+    const previous = normalized[normalized.length - 1];
+    const sameTier =
+      previous?.rank_class === row.rank_class && previous?.rank_level === row.rank_level;
+    const sameRecord =
+      sameTier &&
+      previous.matches_won === row.matches_won &&
+      previous.matches_lost === row.matches_lost;
+    const advancedByWin =
+      previous !== undefined &&
+      sameTier &&
+      row.rank_step === 0 &&
+      row.matches_won !== null &&
+      previous.matches_won !== null &&
+      row.matches_won > previous.matches_won &&
+      row.matches_lost === previous.matches_lost;
+    const displayStep =
+      row.raw_step !== null && row.raw_step !== undefined
+        ? row.raw_step
+        : row.rank_step > 0
+          ? Math.min(row.rank_steps, row.rank_step + 1)
+          : sameRecord
+            ? previous?.rank_step ?? 0
+            : advancedByWin
+              ? 1
+              : 0;
+    normalized.push({
+      ...row,
+      rank_step: displayStep,
+      rank_score: row.rank_score + (displayStep - row.rank_step),
+      rank_label: `${row.rank_class} ${row.rank_level} (${displayStep}/${row.rank_steps})`,
+    });
+  });
+  return normalized;
+}
+
 export function RankProgressChart({ rows }: { rows: RankProgressRow[] }) {
+  const displayRows = useMemo(() => normalizedRankRows(rows), [rows]);
   const points = useMemo(
     () =>
-      rows.map((row, index) => ({
+      displayRows.map((row, index) => ({
         row,
-        x: rows.length === 1 ? VIEW_WIDTH / 2 : (index * VIEW_WIDTH) / (rows.length - 1),
+        x:
+          displayRows.length === 1
+            ? VIEW_WIDTH / 2
+            : (index * VIEW_WIDTH) / (displayRows.length - 1),
         y: VIEW_HEIGHT - (Math.max(0, Math.min(MAX_RANK_SCORE, row.rank_score)) / MAX_RANK_SCORE) * VIEW_HEIGHT,
       })),
-    [rows],
+    [displayRows],
   );
 
   if (points.length === 0) {

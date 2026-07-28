@@ -88,8 +88,11 @@ export interface RecentGameRow {
   outcome: string | null;
   mulligans: number | null;
   duration_seconds: number | null;
-  player_avg_turn_seconds: number | null;
-  opponent_avg_turn_seconds: number | null;
+  total_turns: number | null;
+  flood_reasons: string[];
+  is_flood: boolean;
+  screw_reasons?: string[];
+  is_screw?: boolean;
 }
 
 export interface MatchRow {
@@ -132,6 +135,7 @@ export interface RankProgressRow {
   rank_level: number;
   rank_step: number;
   rank_steps: number;
+  raw_step?: number | null;
   rank_score: number;
   rank_label: string;
   matches_won: number | null;
@@ -227,9 +231,24 @@ export interface DeckGameRow {
   play_draw: string | null;
 }
 
+export interface DeckExportCard {
+  display_name: string;
+  quantity: number;
+  type_category: string;
+}
+
+export interface DeckExport {
+  available: boolean;
+  source_game_id: string | null;
+  main_deck: DeckExportCard[];
+  sideboard: DeckExportCard[];
+  text: string | null;
+}
+
 export interface DeckDetail {
   deck_name: string;
   deck_visual: DeckVisual;
+  deck_export: DeckExport;
   summary: Summary;
   profile: DeckProfile;
   formats: FormatRow[];
@@ -298,6 +317,10 @@ export interface OpponentVisibleCardRow extends GamePlayedCardRow {
   exiled_count: number;
 }
 
+export type TimelineTextSegment =
+  | { kind: 'text'; text: string }
+  | { kind: 'card'; text: string; card_name: string; card_type?: string | null };
+
 export interface GameTimelineRow {
   turn_number: number | null;
   phase: string | null;
@@ -305,6 +328,7 @@ export interface GameTimelineRow {
   event_type: string | null;
   actor_role: string | null;
   text: string;
+  text_segments: TimelineTextSegment[];
   player_life: number | null;
   opponent_life: number | null;
 }
@@ -320,7 +344,22 @@ export interface GameDrawQuality {
   identified_draws: number;
   land_draws: number;
   land_draw_pct: number | null;
+  total_cards_seen?: number;
+  opening_lands?: number;
+  lands_seen?: number;
+  land_seen_pct?: number | null;
+  expected_land_rate?: number;
+  expected_lands_seen?: number;
+  flood_probability_pct?: number | null;
+  screw_probability_pct?: number | null;
+  longest_land_streak?: number;
+  max_lands_in_eight?: number | null;
+  longest_low_land_drought?: number;
+  low_land_drought_lands?: number | null;
+  flood_reasons?: string[];
   is_flood: boolean;
+  screw_reasons?: string[];
+  is_screw?: boolean;
 }
 
 export interface TurnTimingSummary {
@@ -424,12 +463,22 @@ export interface CardOpenerImpact {
   times_drawn: number;
 }
 
+export interface CardOpponentImpact {
+  games: number;
+  plays: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  loss_rate: number | null;
+}
+
 export interface CardDetail {
   card_name: string;
   image_url: string | null;
   summary: CardSummary;
   all_usage: CardAllUsage;
   by_role: CardByRoleRow[];
+  opponent_impact?: CardOpponentImpact;
   by_deck: CardByDeckRow[];
   opener_impact: CardOpenerImpact;
 }
