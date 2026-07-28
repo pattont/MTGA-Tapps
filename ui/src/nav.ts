@@ -11,6 +11,7 @@ export const dashboardNavItems: AppNavItem[] = [
   { id: 'rank-progress', label: 'Ranked Progress' },
   { id: 'recent-games', label: 'Recent Games' },
   { id: 'decks', label: 'Decks' },
+  { id: 'combat', label: 'Combat' },
   { id: 'formats', label: 'Formats' },
   { id: 'visible-drawn-cards', label: 'Visible Drawn Cards' },
   { id: 'matches', label: 'Bo3 Matches' },
@@ -20,6 +21,7 @@ export const dashboardNavItems: AppNavItem[] = [
 export const deckNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
   { id: 'deck-trend', label: 'Win Rate Trend' },
+  { id: 'deck-combat', label: 'Combat Profile' },
   { id: 'deck-cards', label: 'Deck List & Card Performance' },
   { id: 'deck-openers', label: 'Opening Hands' },
   { id: 'deck-mulligans', label: 'Mulligans' },
@@ -32,6 +34,7 @@ export const gameNavItems: AppNavItem[] = [
   { id: 'game-summary', label: 'Summary' },
   { id: 'game-turn-timing', label: 'Turn Timing' },
   { id: 'game-draw-quality', label: 'Draw Quality' },
+  { id: 'game-combat', label: 'Combat & Resources' },
   { id: 'game-life', label: 'Life Totals' },
   { id: 'game-opening-hand', label: 'Opening Hand' },
   { id: 'game-draws', label: 'Drawn Cards' },

@@ -402,6 +402,10 @@ class TrackerAnalyticsMixin:
         stats = self.game_state.match_stats.get(int(seat_id), {}) if seat_id in (1, 2) else {}
         damage_dealt = int(stats.get("total_damage", 0))
         life_lost = int(stats.get("life_lost", 0))
+        self_damage = int(stats.get("self_damage", 0))
+        # damage_taken means externally inflicted life loss; life_lost keeps the
+        # raw total including the participant's own payments/self damage.
+        damage_taken = max(0, life_lost - self_damage)
         conn.execute(
             """
             INSERT INTO game_participant_stats (
@@ -450,9 +454,9 @@ class TrackerAnalyticsMixin:
                 int(stats.get("blocking_creatures", 0)),
                 int(stats.get("blockers_lost", 0)),
                 damage_dealt,
+                damage_taken,
                 life_lost,
-                life_lost,
-                int(stats.get("self_damage", 0)),
+                self_damage,
                 int(stats.get("life_gain", 0)),
                 cards_played,
                 int(stats.get("cards_drawn", 0)),

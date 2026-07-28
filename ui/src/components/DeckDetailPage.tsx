@@ -396,6 +396,51 @@ export function DeckDetailPage({
       </Section>
 
       <Section
+        id="deck-combat"
+        title="Combat Profile"
+        description="Per-game combat and resource telemetry for this deck. Trade Ratio is blockers killed per attacker lost."
+      >
+        {detail.combat_profile ? (
+          <section className="metric-grid metric-grid-deck" aria-label="Deck combat metrics">
+            <MetricCard
+              label="Profile"
+              value={detail.combat_profile.aggression_profile ?? '—'}
+            />
+            <MetricCard
+              label="Dmg Dealt / Game"
+              value={formatNumber(detail.combat_profile.avg_damage_dealt)}
+            />
+            <MetricCard
+              label="Dmg Taken / Game"
+              value={formatNumber(detail.combat_profile.avg_damage_taken)}
+            />
+            <MetricCard
+              label="Attacks / Game"
+              value={formatNumber(detail.combat_profile.avg_attack_steps)}
+            />
+            <MetricCard
+              label="Attackers / Attack"
+              value={formatNumber(detail.combat_profile.attackers_per_attack)}
+            />
+            <MetricCard
+              label="Trade Ratio"
+              value={
+                detail.combat_profile.trade_ratio === null
+                  ? '—'
+                  : formatNumber(detail.combat_profile.trade_ratio)
+              }
+            />
+            <MetricCard
+              label="Life Gained / Game"
+              value={formatNumber(detail.combat_profile.avg_life_gained)}
+            />
+          </section>
+        ) : (
+          <p className="empty-state">No combat telemetry recorded for this deck yet.</p>
+        )}
+      </Section>
+
+      <Section
         id="deck-cards"
         title="Deck List & Card Performance"
         description={

@@ -70,6 +70,35 @@ export interface DrawnCardRow {
   pct_of_games: number | null;
 }
 
+export interface CombatDeckRow {
+  deck_name: string;
+  games: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  avg_damage_dealt: number | null;
+  avg_damage_taken: number | null;
+  avg_attack_steps: number | null;
+  attackers_per_attack: number | null;
+  attackers_lost: number;
+  blockers_lost: number;
+  trade_ratio: number | null;
+  avg_life_gained: number | null;
+  avg_player_turns: number | null;
+  aggression_profile: 'Aggro' | 'Midrange' | 'Control' | null;
+}
+
+export interface CombatSplitRow {
+  split: string;
+  games: number;
+  avg_damage_dealt: number | null;
+  avg_damage_taken: number | null;
+  avg_attack_steps: number | null;
+  avg_life_gained: number | null;
+  avg_cards_drawn: number | null;
+  avg_cards_denied: number | null;
+}
+
 export interface MomentumRow {
   split: string;
   games: number;
@@ -174,6 +203,8 @@ export interface DashboardSnapshot {
   draw_quality: DrawQualityRow[];
   drawn_cards: DrawnCardRow[];
   momentum: MomentumRow[];
+  combat_decks: CombatDeckRow[];
+  combat_split: CombatSplitRow[];
   recent: RecentGameRow[];
   matches: MatchRow[];
   sessions: SessionRow[];
@@ -251,6 +282,7 @@ export interface DeckDetail {
   deck_export: DeckExport;
   summary: Summary;
   profile: DeckProfile;
+  combat_profile: CombatDeckRow | null;
   formats: FormatRow[];
   midweek_formats: FormatRow[];
   card_performance: CardPerformanceRow[];
@@ -378,10 +410,30 @@ export interface GameTurnTimingRow {
   timing_source: 'live' | 'estimated_header_events' | string;
 }
 
+export interface GameParticipantStatsRow {
+  role: string;
+  attack_steps: number;
+  attacking_creatures: number;
+  attackers_lost: number;
+  blocking_creatures: number;
+  blockers_lost: number;
+  damage_dealt: number;
+  damage_taken: number;
+  life_lost: number;
+  self_damage: number;
+  life_gained: number;
+  cards_played: number;
+  cards_drawn: number;
+  cards_discarded: number;
+  cards_milled: number;
+  cards_exiled: number;
+}
+
 export interface GameDetail {
   game: GameHeader;
   player: GameParticipant;
   opponent: GameParticipant;
+  participant_stats: GameParticipantStatsRow[];
   opening_hand: GameOpeningHandRow[];
   drawn: GameDrawnCardRow[];
   draw_quality: GameDrawQuality;
