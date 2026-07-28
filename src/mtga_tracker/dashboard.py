@@ -485,6 +485,99 @@ def _deck_decklist_analysis(
     return composition_rows, version_rows, sideboard_summary
 
 
+def _mana_readiness_rows(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> List[Dict[str, Any]]:
+    """Land availability on curve: had N lands by (global) turn N, with win rates.
+
+    Uses opening-hand lands plus visible drawn lands with a known turn number.
+    Games with unknown-turn land draws are excluded per threshold to avoid
+    counting a land as late/early when its draw turn was not captured.
+    """
+    games = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              g.id AS game_id,
+              g.outcome,
+              p.id AS participant_id,
+              (
+                SELECT COUNT(*) FROM game_opening_hand_cards oh
+                WHERE oh.participant_id = p.id
+                  AND (oh.type_category = 'Land' OR oh.display_name LIKE '%(Land)')
+              ) AS opening_lands,
+              (
+                SELECT COUNT(*) FROM game_opening_hand_cards oh
+                WHERE oh.participant_id = p.id
+              ) AS opening_cards
+            FROM games g
+            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            WHERE {where} AND g.outcome IN ('win', 'loss')
+            """,
+            params,
+        )
+    )
+    if not games:
+        return []
+    participant_ids = [row["participant_id"] for row in games]
+    placeholders = ",".join("?" for _ in participant_ids)
+    land_draws: Dict[str, List[Optional[int]]] = {}
+    for row in _dict_rows(
+        conn.execute(
+            f"""
+            SELECT participant_id, turn_number
+            FROM game_drawn_cards
+            WHERE participant_id IN ({placeholders})
+              AND (type_category = 'Land' OR display_name LIKE '%(Land)')
+            """,
+            participant_ids,
+        )
+    ):
+        land_draws.setdefault(row["participant_id"], []).append(row["turn_number"])
+
+    rows: List[Dict[str, Any]] = []
+    for threshold in (2, 3, 4, 5):
+        on_time = {"wins": 0, "losses": 0}
+        behind = {"wins": 0, "losses": 0}
+        eligible = 0
+        for game in games:
+            if not int(game.get("opening_cards") or 0):
+                continue
+            draws = land_draws.get(game["participant_id"], [])
+            if any(turn is None for turn in draws):
+                continue
+            eligible += 1
+            lands_by_turn = int(game.get("opening_lands") or 0) + sum(
+                1 for turn in draws if turn is not None and int(turn) <= threshold
+            )
+            bucket = on_time if lands_by_turn >= threshold else behind
+            if game.get("outcome") == "win":
+                bucket["wins"] += 1
+            else:
+                bucket["losses"] += 1
+        if not eligible:
+            continue
+        on_time_games = on_time["wins"] + on_time["losses"]
+        behind_games = behind["wins"] + behind["losses"]
+        rows.append(
+            {
+                "threshold": threshold,
+                "label": f"{threshold} lands by turn {threshold}",
+                "games": eligible,
+                "on_time_games": on_time_games,
+                "on_time_pct": round(100.0 * on_time_games / eligible, 1),
+                "on_time_win_rate": (
+                    round(100.0 * on_time["wins"] / on_time_games, 1) if on_time_games else None
+                ),
+                "behind_games": behind_games,
+                "behind_win_rate": (
+                    round(100.0 * behind["wins"] / behind_games, 1) if behind_games else None
+                ),
+            }
+        )
+    return rows
+
+
 def _combat_deck_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> List[Dict[str, Any]]:
     """Per-deck combat/aggression profile from game_participant_stats."""
     rows = _dict_rows(
@@ -1222,6 +1315,7 @@ def dashboard_snapshot(
             )
         combat_deck_rows = _combat_deck_rows(conn, where, params)
         combat_split_rows = _combat_split_rows(conn, where, params)
+        mana_readiness_rows = _mana_readiness_rows(conn, where, params)
         deck_visuals = _deck_visuals(conn)
         for row in deck_rows:
             deck_name = row["deck_name"]
@@ -1288,6 +1382,7 @@ def dashboard_snapshot(
         "momentum": momentum_rows,
         "combat_decks": combat_deck_rows,
         "combat_split": combat_split_rows,
+        "mana_readiness": mana_readiness_rows,
         "recent": recent_rows,
         "trend": trend_rows,
         "rank_progress": rank_progress_rows,
@@ -1348,6 +1443,7 @@ def deck_detail(
         composition_rows, version_rows, sideboard_summary = _deck_decklist_analysis(
             conn, where, params
         )
+        mana_readiness_rows = _mana_readiness_rows(conn, where, params)
         format_rows, midweek_rows = _grouped_format_rows(conn, where, params)
         submitted_cards_by_game: Dict[str, Set[str]] = {}
         if _table_exists(conn, "game_deck_cards"):
@@ -1614,6 +1710,7 @@ def deck_detail(
         "composition": composition_rows,
         "versions": version_rows,
         "sideboard": sideboard_summary,
+        "mana_readiness": mana_readiness_rows,
         "formats": format_rows,
         "midweek_formats": midweek_rows,
         "card_performance": card_rows,
@@ -1992,6 +2089,127 @@ def opponent_detail(db_path: Path = DEFAULT_DB_PATH, opponent_name: str = "") ->
     }
 
 
+def _card_multiplicity(
+    conn: sqlite3.Connection, clean_name: str
+) -> Dict[str, Any]:
+    """Repeat-draw analysis for one card across the player's games.
+
+    For every game where the card was in the submitted maindeck (or, lacking a
+    decklist, where it was seen), count how many copies the player saw
+    (opening hand + visible draws) and compare against the hypergeometric
+    expectation from the decklist copies and total cards seen that game.
+    """
+    like_param = f"{clean_name} (%"
+    seen_rows = _dict_rows(
+        conn.execute(
+            """
+            SELECT
+              g.id AS game_id,
+              g.outcome,
+              p.id AS participant_id,
+              COALESCE(oh.copies, 0) + COALESCE(dr.copies, 0) AS copies_seen,
+              COALESCE(oh_total.total, 0) + COALESCE(dr_total.total, 0) AS cards_seen,
+              dc.quantity AS copies_in_deck,
+              dc_total.deck_size AS deck_size
+            FROM games g
+            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            LEFT JOIN (
+              SELECT participant_id, COUNT(*) AS copies
+              FROM game_opening_hand_cards
+              WHERE display_name = ? OR display_name LIKE ?
+              GROUP BY participant_id
+            ) oh ON oh.participant_id = p.id
+            LEFT JOIN (
+              SELECT participant_id, COUNT(*) AS copies
+              FROM game_drawn_cards
+              WHERE display_name = ? OR display_name LIKE ?
+              GROUP BY participant_id
+            ) dr ON dr.participant_id = p.id
+            LEFT JOIN (
+              SELECT participant_id, COUNT(*) AS total
+              FROM game_opening_hand_cards
+              GROUP BY participant_id
+            ) oh_total ON oh_total.participant_id = p.id
+            LEFT JOIN (
+              SELECT participant_id, COUNT(*) AS total
+              FROM game_drawn_cards
+              GROUP BY participant_id
+            ) dr_total ON dr_total.participant_id = p.id
+            LEFT JOIN (
+              SELECT participant_id, SUM(quantity) AS quantity
+              FROM game_deck_cards
+              WHERE deck_zone = 'deck' AND (display_name = ? OR display_name LIKE ?)
+              GROUP BY participant_id
+            ) dc ON dc.participant_id = p.id
+            LEFT JOIN (
+              SELECT participant_id, SUM(quantity) AS deck_size
+              FROM game_deck_cards
+              WHERE deck_zone = 'deck'
+              GROUP BY participant_id
+            ) dc_total ON dc_total.participant_id = p.id
+            WHERE COALESCE(dc.quantity, 0) > 0
+               OR COALESCE(oh.copies, 0) + COALESCE(dr.copies, 0) > 0
+            """,
+            (clean_name, like_param) * 3,
+        )
+    )
+    if not seen_rows:
+        return {"games": 0, "buckets": []}
+
+    buckets: Dict[int, Dict[str, Any]] = {}
+    expected_at_least: Dict[int, float] = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
+    expected_games = 0
+    for row in seen_rows:
+        copies_seen = int(row.get("copies_seen") or 0)
+        bucket_key = min(copies_seen, 4)
+        bucket = buckets.setdefault(
+            bucket_key,
+            {"copies_seen": bucket_key, "games": 0, "wins": 0, "losses": 0},
+        )
+        bucket["games"] += 1
+        if row.get("outcome") == "win":
+            bucket["wins"] += 1
+        elif row.get("outcome") == "loss":
+            bucket["losses"] += 1
+        deck_size = int(row.get("deck_size") or 0)
+        copies_in_deck = int(row.get("copies_in_deck") or 0)
+        cards_seen = int(row.get("cards_seen") or 0)
+        if deck_size and copies_in_deck and cards_seen:
+            expected_games += 1
+            for k in expected_at_least:
+                expected_at_least[k] += hypergeom_tail_at_least(
+                    k,
+                    population_size=deck_size,
+                    success_count=copies_in_deck,
+                    draw_count=min(cards_seen, deck_size),
+                )
+
+    total_games = len(seen_rows)
+    bucket_rows = []
+    for key in sorted(buckets):
+        bucket = buckets[key]
+        decided = bucket["wins"] + bucket["losses"]
+        games_at_least = sum(b["games"] for k, b in buckets.items() if k >= key)
+        bucket_rows.append(
+            {
+                "copies_seen": key,
+                "label": f"{key}+" if key == 4 else str(key),
+                "games": bucket["games"],
+                "pct_of_games": round(100.0 * bucket["games"] / total_games, 1),
+                "pct_at_least": round(100.0 * games_at_least / total_games, 1),
+                "expected_pct_at_least": (
+                    round(100.0 * expected_at_least[key] / expected_games, 1)
+                    if expected_games and key in expected_at_least and key > 0
+                    else None
+                ),
+                "wins": bucket["wins"],
+                "losses": bucket["losses"],
+                "win_rate": round(100.0 * bucket["wins"] / decided, 1) if decided else None,
+            }
+        )
+    return {"games": total_games, "buckets": bucket_rows}
+
+
 def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[str, Any]:
     """Return drill-down analytics for one clean card name.
 
@@ -2106,6 +2324,7 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
             """,
             match_params,
         ).fetchone()
+        multiplicity = _card_multiplicity(conn, clean_name)
 
     opponent_usage = next((row for row in by_role if row["role"] == "opponent"), None)
     opponent_games = int(opponent_usage["games_seen"] or 0) if opponent_usage else 0
@@ -2157,6 +2376,7 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
             ),
         },
         "by_deck": by_deck,
+        "multiplicity": multiplicity,
         "opener_impact": {
             "games_in_opener": int(opener[0] or 0) if opener else 0,
             "wins": int(opener[1] or 0) if opener else 0,

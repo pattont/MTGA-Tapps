@@ -26,6 +26,7 @@ import { Badge } from './Badge';
 import { CardLink } from './CardLink';
 import { DeckVisual } from './DeckVisual';
 import { FormatsTable } from './FormatsTable';
+import { ManaReadinessTable } from './ManaReadinessTable';
 import { MetricCard } from './MetricCard';
 import { SortableTable, type Column } from './SortableTable';
 import { TrendChart } from './TrendChart';
@@ -637,6 +638,14 @@ export function DeckDetailPage({
             ) : null}
           </>
         ) : null}
+      </Section>
+
+      <Section
+        id="deck-lands"
+        title="Land Availability"
+        description="How often this deck had N lands by turn N, and the cost of falling behind."
+      >
+        <ManaReadinessTable caption="Deck land availability" rows={detail.mana_readiness ?? []} />
       </Section>
 
       <Section id="deck-formats" title="Formats">

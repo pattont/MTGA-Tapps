@@ -370,6 +370,22 @@ export function GameDetailPage({
           opponent: opponentStats ? opponentStats[key] : null,
         }))
       : [];
+  const drawsByTurnMap = new Map<number, { lands: number; nonlands: number }>();
+  for (const row of detail.drawn) {
+    if (row.turn_number === null || row.turn_number === undefined) {
+      continue;
+    }
+    const bucket = drawsByTurnMap.get(row.turn_number) ?? { lands: 0, nonlands: 0 };
+    if ((row.type_category ?? '').toLowerCase() === 'land' || row.display_name.endsWith('(Land)')) {
+      bucket.lands += 1;
+    } else {
+      bucket.nonlands += 1;
+    }
+    drawsByTurnMap.set(row.turn_number, bucket);
+  }
+  const drawsByTurn = Array.from(drawsByTurnMap.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([turn, counts]) => ({ turn, ...counts }));
   const timelineReturnHash = gameRouteHash(gameId, backHref, 'game-timeline');
   const metricCards = [
     { label: 'Play / Draw', value: playDraw },
@@ -518,6 +534,19 @@ export function GameDetailPage({
       </Section>
 
       <Section id="game-draws" title="Drawn Cards">
+        {drawsByTurn.length > 0 ? (
+          <div className="draws-by-turn" aria-label="Draws by turn">
+            {drawsByTurn.map(({ turn, lands, nonlands }) => (
+              <div key={turn} className="draws-by-turn-cell">
+                <span className="draws-by-turn-turn">T{turn}</span>
+                <span className="draws-by-turn-counts">
+                  {lands > 0 ? <span className="draws-by-turn-lands">{lands}L</span> : null}
+                  {nonlands > 0 ? <span className="draws-by-turn-spells">{nonlands}S</span> : null}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
         <SortableTable
           caption="Drawn cards"
           columns={drawnColumns}

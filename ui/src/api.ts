@@ -99,6 +99,17 @@ export interface CombatSplitRow {
   avg_cards_denied: number | null;
 }
 
+export interface ManaReadinessRow {
+  threshold: number;
+  label: string;
+  games: number;
+  on_time_games: number;
+  on_time_pct: number;
+  on_time_win_rate: number | null;
+  behind_games: number;
+  behind_win_rate: number | null;
+}
+
 export interface MomentumRow {
   split: string;
   games: number;
@@ -205,6 +216,7 @@ export interface DashboardSnapshot {
   momentum: MomentumRow[];
   combat_decks: CombatDeckRow[];
   combat_split: CombatSplitRow[];
+  mana_readiness: ManaReadinessRow[];
   recent: RecentGameRow[];
   matches: MatchRow[];
   sessions: SessionRow[];
@@ -329,6 +341,7 @@ export interface DeckDetail {
   composition: DeckCompositionRow[];
   versions: DeckVersionRow[];
   sideboard: DeckSideboardSummary | null;
+  mana_readiness: ManaReadinessRow[];
   formats: FormatRow[];
   midweek_formats: FormatRow[];
   card_performance: CardPerformanceRow[];
@@ -570,6 +583,23 @@ export interface CardOpponentImpact {
   loss_rate: number | null;
 }
 
+export interface CardMultiplicityBucket {
+  copies_seen: number;
+  label: string;
+  games: number;
+  pct_of_games: number;
+  pct_at_least: number;
+  expected_pct_at_least: number | null;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+}
+
+export interface CardMultiplicity {
+  games: number;
+  buckets: CardMultiplicityBucket[];
+}
+
 export interface CardDetail {
   card_name: string;
   image_url: string | null;
@@ -578,6 +608,7 @@ export interface CardDetail {
   by_role: CardByRoleRow[];
   opponent_impact?: CardOpponentImpact;
   by_deck: CardByDeckRow[];
+  multiplicity?: CardMultiplicity;
   opener_impact: CardOpenerImpact;
 }
 
