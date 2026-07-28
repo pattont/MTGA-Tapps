@@ -133,9 +133,16 @@ Important tables:
 - `game_events`: structured event history where available.
 - `console_logs`: rendered console log lines for later dashboard/query work.
 - `raw_game_payloads`: raw payload persistence when enabled/available.
-- `rank_snapshots`: constructed rank changes by season, with optional ranked match/game linkage.
+- `rank_snapshots`: constructed and limited rank changes by season, with optional ranked match/game linkage.
+- `game_annotations`: user notes and comma-joined tags per game, written by the dashboard's
+  `POST /api/game/annotation` endpoint (the only write path in the dashboard server).
+- `schema_migrations`: numbered one-time migrations applied by `AnalyticsStore.apply_pending_migrations`
+  (baseline is version 1; add new migrations there rather than ad-hoc ALTERs when possible).
 
 When adding stats, persist both player and opponent perspectives when the log can support it.
+
+Shared draw-quality math (hypergeometrics, land runs, per-game metrics) lives in `draw_quality.py`
+and is decklist-aware; the dashboard and CLI must both use it rather than reimplementing rates.
 
 Use `format_normalizer.py` for queue labels and best-of inference. Do not duplicate string-matching format logic in tracker mixins or reports.
 
