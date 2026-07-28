@@ -8,7 +8,6 @@ import {
   type DeckGameRow,
   type DeckVersionRow,
   type MulliganRow,
-  type OpeningHandRow,
   type SnapshotFilters,
 } from '../api';
 import { formatPercent } from '../dashboardData';
@@ -208,7 +207,9 @@ const cardColumns: Column<DeckListPerformanceRow>[] = [
   },
 ];
 
-const versionColumns: Column<DeckVersionRow>[] = [
+type VersionRowWithDelta = DeckVersionRow & { wr_delta: number | null };
+
+const versionColumns: Column<VersionRowWithDelta>[] = [
   { key: 'version', header: 'Version', numeric: true },
   {
     key: 'first_played',
@@ -228,6 +229,14 @@ const versionColumns: Column<DeckVersionRow>[] = [
     header: 'Win Rate',
     render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
     sortValue: (row) => row.win_rate,
+    numeric: true,
+  },
+  {
+    key: 'wr_delta',
+    header: 'WR vs Previous',
+    render: (row) =>
+      row.wr_delta === null ? '—' : `${row.wr_delta > 0 ? '+' : ''}${Math.round(row.wr_delta * 10) / 10}%`,
+    sortValue: (row) => row.wr_delta,
     numeric: true,
   },
   {
@@ -251,31 +260,6 @@ const versionColumns: Column<DeckVersionRow>[] = [
         </span>
       ),
     sortValue: (row) => row.added.length + row.removed.length,
-  },
-];
-
-const openerColumns: Column<OpeningHandRow>[] = [
-  {
-    key: 'display_name',
-    header: 'Card',
-    render: (row) => <CardLink cardName={row.display_name} />,
-    sortValue: (row) => row.display_name,
-  },
-  {
-    key: 'type_category',
-    header: 'Type',
-    render: (row) => <TypeChip type={row.type_category} />,
-    sortValue: (row) => row.type_category,
-  },
-  { key: 'games_in_opener', header: 'Games In Opener', numeric: true },
-  { key: 'wins', header: 'Wins', numeric: true },
-  { key: 'losses', header: 'Losses', numeric: true },
-  {
-    key: 'win_rate',
-    header: 'Win Rate',
-    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
-    sortValue: (row) => row.win_rate,
-    numeric: true,
   },
 ];
 
@@ -350,6 +334,86 @@ const gameColumns: Column<DeckGameRow>[] = [
   },
 ];
 
+
+type CutCardRow = DeckCompositionRow & {
+  wins_in_deck: number;
+  losses_in_deck: number;
+  win_rate_in_deck: number | null;
+};
+
+function versionsWithDelta(versions: DeckVersionRow[]): VersionRowWithDelta[] {
+  return versions.map((version, index) => {
+    const previous = index > 0 ? versions[index - 1] : null;
+    const delta =
+      previous && previous.win_rate !== null && version.win_rate !== null
+        ? version.win_rate - previous.win_rate
+        : null;
+    return { ...version, wr_delta: delta };
+  });
+}
+
+function cutCardRows(detail: DeckDetail): CutCardRow[] {
+  if (!detail.deck_export.available) {
+    return [];
+  }
+  const currentNames = new Set<string>();
+  for (const card of [...detail.deck_export.main_deck, ...detail.deck_export.sideboard]) {
+    cardNameAliases(card.display_name).forEach((alias) => currentNames.add(alias));
+  }
+  return (detail.composition ?? [])
+    .filter((row) => !Array.from(cardNameAliases(row.display_name)).some((alias) => currentNames.has(alias)))
+    .map((row) => {
+      const wins = row.wins_when_seen + row.wins_when_not_seen;
+      const losses = row.losses_when_seen + row.losses_when_not_seen;
+      const decided = wins + losses;
+      return {
+        ...row,
+        wins_in_deck: wins,
+        losses_in_deck: losses,
+        win_rate_in_deck: decided ? Math.round((1000 * wins) / decided) / 10 : null,
+      };
+    })
+    .sort((a, b) => b.games_in_deck - a.games_in_deck);
+}
+
+const cutCardColumns: Column<CutCardRow>[] = [
+  {
+    key: 'display_name',
+    header: 'Card',
+    render: (row) => <CardLink cardName={row.display_name} />,
+    sortValue: (row) => row.display_name,
+  },
+  {
+    key: 'type_category',
+    header: 'Type',
+    render: (row) => <TypeChip type={row.type_category} />,
+    sortValue: (row) => row.type_category,
+  },
+  { key: 'games_in_deck', header: 'Games In Deck', numeric: true },
+  {
+    key: 'win_rate_in_deck',
+    header: 'Deck WR While In List',
+    render: (row) => (
+      <WinRateBar losses={row.losses_in_deck} winRate={row.win_rate_in_deck} wins={row.wins_in_deck} />
+    ),
+    sortValue: (row) => row.win_rate_in_deck,
+    numeric: true,
+  },
+  {
+    key: 'seen_pct',
+    header: 'Seen %',
+    render: (row) => formatPercent(row.seen_pct),
+    sortValue: (row) => row.seen_pct,
+    numeric: true,
+  },
+  {
+    key: 'win_rate_when_seen',
+    header: 'WR When Seen',
+    render: (row) => formatPercent(row.win_rate_when_seen),
+    sortValue: (row) => row.win_rate_when_seen,
+    numeric: true,
+  },
+];
 
 export function DeckDetailPage({
   backHref = '#overview',
@@ -431,6 +495,7 @@ export function DeckDetailPage({
   const { detail, refreshError } = loadState;
   const deckExport = detail.deck_export;
   const cardRows = deckListPerformanceRows(detail);
+  const cutCards = cutCardRows(detail);
 
   async function copyArenaDeck() {
     if (!deckExport?.available || !deckExport.text) {
@@ -602,20 +667,6 @@ export function DeckDetailPage({
         />
       </Section>
 
-      <Section
-        id="deck-openers"
-        title="Opening Hands"
-        description="How games went when a card was in your opening hand."
-      >
-        <SortableTable
-          caption="Opening hand performance"
-          columns={openerColumns}
-          initialSort={{ key: 'games_in_opener', direction: 'desc' }}
-          getRowKey={(row) => `${row.display_name}-${row.type_category}`}
-          rows={detail.opening_hands}
-        />
-      </Section>
-
       <Section id="deck-mulligans" title="Mulligans" description="Results grouped by how many times you mulliganed.">
         <SortableTable
           caption="Mulligan performance"
@@ -636,11 +687,32 @@ export function DeckDetailPage({
             columns={versionColumns}
             getRowKey={(row) => String(row.version)}
             initialSort={{ key: 'version', direction: 'asc' }}
-            rows={detail.versions ?? []}
+            rows={versionsWithDelta(detail.versions ?? [])}
           />
         ) : (
           <p className="empty-state">No submitted decklists recorded for this deck yet.</p>
         )}
+        {cutCards.length > 0 ? (
+          <>
+            <div className="section-heading">
+              <div>
+                <h3>Cut From Current List</h3>
+                <p className="section-description">
+                  Cards from earlier versions that are not in the current list, with the deck's record
+                  while they were in it. The Deck List table and Arena export always reflect only the
+                  current version.
+                </p>
+              </div>
+            </div>
+            <SortableTable
+              caption="Cards cut from the current list"
+              columns={cutCardColumns}
+              getRowKey={(row) => row.display_name}
+              initialSort={{ key: 'games_in_deck', direction: 'desc' }}
+              rows={cutCards}
+            />
+          </>
+        ) : null}
         {detail.sideboard ? (
           <>
             <div className="section-heading">
