@@ -50,3 +50,10 @@ export function outcomeTone(outcome: string | null | undefined): 'neutral' | 'wi
 export function outcomeLabel(outcome: string | null | undefined): string {
   return outcome ? outcome[0].toUpperCase() + outcome.slice(1) : 'Unknown';
 }
+
+/** "Standard Best-of-1 (Ranked)" -> "Standard BO1 (Ranked)" for tight table columns. */
+export function shortFormatLabel(label: string | null | undefined): string {
+  return String(label ?? '')
+    .replace('Best-of-1', 'BO1')
+    .replace('Best-of-3', 'BO3');
+}

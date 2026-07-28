@@ -1456,7 +1456,15 @@ def dashboard_snapshot(
                   m.format AS raw_format,
                   m.best_of,
                   COALESCE(p.deck_name, '(unknown)') AS deck_name,
-                  p.mulligans
+                  p.mulligans,
+                  (
+                    SELECT SUM(g2.outcome = 'win') FROM games g2
+                    WHERE g2.match_id = g.match_id
+                  ) AS match_wins,
+                  (
+                    SELECT SUM(g2.outcome = 'loss') FROM games g2
+                    WHERE g2.match_id = g.match_id
+                  ) AS match_losses
                 FROM games g
                 JOIN matches m ON m.id = g.match_id
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'

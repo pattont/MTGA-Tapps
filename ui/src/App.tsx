@@ -13,8 +13,6 @@ import {
   type OutcomeReasonRow,
   type ScheduleRow,
   type DrawQualityRow,
-  type DrawnCardRow,
-  type MatchRow,
   type MomentumRow,
   type PlayDrawRow,
   type RecentGameRow,
@@ -42,7 +40,7 @@ import { AppShell } from './components/AppShell';
 import { Section } from './components/Section';
 import { ManaReadinessTable } from './components/ManaReadinessTable';
 import { formatPercent, metricCards } from './dashboardData';
-import { formatCardName, formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone } from './format';
+import { formatCardName, formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone, shortFormatLabel } from './format';
 import { auditNavItems, cardNavItems, deckNavItems, gameNavItems, opponentNavItems } from './nav';
 import { RouteFiltersContext } from './routeFilters';
 import {
@@ -196,6 +194,13 @@ const deckColumns: Column<DeckWithCombatRow>[] = [
     numeric: true,
   },
   {
+    key: 'avg_player_turns',
+    header: 'Avg Turns',
+    render: (row) => formatNumber(row.avg_player_turns),
+    sortValue: (row) => row.avg_player_turns,
+    numeric: true,
+  },
+  {
     key: 'avg_life_gained',
     header: 'Life Gained / Game',
     render: (row) => formatNumber(row.avg_life_gained),
@@ -219,30 +224,6 @@ const playDrawColumns: Column<PlayDrawRow>[] = [
     header: 'Win Rate',
     render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
     sortValue: (row) => row.win_rate,
-    numeric: true,
-  },
-];
-
-const drawnCardColumns: Column<DrawnCardRow>[] = [
-  {
-    key: 'display_name',
-    header: 'Card',
-    render: (row) => <CardLink cardName={row.display_name} />,
-    sortValue: (row) => row.display_name,
-  },
-  {
-    key: 'type_category',
-    header: 'Type',
-    render: (row) => <TypeChip type={row.type_category} />,
-    sortValue: (row) => row.type_category,
-  },
-  { key: 'times_drawn', header: 'Times Drawn', numeric: true },
-  { key: 'games_seen', header: 'Games Seen', numeric: true },
-  {
-    key: 'pct_of_games',
-    header: 'Game Share',
-    render: (row) => formatPercent(row.pct_of_games),
-    sortValue: (row) => row.pct_of_games,
     numeric: true,
   },
 ];
@@ -323,7 +304,12 @@ const combatSplitColumns: Column<CombatSplitRow>[] = [
 ];
 
 const scheduleColumns: Column<ScheduleRow>[] = [
-  { key: 'label', header: 'When' },
+  {
+    key: 'label',
+    header: 'When',
+    // Sort chronologically (Sunday..Saturday / morning..late night), not alphabetically.
+    sortValue: (row) => row.weekday ?? row.bucket ?? 0,
+  },
   { key: 'games', header: 'Games', numeric: true },
   { key: 'wins', header: 'Wins', numeric: true },
   { key: 'losses', header: 'Losses', numeric: true },
@@ -423,6 +409,24 @@ const matchupColumns: Column<MatchupRow>[] = [
   },
 ];
 
+const RECENT_QUICK_FILTERS: { id: string; label: string; matches: (label: string) => boolean }[] = [
+  { id: 'all', label: 'All', matches: () => true },
+  { id: 'bo1', label: 'BO1', matches: (label) => label.includes('best-of-1') },
+  { id: 'bo3', label: 'BO3', matches: (label) => label.includes('best-of-3') },
+  {
+    id: 'premier-draft',
+    label: 'Premier Draft',
+    matches: (label) => label.includes('premier draft') || (label.includes('draft') && !label.includes('traditional') && !label.includes('quick')),
+  },
+  {
+    id: 'sealed',
+    label: 'Sealed',
+    matches: (label) => label.includes('sealed') && !label.includes('traditional'),
+  },
+  { id: 'trad-draft', label: 'Traditional Draft', matches: (label) => label.includes('traditional') && label.includes('draft') },
+  { id: 'trad-sealed', label: 'Traditional Sealed', matches: (label) => label.includes('traditional') && label.includes('sealed') },
+];
+
 const recentColumns: Column<RecentGameWithDrawQuality>[] = [
   {
     key: 'started_at',
@@ -436,12 +440,27 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
     render: (row) => <DeckLink deckName={row.deck_name} />,
     sortValue: (row) => row.deck_name,
   },
-  { key: 'format_label', header: 'Format' },
+  {
+    key: 'format_label',
+    header: 'Format',
+    render: (row) => shortFormatLabel(row.format_label),
+    sortValue: (row) => row.format_label,
+  },
   {
     key: 'outcome',
     header: 'Outcome',
     render: (row) => <Badge tone={outcomeTone(row.outcome)}>{outcomeLabel(row.outcome)}</Badge>,
     sortValue: (row) => row.outcome,
+  },
+  {
+    key: 'match_wins',
+    header: 'Match Record',
+    render: (row) =>
+      (row.best_of ?? 1) > 1 && row.match_wins !== null && row.match_wins !== undefined
+        ? `${row.match_wins}–${row.match_losses ?? 0}`
+        : '—',
+    sortValue: (row) => ((row.best_of ?? 1) > 1 ? (row.match_wins ?? 0) - (row.match_losses ?? 0) : null),
+    numeric: true,
   },
   {
     key: 'is_flood',
@@ -490,36 +509,6 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
     render: (row) => formatDuration(row.duration_seconds),
     sortValue: (row) => row.duration_seconds,
     numeric: true,
-  },
-];
-
-const matchColumns: Column<MatchRow>[] = [
-  {
-    key: 'started_at',
-    header: 'Started',
-    render: (row) => (row.started_at ? formatDateTime(row.started_at) : '—'),
-    sortValue: (row) => row.started_at,
-  },
-  {
-    key: 'deck_name',
-    header: 'Deck',
-    render: (row) => <DeckLink deckName={row.deck_name} />,
-    sortValue: (row) => row.deck_name,
-  },
-  { key: 'format_label', header: 'Format' },
-  {
-    key: 'best_of',
-    header: 'Best Of',
-    render: (row) => formatNumber(row.best_of),
-    sortValue: (row) => row.best_of,
-    numeric: true,
-  },
-  { key: 'record', header: 'Record' },
-  {
-    key: 'outcome',
-    header: 'Outcome',
-    render: (row) => <Badge tone={outcomeTone(row.outcome)}>{outcomeLabel(row.outcome)}</Badge>,
-    sortValue: (row) => row.outcome,
   },
 ];
 
@@ -823,7 +812,7 @@ function Dashboard({
   snapshot: DashboardSnapshot;
 }) {
   const [deckSearch, setDeckSearch] = useState('');
-  const [drawnCardSearch, setDrawnCardSearch] = useState('');
+  const [recentQuickFilter, setRecentQuickFilter] = useState('all');
   const filteredDecks = useMemo(() => {
     const combatByDeck = new Map((snapshot.combat_decks ?? []).map((row) => [row.deck_name, row]));
     const merged = snapshot.decks.map((row) => ({ ...combatByDeck.get(row.deck_name), ...row }));
@@ -833,13 +822,6 @@ function Dashboard({
     }
     return merged.filter((row) => row.deck_name.toLocaleLowerCase().includes(query));
   }, [deckSearch, snapshot.combat_decks, snapshot.decks]);
-  const filteredDrawnCards = useMemo(() => {
-    const query = drawnCardSearch.trim().toLocaleLowerCase();
-    if (!query) {
-      return snapshot.drawn_cards;
-    }
-    return snapshot.drawn_cards.filter((row) => row.display_name.toLocaleLowerCase().includes(query));
-  }, [drawnCardSearch, snapshot.drawn_cards]);
   const recentGames = useMemo(() => {
     const qualityByGame = new Map(snapshot.draw_quality.map((row) => [row.game_id, row]));
     return snapshot.recent.map((row) => {
@@ -860,6 +842,14 @@ function Dashboard({
       };
     });
   }, [snapshot.draw_quality, snapshot.recent]);
+
+  const filteredRecentGames = useMemo(() => {
+    const active = RECENT_QUICK_FILTERS.find((filter) => filter.id === recentQuickFilter);
+    if (!active || active.id === 'all') {
+      return recentGames;
+    }
+    return recentGames.filter((row) => active.matches(row.format_label.toLocaleLowerCase()));
+  }, [recentGames, recentQuickFilter]);
 
   return (
     <>
@@ -968,13 +958,27 @@ function Dashboard({
         title="Recent Games"
         description="Recent results with draw distribution, flood or mana-screw status, total turns, and game time."
       >
+        <div className="quick-filters" role="group" aria-label="Quick format filters">
+          {RECENT_QUICK_FILTERS.map((filter) => (
+            <button
+              key={filter.id}
+              type="button"
+              className={recentQuickFilter === filter.id ? 'quick-filter quick-filter-active' : 'quick-filter'}
+              aria-pressed={recentQuickFilter === filter.id}
+              onClick={() => setRecentQuickFilter(filter.id)}
+            >
+              {filter.label}
+            </button>
+          ))}
+        </div>
         <SortableTable
           caption="Recent games"
           columns={recentColumns}
           pageSize={15}
+          paginationKey={recentQuickFilter}
           getRowKey={(row) => row.game_id}
           initialSort={{ key: 'started_at', direction: 'desc' }}
-          rows={recentGames}
+          rows={filteredRecentGames}
         />
       </Section>
 
@@ -999,7 +1003,7 @@ function Dashboard({
           columns={deckColumns}
           getRowKey={(row) => row.deck_name}
           initialSort={{ key: 'games', direction: 'desc' }}
-          pageSize={15}
+          pageSize={10}
           paginationKey={deckSearch.trim().toLocaleLowerCase()}
           rows={filteredDecks}
         />
@@ -1043,6 +1047,7 @@ function Dashboard({
               caption="Win rate by weekday"
               columns={scheduleColumns}
               getRowKey={(row) => row.label}
+              initialSort={{ key: 'label', direction: 'asc' }}
               rows={snapshot.schedule?.by_weekday ?? []}
             />
           </section>
@@ -1056,6 +1061,7 @@ function Dashboard({
               caption="Win rate by time of day"
               columns={scheduleColumns}
               getRowKey={(row) => row.label}
+              initialSort={{ key: 'label', direction: 'asc' }}
               rows={snapshot.schedule?.by_time_of_day ?? []}
             />
           </section>
@@ -1169,44 +1175,6 @@ function Dashboard({
 
       <Section id="formats" title="Formats">
         <FormatsTable caption="Format performance" rows={snapshot.formats} />
-      </Section>
-
-      <Section id="visible-drawn-cards" title="Visible Drawn Cards">
-        <div className="table-filter">
-          <label>
-            <span>Search cards</span>
-            <input
-              type="search"
-              value={drawnCardSearch}
-              onChange={(event) => setDrawnCardSearch(event.target.value)}
-              placeholder="Card name"
-            />
-          </label>
-        </div>
-        <SortableTable
-          caption="Visible drawn card frequency"
-          columns={drawnCardColumns}
-          getRowKey={(row) => `${row.display_name}-${row.type_category ?? 'unknown'}`}
-          initialSort={{ key: 'times_drawn', direction: 'desc' }}
-          pageSize={15}
-          paginationKey={drawnCardSearch.trim().toLocaleLowerCase()}
-          rows={filteredDrawnCards}
-        />
-      </Section>
-
-      <Section
-        id="matches"
-        title="Best-of-3 Matches"
-        description="Multi-game matches with the game record inside each match. Single-game (Bo1) play lives in Recent Games."
-      >
-        <SortableTable
-          caption="Best-of-3 matches"
-          columns={matchColumns}
-          pageSize={15}
-          getRowKey={(row) => row.match_id}
-          initialSort={{ key: 'started_at', direction: 'desc' }}
-          rows={snapshot.matches}
-        />
       </Section>
 
       <Section id="sessions" title="Sessions" description="Tracker runtime sessions with game volume and record.">
