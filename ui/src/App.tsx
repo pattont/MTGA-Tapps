@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { pageTitle } from './branding';
 import {
   fetchDashboardSnapshot,
@@ -44,7 +44,7 @@ import {
   parseOpponentRoute,
 } from './routes';
 import './styles.css';
-import { getInitialTheme, persistTheme, type ThemeName } from './theme';
+import { getInitialTheme, hasStoredTheme, persistTheme, systemTheme, type ThemeName } from './theme';
 
 type LoadState =
   | { status: 'loading' }
@@ -80,6 +80,14 @@ function applyTheme(theme: ThemeName): void {
     persistTheme(theme);
   } catch {
     document.documentElement.dataset.theme = theme;
+  }
+}
+
+function readHasStoredTheme(): boolean {
+  try {
+    return hasStoredTheme();
+  } catch {
+    return false;
   }
 }
 
@@ -358,6 +366,7 @@ const sessionColumns: Column<SessionRow>[] = [
 
 export default function App() {
   const [theme, setTheme] = useState<ThemeName>(() => readInitialTheme());
+  const themeChosenRef = useRef<boolean>(readHasStoredTheme());
   const [filters, setFilters] = useState<SnapshotFilters>(() => parseDashboardRouteFilters(window.location.hash) ?? {});
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
   const [routeHash, setRouteHash] = useState<string>(() => window.location.hash);
@@ -419,8 +428,33 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    applyTheme(theme);
+    if (themeChosenRef.current) {
+      applyTheme(theme);
+    } else {
+      // No explicit preference yet: reflect the theme without persisting it,
+      // so the dashboard keeps following the OS setting.
+      document.documentElement.dataset.theme = theme;
+    }
   }, [theme]);
+
+  useEffect(() => {
+    // Follow OS theme changes live while the user has no explicit preference.
+    if (typeof window.matchMedia !== 'function') {
+      return;
+    }
+    const media = window.matchMedia('(prefers-color-scheme: light)');
+    function onSystemThemeChange() {
+      try {
+        if (!hasStoredTheme()) {
+          setTheme(systemTheme());
+        }
+      } catch {
+        // Ignore storage failures; the explicit toggle still works.
+      }
+    }
+    media.addEventListener?.('change', onSystemThemeChange);
+    return () => media.removeEventListener?.('change', onSystemThemeChange);
+  }, []);
 
   useEffect(() => {
     if (
@@ -495,6 +529,7 @@ export default function App() {
   }, [filters, deckName, gameId, cardName, opponentRoute]);
 
   function toggleTheme() {
+    themeChosenRef.current = true;
     setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
   }
 
