@@ -11,7 +11,6 @@ export const dashboardNavItems: AppNavItem[] = [
   { id: 'rank-progress', label: 'Ranked Progress' },
   { id: 'recent-games', label: 'Recent Games' },
   { id: 'decks', label: 'Decks' },
-  { id: 'combat', label: 'Combat' },
   { id: 'land-drops', label: 'Land Availability' },
   { id: 'habits', label: 'Habits & Schedule' },
   { id: 'outcomes', label: 'Streaks & Outcomes' },
