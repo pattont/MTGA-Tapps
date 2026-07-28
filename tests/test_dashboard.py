@@ -540,7 +540,7 @@ def test_dashboard_snapshot_supports_deck_and_format_filters(tmp_path):
 
     unfiltered = dashboard_snapshot(db_path)
     assert unfiltered["summary"]["games"] == 3
-    assert unfiltered["filters"] == {"deck": None, "format": None, "days": None}
+    assert unfiltered["filters"] == {"deck": None, "format": None, "days": None, "season": None}
     assert "Izzet Wizards" in unfiltered["filter_options"]["decks"]
     assert {"raw_format": "Play", "format_label": "Standard Best-of-1 (Unranked)"} in unfiltered[
         "filter_options"
@@ -691,7 +691,7 @@ def test_dashboard_handler_applies_snapshot_query_filters(tmp_path):
     assert response.status == 200
     payload = json.loads(body)
     assert payload["summary"]["games"] == 2
-    assert payload["filters"] == {"deck": "Boros Mouse", "format": "Play", "days": None}
+    assert payload["filters"] == {"deck": "Boros Mouse", "format": "Play", "days": None, "season": None}
 
 
 def test_deck_detail_reports_cards_openers_and_mulligans(tmp_path):
@@ -1821,3 +1821,56 @@ def test_card_detail_reports_multiplicity(tmp_path):
     assert buckets[1]["pct_of_games"] == 50.0
     assert buckets[1]["win_rate"] == 100.0
     assert buckets[1]["expected_pct_at_least"] is not None
+
+
+def test_dashboard_snapshot_reports_schedule_fatigue_and_streaks(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+
+    snapshot = dashboard_snapshot(db_path)
+
+    weekdays = snapshot["schedule"]["by_weekday"]
+    assert sum(row["games"] for row in weekdays) == 2
+    assert all("label" in row for row in weekdays)
+    time_buckets = snapshot["schedule"]["by_time_of_day"]
+    assert sum(row["games"] for row in time_buckets) == 2
+
+    fatigue = snapshot["fatigue"]
+    assert fatigue[0]["label"] == "Games 1–2"
+    assert fatigue[0]["games"] == 2
+
+    streaks = snapshot["streaks"]
+    assert streaks["games"] == 2
+    assert streaks["longest_win"] == 1
+    assert streaks["longest_loss"] == 1
+    assert streaks["current"] == {"kind": "loss", "length": 1}
+
+    reasons = {row["reason"]: row for row in snapshot["outcome_reasons"]}
+    assert reasons["opponent_conceded"]["wins"] == 1
+
+    opener = {row["lands"]: row for row in snapshot["opener_lands"]}
+    # game-1 kept a 1-land opener and won; game-2 has no recorded opener rows
+    # in the shared fixture, so only games with opener data are counted.
+    assert opener[1]["games"] == 1
+    assert opener[1]["win_rate"] == 100.0
+
+
+def test_dashboard_snapshot_supports_rank_season_selection(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into rank_snapshots (
+                session_id, captured_at, season_ordinal, rank_format,
+                rank_class, rank_level, rank_step, rank_steps, raw_step
+            ) values ('session-1', '2026-05-01T00:00:00', 90, 'constructed', 'Gold', 2, 1, 6, 1)
+            """
+        )
+
+    latest = dashboard_snapshot(db_path)
+    assert latest["filter_options"]["rank_seasons"] == [91, 90]
+    assert all(row["season_ordinal"] == 91 for row in latest["rank_progress"])
+
+    previous = dashboard_snapshot(db_path, season=90)
+    assert previous["filters"]["season"] == 90
+    assert all(row["season_ordinal"] == 90 for row in previous["rank_progress"])
+    assert previous["rank_progress"][0]["rank_class"] == "Gold"

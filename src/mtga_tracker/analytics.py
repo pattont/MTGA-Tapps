@@ -950,8 +950,9 @@ class AnalyticsStore:
         mythic_rank: Optional[int],
         match_id: Optional[str] = None,
         game_id: Optional[str] = None,
+        rank_format: str = "constructed",
     ) -> bool:
-        """Persist a changed constructed-rank snapshot and return whether it was added."""
+        """Persist a changed rank snapshot for one format and return whether it was added."""
         conn = self.connect()
         if conn is None:
             return False
@@ -961,11 +962,11 @@ class AnalyticsStore:
             SELECT rank_class, rank_level, rank_step, rank_steps, matches_won, matches_lost,
                    mythic_percentile, mythic_rank
             FROM rank_snapshots
-            WHERE rank_format = 'constructed' AND season_ordinal = ?
+            WHERE rank_format = ? AND season_ordinal = ?
             ORDER BY captured_at DESC, id DESC
             LIMIT 1
             """,
-            (season_ordinal,),
+            (rank_format, season_ordinal),
         ).fetchone()
         current = (
             rank_class,
@@ -986,7 +987,7 @@ class AnalyticsStore:
                 rank_class, rank_level, rank_step, rank_steps, raw_step,
                 matches_won, matches_lost, mythic_percentile, mythic_rank
             )
-            VALUES (?, ?, ?, ?, ?, 'constructed', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session.session_id,
@@ -994,6 +995,7 @@ class AnalyticsStore:
                 game_id,
                 captured_at.isoformat(),
                 season_ordinal,
+                rank_format,
                 rank_class,
                 rank_level,
                 rank_step,

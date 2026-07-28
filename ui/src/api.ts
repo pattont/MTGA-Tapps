@@ -99,6 +99,48 @@ export interface CombatSplitRow {
   avg_cards_denied: number | null;
 }
 
+export interface ScheduleRow {
+  label: string;
+  games: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  weekday?: number;
+  bucket?: number;
+}
+
+export interface FatigueRow {
+  bucket: number;
+  label: string;
+  games: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+}
+
+export interface StreakSummary {
+  games: number;
+  current: { kind: string; length: number } | null;
+  longest_win: number;
+  longest_loss: number;
+}
+
+export interface OutcomeReasonRow {
+  reason: string;
+  wins: number;
+  losses: number;
+  games: number;
+}
+
+export interface OpenerLandRow {
+  lands: number;
+  label: string;
+  games: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+}
+
 export interface ManaReadinessRow {
   threshold: number;
   label: string;
@@ -196,12 +238,14 @@ export interface FormatOption {
 export interface FilterOptions {
   decks: string[];
   formats: FormatOption[];
+  rank_seasons?: number[];
 }
 
 export interface SnapshotFilters {
   deck?: string;
   format?: string;
   days?: number;
+  season?: number;
 }
 
 export interface DashboardSnapshot {
@@ -217,6 +261,11 @@ export interface DashboardSnapshot {
   combat_decks: CombatDeckRow[];
   combat_split: CombatSplitRow[];
   mana_readiness: ManaReadinessRow[];
+  schedule: { by_weekday: ScheduleRow[]; by_time_of_day: ScheduleRow[] };
+  fatigue: FatigueRow[];
+  streaks: StreakSummary;
+  outcome_reasons: OutcomeReasonRow[];
+  opener_lands: OpenerLandRow[];
   recent: RecentGameRow[];
   matches: MatchRow[];
   sessions: SessionRow[];
@@ -702,6 +751,9 @@ export function snapshotQueryString(filters: SnapshotFilters): string {
   }
   if (filters.days) {
     params.set('days', String(filters.days));
+  }
+  if (filters.season) {
+    params.set('season', String(filters.season));
   }
   const query = params.toString();
   return query ? `?${query}` : '';

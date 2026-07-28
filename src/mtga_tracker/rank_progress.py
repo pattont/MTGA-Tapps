@@ -17,15 +17,29 @@ def parse_constructed_rank_snapshot(line: str) -> Optional[Dict[str, Any]]:
     payload = parse_json_from_body(line)
     if not isinstance(payload, dict) or "constructedSeasonOrdinal" not in payload:
         return None
+    return _normalized_rank_payload(payload, prefix="constructed")
 
+
+def parse_limited_rank_snapshot(line: str) -> Optional[Dict[str, Any]]:
+    """Return normalized limited (draft/sealed) rank data from a rank response entry."""
+    if "<== RankGetCombinedRankInfo(" not in line:
+        return None
+    payload = parse_json_from_body(line)
+    if not isinstance(payload, dict) or "limitedSeasonOrdinal" not in payload:
+        return None
+    return _normalized_rank_payload(payload, prefix="limited")
+
+
+def _normalized_rank_payload(payload: Dict[str, Any], *, prefix: str) -> Optional[Dict[str, Any]]:
+    """Normalize one rank family ("constructed" or "limited") from the payload."""
     try:
-        season_ordinal = int(payload["constructedSeasonOrdinal"])
-        rank_level = int(payload.get("constructedLevel") or 1)
-        raw_step = int(payload.get("constructedStep") or 0)
-    except (TypeError, ValueError):
+        season_ordinal = int(payload[f"{prefix}SeasonOrdinal"])
+        rank_level = int(payload.get(f"{prefix}Level") or 1)
+        raw_step = int(payload.get(f"{prefix}Step") or 0)
+    except (TypeError, ValueError, KeyError):
         return None
 
-    rank_class = str(payload.get("constructedClass") or "").strip()
+    rank_class = str(payload.get(f"{prefix}Class") or "").strip()
     if not rank_class:
         return None
 
@@ -46,10 +60,10 @@ def parse_constructed_rank_snapshot(line: str) -> Optional[Dict[str, Any]]:
         "rank_step": display_step,
         "rank_steps": 6,
         "raw_step": raw_step,
-        "matches_won": optional_int("constructedMatchesWon"),
-        "matches_lost": optional_int("constructedMatchesLost"),
-        "mythic_percentile": optional_int("constructedPercentile"),
-        "mythic_rank": optional_int("constructedLeaderboardPlace"),
+        "matches_won": optional_int(f"{prefix}MatchesWon"),
+        "matches_lost": optional_int(f"{prefix}MatchesLost"),
+        "mythic_percentile": optional_int(f"{prefix}Percentile"),
+        "mythic_rank": optional_int(f"{prefix}LeaderboardPlace"),
     }
 
 

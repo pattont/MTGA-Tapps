@@ -485,6 +485,204 @@ def _deck_decklist_analysis(
     return composition_rows, version_rows, sideboard_summary
 
 
+def _schedule_rows(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Win rate by weekday and by time-of-day bucket."""
+    weekday_rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              CAST(strftime('%w', COALESCE(g.started_at, g.ended_at)) AS INTEGER) AS weekday,
+              COUNT(*) AS games,
+              SUM(g.outcome = 'win') AS wins,
+              SUM(g.outcome = 'loss') AS losses,
+              ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
+            FROM games g
+            WHERE {where} AND COALESCE(g.started_at, g.ended_at) IS NOT NULL
+            GROUP BY weekday
+            ORDER BY weekday
+            """,
+            params,
+        )
+    )
+    weekday_names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+    for row in weekday_rows:
+        index = row.get("weekday")
+        row["label"] = weekday_names[int(index)] if index is not None else "Unknown"
+
+    hour_rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              CASE
+                WHEN CAST(strftime('%H', COALESCE(g.started_at, g.ended_at)) AS INTEGER) BETWEEN 5 AND 11 THEN 0
+                WHEN CAST(strftime('%H', COALESCE(g.started_at, g.ended_at)) AS INTEGER) BETWEEN 12 AND 16 THEN 1
+                WHEN CAST(strftime('%H', COALESCE(g.started_at, g.ended_at)) AS INTEGER) BETWEEN 17 AND 21 THEN 2
+                ELSE 3
+              END AS bucket,
+              COUNT(*) AS games,
+              SUM(g.outcome = 'win') AS wins,
+              SUM(g.outcome = 'loss') AS losses,
+              ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
+            FROM games g
+            WHERE {where} AND COALESCE(g.started_at, g.ended_at) IS NOT NULL
+            GROUP BY bucket
+            ORDER BY bucket
+            """,
+            params,
+        )
+    )
+    bucket_labels = {
+        0: "Morning (5am–noon)",
+        1: "Afternoon (noon–5pm)",
+        2: "Evening (5pm–10pm)",
+        3: "Late Night (10pm–5am)",
+    }
+    for row in hour_rows:
+        row["label"] = bucket_labels.get(int(row.get("bucket") or 0), "Unknown")
+    return {"by_weekday": weekday_rows, "by_time_of_day": hour_rows}
+
+
+def _fatigue_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> List[Dict[str, Any]]:
+    """Win rate by Nth game of a tracker session."""
+    rows = _dict_rows(
+        conn.execute(
+            f"""
+            WITH ordered AS (
+              SELECT
+                g.outcome,
+                ROW_NUMBER() OVER (
+                  PARTITION BY g.session_id
+                  ORDER BY COALESCE(g.started_at, g.ended_at), g.id
+                ) AS nth
+              FROM games g
+              WHERE {where}
+            )
+            SELECT
+              CASE
+                WHEN nth <= 2 THEN 0
+                WHEN nth <= 4 THEN 1
+                WHEN nth <= 6 THEN 2
+                ELSE 3
+              END AS bucket,
+              COUNT(*) AS games,
+              SUM(outcome = 'win') AS wins,
+              SUM(outcome = 'loss') AS losses,
+              ROUND(100.0 * SUM(outcome = 'win') / NULLIF(SUM(outcome IN ('win', 'loss')), 0), 1) AS win_rate
+            FROM ordered
+            GROUP BY bucket
+            ORDER BY bucket
+            """,
+            params,
+        )
+    )
+    labels = {0: "Games 1–2", 1: "Games 3–4", 2: "Games 5–6", 3: "Games 7+"}
+    for row in rows:
+        row["label"] = labels.get(int(row.get("bucket") or 0), "Unknown")
+    return rows
+
+
+def _streak_summary(conn: sqlite3.Connection, where: str, params: List[Any]) -> Dict[str, Any]:
+    """Current and longest win/loss streaks over the filtered games."""
+    outcomes = [
+        row[0]
+        for row in conn.execute(
+            f"""
+            SELECT g.outcome
+            FROM games g
+            WHERE {where} AND g.outcome IN ('win', 'loss')
+            ORDER BY COALESCE(g.started_at, g.ended_at), g.id
+            """,
+            params,
+        )
+    ]
+    longest_win = longest_loss = 0
+    current_run = 0
+    current_kind: Optional[str] = None
+    for outcome in outcomes:
+        if outcome == current_kind:
+            current_run += 1
+        else:
+            current_kind = outcome
+            current_run = 1
+        if outcome == "win":
+            longest_win = max(longest_win, current_run)
+        else:
+            longest_loss = max(longest_loss, current_run)
+    current = {"kind": current_kind, "length": current_run} if current_kind else None
+    return {
+        "games": len(outcomes),
+        "current": current,
+        "longest_win": longest_win,
+        "longest_loss": longest_loss,
+    }
+
+
+def _outcome_reason_rows(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> List[Dict[str, Any]]:
+    """How wins and losses actually end (concession, damage, timeout...)."""
+    return _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              COALESCE(NULLIF(TRIM(g.outcome_reason), ''), 'unknown') AS reason,
+              SUM(g.outcome = 'win') AS wins,
+              SUM(g.outcome = 'loss') AS losses,
+              COUNT(*) AS games
+            FROM games g
+            WHERE {where} AND g.outcome IN ('win', 'loss')
+            GROUP BY reason
+            ORDER BY games DESC
+            """,
+            params,
+        )
+    )
+
+
+def _opener_land_rows(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> List[Dict[str, Any]]:
+    """Win rate by number of lands in the kept opening hand."""
+    rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              MIN(opener_lands, 5) AS lands,
+              COUNT(*) AS games,
+              SUM(outcome = 'win') AS wins,
+              SUM(outcome = 'loss') AS losses,
+              ROUND(100.0 * SUM(outcome = 'win') / NULLIF(SUM(outcome IN ('win', 'loss')), 0), 1) AS win_rate
+            FROM (
+              SELECT
+                g.outcome,
+                (
+                  SELECT COUNT(*) FROM game_opening_hand_cards oh
+                  WHERE oh.participant_id = p.id
+                    AND (oh.type_category = 'Land' OR oh.display_name LIKE '%(Land)')
+                ) AS opener_lands,
+                (
+                  SELECT COUNT(*) FROM game_opening_hand_cards oh
+                  WHERE oh.participant_id = p.id
+                ) AS opener_cards
+              FROM games g
+              JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+              WHERE {where} AND g.outcome IN ('win', 'loss')
+            )
+            WHERE opener_cards > 0
+            GROUP BY MIN(opener_lands, 5)
+            ORDER BY lands
+            """,
+            params,
+        )
+    )
+    for row in rows:
+        lands = int(row.get("lands") or 0)
+        row["label"] = "5+ lands" if lands >= 5 else f"{lands} {'land' if lands == 1 else 'lands'}"
+    return rows
+
+
 def _mana_readiness_rows(
     conn: sqlite3.Connection, where: str, params: List[Any]
 ) -> List[Dict[str, Any]]:
@@ -980,6 +1178,7 @@ def dashboard_snapshot(
     deck: Optional[str] = None,
     fmt: Optional[str] = None,
     days: Optional[int] = None,
+    season: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Return dashboard-friendly aggregate data from SQLite.
 
@@ -1221,15 +1420,29 @@ def dashboard_snapshot(
                 LEFT JOIN matches m ON m.id = r.match_id
                 LEFT JOIN participants p ON p.game_id = r.game_id AND p.role = 'player'
                 WHERE r.rank_format = 'constructed'
-                  AND r.season_ordinal = (
-                    SELECT MAX(season_ordinal)
-                    FROM rank_snapshots
-                    WHERE rank_format = 'constructed'
+                  AND r.season_ordinal = COALESCE(
+                    ?,
+                    (
+                      SELECT MAX(season_ordinal)
+                      FROM rank_snapshots
+                      WHERE rank_format = 'constructed'
+                    )
                   )
                 ORDER BY r.captured_at, r.id
-                """
+                """,
+                (season,),
             )
         )
+        rank_seasons = [
+            int(row[0])
+            for row in conn.execute(
+                """
+                SELECT DISTINCT season_ordinal FROM rank_snapshots
+                WHERE rank_format = 'constructed'
+                ORDER BY season_ordinal DESC
+                """
+            )
+        ]
         match_rows = _dict_rows(
             conn.execute(
                 f"""
@@ -1316,6 +1529,11 @@ def dashboard_snapshot(
         combat_deck_rows = _combat_deck_rows(conn, where, params)
         combat_split_rows = _combat_split_rows(conn, where, params)
         mana_readiness_rows = _mana_readiness_rows(conn, where, params)
+        schedule = _schedule_rows(conn, where, params)
+        fatigue_rows = _fatigue_rows(conn, where, params)
+        streaks = _streak_summary(conn, where, params)
+        outcome_reason_rows = _outcome_reason_rows(conn, where, params)
+        opener_land_rows = _opener_land_rows(conn, where, params)
         deck_visuals = _deck_visuals(conn)
         for row in deck_rows:
             deck_name = row["deck_name"]
@@ -1383,13 +1601,22 @@ def dashboard_snapshot(
         "combat_decks": combat_deck_rows,
         "combat_split": combat_split_rows,
         "mana_readiness": mana_readiness_rows,
+        "schedule": schedule,
+        "fatigue": fatigue_rows,
+        "streaks": streaks,
+        "outcome_reasons": outcome_reason_rows,
+        "opener_lands": opener_land_rows,
         "recent": recent_rows,
         "trend": trend_rows,
         "rank_progress": rank_progress_rows,
         "matches": match_rows,
         "sessions": session_rows,
-        "filters": {"deck": deck, "format": fmt, "days": days},
-        "filter_options": {"decks": deck_options, "formats": format_options},
+        "filters": {"deck": deck, "format": fmt, "days": days, "season": season},
+        "filter_options": {
+            "decks": deck_options,
+            "formats": format_options,
+            "rank_seasons": rank_seasons,
+        },
     }
 
 
@@ -2720,8 +2947,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 days = None
             if days is not None and days <= 0:
                 days = None
+            season_raw = query.get("season", [None])[0]
             try:
-                body = render_snapshot_json(dashboard_snapshot(self.db_path, deck=deck, fmt=fmt, days=days))
+                season = int(season_raw) if season_raw else None
+            except ValueError:
+                season = None
+            try:
+                body = render_snapshot_json(
+                    dashboard_snapshot(self.db_path, deck=deck, fmt=fmt, days=days, season=season)
+                )
             except FileNotFoundError as exc:
                 _send_bytes(
                     self,

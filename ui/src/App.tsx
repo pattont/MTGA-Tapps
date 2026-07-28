@@ -6,6 +6,10 @@ import {
   type CombatSplitRow,
   type DashboardSnapshot,
   type DeckRow,
+  type FatigueRow,
+  type OpenerLandRow,
+  type OutcomeReasonRow,
+  type ScheduleRow,
   type DrawQualityRow,
   type DrawnCardRow,
   type MatchRow,
@@ -352,6 +356,60 @@ const combatSplitColumns: Column<CombatSplitRow>[] = [
     header: 'Discarded + Milled',
     render: (row) => formatNumber(row.avg_cards_denied),
     sortValue: (row) => row.avg_cards_denied,
+    numeric: true,
+  },
+];
+
+const scheduleColumns: Column<ScheduleRow>[] = [
+  { key: 'label', header: 'When' },
+  { key: 'games', header: 'Games', numeric: true },
+  { key: 'wins', header: 'Wins', numeric: true },
+  { key: 'losses', header: 'Losses', numeric: true },
+  {
+    key: 'win_rate',
+    header: 'Win Rate',
+    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
+    sortValue: (row) => row.win_rate,
+    numeric: true,
+  },
+];
+
+const fatigueColumns: Column<FatigueRow>[] = [
+  { key: 'label', header: 'Session Position' },
+  { key: 'games', header: 'Games', numeric: true },
+  { key: 'wins', header: 'Wins', numeric: true },
+  { key: 'losses', header: 'Losses', numeric: true },
+  {
+    key: 'win_rate',
+    header: 'Win Rate',
+    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
+    sortValue: (row) => row.win_rate,
+    numeric: true,
+  },
+];
+
+const outcomeReasonColumns: Column<OutcomeReasonRow>[] = [
+  {
+    key: 'reason',
+    header: 'How It Ended',
+    render: (row) => row.reason.replaceAll('_', ' '),
+    sortValue: (row) => row.reason,
+  },
+  { key: 'games', header: 'Games', numeric: true },
+  { key: 'wins', header: 'Your Wins', numeric: true },
+  { key: 'losses', header: 'Your Losses', numeric: true },
+];
+
+const openerLandColumns: Column<OpenerLandRow>[] = [
+  { key: 'label', header: 'Kept Opener' },
+  { key: 'games', header: 'Games', numeric: true },
+  { key: 'wins', header: 'Wins', numeric: true },
+  { key: 'losses', header: 'Losses', numeric: true },
+  {
+    key: 'win_rate',
+    header: 'Win Rate',
+    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
+    sortValue: (row) => row.win_rate,
     numeric: true,
   },
 ];
@@ -838,8 +896,31 @@ function Dashboard({
       <Section
         id="rank-progress"
         title="Ranked Progress"
-        description="Constructed ladder progress for the current season. Ranked Standard Best-of-1 and Best-of-3 share this rank."
+        description="Constructed ladder progress by season. Ranked Standard Best-of-1 and Best-of-3 share this rank."
       >
+        {(snapshot.filter_options.rank_seasons ?? []).length > 1 ? (
+          <div className="table-filter">
+            <label>
+              <span>Season</span>
+              <select
+                value={filters.season ?? ''}
+                onChange={(event) =>
+                  onFiltersChange({
+                    ...filters,
+                    season: event.target.value ? Number(event.target.value) : undefined,
+                  })
+                }
+              >
+                <option value="">Latest</option>
+                {(snapshot.filter_options.rank_seasons ?? []).map((season) => (
+                  <option key={season} value={season}>
+                    Season {season}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : null}
         <div className="trend-wrap">
           <RankProgressChart rows={snapshot.rank_progress ?? []} />
         </div>
@@ -917,6 +998,102 @@ function Dashboard({
         description="How often you had N lands available by turn N (opening hand + tagged draws), and how win rate shifts when you fall behind."
       >
         <ManaReadinessTable caption="Land availability on curve" rows={snapshot.mana_readiness ?? []} />
+      </Section>
+
+      <Section
+        id="habits"
+        title="Habits & Schedule"
+        description="When you play and how deep into a session you are, versus how often you win."
+      >
+        <div className="overview-analytics">
+          <section className="overview-panel" aria-labelledby="habits-weekday-title">
+            <div className="section-heading">
+              <div>
+                <h3 id="habits-weekday-title">By Day of Week</h3>
+              </div>
+            </div>
+            <SortableTable
+              caption="Win rate by weekday"
+              columns={scheduleColumns}
+              getRowKey={(row) => row.label}
+              rows={snapshot.schedule?.by_weekday ?? []}
+            />
+          </section>
+          <section className="overview-panel" aria-labelledby="habits-time-title">
+            <div className="section-heading">
+              <div>
+                <h3 id="habits-time-title">By Time of Day</h3>
+              </div>
+            </div>
+            <SortableTable
+              caption="Win rate by time of day"
+              columns={scheduleColumns}
+              getRowKey={(row) => row.label}
+              rows={snapshot.schedule?.by_time_of_day ?? []}
+            />
+          </section>
+        </div>
+        <div className="section-heading">
+          <div>
+            <h3>Session Fatigue</h3>
+            <p className="section-description">Win rate by how many games deep into a tracker session you were.</p>
+          </div>
+        </div>
+        <SortableTable
+          caption="Win rate by session position"
+          columns={fatigueColumns}
+          getRowKey={(row) => row.label}
+          rows={snapshot.fatigue ?? []}
+        />
+      </Section>
+
+      <Section
+        id="outcomes"
+        title="Streaks & Outcomes"
+        description="Run lengths, how games actually end, and what your kept opening hands cost you."
+      >
+        <section className="metric-grid" aria-label="Streaks">
+          <MetricCard
+            label="Current Streak"
+            value={
+              snapshot.streaks?.current
+                ? `${snapshot.streaks.current.length} ${snapshot.streaks.current.kind === 'win' ? 'W' : 'L'}`
+                : '—'
+            }
+          />
+          <MetricCard label="Longest Win Streak" value={formatNumber(snapshot.streaks?.longest_win)} />
+          <MetricCard label="Longest Loss Streak" value={formatNumber(snapshot.streaks?.longest_loss)} />
+          <MetricCard label="Decided Games" value={formatNumber(snapshot.streaks?.games)} />
+        </section>
+        <div className="overview-analytics">
+          <section className="overview-panel" aria-labelledby="outcomes-reasons-title">
+            <div className="section-heading">
+              <div>
+                <h3 id="outcomes-reasons-title">How Games End</h3>
+              </div>
+            </div>
+            <SortableTable
+              caption="Outcome reasons"
+              columns={outcomeReasonColumns}
+              getRowKey={(row) => row.reason}
+              initialSort={{ key: 'games', direction: 'desc' }}
+              rows={snapshot.outcome_reasons ?? []}
+            />
+          </section>
+          <section className="overview-panel" aria-labelledby="outcomes-opener-title">
+            <div className="section-heading">
+              <div>
+                <h3 id="outcomes-opener-title">Kept Opener Lands</h3>
+              </div>
+            </div>
+            <SortableTable
+              caption="Win rate by lands in kept opening hand"
+              columns={openerLandColumns}
+              getRowKey={(row) => row.label}
+              rows={snapshot.opener_lands ?? []}
+            />
+          </section>
+        </div>
       </Section>
 
       <Section id="formats" title="Formats">

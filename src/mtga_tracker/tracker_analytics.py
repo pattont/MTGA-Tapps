@@ -18,7 +18,11 @@ from .analytics_persistence import (
     persist_submitted_deck,
 )
 from .format_normalizer import is_momir_format, normalize_match_format
-from .rank_progress import iter_constructed_rank_snapshots, parse_constructed_rank_snapshot
+from .rank_progress import (
+    iter_constructed_rank_snapshots,
+    parse_constructed_rank_snapshot,
+    parse_limited_rank_snapshot,
+)
 from .state import CardEvent
 
 
@@ -108,7 +112,18 @@ class TrackerAnalyticsMixin:
             return
 
     def _process_rank_progress(self, line: str) -> None:
-        """Persist a changed constructed-rank response, linked to a ranked game when possible."""
+        """Persist changed rank responses, linked to a ranked game when possible."""
+        limited = parse_limited_rank_snapshot(line)
+        if limited is not None:
+            try:
+                self._analytics_store().record_rank_snapshot(
+                    self._session_snapshot(),
+                    captured_at=self._now(),
+                    rank_format="limited",
+                    **limited,
+                )
+            except (OSError, sqlite3.Error, TypeError, ValueError):
+                pass
         snapshot = parse_constructed_rank_snapshot(line)
         if snapshot is None:
             return
