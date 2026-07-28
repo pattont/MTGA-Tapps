@@ -57,6 +57,47 @@ const snapshot = {
     { display_name: 'Llanowar Elves', type_category: 'Creature', times_drawn: 1, games_seen: 1, pct_of_games: 50 },
   ],
   momentum: [{ split: 'After a win', games: 1, wins: 0, losses: 1, win_rate: 0, avg_mulligans: 1, on_play_pct: 0 }],
+  combat_decks: [
+    {
+      deck_name: 'Boros Mouse',
+      games: 2,
+      wins: 1,
+      losses: 1,
+      win_rate: 50,
+      avg_damage_dealt: 14.5,
+      avg_damage_taken: 12,
+      avg_attack_steps: 3,
+      attackers_per_attack: 2.17,
+      attackers_lost: 3,
+      blockers_lost: 3,
+      trade_ratio: 1,
+      avg_life_gained: 2,
+      avg_player_turns: 4.5,
+      aggression_profile: 'Aggro' as const,
+    },
+  ],
+  combat_split: [
+    {
+      split: 'Wins',
+      games: 1,
+      avg_damage_dealt: 20,
+      avg_damage_taken: 6,
+      avg_attack_steps: 4,
+      avg_life_gained: 3,
+      avg_cards_drawn: 9,
+      avg_cards_denied: 1,
+    },
+    {
+      split: 'Losses',
+      games: 1,
+      avg_damage_dealt: 9,
+      avg_damage_taken: 18,
+      avg_attack_steps: 2,
+      avg_life_gained: 1,
+      avg_cards_drawn: 10,
+      avg_cards_denied: 5,
+    },
+  ],
   recent: [
     {
       game_id: 'game-2',
@@ -162,6 +203,23 @@ const deckDetail = {
   },
   summary: { games: 2, wins: 1, losses: 1, draws: 0, win_rate: 50 },
   profile: { avg_duration_seconds: 270, avg_turns: 9, avg_mulligans: 0.5, on_play_pct: 50 },
+  combat_profile: {
+    deck_name: 'Boros Mouse',
+    games: 2,
+    wins: 1,
+    losses: 1,
+    win_rate: 50,
+    avg_damage_dealt: 14.5,
+    avg_damage_taken: 12,
+    avg_attack_steps: 3,
+    attackers_per_attack: 2.17,
+    attackers_lost: 3,
+    blockers_lost: 3,
+    trade_ratio: 1,
+    avg_life_gained: 2,
+    avg_player_turns: 4.5,
+    aggression_profile: 'Aggro' as const,
+  },
   formats: [{ format_label: 'Standard Best-of-1 (Unranked)', raw_formats: 'Play, Unknown', games: 2, wins: 1, losses: 1, win_rate: 50 }],
   midweek_formats: [{ format_label: 'Midweek Magic - Slow Start', raw_formats: 'MWM_SlowStart_20260602', games: 1, wins: 1, losses: 0, win_rate: 100 }],
   card_performance: [
@@ -241,6 +299,44 @@ const gameDetail = {
     land_draw_pct: 70,
     is_flood: true,
   },
+  participant_stats: [
+    {
+      role: 'player',
+      attack_steps: 4,
+      attacking_creatures: 9,
+      attackers_lost: 1,
+      blocking_creatures: 2,
+      blockers_lost: 3,
+      damage_dealt: 20,
+      damage_taken: 6,
+      life_lost: 8,
+      self_damage: 2,
+      life_gained: 3,
+      cards_played: 12,
+      cards_drawn: 9,
+      cards_discarded: 0,
+      cards_milled: 0,
+      cards_exiled: 1,
+    },
+    {
+      role: 'opponent',
+      attack_steps: 2,
+      attacking_creatures: 3,
+      attackers_lost: 3,
+      blocking_creatures: 4,
+      blockers_lost: 1,
+      damage_dealt: 8,
+      damage_taken: 18,
+      life_lost: 20,
+      self_damage: 2,
+      life_gained: 0,
+      cards_played: 10,
+      cards_drawn: 8,
+      cards_discarded: 1,
+      cards_milled: 0,
+      cards_exiled: 0,
+    },
+  ],
   turn_timing: {
     player: { total_seconds: 60, turns_timed: 2, avg_seconds: 30 },
     opponent: { total_seconds: 30, turns_timed: 1, avg_seconds: 30 },
@@ -477,6 +573,7 @@ describe('App', () => {
       'rank-progress',
       'recent-games',
       'decks',
+      'combat',
       'formats',
       'visible-drawn-cards',
       'matches',
@@ -514,9 +611,9 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
-    // Decks table, Best Deck metric, Recent Games, and Matches.
+    // Decks table, Best Deck metric, Recent Games, Combat, and Matches.
     const deckLinks = screen.getAllByRole('link', { name: 'Boros Mouse' });
-    expect(deckLinks.length).toBe(4);
+    expect(deckLinks.length).toBe(5);
     deckLinks.forEach((link) => {
       expect(link).toHaveAttribute('href', '#/deck/Boros%20Mouse');
     });
@@ -725,6 +822,8 @@ describe('App', () => {
       draw_quality: [],
       drawn_cards: [],
       momentum: [],
+      combat_decks: [],
+      combat_split: [],
       recent: [],
       matches: [],
       sessions: [],
@@ -945,7 +1044,7 @@ describe('App', () => {
     expect(timelineSection).toHaveTextContent('[0:20] [Mouse Mentor]Creature2/1');
     expect(screen.getByRole('link', { name: 'Boros Mouse' })).toHaveAttribute('href', '#/deck/Boros%20Mouse');
     expect(screen.getByRole('link', { name: 'Opponent' })).toHaveAttribute('href', '#/opponent/Opponent');
-    expect(screen.getAllByRole('button', { name: /^Collapse / })).toHaveLength(8);
+    expect(screen.getAllByRole('button', { name: /^Collapse / })).toHaveLength(9);
 
     const timingToggle = screen.getByRole('button', { name: 'Collapse Turn Timing' });
     await user.click(timingToggle);

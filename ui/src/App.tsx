@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { pageTitle } from './branding';
 import {
   fetchDashboardSnapshot,
+  type CombatDeckRow,
+  type CombatSplitRow,
   type DashboardSnapshot,
   type DeckRow,
   type DrawQualityRow,
@@ -233,6 +235,122 @@ const momentumColumns: Column<MomentumRow>[] = [
     header: 'On Play',
     render: (row) => formatPercent(row.on_play_pct),
     sortValue: (row) => row.on_play_pct,
+    numeric: true,
+  },
+];
+
+const combatDeckColumns: Column<CombatDeckRow>[] = [
+  {
+    key: 'deck_name',
+    header: 'Deck',
+    render: (row) => (
+      <DeckLink deckName={row.deck_name}>
+        <strong>{row.deck_name}</strong>
+      </DeckLink>
+    ),
+    sortValue: (row) => row.deck_name,
+  },
+  {
+    key: 'aggression_profile',
+    header: 'Profile',
+    render: (row) => (row.aggression_profile ? <Badge tone="draw">{row.aggression_profile}</Badge> : '—'),
+    sortValue: (row) => row.aggression_profile ?? '',
+  },
+  { key: 'games', header: 'Games', numeric: true },
+  {
+    key: 'win_rate',
+    header: 'Win Rate',
+    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
+    sortValue: (row) => row.win_rate,
+    numeric: true,
+  },
+  {
+    key: 'avg_damage_dealt',
+    header: 'Dmg Dealt / Game',
+    render: (row) => formatNumber(row.avg_damage_dealt),
+    sortValue: (row) => row.avg_damage_dealt,
+    numeric: true,
+  },
+  {
+    key: 'avg_damage_taken',
+    header: 'Dmg Taken / Game',
+    render: (row) => formatNumber(row.avg_damage_taken),
+    sortValue: (row) => row.avg_damage_taken,
+    numeric: true,
+  },
+  {
+    key: 'avg_attack_steps',
+    header: 'Attacks / Game',
+    render: (row) => formatNumber(row.avg_attack_steps),
+    sortValue: (row) => row.avg_attack_steps,
+    numeric: true,
+  },
+  {
+    key: 'attackers_per_attack',
+    header: 'Attackers / Attack',
+    render: (row) => formatNumber(row.attackers_per_attack),
+    sortValue: (row) => row.attackers_per_attack,
+    numeric: true,
+  },
+  {
+    key: 'trade_ratio',
+    header: 'Trade Ratio',
+    render: (row) => (row.trade_ratio === null ? '—' : formatNumber(row.trade_ratio)),
+    sortValue: (row) => row.trade_ratio,
+    numeric: true,
+  },
+  {
+    key: 'avg_life_gained',
+    header: 'Life Gained / Game',
+    render: (row) => formatNumber(row.avg_life_gained),
+    sortValue: (row) => row.avg_life_gained,
+    numeric: true,
+  },
+];
+
+const combatSplitColumns: Column<CombatSplitRow>[] = [
+  { key: 'split', header: 'Result' },
+  { key: 'games', header: 'Games', numeric: true },
+  {
+    key: 'avg_damage_dealt',
+    header: 'Dmg Dealt',
+    render: (row) => formatNumber(row.avg_damage_dealt),
+    sortValue: (row) => row.avg_damage_dealt,
+    numeric: true,
+  },
+  {
+    key: 'avg_damage_taken',
+    header: 'Dmg Taken',
+    render: (row) => formatNumber(row.avg_damage_taken),
+    sortValue: (row) => row.avg_damage_taken,
+    numeric: true,
+  },
+  {
+    key: 'avg_attack_steps',
+    header: 'Attacks',
+    render: (row) => formatNumber(row.avg_attack_steps),
+    sortValue: (row) => row.avg_attack_steps,
+    numeric: true,
+  },
+  {
+    key: 'avg_life_gained',
+    header: 'Life Gained',
+    render: (row) => formatNumber(row.avg_life_gained),
+    sortValue: (row) => row.avg_life_gained,
+    numeric: true,
+  },
+  {
+    key: 'avg_cards_drawn',
+    header: 'Cards Drawn',
+    render: (row) => formatNumber(row.avg_cards_drawn),
+    sortValue: (row) => row.avg_cards_drawn,
+    numeric: true,
+  },
+  {
+    key: 'avg_cards_denied',
+    header: 'Discarded + Milled',
+    render: (row) => formatNumber(row.avg_cards_denied),
+    sortValue: (row) => row.avg_cards_denied,
     numeric: true,
   },
 ];
@@ -760,6 +878,35 @@ function Dashboard({
           pageSize={15}
           paginationKey={deckSearch.trim().toLocaleLowerCase()}
           rows={filteredDecks}
+        />
+      </Section>
+
+      <Section
+        id="combat"
+        title="Combat"
+        description="Aggression profiles from per-game combat and resource telemetry: damage, attacks, trades, and lifegain."
+      >
+        <SortableTable
+          caption="Deck combat profiles"
+          columns={combatDeckColumns}
+          getRowKey={(row) => row.deck_name}
+          initialSort={{ key: 'games', direction: 'desc' }}
+          pageSize={15}
+          rows={snapshot.combat_decks ?? []}
+        />
+        <div className="section-heading">
+          <div>
+            <h3>Wins vs Losses</h3>
+            <p className="section-description">
+              How your games look when you win compared to when you lose. Trade Ratio is blockers killed per attacker lost.
+            </p>
+          </div>
+        </div>
+        <SortableTable
+          caption="Combat splits by result"
+          columns={combatSplitColumns}
+          getRowKey={(row) => row.split}
+          rows={snapshot.combat_split ?? []}
         />
       </Section>
 

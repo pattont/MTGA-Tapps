@@ -156,6 +156,22 @@ def _sample_dashboard_db(tmp_path):
                 ("game-2", 3, 2, 35, "live"),
             ],
         )
+        conn.executemany(
+            """
+            insert into game_participant_stats (
+                game_id, participant_id, attack_steps, attacking_creatures,
+                attackers_lost, blocking_creatures, blockers_lost, damage_dealt,
+                damage_taken, life_lost, self_damage, life_gained, cards_played,
+                cards_drawn, cards_discarded, cards_milled, cards_exiled
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("game-1", "player-1", 4, 9, 1, 2, 3, 20, 6, 8, 2, 3, 12, 1, 0, 0, 1),
+                ("game-1", "opponent-1", 2, 3, 3, 4, 1, 8, 18, 20, 2, 0, 10, 8, 1, 0, 0),
+                ("game-2", "player-2", 2, 4, 2, 1, 0, 9, 18, 20, 2, 1, 9, 10, 2, 3, 0),
+                ("game-2", "opponent-2", 3, 7, 1, 2, 2, 20, 8, 9, 1, 4, 11, 9, 0, 0, 2),
+            ],
+        )
         conn.execute(
             """
             insert into rank_snapshots (
@@ -1055,7 +1071,7 @@ def test_game_detail_marks_flood_when_over_half_of_draws_are_lands(tmp_path):
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """
-            insert into game_participant_stats (game_id, participant_id, cards_drawn)
+            insert or replace into game_participant_stats (game_id, participant_id, cards_drawn)
             values ('game-1', 'player-1', 5)
             """
         )
@@ -1099,7 +1115,7 @@ def test_game_detail_does_not_mark_exactly_half_land_draws_as_flood(tmp_path):
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """
-            insert into game_participant_stats (game_id, participant_id, cards_drawn)
+            insert or replace into game_participant_stats (game_id, participant_id, cards_drawn)
             values ('game-1', 'player-1', 2)
             """
         )
@@ -1134,7 +1150,7 @@ def test_game_detail_marks_three_nonland_draws_while_stuck_on_one_land_as_screw(
         )
         conn.execute(
             """
-            insert into game_participant_stats (game_id, participant_id, cards_drawn)
+            insert or replace into game_participant_stats (game_id, participant_id, cards_drawn)
             values ('game-1', 'player-1', 3)
             """
         )
@@ -1172,7 +1188,7 @@ def test_game_detail_does_not_treat_unidentified_draws_as_nonland_drought(tmp_pa
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """
-            insert into game_participant_stats (game_id, participant_id, cards_drawn)
+            insert or replace into game_participant_stats (game_id, participant_id, cards_drawn)
             values ('game-1', 'player-1', 3)
             """
         )
@@ -1190,7 +1206,7 @@ def test_game_detail_marks_four_consecutive_land_draws_as_flood(tmp_path):
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """
-            insert into game_participant_stats (game_id, participant_id, cards_drawn)
+            insert or replace into game_participant_stats (game_id, participant_id, cards_drawn)
             values ('game-1', 'player-1', 10)
             """
         )
@@ -1217,7 +1233,7 @@ def test_game_detail_marks_six_lands_in_eight_draws_as_flood(tmp_path):
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """
-            insert into game_participant_stats (game_id, participant_id, cards_drawn)
+            insert or replace into game_participant_stats (game_id, participant_id, cards_drawn)
             values ('game-1', 'player-1', 20)
             """
         )
@@ -1643,3 +1659,51 @@ def test_dashboard_snapshot_deck_visual_ranking_has_stable_tiebreakers(tmp_path)
     assert deck["deck_visual"]["card_id"] == 88888
     assert deck["deck_visual"]["type_category"] == "Artifact"
     assert deck["deck_visual"]["source"] == "local_metadata"
+
+
+def test_dashboard_snapshot_reports_combat_profiles(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+
+    snapshot = dashboard_snapshot(db_path)
+
+    combat_decks = snapshot["combat_decks"]
+    assert len(combat_decks) == 1
+    deck = combat_decks[0]
+    assert deck["deck_name"] == "Boros Mouse"
+    assert deck["games"] == 2
+    assert deck["avg_damage_dealt"] == 14.5
+    assert deck["avg_damage_taken"] == 12.0
+    assert deck["avg_attack_steps"] == 3.0
+    assert deck["attackers_per_attack"] == 2.17
+    assert deck["attackers_lost"] == 3
+    assert deck["blockers_lost"] == 3
+    assert deck["trade_ratio"] == 1.0
+    assert deck["aggression_profile"] == "Aggro"
+
+    split = {row["split"]: row for row in snapshot["combat_split"]}
+    assert split["Wins"]["avg_damage_dealt"] == 20.0
+    assert split["Losses"]["avg_damage_dealt"] == 9.0
+    assert split["Losses"]["avg_cards_denied"] == 5.0
+
+
+def test_deck_detail_includes_combat_profile(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+
+    detail = deck_detail(db_path, "Boros Mouse")
+
+    profile = detail["combat_profile"]
+    assert profile is not None
+    assert profile["deck_name"] == "Boros Mouse"
+    assert profile["avg_damage_dealt"] == 14.5
+
+
+def test_game_detail_includes_participant_stats(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+
+    detail = game_detail(db_path, "game-1")
+
+    stats = detail["participant_stats"]
+    assert [row["role"] for row in stats] == ["player", "opponent"]
+    assert stats[0]["damage_dealt"] == 20
+    assert stats[0]["damage_taken"] == 6
+    assert stats[1]["damage_dealt"] == 8

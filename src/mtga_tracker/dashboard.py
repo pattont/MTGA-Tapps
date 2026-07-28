@@ -205,6 +205,83 @@ def _card_image_url(arena_id: Optional[int], card_name: Optional[str]) -> Option
     return None
 
 
+def _combat_deck_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> List[Dict[str, Any]]:
+    """Per-deck combat/aggression profile from game_participant_stats."""
+    rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              COALESCE(p.deck_name, '(unknown)') AS deck_name,
+              COUNT(*) AS games,
+              SUM(g.outcome = 'win') AS wins,
+              SUM(g.outcome = 'loss') AS losses,
+              ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate,
+              ROUND(AVG(s.damage_dealt), 1) AS avg_damage_dealt,
+              ROUND(AVG(s.damage_taken), 1) AS avg_damage_taken,
+              ROUND(AVG(s.attack_steps), 1) AS avg_attack_steps,
+              ROUND(1.0 * SUM(s.attacking_creatures) / NULLIF(SUM(s.attack_steps), 0), 2) AS attackers_per_attack,
+              SUM(s.attackers_lost) AS attackers_lost,
+              SUM(s.blockers_lost) AS blockers_lost,
+              ROUND(AVG(s.life_gained), 1) AS avg_life_gained,
+              ROUND(AVG(g.player_turns), 1) AS avg_player_turns
+            FROM game_participant_stats s
+            JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
+            JOIN games g ON g.id = s.game_id
+            WHERE {where}
+            GROUP BY COALESCE(p.deck_name, '(unknown)')
+            HAVING COUNT(*) > 0
+            ORDER BY games DESC, deck_name COLLATE NOCASE
+            LIMIT 40
+            """,
+            params,
+        )
+    )
+    for row in rows:
+        attacks = row.get("avg_attack_steps") or 0
+        turns = row.get("avg_player_turns") or 0
+        ratio = (attacks / turns) if turns else None
+        if ratio is None:
+            row["aggression_profile"] = None
+        elif ratio >= 0.6 and turns <= 9:
+            row["aggression_profile"] = "Aggro"
+        elif ratio <= 0.35:
+            row["aggression_profile"] = "Control"
+        else:
+            row["aggression_profile"] = "Midrange"
+        attackers_lost = int(row.get("attackers_lost") or 0)
+        blockers_lost = int(row.get("blockers_lost") or 0)
+        row["trade_ratio"] = (
+            round(blockers_lost / attackers_lost, 2) if attackers_lost else None
+        )
+    return rows
+
+
+def _combat_split_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> List[Dict[str, Any]]:
+    """Aggression aggregates split by game outcome (wins vs losses)."""
+    return _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              CASE WHEN g.outcome = 'win' THEN 'Wins' ELSE 'Losses' END AS split,
+              COUNT(*) AS games,
+              ROUND(AVG(s.damage_dealt), 1) AS avg_damage_dealt,
+              ROUND(AVG(s.damage_taken), 1) AS avg_damage_taken,
+              ROUND(AVG(s.attack_steps), 1) AS avg_attack_steps,
+              ROUND(AVG(s.life_gained), 1) AS avg_life_gained,
+              ROUND(AVG(s.cards_drawn), 1) AS avg_cards_drawn,
+              ROUND(AVG(s.cards_discarded + s.cards_milled), 1) AS avg_cards_denied
+            FROM game_participant_stats s
+            JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
+            JOIN games g ON g.id = s.game_id
+            WHERE {where} AND g.outcome IN ('win', 'loss')
+            GROUP BY split
+            ORDER BY split = 'Wins' DESC
+            """,
+            params,
+        )
+    )
+
+
 def _games_filter(
     deck: Optional[str], fmt: Optional[str], days: Optional[int]
 ) -> Tuple[str, List[Any]]:
@@ -863,6 +940,8 @@ def dashboard_snapshot(
             format_options.append(
                 {"raw_format": row[0], "format_label": normalized.label}
             )
+        combat_deck_rows = _combat_deck_rows(conn, where, params)
+        combat_split_rows = _combat_split_rows(conn, where, params)
         deck_visuals = _deck_visuals(conn)
         for row in deck_rows:
             deck_name = row["deck_name"]
@@ -927,6 +1006,8 @@ def dashboard_snapshot(
         "draw_quality": draw_quality_rows,
         "drawn_cards": drawn_card_rows,
         "momentum": momentum_rows,
+        "combat_decks": combat_deck_rows,
+        "combat_split": combat_split_rows,
         "recent": recent_rows,
         "trend": trend_rows,
         "rank_progress": rank_progress_rows,
@@ -982,6 +1063,8 @@ def deck_detail(
             """,
             params,
         ).fetchone()
+        combat_rows = _combat_deck_rows(conn, where, params)
+        combat_profile = combat_rows[0] if combat_rows else None
         format_rows, midweek_rows = _grouped_format_rows(conn, where, params)
         submitted_cards_by_game: Dict[str, Set[str]] = {}
         if _table_exists(conn, "game_deck_cards"):
@@ -1244,6 +1327,7 @@ def deck_detail(
             "avg_mulligans": profile[2],
             "on_play_pct": profile[3],
         },
+        "combat_profile": combat_profile,
         "formats": format_rows,
         "midweek_formats": midweek_rows,
         "card_performance": card_rows,
@@ -1496,11 +1580,40 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
             for row in timeline
             if row.get("player_life") is not None and row.get("opponent_life") is not None
         ]
+        participant_stats = _dict_rows(
+            conn.execute(
+                """
+                SELECT
+                  p.role,
+                  s.attack_steps,
+                  s.attacking_creatures,
+                  s.attackers_lost,
+                  s.blocking_creatures,
+                  s.blockers_lost,
+                  s.damage_dealt,
+                  s.damage_taken,
+                  s.life_lost,
+                  s.self_damage,
+                  s.life_gained,
+                  s.cards_played,
+                  s.cards_drawn,
+                  s.cards_discarded,
+                  s.cards_milled,
+                  s.cards_exiled
+                FROM game_participant_stats s
+                JOIN participants p ON p.id = s.participant_id
+                WHERE s.game_id = ?
+                ORDER BY p.role = 'player' DESC
+                """,
+                (game_id,),
+            )
+        )
 
     return {
         "game": game,
         "player": player or {},
         "opponent": opponent or {},
+        "participant_stats": participant_stats,
         "opening_hand": opening_hand,
         "drawn": drawn,
         "draw_quality": draw_quality,

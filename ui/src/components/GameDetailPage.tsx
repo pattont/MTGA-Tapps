@@ -342,6 +342,34 @@ export function GameDetailPage({
         : isScrew
           ? 'Mana Screwed'
           : 'Normal';
+  const playerStats = detail.participant_stats.find((row) => row.role === 'player');
+  const opponentStats = detail.participant_stats.find((row) => row.role === 'opponent');
+  const combatStatRows =
+    playerStats || opponentStats
+      ? (
+          [
+            ['Attack steps', 'attack_steps'],
+            ['Attacking creatures', 'attacking_creatures'],
+            ['Attackers lost', 'attackers_lost'],
+            ['Blocking creatures', 'blocking_creatures'],
+            ['Blockers lost', 'blockers_lost'],
+            ['Damage dealt', 'damage_dealt'],
+            ['Damage taken', 'damage_taken'],
+            ['Life lost', 'life_lost'],
+            ['Self damage', 'self_damage'],
+            ['Life gained', 'life_gained'],
+            ['Cards played', 'cards_played'],
+            ['Cards drawn', 'cards_drawn'],
+            ['Cards discarded', 'cards_discarded'],
+            ['Cards milled', 'cards_milled'],
+            ['Cards exiled', 'cards_exiled'],
+          ] as const
+        ).map(([label, key]) => ({
+          label,
+          player: playerStats ? playerStats[key] : null,
+          opponent: opponentStats ? opponentStats[key] : null,
+        }))
+      : [];
   const timelineReturnHash = gameRouteHash(gameId, backHref, 'game-timeline');
   const metricCards = [
     { label: 'Play / Draw', value: playDraw },
@@ -440,6 +468,38 @@ export function GameDetailPage({
             <span>{screwReasons.join(' · ')}</span>
           </p>
         ) : null}
+      </Section>
+
+      <Section
+        id="game-combat"
+        title="Combat & Resources"
+        description="Per-seat combat, damage, and resource totals recorded for this game."
+      >
+        {detail.participant_stats.length > 0 ? (
+          <div className="table-wrap">
+            <table>
+              <caption className="visually-hidden">Combat and resource stats by seat</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Stat</th>
+                  <th scope="col" className="numeric">You</th>
+                  <th scope="col" className="numeric">Opponent</th>
+                </tr>
+              </thead>
+              <tbody>
+                {combatStatRows.map((stat) => (
+                  <tr key={stat.label}>
+                    <td>{stat.label}</td>
+                    <td className="numeric">{formatNumber(stat.player)}</td>
+                    <td className="numeric">{formatNumber(stat.opponent)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="empty-state">No combat telemetry recorded for this game.</p>
+        )}
       </Section>
 
       <Section id="game-life" title="Life Totals" description="Life-total changes captured from the game timeline.">
