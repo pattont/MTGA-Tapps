@@ -7,7 +7,9 @@ import {
   type DashboardSnapshot,
   type DeckRow,
   type FatigueRow,
+  type MatchupRow,
   type OpenerLandRow,
+  type OpponentThreatRow,
   type OutcomeReasonRow,
   type ScheduleRow,
   type DrawQualityRow,
@@ -405,6 +407,53 @@ const openerLandColumns: Column<OpenerLandRow>[] = [
   { key: 'games', header: 'Games', numeric: true },
   { key: 'wins', header: 'Wins', numeric: true },
   { key: 'losses', header: 'Losses', numeric: true },
+  {
+    key: 'win_rate',
+    header: 'Win Rate',
+    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
+    sortValue: (row) => row.win_rate,
+    numeric: true,
+  },
+];
+
+const opponentThreatColumns: Column<OpponentThreatRow>[] = [
+  {
+    key: 'display_name',
+    header: 'Card',
+    render: (row) => <CardLink cardName={row.display_name} />,
+    sortValue: (row) => row.display_name,
+  },
+  {
+    key: 'type_category',
+    header: 'Type',
+    render: (row) => <TypeChip type={row.type_category} />,
+    sortValue: (row) => row.type_category,
+  },
+  { key: 'games', header: 'Games Seen', numeric: true },
+  { key: 'plays', header: 'Times Played', numeric: true },
+  { key: 'losses', header: 'Your Losses', numeric: true },
+  {
+    key: 'loss_rate',
+    header: 'Loss Rate',
+    render: (row) => formatPercent(row.loss_rate),
+    sortValue: (row) => row.loss_rate,
+    numeric: true,
+  },
+];
+
+const matchupColumns: Column<MatchupRow>[] = [
+  {
+    key: 'deck_name',
+    header: 'Your Deck',
+    render: (row) => (
+      <DeckLink deckName={row.deck_name}>
+        <strong>{row.deck_name}</strong>
+      </DeckLink>
+    ),
+    sortValue: (row) => row.deck_name,
+  },
+  { key: 'opponent_archetype', header: 'Opponent Archetype' },
+  { key: 'games', header: 'Games', numeric: true },
   {
     key: 'win_rate',
     header: 'Win Rate',
@@ -1094,6 +1143,50 @@ function Dashboard({
             />
           </section>
         </div>
+      </Section>
+
+      <Section
+        id="opponent-meta"
+        title="Opponent Meta"
+        description="What the ladder is beating you with, and matchup records when opponent archetypes are identified."
+      >
+        <div className="section-heading">
+          <div>
+            <h3>Cards That Beat You</h3>
+            <p className="section-description">
+              Opponent-played cards ranked by how often their games end in your losses (minimum 2 games).
+            </p>
+          </div>
+        </div>
+        <SortableTable
+          caption="Opponent threat leaderboard"
+          columns={opponentThreatColumns}
+          getRowKey={(row) => row.display_name}
+          initialSort={{ key: 'loss_rate', direction: 'desc' }}
+          pageSize={15}
+          rows={snapshot.opponent_threats ?? []}
+        />
+        <div className="section-heading">
+          <div>
+            <h3>Matchups</h3>
+            <p className="section-description">
+              Your decks against identified opponent archetypes. Archetype identification is optional — enable
+              the deck LLM in config.py (DECK_LLM_ENABLED plus an API key) and future games will be tagged.
+            </p>
+          </div>
+        </div>
+        {(snapshot.matchups ?? []).length > 0 ? (
+          <SortableTable
+            caption="Matchup records"
+            columns={matchupColumns}
+            getRowKey={(row) => `${row.deck_name}|${row.opponent_archetype}`}
+            initialSort={{ key: 'games', direction: 'desc' }}
+            pageSize={15}
+            rows={snapshot.matchups ?? []}
+          />
+        ) : (
+          <p className="empty-state">No identified opponent archetypes yet.</p>
+        )}
       </Section>
 
       <Section id="formats" title="Formats">

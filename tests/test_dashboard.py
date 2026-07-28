@@ -1874,3 +1874,44 @@ def test_dashboard_snapshot_supports_rank_season_selection(tmp_path):
     assert previous["filters"]["season"] == 90
     assert all(row["season_ordinal"] == 90 for row in previous["rank_progress"])
     assert previous["rank_progress"][0]["rank_class"] == "Gold"
+
+
+def test_dashboard_snapshot_reports_opponent_threats_and_matchups(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            ) values (?, ?, NULL, ?, ?, ?)
+            """,
+            [
+                ("game-1", "opponent-1", "Graveyard Trespasser (Creature 3/3)", "Creature", 1),
+                ("game-2", "opponent-2", "Graveyard Trespasser (Creature 3/3)", "Creature", 2),
+            ],
+        )
+        conn.execute(
+            "update participants set deck_archetype = 'Dimir Midrange' where id = 'opponent-2'"
+        )
+
+    snapshot = dashboard_snapshot(db_path)
+
+    threats = snapshot["opponent_threats"]
+    assert threats[0]["display_name"] == "Graveyard Trespasser"
+    assert threats[0]["games"] == 2
+    assert threats[0]["plays"] == 3
+    assert threats[0]["loss_rate"] == 50.0
+
+    matchups = {
+        (row["deck_name"], row["opponent_archetype"]): row for row in snapshot["matchups"]
+    }
+    assert matchups[("Boros Mouse", "Dimir Midrange")]["losses"] == 1
+    assert matchups[("Boros Mouse", "(unidentified)")]["wins"] == 1
+
+
+def test_dashboard_snapshot_matchups_empty_without_archetypes(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+
+    snapshot = dashboard_snapshot(db_path)
+
+    assert snapshot["matchups"] == []

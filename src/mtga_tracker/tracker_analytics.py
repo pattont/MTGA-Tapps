@@ -18,6 +18,7 @@ from .analytics_persistence import (
     persist_submitted_deck,
 )
 from .format_normalizer import is_momir_format, normalize_match_format
+from .deck_llm import identify_deck, is_deck_llm_enabled
 from .rank_progress import (
     iter_constructed_rank_snapshots,
     parse_constructed_rank_snapshot,
@@ -314,7 +315,7 @@ class TrackerAnalyticsMixin:
             or ("You" if is_player else "Opponent"),
             "deck_name": self.game_state.player_deck_name if is_player else None,
             "deck_id": self.game_state.player_deck_id if is_player else None,
-            "deck_archetype": None,
+            "deck_archetype": None if is_player else self._opponent_archetype(game_id),
             "deck_size": deck_size,
             "deck_size_source": deck_size_source,
             "opening_hand_size": (
@@ -707,6 +708,39 @@ class TrackerAnalyticsMixin:
                     participant["went_first"],
                 ),
             )
+
+    def _opponent_archetype(self, game_id: str) -> Optional[str]:
+        """Best-effort opponent archetype from observed cards (opt-in LLM).
+
+        Only runs when deck_llm is explicitly enabled via config/env; the result
+        is cached per game so repeated persistence passes never re-call the API.
+        """
+        try:
+            if not is_deck_llm_enabled():
+                return None
+        except Exception:
+            return None
+        cache = getattr(self, "_archetype_cache", None)
+        if cache is None:
+            cache = {}
+            self._archetype_cache = cache
+        if game_id in cache:
+            return cache[game_id]
+        card_names = []
+        seen = set()
+        for event in getattr(self, "opponent_cards", []) or []:
+            name = str(getattr(event, "card_name", "") or "").strip()
+            if name and name not in seen:
+                seen.add(name)
+                card_names.append(name)
+        archetype = None
+        if len(card_names) >= 3:
+            try:
+                archetype = identify_deck(card_names)
+            except Exception:
+                archetype = None
+        cache[game_id] = archetype
+        return archetype
 
     def _persist_game_detail_analytics(
         self,
