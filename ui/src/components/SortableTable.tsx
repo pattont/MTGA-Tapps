@@ -3,6 +3,35 @@ import type { ReactNode } from 'react';
 import { useMemo, useState } from 'react';
 import { sortRows, type SortDirection } from '../sort';
 
+interface StoredSort {
+  key: string;
+  direction: SortDirection;
+}
+
+function readStoredSort(caption: string): StoredSort | null {
+  try {
+    const raw = sessionStorage.getItem(`mtga-table-sort:${caption}`);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as StoredSort;
+    if (typeof parsed?.key === 'string' && (parsed.direction === 'asc' || parsed.direction === 'desc')) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function storeSort(caption: string, sort: StoredSort): void {
+  try {
+    sessionStorage.setItem(`mtga-table-sort:${caption}`, JSON.stringify(sort));
+  } catch {
+    // Persistence is best-effort only.
+  }
+}
+
 type SortValue = string | number | boolean | null | undefined;
 
 export interface Column<T extends object> {
@@ -42,8 +71,20 @@ export function SortableTable<T extends object>({
 }: SortableTableProps<T>) {
   const sortableColumns = useMemo(() => columns.filter((column) => column.sortable !== false), [columns]);
   const firstSortableKey = sortableColumns[0]?.key ?? null;
-  const [sortKey, setSortKey] = useState<keyof T | null>(initialSort?.key ?? firstSortableKey);
-  const [direction, setDirection] = useState<SortDirection>(initialSort?.direction ?? 'asc');
+  const [sortKey, setSortKey] = useState<keyof T | null>(() => {
+    const stored = readStoredSort(caption);
+    if (stored && columns.some((column) => String(column.key) === stored.key)) {
+      return stored.key as keyof T;
+    }
+    return initialSort?.key ?? firstSortableKey;
+  });
+  const [direction, setDirection] = useState<SortDirection>(() => {
+    const stored = readStoredSort(caption);
+    if (stored && columns.some((column) => String(column.key) === stored.key)) {
+      return stored.direction;
+    }
+    return initialSort?.direction ?? 'asc';
+  });
   const [pagination, setPagination] = useState({ key: paginationKey, page: 1 });
   const requestedSortColumn = sortableColumns.find((column) => column.key === sortKey) ?? null;
   const activeSortColumn = requestedSortColumn ?? sortableColumns[0] ?? null;
@@ -72,12 +113,15 @@ export function SortableTable<T extends object>({
   function toggleSort(key: keyof T) {
     setPagination({ key: paginationKey, page: 1 });
     if (key === activeSortColumn?.key) {
+      const nextDirection = activeDirection === 'asc' ? 'desc' : 'asc';
       setSortKey(key);
-      setDirection(activeDirection === 'asc' ? 'desc' : 'asc');
+      setDirection(nextDirection);
+      storeSort(caption, { key: String(key), direction: nextDirection });
       return;
     }
     setSortKey(key);
     setDirection('asc');
+    storeSort(caption, { key: String(key), direction: 'asc' });
   }
 
   function changePage(page: number) {
@@ -90,7 +134,12 @@ export function SortableTable<T extends object>({
 
   return (
     <div className={isPaginated ? 'table-container table-container-paginated' : 'table-container'}>
-      <div className={compact ? 'table-wrap table-wrap-compact' : 'table-wrap'}>
+      <div
+        className={compact ? 'table-wrap table-wrap-compact' : 'table-wrap'}
+        role="region"
+        aria-label={caption}
+        tabIndex={0}
+      >
         <table>
           <caption>{caption}</caption>
           <thead>

@@ -9,6 +9,7 @@ describe('detail route return context', () => {
     expect(parseCardRoute(cardHash)).toEqual({
       name: 'Sheltered by Ghosts',
       returnHash: gameHash,
+      filters: {},
     });
     expect(parseGameRoute(gameHash)).toEqual({
       id: 'game:1',
@@ -21,6 +22,43 @@ describe('detail route return context', () => {
     expect(parseCardRoute('#/card/Swamp?return=https%3A%2F%2Fexample.com')).toEqual({
       name: 'Swamp',
       returnHash: '#overview',
+      filters: {},
     });
+  });
+});
+
+
+describe('filter round-trips', () => {
+  it('carries season and date-range filters through the dashboard route', async () => {
+    const { dashboardRouteHash, parseDashboardRouteFilters } = await import('./routes');
+    const hash = dashboardRouteHash({
+      deck: 'Boros Mouse',
+      format: 'Play',
+      days: 30,
+      season: 91,
+      since: '2026-06-01',
+      until: '2026-06-30',
+    });
+    expect(parseDashboardRouteFilters(hash)).toEqual({
+      deck: 'Boros Mouse',
+      format: 'Play',
+      days: 30,
+      season: 91,
+      since: '2026-06-01',
+      until: '2026-06-30',
+    });
+  });
+
+  it('parses opponent routes with filters', async () => {
+    const { parseOpponentRoute } = await import('./routes');
+    expect(parseOpponentRoute('#/opponent/Foe?format=Play&days=7')).toEqual({
+      name: 'Foe',
+      filters: { format: 'Play', days: 7 },
+    });
+  });
+
+  it('drops malformed date filters', async () => {
+    const { parseDashboardRouteFilters } = await import('./routes');
+    expect(parseDashboardRouteFilters('#overview?since=yesterday&until=2026-13-99x')).toEqual({});
   });
 });

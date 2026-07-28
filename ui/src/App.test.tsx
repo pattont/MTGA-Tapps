@@ -1276,6 +1276,12 @@ describe('App', () => {
       },
     ];
     const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).startsWith('/api/search')) {
+        return new Response(
+          JSON.stringify({ cards: searchResults, decks: [], opponents: [] }),
+          { status: 200 },
+        );
+      }
       if (String(url).startsWith('/api/cards')) {
         return new Response(JSON.stringify(searchResults), { status: 200 });
       }

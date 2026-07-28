@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchOpponentDetail, type OpponentDetail, type OpponentGameRow } from '../api';
+import { fetchOpponentDetail, type OpponentDetail, type OpponentGameRow, type SnapshotFilters } from '../api';
 import { formatPercent } from '../dashboardData';
 import { formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone } from '../format';
 import { gameRouteHash, opponentRouteHash } from '../routes';
@@ -8,9 +8,11 @@ import { DeckLink } from './DeckLink';
 import { MetricCard } from './MetricCard';
 import { SortableTable, type Column } from './SortableTable';
 
+const DETAIL_REFRESH_MS = 20_000;
+
 type LoadState =
   | { status: 'loading' }
-  | { status: 'loaded'; detail: OpponentDetail }
+  | { status: 'loaded'; detail: OpponentDetail; refreshError?: string }
   | { status: 'error'; message: string };
 
 const columns = (opponentName: string): Column<OpponentGameRow>[] => [
@@ -55,35 +57,82 @@ const columns = (opponentName: string): Column<OpponentGameRow>[] => [
   },
 ];
 
-export function OpponentDetailPage({ opponentName }: { opponentName: string }) {
+export function OpponentDetailPage({
+  opponentName,
+  filters = {},
+}: {
+  opponentName: string;
+  filters?: SnapshotFilters;
+}) {
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
+  const [retryToken, setRetryToken] = useState(0);
 
   useEffect(() => {
     window.scrollTo(0, 0);
-    const controller = new AbortController();
-    void fetchOpponentDetail(opponentName, controller.signal)
-      .then((detail) => setLoadState({ status: 'loaded', detail }))
-      .catch((error: unknown) => {
-        if (!(error instanceof Error && error.name === 'AbortError')) {
-          setLoadState({
-            status: 'error',
-            message: error instanceof Error ? error.message : 'Dashboard API failed',
-          });
+    let ignore = false;
+    let activeController: AbortController | null = null;
+
+    async function load() {
+      activeController?.abort();
+      const controller = new AbortController();
+      activeController = controller;
+      try {
+        const detail = await fetchOpponentDetail(opponentName, filters, controller.signal);
+        if (!ignore) {
+          setLoadState({ status: 'loaded', detail });
         }
-      });
-    return () => controller.abort();
-  }, [opponentName]);
+      } catch (error: unknown) {
+        if (ignore || (error instanceof Error && error.name === 'AbortError')) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : 'Dashboard API failed';
+        setLoadState((current) =>
+          current.status === 'loaded'
+            ? { ...current, refreshError: message }
+            : { status: 'error', message },
+        );
+      }
+    }
+
+    void load();
+    const refreshId = window.setInterval(() => {
+      if (!document.hidden) {
+        void load();
+      }
+    }, DETAIL_REFRESH_MS);
+    return () => {
+      ignore = true;
+      activeController?.abort();
+      window.clearInterval(refreshId);
+    };
+  }, [opponentName, filters, retryToken]);
 
   if (loadState.status === 'loading') {
-    return <p className="state-panel">Loading opponent history...</p>;
+    return (
+      <p className="state-panel" role="status" aria-busy="true">
+        Loading opponent history...
+      </p>
+    );
   }
   if (loadState.status === 'error') {
-    return <p className="state-panel error-state">{loadState.message}</p>;
+    return (
+      <div className="state-panel error-state" role="alert">
+        <p>{loadState.message}</p>
+        <button className="retry-button" type="button" onClick={() => setRetryToken((token) => token + 1)}>
+          Retry
+        </button>
+      </div>
+    );
   }
 
   const { detail } = loadState;
   return (
     <>
+      {loadState.refreshError ? (
+        <p className="refresh-status refresh-status-error" role="alert">
+          Refresh failed: {loadState.refreshError} — showing the last loaded data.
+        </p>
+      ) : null}
       <div className="deck-detail-header" id="opponent-summary">
         <a className="back-link" href="#recent-games">← Back to dashboard</a>
         <div className="opponent-detail-title">
@@ -114,6 +163,7 @@ export function OpponentDetailPage({ opponentName }: { opponentName: string }) {
           columns={columns(detail.opponent_name)}
           getRowKey={(row) => row.game_id}
           initialSort={{ key: 'started_at', direction: 'desc' }}
+          pageSize={15}
           rows={detail.games}
         />
       </section>

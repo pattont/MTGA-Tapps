@@ -38,6 +38,7 @@ import { TrendChart } from './components/TrendChart';
 import { TypeChip } from './components/TypeChip';
 import { WinRateBar } from './components/WinRateBar';
 import { AppShell } from './components/AppShell';
+import { Section } from './components/Section';
 import { ManaReadinessTable } from './components/ManaReadinessTable';
 import { formatPercent, metricCards } from './dashboardData';
 import { formatCardName, formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone } from './format';
@@ -45,6 +46,7 @@ import { cardNavItems, deckNavItems, gameNavItems, opponentNavItems } from './na
 import { RouteFiltersContext } from './routeFilters';
 import {
   dashboardRouteHash,
+  deckRouteHashWithFilters,
   gameRouteHash,
   parseCardRoute,
   parseDashboardRouteFilters,
@@ -104,29 +106,6 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
 }
 
-function Section({
-  id,
-  title,
-  description,
-  children,
-}: {
-  id: string;
-  title: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="dashboard-section" id={id}>
-      <div className="section-heading">
-        <div>
-          <h3>{title}</h3>
-          {description ? <p className="section-description">{description}</p> : null}
-        </div>
-      </div>
-      {children}
-    </section>
-  );
-}
 
 function SetupCard() {
   return (
@@ -709,7 +688,7 @@ export default function App() {
         : cardRoute
           ? pageTitle(cardRoute.name)
           : opponentRoute
-            ? pageTitle(opponentRoute)
+            ? pageTitle(opponentRoute.name)
             : pageTitle('Overview');
   }, [deckRoute, gameRoute, cardRoute, opponentRoute]);
 
@@ -759,6 +738,20 @@ export default function App() {
     setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
   }
 
+  function updateFilters(nextFilters: SnapshotFilters) {
+    setFilters(nextFilters);
+    // Keep the dashboard URL shareable/bookmarkable without triggering a
+    // scroll jump or an extra hashchange round-trip.
+    if (!deckRoute && !gameRoute && !cardRoute && !opponentRoute) {
+      try {
+        window.history.replaceState(null, '', dashboardRouteHash(nextFilters));
+        setRouteHash(window.location.hash);
+      } catch {
+        // history API unavailable: fall back to plain state updates.
+      }
+    }
+  }
+
   return (
     <RouteFiltersContext.Provider value={activeRouteFilters}>
       <AppShell
@@ -775,13 +768,14 @@ export default function App() {
                   ? opponentNavItems
                   : undefined
         }
-        heading={cardName ? formatCardName(cardName) : (gameRoute ? 'Game Detail' : deckName ?? opponentRoute ?? DASHBOARD_TITLE)}
+        heading={cardName ? formatCardName(cardName) : (gameRoute ? 'Game Detail' : deckName ?? opponentRoute?.name ?? DASHBOARD_TITLE)}
       >
         {cardRoute ? (
           <CardDetailPage
             key={`${cardRoute.name}-${cardRoute.returnHash}`}
             backHref={cardRoute.returnHash}
             cardName={cardRoute.name}
+            filters={cardRoute.filters}
           />
         ) : gameRoute ? (
           <GameDetailPage
@@ -796,9 +790,12 @@ export default function App() {
             backHref={deckBackHref}
             deckName={deckName}
             filters={deckRouteFilters}
+            onFiltersChange={(nextFilters) => {
+              window.location.hash = deckRouteHashWithFilters(deckName, nextFilters);
+            }}
           />
         ) : opponentRoute ? (
-          <OpponentDetailPage key={opponentRoute} opponentName={opponentRoute} />
+          <OpponentDetailPage key={opponentRoute.name} filters={opponentRoute.filters} opponentName={opponentRoute.name} />
         ) : (
           <>
             {loadState.status === 'loading' ? <p className="state-panel">Loading dashboard snapshot...</p> : null}
@@ -811,7 +808,7 @@ export default function App() {
               <Dashboard
                 filters={filters}
                 lastUpdated={loadState.lastUpdated}
-                onFiltersChange={setFilters}
+                onFiltersChange={updateFilters}
                 refreshError={loadState.refreshError}
                 snapshot={loadState.snapshot}
               />
@@ -983,6 +980,7 @@ function Dashboard({
         <SortableTable
           caption="Recent games"
           columns={recentColumns}
+          pageSize={15}
           getRowKey={(row) => row.game_id}
           initialSort={{ key: 'started_at', direction: 'desc' }}
           rows={recentGames}
@@ -1210,6 +1208,8 @@ function Dashboard({
           columns={drawnCardColumns}
           getRowKey={(row) => `${row.display_name}-${row.type_category ?? 'unknown'}`}
           initialSort={{ key: 'times_drawn', direction: 'desc' }}
+          pageSize={15}
+          paginationKey={drawnCardSearch.trim().toLocaleLowerCase()}
           rows={filteredDrawnCards}
         />
       </Section>
@@ -1222,6 +1222,7 @@ function Dashboard({
         <SortableTable
           caption="Best-of-3 matches"
           columns={matchColumns}
+          pageSize={15}
           getRowKey={(row) => row.match_id}
           initialSort={{ key: 'started_at', direction: 'desc' }}
           rows={snapshot.matches}
@@ -1232,6 +1233,7 @@ function Dashboard({
         <SortableTable
           caption="Tracker sessions"
           columns={sessionColumns}
+          pageSize={15}
           getRowKey={(row) => row.session_id}
           initialSort={{ key: 'started_at', direction: 'desc' }}
           rows={snapshot.sessions}

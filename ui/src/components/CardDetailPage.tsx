@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchCardDetail, type CardByDeckRow, type CardByRoleRow, type CardDetail, type CardMultiplicityBucket } from '../api';
+import { fetchCardDetail, type CardByDeckRow, type CardByRoleRow, type CardDetail, type CardMultiplicityBucket, type SnapshotFilters } from '../api';
 import { pageTitle } from '../branding';
 import {
   cardPreviewImageUrl,
@@ -10,6 +10,7 @@ import { formatPercent } from '../dashboardData';
 import { formatCardName, formatNumber } from '../format';
 import { DeckLink } from './DeckLink';
 import { MetricCard } from './MetricCard';
+import { Section } from './Section';
 import { SortableTable, type Column } from './SortableTable';
 import { WinRateBar } from './WinRateBar';
 
@@ -17,36 +18,13 @@ const DETAIL_REFRESH_MS = 20_000;
 
 type LoadState =
   | { status: 'loading' }
-  | { status: 'loaded'; detail: CardDetail }
+  | { status: 'loaded'; detail: CardDetail; refreshError?: string }
   | { status: 'error'; message: string };
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
 }
 
-function Section({
-  id,
-  title,
-  description,
-  children,
-}: {
-  id: string;
-  title: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="dashboard-section" id={id}>
-      <div className="section-heading">
-        <div>
-          <h3>{title}</h3>
-          {description ? <p className="section-description">{description}</p> : null}
-        </div>
-      </div>
-      {children}
-    </section>
-  );
-}
 
 const deckColumns: Column<CardByDeckRow>[] = [
   {
@@ -125,9 +103,11 @@ const multiplicityColumns: Column<CardMultiplicityBucket>[] = [
 export function CardDetailPage({
   cardName,
   backHref = '#overview',
+  filters = {},
 }: {
   cardName: string;
   backHref?: string;
+  filters?: SnapshotFilters;
 }) {
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
   const [failedImageCard, setFailedImageCard] = useState<string | null>(null);
@@ -136,7 +116,7 @@ export function CardDetailPage({
 
   useEffect(() => {
     window.scrollTo(0, 0);
-  }, [cardName]);
+  }, [cardName, filters]);
 
   useEffect(() => {
     let ignore = false;
@@ -147,21 +127,27 @@ export function CardDetailPage({
       const controller = new AbortController();
       activeController = controller;
       try {
-        const detail = await fetchCardDetail(cardName, controller.signal);
+        const detail = await fetchCardDetail(cardName, filters, controller.signal);
         if (!ignore) {
           setLoadState({ status: 'loaded', detail });
         }
       } catch (error: unknown) {
         if (!ignore && !isAbortError(error)) {
           const message = error instanceof Error ? error.message : 'Dashboard API failed';
-          setLoadState((current) => (current.status === 'loaded' ? current : { status: 'error', message }));
+          setLoadState((current) =>
+            current.status === 'loaded'
+              ? { ...current, refreshError: message }
+              : { status: 'error', message },
+          );
         }
       }
     }
 
     void loadDetail();
     const refreshId = window.setInterval(() => {
-      void loadDetail();
+      if (!document.hidden) {
+        void loadDetail();
+      }
     }, DETAIL_REFRESH_MS);
 
     return () => {
@@ -169,7 +155,7 @@ export function CardDetailPage({
       activeController?.abort();
       window.clearInterval(refreshId);
     };
-  }, [cardName]);
+  }, [cardName, filters]);
 
   useEffect(() => {
     if (loadState.status === 'loaded') {
@@ -178,7 +164,11 @@ export function CardDetailPage({
   }, [loadState]);
 
   if (loadState.status === 'loading') {
-    return <p className="state-panel">Loading card details...</p>;
+    return (
+      <p className="state-panel" role="status" aria-busy="true">
+        Loading card details...
+      </p>
+    );
   }
   if (loadState.status === 'error') {
     return (
@@ -191,7 +181,7 @@ export function CardDetailPage({
     );
   }
 
-  const { detail } = loadState;
+  const { detail, refreshError } = loadState;
   const displayName = formatCardName(detail.card_name);
   const metrics = [
     { label: 'Games Appeared', value: formatNumber(detail.all_usage.games_seen) },
@@ -229,6 +219,11 @@ export function CardDetailPage({
 
   return (
     <>
+      {refreshError ? (
+        <p className="refresh-status refresh-status-error" role="alert">
+          Refresh failed: {refreshError} — showing the last loaded data.
+        </p>
+      ) : null}
       <div className="card-detail-header" id="card-summary">
         <a className="back-link" href={backHref}>
           {backLabel}
