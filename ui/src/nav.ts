@@ -34,7 +34,6 @@ export const deckNavItems: AppNavItem[] = [
   { id: 'deck-trend', label: 'Win Rate Trend' },
   { id: 'deck-combat', label: 'Combat Profile' },
   { id: 'deck-cards', label: 'Deck List & Card Performance' },
-  { id: 'deck-openers', label: 'Opening Hands' },
   { id: 'deck-mulligans', label: 'Mulligans' },
   { id: 'deck-versions', label: 'Decklist Changes' },
   { id: 'deck-lands', label: 'Land Availability' },
