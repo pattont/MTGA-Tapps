@@ -2074,3 +2074,65 @@ tbody tr:hover {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+.annotation-editor {
+  display: grid;
+  gap: 10px;
+  max-width: 640px;
+}
+
+.annotation-label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.annotation-note,
+.annotation-tags {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 400;
+}
+
+.annotation-note:focus-visible,
+.annotation-tags:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.annotation-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.annotation-status {
+  color: var(--success);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.annotation-status-error {
+  color: var(--danger);
+}
+
+.retry-button {
+  margin-top: 8px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--accent-strong);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.retry-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
