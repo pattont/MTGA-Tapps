@@ -485,6 +485,67 @@ def _deck_decklist_analysis(
     return composition_rows, version_rows, sideboard_summary
 
 
+def _opponent_threat_rows(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> List[Dict[str, Any]]:
+    """Opponent-side cards ranked by how often they appear in your losses."""
+    rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              s.display_name,
+              COALESCE(s.type_category, 'Other') AS type_category,
+              COUNT(DISTINCT g.id) AS games,
+              COALESCE(SUM(s.played_count), 0) AS plays,
+              SUM(g.outcome = 'win') AS wins,
+              SUM(g.outcome = 'loss') AS losses,
+              ROUND(100.0 * SUM(g.outcome = 'loss') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS loss_rate
+            FROM game_card_summary s
+            JOIN participants p ON p.id = s.participant_id AND p.role = 'opponent'
+            JOIN games g ON g.id = s.game_id
+            WHERE {where} AND s.played_count > 0
+            GROUP BY s.display_name
+            HAVING COUNT(DISTINCT g.id) >= 2
+            ORDER BY loss_rate DESC, games DESC, s.display_name COLLATE NOCASE
+            LIMIT 30
+            """,
+            params,
+        )
+    )
+    for row in rows:
+        row["display_name"] = _clean_card_name(row.get("display_name"))
+    return rows
+
+
+def _matchup_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> List[Dict[str, Any]]:
+    """Your deck vs identified opponent archetype win rates."""
+    has_archetypes = conn.execute(
+        "SELECT 1 FROM participants WHERE role = 'opponent' AND deck_archetype IS NOT NULL LIMIT 1"
+    ).fetchone()
+    if not has_archetypes:
+        return []
+    return _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              COALESCE(pp.deck_name, '(unknown)') AS deck_name,
+              COALESCE(po.deck_archetype, '(unidentified)') AS opponent_archetype,
+              COUNT(*) AS games,
+              SUM(g.outcome = 'win') AS wins,
+              SUM(g.outcome = 'loss') AS losses,
+              ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
+            FROM games g
+            JOIN participants pp ON pp.game_id = g.id AND pp.role = 'player'
+            JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
+            WHERE {where}
+            GROUP BY COALESCE(pp.deck_name, '(unknown)'), COALESCE(po.deck_archetype, '(unidentified)')
+            ORDER BY COALESCE(pp.deck_name, '(unknown)') COLLATE NOCASE, games DESC
+            """,
+            params,
+        )
+    )
+
+
 def _schedule_rows(
     conn: sqlite3.Connection, where: str, params: List[Any]
 ) -> Dict[str, List[Dict[str, Any]]]:
@@ -1534,6 +1595,8 @@ def dashboard_snapshot(
         streaks = _streak_summary(conn, where, params)
         outcome_reason_rows = _outcome_reason_rows(conn, where, params)
         opener_land_rows = _opener_land_rows(conn, where, params)
+        opponent_threat_rows = _opponent_threat_rows(conn, where, params)
+        matchup_rows = _matchup_rows(conn, where, params)
         deck_visuals = _deck_visuals(conn)
         for row in deck_rows:
             deck_name = row["deck_name"]
@@ -1606,6 +1669,8 @@ def dashboard_snapshot(
         "streaks": streaks,
         "outcome_reasons": outcome_reason_rows,
         "opener_lands": opener_land_rows,
+        "opponent_threats": opponent_threat_rows,
+        "matchups": matchup_rows,
         "recent": recent_rows,
         "trend": trend_rows,
         "rank_progress": rank_progress_rows,

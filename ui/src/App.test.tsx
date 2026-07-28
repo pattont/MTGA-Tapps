@@ -93,6 +93,27 @@ const snapshot = {
   },
   outcome_reasons: [{ reason: 'opponent_conceded', wins: 1, losses: 0, games: 1 }],
   opener_lands: [{ lands: 1, label: '1 land', games: 1, wins: 1, losses: 0, win_rate: 100 }],
+  opponent_threats: [
+    {
+      display_name: 'Graveyard Trespasser',
+      type_category: 'Creature',
+      games: 2,
+      plays: 3,
+      wins: 1,
+      losses: 1,
+      loss_rate: 50,
+    },
+  ],
+  matchups: [
+    {
+      deck_name: 'Boros Mouse',
+      opponent_archetype: 'Dimir Midrange',
+      games: 1,
+      wins: 0,
+      losses: 1,
+      win_rate: 0,
+    },
+  ],
   mana_readiness: [
     {
       threshold: 2,
@@ -667,6 +688,7 @@ describe('App', () => {
       'land-drops',
       'habits',
       'outcomes',
+      'opponent-meta',
       'formats',
       'visible-drawn-cards',
       'matches',
@@ -704,9 +726,9 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
-    // Decks table, Best Deck metric, Recent Games, Combat, and Matches.
+    // Decks table, Best Deck metric, Recent Games, Combat, Matchups, and Matches.
     const deckLinks = screen.getAllByRole('link', { name: 'Boros Mouse' });
-    expect(deckLinks.length).toBe(5);
+    expect(deckLinks.length).toBe(6);
     deckLinks.forEach((link) => {
       expect(link).toHaveAttribute('href', '#/deck/Boros%20Mouse');
     });
@@ -923,6 +945,8 @@ describe('App', () => {
       streaks: { games: 0, current: null, longest_win: 0, longest_loss: 0 },
       outcome_reasons: [],
       opener_lands: [],
+      opponent_threats: [],
+      matchups: [],
       recent: [],
       matches: [],
       sessions: [],
