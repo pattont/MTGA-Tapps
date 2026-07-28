@@ -70,7 +70,14 @@ class _MissingGameRecord:
     player_went_first: int
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
+def _connect(db_path: Path, *, readonly: bool = False) -> sqlite3.Connection:
+    if readonly:
+        # Never take the write lock (or run schema migrations) for a pure
+        # audit read — the tracker may be mid-write on the same database.
+        conn = sqlite3.connect(f"{Path(db_path).resolve().as_uri()}?mode=ro", uri=True)
+        conn.execute("PRAGMA query_only = ON")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        return conn
     conn = sqlite3.connect(db_path)
     AnalyticsStore.ensure_schema(conn)
     return conn
@@ -513,12 +520,18 @@ def _empty_game_findings(conn: sqlite3.Connection) -> Iterable[AuditFinding]:
         )
 
 
-def audit_database(db_path: Path = DEFAULT_DB_PATH) -> List[AuditFinding]:
-    """Return consistency findings for the analytics DB."""
+def audit_database(
+    db_path: Path = DEFAULT_DB_PATH, *, readonly: bool = False
+) -> List[AuditFinding]:
+    """Return consistency findings for the analytics DB.
+
+    readonly=True audits without taking the write lock or applying schema
+    migrations — required when the tracker is running (the dashboard uses it).
+    """
     db_path = Path(db_path)
     if not db_path.exists():
         raise FileNotFoundError(f"Analytics DB not found: {db_path}")
-    with _connect(db_path) as conn:
+    with _connect(db_path, readonly=readonly) as conn:
         findings = []
         findings.extend(_format_queue_findings(conn))
         findings.extend(_turn_count_findings(conn))
