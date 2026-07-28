@@ -16,8 +16,6 @@ export const dashboardNavItems: AppNavItem[] = [
   { id: 'outcomes', label: 'Streaks & Outcomes' },
   { id: 'opponent-meta', label: 'Opponent Meta' },
   { id: 'formats', label: 'Formats' },
-  { id: 'visible-drawn-cards', label: 'Visible Drawn Cards' },
-  { id: 'matches', label: 'Bo3 Matches' },
   { id: 'sessions', label: 'Sessions' },
   { id: 'db-health', label: 'DB Health', route: '#/audit' },
 ];

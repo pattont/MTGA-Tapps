@@ -644,8 +644,6 @@ describe('App', () => {
       ['Recent Games', '#recent-games'],
       ['Decks', '#decks'],
       ['Formats', '#formats'],
-      ['Visible Drawn Cards', '#visible-drawn-cards'],
-      ['Bo3 Matches', '#matches'],
       ['Sessions', '#sessions'],
     ].forEach(([label, href]) => {
       expect(screen.getByRole('link', { name: label })).toHaveAttribute('href', href);
@@ -656,15 +654,12 @@ describe('App', () => {
       'Decks',
       'Formats',
       'Play / Draw',
-      'Visible Drawn Cards',
       'Momentum',
       'Recent Games',
-      'Best-of-3 Matches',
       'Sessions',
     ].forEach((sectionName) => {
       expect(screen.getByRole('heading', { name: sectionName })).toBeInTheDocument();
     });
-    expect(screen.getByRole('table', { name: 'Best-of-3 matches' })).toBeInTheDocument();
     expect(screen.getByRole('table', { name: 'Tracker sessions' })).toBeInTheDocument();
     expect(screen.queryByRole('table', { name: 'Draw quality by game' })).not.toBeInTheDocument();
     const dashboardNav = screen.getByRole('navigation', { name: 'Dashboard sections' });
@@ -689,8 +684,6 @@ describe('App', () => {
       'outcomes',
       'opponent-meta',
       'formats',
-      'visible-drawn-cards',
-      'matches',
       'sessions',
     ]);
     const overviewSection = document.getElementById('overview');
@@ -725,9 +718,9 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
-    // Decks table, Best Deck metric, Recent Games, Matchups, and Matches.
+    // Decks table, Best Deck metric, Recent Games, and Matchups.
     const deckLinks = screen.getAllByRole('link', { name: 'Boros Mouse' });
-    expect(deckLinks.length).toBe(5);
+    expect(deckLinks.length).toBe(4);
     deckLinks.forEach((link) => {
       expect(link).toHaveAttribute('href', '#/deck/Boros%20Mouse');
     });
@@ -859,7 +852,7 @@ describe('App', () => {
     );
   });
 
-  it('filters deck and visible drawn card tables by text', async () => {
+  it('filters the deck table by text', async () => {
     const expandedSnapshot = {
       ...snapshot,
       decks: [
@@ -895,13 +888,9 @@ describe('App', () => {
     expect(within(deckTable).getByText('Izzet Wizards')).toBeInTheDocument();
     expect(within(deckTable).queryByText('Boros Mouse')).not.toBeInTheDocument();
 
-    await user.type(screen.getByLabelText('Search cards'), 'slick');
-    const cardTable = screen.getByRole('table', { name: 'Visible drawn card frequency' });
-    expect(within(cardTable).getByText('Slickshot Show-Off')).toBeInTheDocument();
-    expect(within(cardTable).queryByText('Llanowar Elves')).not.toBeInTheDocument();
   });
 
-  it('shows fifteen decks at a time and pages through the remaining decks', async () => {
+  it('shows ten decks at a time and pages through the remaining decks', async () => {
     const pagedSnapshot = {
       ...snapshot,
       decks: Array.from({ length: 17 }, (_, index) => ({
@@ -915,13 +904,13 @@ describe('App', () => {
     render(<App />);
 
     const deckTable = await screen.findByRole('table', { name: 'Deck performance' });
-    expect(within(deckTable).getAllByRole('row')).toHaveLength(16);
+    expect(within(deckTable).getAllByRole('row')).toHaveLength(11);
     expect(within(deckTable).getByText('Deck 17')).toBeInTheDocument();
     expect(within(deckTable).queryByText('Deck 01')).not.toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: 'Deck performance pagination' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Next page' }));
-    expect(within(deckTable).getAllByRole('row')).toHaveLength(3);
+    expect(within(deckTable).getAllByRole('row')).toHaveLength(8);
     expect(within(deckTable).getByText('Deck 01')).toBeInTheDocument();
   });
 
@@ -978,6 +967,7 @@ describe('App', () => {
       'Deck',
       'Format',
       'Outcome',
+      'Match Record',
       'Draw Status',
       'Mulligan(s)',
       'Total Turns',
@@ -1255,7 +1245,11 @@ describe('App', () => {
 
     expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
 
-    expect(screen.getByRole('link', { name: 'Llanowar Elves' })).toHaveAttribute('href', '#/card/Llanowar%20Elves');
+    // Card links on the dashboard now live in the Opponent Meta threat table.
+    expect(screen.getByRole('link', { name: 'Graveyard Trespasser' })).toHaveAttribute(
+      'href',
+      '#/card/Graveyard%20Trespasser',
+    );
   });
 
   it('searches all tracked cards and opens the selected card detail', async () => {

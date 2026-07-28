@@ -187,6 +187,9 @@ export interface RecentGameRow {
   started_at: string;
   deck_name: string;
   format_label: string;
+  best_of?: number | null;
+  match_wins?: number | null;
+  match_losses?: number | null;
   outcome: string | null;
   mulligans: number | null;
   duration_seconds: number | null;
