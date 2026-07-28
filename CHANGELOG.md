@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### Fable optimizations branch
+
+- Overhauled the light theme with a warm off-white palette: distinct panel/surface/raised
+  elevations in both themes, per-theme tint tokens, light-mode timeline chip colors, deeper
+  accessible accents, `prefers-color-scheme` support with live OS-follow, and an inline pre-paint
+  script that removes the dark flash for light-theme users.
+- Added a numbered schema migration runner: migration 2 backfills `cards.arena_id` from submitted
+  decklists (exact card-image lookups), migration 3 backfills `game_card_summary.drawn_count` and
+  adds drawn-only summary rows, migration 4 creates `game_annotations`.
+- Unified the two divergent draw-quality implementations into `draw_quality.py` with
+  decklist-exact land rates; the CLI and dashboard now agree, and the dashboard reports the land
+  rate source per game.
+- Surfaced `game_participant_stats` end to end: dashboard Combat section with per-deck aggression
+  profiles and wins-vs-losses splits, deck Combat Profile cards, per-game seat comparison, and a
+  corrected `damage_taken` (externally inflicted life loss instead of duplicating `life_lost`).
+- Added decklist-aware deck analytics: per-card composition with seen-vs-expected draws and
+  win-rate-when-seen vs not-seen (dead-weight report), decklist version history with diffs, and
+  Bo3 game-1 vs post-board records with most-boarded cards.
+- Added repeat-draw multiplicity analysis on the card page (copies seen per game vs hypergeometric
+  expectation, win rate by multiplicity) and Land Availability on curve (N lands by turn N) on the
+  dashboard and deck pages, plus a draws-by-turn strip on the game page.
+- Added Habits & Schedule (weekday/time-of-day win rates, session fatigue), Streaks & Outcomes
+  (run lengths, outcome reasons, kept-opener land counts), rank season selection with historical
+  seasons, limited-rank capture, and a minimum-sample floor for Best Deck.
+- Added Opponent Meta: a cards-that-beat-you leaderboard and deck-vs-archetype matchup records;
+  wired the previously orphaned `deck_llm` module so opt-in LLM archetype identification fills
+  `participants.deck_archetype` at game end.
+- UI/UX pass: custom date-range filters everywhere (including `/api/card` and `/api/opponent`,
+  which previously ignored all filters), URL-synced shareable filters, pagination and CSV export
+  on every table, sort persistence, chart hover tooltips with accessible table fallbacks and
+  colorblind-safe life lines, stale-data banners with retry on detail pages, visibility-paused
+  polling, restored focus outlines, skip-to-content, and a consolidated collapsible Section used
+  on every page.
+- Added per-game Notes & Tags backed by the dashboard's first write endpoint
+  (`POST /api/game/annotation`), a DB Health page at `#/audit` surfacing `db_audit` findings, a
+  global search covering cards, decks, and opponents, and a `/` keyboard shortcut for search.
+- Added a validated `dashboard.port` setting in `data/settings.json` and stopped tracking live DB
+  WAL/SHM files and local backups.
+
 - Added an adaptive macOS menu-bar template icon, transparent app artwork, canonical icon generation, a native `MTGA Tracker` Dock identity, and explicit packaged-app launch guidance.
 - Saved the deferred full-card hover preview design in `docs/CARD_HOVER_PREVIEW_PLAN.md`.
 - Prevented the macOS menu-bar controller from opening a second overlapping copy of its menu.
