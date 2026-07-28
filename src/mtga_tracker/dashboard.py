@@ -2305,10 +2305,12 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
             )
         )
 
+    annotation = game_annotation(db_path, game_id)
     return {
         "game": game,
         "player": player or {},
         "opponent": opponent or {},
+        "annotation": annotation,
         "participant_stats": participant_stats,
         "opening_hand": opening_hand,
         "drawn": drawn,
@@ -2721,6 +2723,116 @@ def card_detail(
     }
 
 
+def game_annotation(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str, Any]:
+    """Return the user's note/tags for one game (empty defaults when unset)."""
+    db_path = Path(db_path).expanduser()
+    if not db_path.is_file():
+        raise FileNotFoundError(f"Dashboard database not found: {db_path}")
+    db_uri = db_path.resolve().as_uri() + "?mode=ro"
+    with sqlite3.connect(db_uri, uri=True) as conn:
+        conn.execute("PRAGMA query_only = ON")
+        row = conn.execute(
+            "SELECT note, tags, updated_at FROM game_annotations WHERE game_id = ?",
+            (game_id,),
+        ).fetchone()
+    if row is None:
+        return {"game_id": game_id, "note": "", "tags": [], "updated_at": None}
+    tags = [tag for tag in str(row[1] or "").split(",") if tag]
+    return {"game_id": game_id, "note": row[0] or "", "tags": tags, "updated_at": row[2]}
+
+
+MAX_ANNOTATION_NOTE_LENGTH = 4000
+MAX_ANNOTATION_TAGS = 12
+MAX_ANNOTATION_TAG_LENGTH = 40
+
+
+def save_game_annotation(
+    db_path: Path = DEFAULT_DB_PATH,
+    game_id: str = "",
+    note: str = "",
+    tags: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Persist a note/tags for one game. The dashboard's only write path.
+
+    The game must exist. Empty note + no tags deletes the row.
+    """
+    db_path = Path(db_path).expanduser()
+    if not db_path.is_file():
+        raise FileNotFoundError(f"Dashboard database not found: {db_path}")
+    clean_note = str(note or "").strip()[:MAX_ANNOTATION_NOTE_LENGTH]
+    clean_tags: List[str] = []
+    for tag in tags or []:
+        cleaned = str(tag or "").strip()[:MAX_ANNOTATION_TAG_LENGTH]
+        if cleaned and "," not in cleaned and cleaned.casefold() not in {
+            existing.casefold() for existing in clean_tags
+        }:
+            clean_tags.append(cleaned)
+        if len(clean_tags) >= MAX_ANNOTATION_TAGS:
+            break
+    with sqlite3.connect(db_path, timeout=10.0) as conn:
+        conn.execute("PRAGMA busy_timeout = 10000")
+        exists = conn.execute("SELECT 1 FROM games WHERE id = ?", (game_id,)).fetchone()
+        if not exists:
+            raise LookupError(f"No recorded game for id: {game_id}")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS game_annotations (
+                game_id TEXT PRIMARY KEY,
+                note TEXT,
+                tags TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        if not clean_note and not clean_tags:
+            conn.execute("DELETE FROM game_annotations WHERE game_id = ?", (game_id,))
+        else:
+            conn.execute(
+                """
+                INSERT INTO game_annotations (game_id, note, tags, updated_at)
+                VALUES (?, ?, ?, datetime('now'))
+                ON CONFLICT(game_id) DO UPDATE SET
+                    note = excluded.note,
+                    tags = excluded.tags,
+                    updated_at = excluded.updated_at
+                """,
+                (game_id, clean_note, ",".join(clean_tags)),
+            )
+        conn.commit()
+    return {"game_id": game_id, "note": clean_note, "tags": clean_tags}
+
+
+def audit_report(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
+    """Database consistency findings from db_audit, JSON-friendly."""
+    from .db_audit import audit_database
+
+    findings = audit_database(Path(db_path).expanduser())
+    rows = [
+        {
+            "code": finding.code,
+            "severity": finding.severity,
+            "table_name": finding.table_name,
+            "row_id": finding.row_id,
+            "message": finding.message,
+            "current_value": finding.current_value,
+            "suggested_value": finding.suggested_value,
+            "repairable": finding.repairable,
+        }
+        for finding in findings
+    ]
+    by_code: Dict[str, int] = {}
+    for row in rows:
+        by_code[row["code"]] = by_code.get(row["code"], 0) + 1
+    return {
+        "findings": rows,
+        "total": len(rows),
+        "by_code": [
+            {"code": code, "count": count}
+            for code, count in sorted(by_code.items(), key=lambda item: (-item[1], item[0]))
+        ],
+    }
+
+
 def global_search(
     db_path: Path = DEFAULT_DB_PATH, query: str = "", limit: int = 8
 ) -> Dict[str, Any]:
@@ -3126,6 +3238,74 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if sys.stderr is not None:
             super().log_message(message_format, *args)
 
+    def do_POST(self):  # noqa: N802 - http.server API
+        """Handle the dashboard's only write: saving a per-game note/tags."""
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/game/annotation":
+            self.send_error(404)
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > 1_000_000:
+            _send_bytes(
+                self,
+                400,
+                b"Missing or oversized request body",
+                "text/plain; charset=utf-8",
+                {"Cache-Control": "no-store"},
+            )
+            return
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            payload = None
+        game_id = str(payload.get("game_id") or "") if isinstance(payload, dict) else ""
+        if not payload or not game_id:
+            _send_bytes(
+                self,
+                400,
+                b"Body must be JSON with a game_id",
+                "text/plain; charset=utf-8",
+                {"Cache-Control": "no-store"},
+            )
+            return
+        tags = payload.get("tags")
+        try:
+            result = save_game_annotation(
+                self.db_path,
+                game_id,
+                note=str(payload.get("note") or ""),
+                tags=[str(tag) for tag in tags] if isinstance(tags, list) else [],
+            )
+        except (FileNotFoundError, LookupError) as exc:
+            _send_bytes(
+                self,
+                404,
+                str(exc).encode("utf-8"),
+                "text/plain; charset=utf-8",
+                {"Cache-Control": "no-store"},
+            )
+            return
+        except Exception as exc:
+            _send_bytes(
+                self,
+                500,
+                str(exc).encode("utf-8"),
+                "text/plain; charset=utf-8",
+                {"Cache-Control": "no-store"},
+            )
+            return
+        _send_bytes(
+            self,
+            200,
+            render_snapshot_json(result),
+            "application/json; charset=utf-8",
+            {"Cache-Control": "no-store"},
+        )
+        return
+
     def do_GET(self) -> None:  # noqa: N802 - http.server API
         parsed = urlparse(self.path)
         request_path = parsed.path
@@ -3320,6 +3500,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     )
                 )
             except (FileNotFoundError, LookupError) as exc:
+                _send_bytes(
+                    self,
+                    404,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            except Exception as exc:
+                _send_bytes(
+                    self,
+                    500,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
+        if request_path == "/api/audit":
+            try:
+                body = render_snapshot_json(audit_report(self.db_path))
+            except FileNotFoundError as exc:
                 _send_bytes(
                     self,
                     404,

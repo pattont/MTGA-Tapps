@@ -437,6 +437,7 @@ class AnalyticsStore:
         migrations = (
             (2, AnalyticsStore._migrate_v2_backfill_card_arena_ids),
             (3, AnalyticsStore._migrate_v3_backfill_summary_drawn_counts),
+            (4, AnalyticsStore._migrate_v4_game_annotations),
         )
         for version, migrate in migrations:
             if version in applied:
@@ -522,6 +523,20 @@ class AnalyticsStore:
                   AND (s.card_id = d.card_id OR s.display_name = d.display_name)
               )
             GROUP BY d.game_id, d.participant_id, d.card_id
+            """
+        )
+
+    @staticmethod
+    def _migrate_v4_game_annotations(conn: sqlite3.Connection) -> None:
+        """User notes and tags per game (the dashboard's first writable data)."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS game_annotations (
+                game_id TEXT PRIMARY KEY,
+                note TEXT,
+                tags TEXT,
+                updated_at TEXT NOT NULL
+            )
             """
         )
 

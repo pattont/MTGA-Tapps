@@ -7,6 +7,7 @@ import {
   type OpponentVisibleCardRow,
   type GamePlayedCardRow,
 } from '../api';
+import { saveGameAnnotation } from '../api';
 import { pageTitle } from '../branding';
 import { formatPercent } from '../dashboardData';
 import { formatDateTime, formatDuration, formatNumber, formatTurnDuration, outcomeLabel, outcomeTone } from '../format';
@@ -174,6 +175,10 @@ export function GameDetailPage({
   focusId?: 'game-timeline' | null;
 }) {
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
+  const [noteDraft, setNoteDraft] = useState('');
+  const [tagsDraft, setTagsDraft] = useState('');
+  const [noteStatus, setNoteStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [, setAnnotationLoaded] = useState(false);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -203,6 +208,13 @@ export function GameDetailPage({
         const detail = await fetchGameDetail(gameId, controller.signal);
         if (!ignore) {
           setLoadState({ status: 'loaded', detail });
+          setAnnotationLoaded((alreadyLoaded) => {
+            if (!alreadyLoaded) {
+              setNoteDraft(detail.annotation?.note ?? '');
+              setTagsDraft((detail.annotation?.tags ?? []).join(', '));
+            }
+            return true;
+          });
         }
       } catch (error: unknown) {
         if (!ignore && !isAbortError(error)) {
@@ -343,6 +355,22 @@ export function GameDetailPage({
           opponent: opponentStats ? opponentStats[key] : null,
         }))
       : [];
+  async function saveAnnotation() {
+    setNoteStatus('saving');
+    try {
+      const tags = tagsDraft
+        .split(',')
+        .map((tag) => tag.trim())
+        .filter(Boolean);
+      const saved = await saveGameAnnotation(gameId, noteDraft.trim(), tags);
+      setNoteDraft(saved.note);
+      setTagsDraft(saved.tags.join(', '));
+      setNoteStatus('saved');
+    } catch {
+      setNoteStatus('error');
+    }
+  }
+
   const drawsByTurnMap = new Map<number, { lands: number; nonlands: number }>();
   for (const row of detail.drawn) {
     if (row.turn_number === null || row.turn_number === undefined) {
@@ -554,6 +582,61 @@ export function GameDetailPage({
           initialSort={{ key: 'played_count', direction: 'desc' }}
           rows={detail.opponent_cards ?? []}
         />
+      </Section>
+
+      <Section
+        id="game-notes"
+        title="Notes & Tags"
+        description="Your own notes for this game. Tags are comma-separated (e.g. misplay, flood, great game)."
+      >
+        <div className="annotation-editor">
+          <label className="annotation-label">
+            <span>Note</span>
+            <textarea
+              className="annotation-note"
+              maxLength={4000}
+              rows={3}
+              value={noteDraft}
+              onChange={(event) => {
+                setNoteDraft(event.target.value);
+                setNoteStatus('idle');
+              }}
+            />
+          </label>
+          <label className="annotation-label">
+            <span>Tags</span>
+            <input
+              className="annotation-tags"
+              placeholder="misplay, flood, great game"
+              type="text"
+              value={tagsDraft}
+              onChange={(event) => {
+                setTagsDraft(event.target.value);
+                setNoteStatus('idle');
+              }}
+            />
+          </label>
+          <div className="annotation-actions">
+            <button
+              className="deck-export-button"
+              disabled={noteStatus === 'saving'}
+              type="button"
+              onClick={() => void saveAnnotation()}
+            >
+              {noteStatus === 'saving' ? 'Saving…' : 'Save Notes'}
+            </button>
+            {noteStatus === 'saved' ? (
+              <span className="annotation-status" role="status">
+                Saved
+              </span>
+            ) : null}
+            {noteStatus === 'error' ? (
+              <span className="annotation-status annotation-status-error" role="alert">
+                Save failed — is the tracker running?
+              </span>
+            ) : null}
+          </div>
+        </div>
       </Section>
 
       <Section

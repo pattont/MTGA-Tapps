@@ -20,6 +20,13 @@ export const dashboardNavItems: AppNavItem[] = [
   { id: 'visible-drawn-cards', label: 'Visible Drawn Cards' },
   { id: 'matches', label: 'Bo3 Matches' },
   { id: 'sessions', label: 'Sessions' },
+  { id: 'db-health', label: 'DB Health', route: '#/audit' },
+];
+
+export const auditNavItems: AppNavItem[] = [
+  { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
+  { id: 'audit-summary', label: 'Summary' },
+  { id: 'audit-findings', label: 'Findings' },
 ];
 
 export const deckNavItems: AppNavItem[] = [
