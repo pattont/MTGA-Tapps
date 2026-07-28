@@ -200,3 +200,7 @@ export function parseOpponentRoute(hash: string): OpponentRoute | null {
     return { name: encoded, filters };
   }
 }
+
+export function parseAuditRoute(hash: string): boolean {
+  return hash === '#/audit' || hash.startsWith('#/audit?');
+}

@@ -15,8 +15,11 @@ from mtga_tracker.dashboard import (
     deck_detail,
     game_detail,
     opponent_detail,
+    audit_report,
+    game_annotation,
     global_search,
     render_dashboard_html,
+    save_game_annotation,
     search_cards,
 )
 from mtga_tracker.format_normalizer import normalize_match_format
@@ -2010,3 +2013,64 @@ def test_search_endpoint_serves_global_results(tmp_path):
         assert not thread.is_alive()
     assert payload["decks"][0]["deck_name"] == "Boros Mouse"
     assert "cards" in payload and "opponents" in payload
+
+
+def test_game_annotation_round_trip(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+
+    saved = save_game_annotation(db_path, "game-1", note="Misplayed turn 4", tags=["misplay", "flood"])
+    assert saved == {"game_id": "game-1", "note": "Misplayed turn 4", "tags": ["misplay", "flood"]}
+
+    detail = game_detail(db_path, "game-1")
+    assert detail["annotation"]["note"] == "Misplayed turn 4"
+    assert detail["annotation"]["tags"] == ["misplay", "flood"]
+
+    # Clearing removes the row.
+    save_game_annotation(db_path, "game-1", note="", tags=[])
+    assert game_annotation(db_path, "game-1")["note"] == ""
+
+    try:
+        save_game_annotation(db_path, "missing-game", note="x")
+        raised = False
+    except LookupError:
+        raised = True
+    assert raised
+
+
+def test_annotation_post_endpoint(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _dashboard_handler_for(db_path))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    conn = None
+    thread.start()
+    try:
+        conn = HTTPConnection("127.0.0.1", server.server_address[1])
+        body = json.dumps({"game_id": "game-1", "note": "great game", "tags": ["fun"]})
+        conn.request("POST", "/api/game/annotation", body=body, headers={"Content-Type": "application/json"})
+        response = conn.getresponse()
+        assert response.status == 200
+        payload = json.loads(response.read().decode("utf-8"))
+
+        conn.request("POST", "/api/game/annotation", body="{}", headers={"Content-Type": "application/json"})
+        bad = conn.getresponse()
+        bad_status = bad.status
+        bad.read()
+    finally:
+        if conn is not None:
+            conn.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+    assert payload["note"] == "great game"
+    assert payload["tags"] == ["fun"]
+    assert bad_status == 400
+
+
+def test_audit_endpoint_reports_findings(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+
+    report = audit_report(db_path)
+
+    assert "findings" in report and "total" in report and "by_code" in report
+    assert report["total"] == len(report["findings"])

@@ -1167,7 +1167,7 @@ describe('App', () => {
     expect(timelineSection).toHaveTextContent('[0:20] [Mouse Mentor]Creature2/1');
     expect(screen.getByRole('link', { name: 'Boros Mouse' })).toHaveAttribute('href', '#/deck/Boros%20Mouse');
     expect(screen.getByRole('link', { name: 'Opponent' })).toHaveAttribute('href', '#/opponent/Opponent');
-    expect(screen.getAllByRole('button', { name: /^Collapse / })).toHaveLength(9);
+    expect(screen.getAllByRole('button', { name: /^Collapse / })).toHaveLength(10);
 
     const timingToggle = screen.getByRole('button', { name: 'Collapse Turn Timing' });
     await user.click(timingToggle);

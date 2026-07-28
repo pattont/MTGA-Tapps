@@ -562,10 +562,35 @@ export interface GameParticipantStatsRow {
   cards_exiled: number;
 }
 
+export interface GameAnnotation {
+  game_id: string;
+  note: string;
+  tags: string[];
+  updated_at?: string | null;
+}
+
+export interface AuditFindingRow {
+  code: string;
+  severity: string;
+  table_name: string;
+  row_id: string;
+  message: string;
+  current_value: string | null;
+  suggested_value: string | null;
+  repairable: boolean;
+}
+
+export interface AuditReport {
+  findings: AuditFindingRow[];
+  total: number;
+  by_code: { code: string; count: number }[];
+}
+
 export interface GameDetail {
   game: GameHeader;
   player: GameParticipant;
   opponent: GameParticipant;
+  annotation?: GameAnnotation;
   participant_stats: GameParticipantStatsRow[];
   opening_hand: GameOpeningHandRow[];
   drawn: GameDrawnCardRow[];
@@ -817,6 +842,32 @@ export async function fetchGlobalSearch(
     throw new Error(`Search API returned ${response.status}`);
   }
   return response.json() as Promise<GlobalSearchResult>;
+}
+
+export async function saveGameAnnotation(
+  gameId: string,
+  note: string,
+  tags: string[],
+  signal?: AbortSignal,
+): Promise<GameAnnotation> {
+  const response = await fetch('/api/game/annotation', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ game_id: gameId, note, tags }),
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(`Annotation save failed (${response.status})`);
+  }
+  return response.json() as Promise<GameAnnotation>;
+}
+
+export async function fetchAuditReport(signal?: AbortSignal): Promise<AuditReport> {
+  const response = await fetch('/api/audit', { signal });
+  if (!response.ok) {
+    throw new Error(`Audit API returned ${response.status}`);
+  }
+  return response.json() as Promise<AuditReport>;
 }
 
 export function snapshotQueryString(filters: SnapshotFilters): string {
