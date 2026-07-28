@@ -200,6 +200,20 @@ export interface RecentGameRow {
   is_screw?: boolean;
 }
 
+export interface AllGamesRow extends RecentGameRow {
+  duration_seconds: number | null;
+  total_turns: number | null;
+  mulligans: number | null;
+  cards_seen: number | null;
+  lands_seen: number | null;
+  land_seen_pct: number | null;
+}
+
+export interface AllGamesResponse {
+  games: AllGamesRow[];
+  total: number;
+}
+
 export interface MatchRow {
   match_id: string;
   started_at: string | null;
@@ -850,6 +864,17 @@ export async function fetchGlobalSearch(
     throw new Error(`Search API returned ${response.status}`);
   }
   return response.json() as Promise<GlobalSearchResult>;
+}
+
+export async function fetchAllGames(
+  filters: SnapshotFilters = {},
+  signal?: AbortSignal,
+): Promise<AllGamesResponse> {
+  const response = await fetch(`/api/games${snapshotQueryString(filters)}`, { signal });
+  if (!response.ok) {
+    throw new Error(`Games API returned ${response.status}`);
+  }
+  return response.json() as Promise<AllGamesResponse>;
 }
 
 export async function saveGameAnnotation(
