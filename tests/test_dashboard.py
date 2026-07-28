@@ -1759,3 +1759,65 @@ def test_deck_detail_reports_composition_and_versions(tmp_path):
     assert sideboard["game_one"]["wins"] == 1
     assert sideboard["post_board"]["losses"] == 1
     assert sideboard["boarded_in"][0]["display_name"] == "Sheltered by Ghosts"
+
+
+def test_dashboard_snapshot_reports_mana_readiness(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        # game-1: opening Mountain (1 land) + no land draws by turn 2 -> behind.
+        # Give game-2 an opening hand with two lands and a land drawn on turn 2.
+        conn.executemany(
+            """
+            insert into game_opening_hand_cards (
+                game_id, participant_id, display_name, type_category, hand_position, copy_number
+            ) values (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("game-2", "player-2", "Mountain", "Land", 1, 1),
+                ("game-2", "player-2", "Mountain", "Land", 2, 2),
+                ("game-2", "player-2", "Shock", "Instant", 3, 1),
+            ],
+        )
+        conn.execute(
+            """
+            insert into game_drawn_cards (
+                game_id, participant_id, display_name, type_category, draw_position, turn_number, copy_number
+            ) values ('game-2', 'player-2', 'Mountain', 'Land', 1, 2, 3)
+            """
+        )
+
+    snapshot = dashboard_snapshot(db_path)
+
+    readiness = {row["threshold"]: row for row in snapshot["mana_readiness"]}
+    two = readiness[2]
+    assert two["games"] == 2
+    # game-1 has 1 land by turn 2 (behind, a win); game-2 has 3 (on time, a loss).
+    assert two["on_time_games"] == 1
+    assert two["on_time_pct"] == 50.0
+    assert two["on_time_win_rate"] == 0.0
+    assert two["behind_win_rate"] == 100.0
+
+
+def test_card_detail_reports_multiplicity(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            ) values ('game-1', 'player-1', NULL, 'Mountain', 'Land', 1)
+            """
+        )
+
+    detail = card_detail(db_path, "Mountain")
+
+    multiplicity = detail["multiplicity"]
+    # Mountain is in both games' decklists (24 copies each).
+    assert multiplicity["games"] == 2
+    buckets = {row["copies_seen"]: row for row in multiplicity["buckets"]}
+    # game-2 never saw it; game-1 saw one copy in the opener.
+    assert buckets[0]["games"] == 1
+    assert buckets[1]["games"] == 1
+    assert buckets[1]["pct_of_games"] == 50.0
+    assert buckets[1]["win_rate"] == 100.0
+    assert buckets[1]["expected_pct_at_least"] is not None

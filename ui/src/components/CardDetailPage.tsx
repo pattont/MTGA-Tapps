@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchCardDetail, type CardByDeckRow, type CardByRoleRow, type CardDetail } from '../api';
+import { fetchCardDetail, type CardByDeckRow, type CardByRoleRow, type CardDetail, type CardMultiplicityBucket } from '../api';
 import { pageTitle } from '../branding';
 import {
   cardPreviewImageUrl,
@@ -82,6 +82,40 @@ const roleColumns: Column<CardByRoleRow>[] = [
   {
     key: 'win_rate',
     header: 'Your Win Rate',
+    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
+    sortValue: (row) => row.win_rate,
+    numeric: true,
+  },
+];
+
+const multiplicityColumns: Column<CardMultiplicityBucket>[] = [
+  { key: 'label', header: 'Copies Seen' },
+  { key: 'games', header: 'Games', numeric: true },
+  {
+    key: 'pct_of_games',
+    header: 'Share of Games',
+    render: (row) => formatPercent(row.pct_of_games),
+    sortValue: (row) => row.pct_of_games,
+    numeric: true,
+  },
+  {
+    key: 'pct_at_least',
+    header: 'At Least This Many',
+    render: (row) => formatPercent(row.pct_at_least),
+    sortValue: (row) => row.pct_at_least,
+    numeric: true,
+  },
+  {
+    key: 'expected_pct_at_least',
+    header: 'Expected At Least',
+    render: (row) =>
+      row.expected_pct_at_least === null ? '—' : formatPercent(row.expected_pct_at_least),
+    sortValue: (row) => row.expected_pct_at_least,
+    numeric: true,
+  },
+  {
+    key: 'win_rate',
+    header: 'Win Rate',
     render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
     sortValue: (row) => row.win_rate,
     numeric: true,
@@ -274,6 +308,25 @@ export function CardDetailPage({
           getRowKey={(row) => row.deck_name}
           rows={detail.by_deck}
         />
+      </Section>
+
+      <Section
+        id="card-multiplicity"
+        title="Repeat Draws"
+        description="How often you see this card once, twice, or more in a single game, versus the hypergeometric expectation from your decklists — and how your win rate moves with each extra copy."
+      >
+        {detail.multiplicity && detail.multiplicity.buckets.length > 0 ? (
+          <SortableTable
+            caption="Copies seen per game"
+            columns={multiplicityColumns}
+            compact
+            getRowKey={(row) => row.label}
+            initialSort={{ key: 'label', direction: 'asc' }}
+            rows={detail.multiplicity.buckets}
+          />
+        ) : (
+          <p className="empty-state">No per-game copy data recorded for this card yet.</p>
+        )}
       </Section>
 
       <Section

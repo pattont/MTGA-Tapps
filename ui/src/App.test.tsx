@@ -76,6 +76,18 @@ const snapshot = {
       aggression_profile: 'Aggro' as const,
     },
   ],
+  mana_readiness: [
+    {
+      threshold: 2,
+      label: '2 lands by turn 2',
+      games: 2,
+      on_time_games: 1,
+      on_time_pct: 50,
+      on_time_win_rate: 0,
+      behind_games: 1,
+      behind_win_rate: 100,
+    },
+  ],
   combat_split: [
     {
       split: 'Wins',
@@ -244,6 +256,18 @@ const deckDetail = {
       win_rate: 0,
       added: ['2x Sheltered by Ghosts'],
       removed: ['2x Mouse Mentor'],
+    },
+  ],
+  mana_readiness: [
+    {
+      threshold: 3,
+      label: '3 lands by turn 3',
+      games: 2,
+      on_time_games: 2,
+      on_time_pct: 100,
+      on_time_win_rate: 50,
+      behind_games: 0,
+      behind_win_rate: null,
     },
   ],
   sideboard: {
@@ -623,6 +647,7 @@ describe('App', () => {
       'recent-games',
       'decks',
       'combat',
+      'land-drops',
       'formats',
       'visible-drawn-cards',
       'matches',
@@ -873,6 +898,7 @@ describe('App', () => {
       momentum: [],
       combat_decks: [],
       combat_split: [],
+      mana_readiness: [],
       recent: [],
       matches: [],
       sessions: [],

@@ -1865,3 +1865,44 @@ tbody tr:hover {
 .version-change-out {
   color: var(--danger);
 }
+
+.draws-by-turn {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.draws-by-turn-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 40px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.draws-by-turn-turn {
+  color: var(--subtle);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.draws-by-turn-counts {
+  display: flex;
+  gap: 5px;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.draws-by-turn-lands {
+  color: var(--success);
+}
+
+.draws-by-turn-spells {
+  color: var(--draw);
+}
