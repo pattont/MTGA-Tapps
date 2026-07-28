@@ -85,6 +85,7 @@ export interface CombatDeckRow {
   trade_ratio: number | null;
   avg_life_gained: number | null;
   avg_player_turns: number | null;
+  damage_per_turn?: number | null;
   aggression_profile: 'Aggro' | 'Midrange' | 'Control' | null;
 }
 
