@@ -9,6 +9,7 @@ import pytest
 from mtga_tracker.analytics import AnalyticsStore
 from mtga_tracker.dashboard import (
     _timeline_text_segments,
+    all_games,
     card_detail,
     DashboardHandler,
     dashboard_snapshot,
@@ -2087,3 +2088,21 @@ def test_audit_report_works_while_a_writer_holds_the_lock(tmp_path):
         writer.rollback()
         writer.close()
     assert "findings" in report
+
+
+def test_all_games_returns_full_history_with_flags(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+
+    result = all_games(db_path)
+
+    assert result["total"] == 2
+    rows = {row["game_id"]: row for row in result["games"]}
+    assert rows["game-1"]["deck_name"] == "Boros Mouse"
+    assert rows["game-1"]["format_label"] == "Standard Best-of-1 (Unranked)"
+    assert rows["game-1"]["match_wins"] == 1
+    assert rows["game-1"]["match_losses"] == 1
+    assert "is_flood" in rows["game-1"] and "is_screw" in rows["game-1"]
+    assert rows["game-1"]["cards_seen"] == 2
+
+    filtered = all_games(db_path, since="2026-06-05")
+    assert filtered["total"] == 0

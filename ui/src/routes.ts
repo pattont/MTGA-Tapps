@@ -204,3 +204,16 @@ export function parseOpponentRoute(hash: string): OpponentRoute | null {
 export function parseAuditRoute(hash: string): boolean {
   return hash === '#/audit' || hash.startsWith('#/audit?');
 }
+
+export function gamesRouteHash(filters: SnapshotFilters = {}): string {
+  const query = routeQuery(filters, true);
+  return `#/games${query ? `?${query}` : ''}`;
+}
+
+export function parseGamesRoute(hash: string): { filters: SnapshotFilters } | null {
+  if (hash !== '#/games' && !hash.startsWith('#/games?')) {
+    return null;
+  }
+  const query = hash.startsWith('#/games?') ? hash.slice('#/games?'.length) : '';
+  return { filters: parseFilters(query, true) };
+}

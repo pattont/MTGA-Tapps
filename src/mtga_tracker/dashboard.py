@@ -2757,6 +2757,135 @@ def card_detail(
     }
 
 
+def all_games(
+    db_path: Path = DEFAULT_DB_PATH,
+    deck: Optional[str] = None,
+    fmt: Optional[str] = None,
+    days: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Every tracked game (newest first) with match records and draw-quality flags.
+
+    Unlike the snapshot's 25-row recent list, flags here are computed in one
+    set-based pass so the full history stays cheap (<50ms on ~800 games).
+    """
+    db_path = Path(db_path).expanduser()
+    if not db_path.is_file():
+        raise FileNotFoundError(f"Dashboard database not found: {db_path}")
+    where, params = _games_filter(deck, fmt, days, since, until)
+    db_uri = db_path.resolve().as_uri() + "?mode=ro"
+    with sqlite3.connect(db_uri, uri=True) as conn:
+        conn.execute("PRAGMA query_only = ON")
+        rows = _dict_rows(
+            conn.execute(
+                f"""
+                SELECT
+                  g.id AS game_id,
+                  g.started_at,
+                  g.outcome,
+                  g.duration_seconds,
+                  g.total_turns,
+                  p.id AS player_participant_id,
+                  p.deck_size,
+                  m.format AS raw_format,
+                  m.best_of,
+                  COALESCE(p.deck_name, '(unknown)') AS deck_name,
+                  p.mulligans,
+                  (
+                    SELECT SUM(g2.outcome = 'win') FROM games g2
+                    WHERE g2.match_id = g.match_id
+                  ) AS match_wins,
+                  (
+                    SELECT SUM(g2.outcome = 'loss') FROM games g2
+                    WHERE g2.match_id = g.match_id
+                  ) AS match_losses
+                FROM games g
+                JOIN matches m ON m.id = g.match_id
+                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                WHERE {where}
+                ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
+                """,
+                params,
+            )
+        )
+        participant_ids = [row["player_participant_id"] for row in rows]
+        opener_by_participant: Dict[str, List[Dict[str, Any]]] = {}
+        drawn_by_participant: Dict[str, List[Dict[str, Any]]] = {}
+        stats_drawn: Dict[str, int] = {}
+        deck_stats: Dict[str, Tuple[int, int]] = {}
+        if participant_ids:
+            placeholders = ",".join("?" for _ in participant_ids)
+            for record in _dict_rows(
+                conn.execute(
+                    f"""
+                    SELECT participant_id, display_name,
+                           COALESCE(type_category, 'Other') AS type_category
+                    FROM game_opening_hand_cards
+                    WHERE participant_id IN ({placeholders})
+                    ORDER BY hand_position
+                    """,
+                    participant_ids,
+                )
+            ):
+                opener_by_participant.setdefault(record["participant_id"], []).append(record)
+            for record in _dict_rows(
+                conn.execute(
+                    f"""
+                    SELECT participant_id, display_name,
+                           COALESCE(type_category, 'Other') AS type_category, draw_position
+                    FROM game_drawn_cards
+                    WHERE participant_id IN ({placeholders})
+                    ORDER BY draw_position
+                    """,
+                    participant_ids,
+                )
+            ):
+                drawn_by_participant.setdefault(record["participant_id"], []).append(record)
+            for record in conn.execute(
+                f"""
+                SELECT participant_id, cards_drawn FROM game_participant_stats
+                WHERE participant_id IN ({placeholders})
+                """,
+                participant_ids,
+            ):
+                stats_drawn[record[0]] = int(record[1] or 0)
+            for record in conn.execute(
+                f"""
+                SELECT participant_id, SUM(quantity),
+                       SUM(CASE WHEN type_category = 'Land' THEN quantity ELSE 0 END)
+                FROM game_deck_cards
+                WHERE deck_zone = 'deck' AND participant_id IN ({placeholders})
+                GROUP BY participant_id
+                """,
+                participant_ids,
+            ):
+                deck_stats[record[0]] = (int(record[1] or 0), int(record[2] or 0))
+
+    for row in rows:
+        participant_id = row.pop("player_participant_id", None)
+        fallback_size = int(row.pop("deck_size", None) or 60)
+        decklist = deck_stats.get(participant_id)
+        deck_size = decklist[0] if decklist and decklist[0] else fallback_size
+        deck_lands = decklist[1] if decklist and decklist[0] else None
+        quality = draw_quality_metrics(
+            opener_by_participant.get(participant_id, []),
+            drawn_by_participant.get(participant_id, []),
+            stats_drawn.get(participant_id, 0),
+            deck_size,
+            deck_lands=deck_lands,
+        )
+        row["is_flood"] = quality["is_flood"]
+        row["is_screw"] = quality["is_screw"]
+        row["cards_seen"] = quality["total_cards_seen"]
+        row["lands_seen"] = quality["lands_seen"]
+        row["land_seen_pct"] = quality["land_seen_pct"]
+        row["format_label"] = format_label(
+            row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
+        )
+    return {"games": rows, "total": len(rows)}
+
+
 def game_annotation(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str, Any]:
     """Return the user's note/tags for one game (empty defaults when unset)."""
     db_path = Path(db_path).expanduser()
@@ -3534,6 +3663,40 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     )
                 )
             except (FileNotFoundError, LookupError) as exc:
+                _send_bytes(
+                    self,
+                    404,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            except Exception as exc:
+                _send_bytes(
+                    self,
+                    500,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
+        if request_path == "/api/games":
+            query = parse_qs(parsed.query)
+            common = _parse_common_filters(query)
+            try:
+                body = render_snapshot_json(
+                    all_games(
+                        self.db_path,
+                        deck=common["deck"],
+                        fmt=common["fmt"],
+                        days=common["days"],
+                        since=common["since"],
+                        until=common["until"],
+                    )
+                )
+            except FileNotFoundError as exc:
                 _send_bytes(
                     self,
                     404,
