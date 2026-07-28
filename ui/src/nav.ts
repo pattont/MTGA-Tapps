@@ -12,6 +12,7 @@ export const dashboardNavItems: AppNavItem[] = [
   { id: 'recent-games', label: 'Recent Games' },
   { id: 'decks', label: 'Decks' },
   { id: 'combat', label: 'Combat' },
+  { id: 'land-drops', label: 'Land Availability' },
   { id: 'formats', label: 'Formats' },
   { id: 'visible-drawn-cards', label: 'Visible Drawn Cards' },
   { id: 'matches', label: 'Bo3 Matches' },
@@ -26,6 +27,7 @@ export const deckNavItems: AppNavItem[] = [
   { id: 'deck-openers', label: 'Opening Hands' },
   { id: 'deck-mulligans', label: 'Mulligans' },
   { id: 'deck-versions', label: 'Decklist Changes' },
+  { id: 'deck-lands', label: 'Land Availability' },
   { id: 'deck-formats', label: 'Formats' },
   { id: 'deck-games', label: 'Recent Games' },
 ];
@@ -50,6 +52,7 @@ export const cardNavItems: AppNavItem[] = [
   { id: 'card-usage-by-side', label: 'Opponent Impact' },
   { id: 'card-usage-comparison', label: 'Played by Side' },
   { id: 'card-decks', label: 'Your Decks' },
+  { id: 'card-multiplicity', label: 'Repeat Draws' },
   { id: 'card-opener-impact', label: 'Opening Hand Impact' },
 ];
 

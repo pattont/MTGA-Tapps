@@ -32,6 +32,7 @@ import { TrendChart } from './components/TrendChart';
 import { TypeChip } from './components/TypeChip';
 import { WinRateBar } from './components/WinRateBar';
 import { AppShell } from './components/AppShell';
+import { ManaReadinessTable } from './components/ManaReadinessTable';
 import { formatPercent, metricCards } from './dashboardData';
 import { formatCardName, formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone } from './format';
 import { cardNavItems, deckNavItems, gameNavItems, opponentNavItems } from './nav';
@@ -908,6 +909,14 @@ function Dashboard({
           getRowKey={(row) => row.split}
           rows={snapshot.combat_split ?? []}
         />
+      </Section>
+
+      <Section
+        id="land-drops"
+        title="Land Availability"
+        description="How often you had N lands available by turn N (opening hand + tagged draws), and how win rate shifts when you fall behind."
+      >
+        <ManaReadinessTable caption="Land availability on curve" rows={snapshot.mana_readiness ?? []} />
       </Section>
 
       <Section id="formats" title="Formats">
