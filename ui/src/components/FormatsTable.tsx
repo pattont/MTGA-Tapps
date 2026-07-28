@@ -1,4 +1,5 @@
 import type { FormatRow } from '../api';
+import { showInFormatAnalytics } from '../formatVisibility';
 import { SortableTable, type Column } from './SortableTable';
 import { WinRateBar } from './WinRateBar';
 
@@ -27,31 +28,17 @@ const formatColumns: Column<FormatRow>[] = [
 interface FormatsTableProps {
   caption: string;
   rows: FormatRow[];
-  midweekRows?: FormatRow[];
 }
 
-export function FormatsTable({ caption, rows, midweekRows = [] }: FormatsTableProps) {
+export function FormatsTable({ caption, rows }: FormatsTableProps) {
+  const visibleRows = rows.filter(showInFormatAnalytics);
   return (
-    <>
-      <SortableTable
-        caption={caption}
-        columns={formatColumns}
-        getRowKey={(row) => row.format_label}
-        initialSort={{ key: 'games', direction: 'desc' }}
-        rows={rows}
-      />
-      {midweekRows.length > 0 ? (
-        <details className="midweek-breakdown">
-          <summary>Midweek Magic breakdown ({midweekRows.length} events)</summary>
-          <SortableTable
-            caption={`${caption} – Midweek Magic breakdown`}
-            columns={formatColumns}
-            getRowKey={(row) => row.format_label}
-            initialSort={{ key: 'games', direction: 'desc' }}
-            rows={midweekRows}
-          />
-        </details>
-      ) : null}
-    </>
+    <SortableTable
+      caption={caption}
+      columns={formatColumns}
+      getRowKey={(row) => row.format_label}
+      initialSort={{ key: 'format_label', direction: 'asc' }}
+      rows={visibleRows}
+    />
   );
 }

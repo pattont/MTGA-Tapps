@@ -71,6 +71,8 @@ Preserve these behaviors unless the user explicitly changes requirements:
 
 - Never stop or restart the active tracker or desktop app without explicit user approval. The
   user may be in a live game even when the latest persisted log line appears idle.
+- On macOS, rely on the tray icon's registered native context menu; manually popping that same
+  menu from the activation callback creates a duplicate overlapping menu.
 - Perform database inspection read-only first. Use SQLite's online backup API before a live
   repair, and keep the tracker running unless the user explicitly authorizes downtime.
 - Console output should be readable and consistent: no emoji/icons in turn log lines or summaries.
@@ -79,6 +81,20 @@ Preserve these behaviors unless the user explicitly changes requirements:
 - Do not show normal single-item stack resolves if they add noise; show stack details when another item is added above an existing item or a spell/ability does not resolve normally.
 - Opening hand should be captured whenever a full visible hand is available before gameplay begins, then persisted to `game_opening_hand_cards`.
 - SQLite analytics should support future dashboards. Prefer structured tables over stuffing summary text into one blob.
+- Game Detail marks Flood for more than 50% post-opening land draws, statistically unusual
+  total lands, at least four consecutive land draws, or at least six lands within eight draws.
+- The homepage Recent Games table uses that same Flood calculation, shows total turns, and
+  combines Lands Seen with a whole-number percentage rounded upward; it does not show
+  player/opponent average-turn columns.
+- The Formats table defaults to case-insensitive Format A–Z order. Midweek Magic and Momir are
+  excluded in both backend responses and the UI as a safeguard against stale dashboard processes.
+- Best Deck uses the 95% Wilson lower confidence bound so both win rate and decided-game sample
+  size affect the ranking; the metric shows raw win rate, record, and total games.
+- Card Drill-Down persistently uses the same Scryfall full-card image loader as card hover
+  previews; deck thumbnails continue using cropped artwork.
+- The sidebar `MTGA Tracker` brand uses the dashboard heading typography, links to the very
+  top of Overview, and displays local vector W/U/B/R/G mana symbols rather than upscaled raster
+  icons. Browser tab titles use `MTGA Tracker – <page>`.
 - Unhandled annotations go to the text diagnostics log, not SQLite.
 
 ## MTGA Log Gotchas
@@ -108,10 +124,12 @@ Important tables:
 - `participants`: player/opponent seat, deck metadata, life, opening hand size, mulligans.
 - `game_opening_hand_cards`: one row per card in the player's opening hand.
 - `game_drawn_cards`: one row per visible player/opponent drawn card identity when Arena exposes it.
+- `game_deck_cards`: authoritative per-game submitted main-deck and sideboard quantities from Arena.
 - `game_card_summary`: cards played by each participant.
 - `game_participant_stats`: combat, damage/life, cards drawn/discarded/milled/exiled, stack stats.
 - `game_turns`: observed turn start/end timestamps and duration by active seat; `timing_source`
-  distinguishes exact `live` rows from `estimated_header_events` historical backfills.
+  distinguishes exact `live` rows, exact `recovered_previous_turn_logs` rows restored from
+  durable console headers, and `estimated_header_events` historical backfills.
 - `game_events`: structured event history where available.
 - `console_logs`: rendered console log lines for later dashboard/query work.
 - `raw_game_payloads`: raw payload persistence when enabled/available.
@@ -122,6 +140,10 @@ When adding stats, persist both player and opponent perspectives when the log ca
 Use `format_normalizer.py` for queue labels and best-of inference. Do not duplicate string-matching format logic in tracker mixins or reports.
 
 Run `mtga_tracker.db_audit` after suspected tracker inconsistencies. Safe repairs currently include format/queue mismatches, turn-count aggregate mismatches, reconstruction of completed games missing their core row, timestamp-based game-event reassignment, and deletion of empty unknown-result game artifacts; unresolved deck names and `Card #...` labels are reported for manual follow-up.
+
+The analytics writer uses WAL mode, a busy timeout, and bounded retries so dashboard reads or
+development-time reloads do not drop end-game writes. Missing exact turn timings are recovered
+from persisted `Previous Turn` console headers at startup and by `db_audit --repair`.
 
 ## Testing Expectations
 

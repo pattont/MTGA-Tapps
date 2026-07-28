@@ -129,6 +129,45 @@ def _turn_count_findings(conn: sqlite3.Connection) -> Iterable[AuditFinding]:
         )
 
 
+def _missing_turn_timing_findings(conn: sqlite3.Connection) -> Iterable[AuditFinding]:
+    """Report completed games whose durable turn headers can restore timing rows."""
+    for game_id, total_turns, timed_turns in conn.execute(
+        """
+        SELECT
+            g.id,
+            g.total_turns,
+            (SELECT COUNT(*) FROM game_turns gt WHERE gt.game_id = g.id) AS timed_turns
+        FROM games g
+        WHERE g.ended_at IS NOT NULL
+          AND COALESCE(g.total_turns, 0) > (
+              SELECT COUNT(*) FROM game_turns gt WHERE gt.game_id = g.id
+          )
+          AND EXISTS (
+              SELECT 1
+              FROM console_logs cl
+              WHERE cl.session_id = g.session_id
+                AND substr(cl.match_started_at, 1, 19) = substr(g.started_at, 1, 19)
+                AND cl.text LIKE 'Previous Turn (%'
+          )
+        ORDER BY g.started_at
+        """
+    ):
+        missing_turns = int(total_turns or 0) - int(timed_turns or 0)
+        yield AuditFinding(
+            code="MISSING_TURN_TIMINGS",
+            severity="error",
+            table_name="game_turns",
+            row_id=str(game_id),
+            message=(
+                f"Completed game has {timed_turns} of {total_turns} turn timings, "
+                "but exact previous-turn durations remain recoverable from console history."
+            ),
+            current_value=str(timed_turns),
+            suggested_value=f"recover {missing_turns} missing turn timing row(s)",
+            repairable=True,
+        )
+
+
 def _missing_deck_name_findings(conn: sqlite3.Connection) -> Iterable[AuditFinding]:
     for row in conn.execute(
         """
@@ -265,9 +304,7 @@ def _missing_completed_game_records(conn: sqlite3.Connection) -> List[_MissingGa
             (
                 item
                 for item in completed_groups
-                if item[0] == session_id
-                and first_event >= item[2]
-                and last_event <= item[3]
+                if item[0] == session_id and first_event >= item[2] and last_event <= item[3]
             ),
             None,
         )
@@ -292,13 +329,7 @@ def _missing_completed_game_records(conn: sqlite3.Connection) -> List[_MissingGa
             continue
         end_row = rows[end_index]
         end_text = stripped[end_index]
-        outcome = (
-            "win"
-            if "YOU WON" in end_text
-            else "loss"
-            if "YOU LOST" in end_text
-            else "draw"
-        )
+        outcome = "win" if "YOU WON" in end_text else "loss" if "YOU LOST" in end_text else "draw"
         reason = next(
             (
                 text.removeprefix("Reason:").strip()
@@ -360,9 +391,7 @@ def _missing_completed_game_records(conn: sqlite3.Connection) -> List[_MissingGa
         for role, seat_id, _uses in seat_rows:
             seats.setdefault(role, int(seat_id))
 
-        player_turns = len(
-            {row[1] for row in rows if row[1] and "YOUR TURN" in str(row[0] or "")}
-        )
+        player_turns = len({row[1] for row in rows if row[1] and "YOUR TURN" in str(row[0] or "")})
         opponent_turns = len(
             {row[1] for row in rows if row[1] and "OPPONENT'S TURN" in str(row[0] or "")}
         )
@@ -383,8 +412,7 @@ def _missing_completed_game_records(conn: sqlite3.Connection) -> List[_MissingGa
             0,
             int(
                 (
-                    datetime.fromisoformat(ended_at)
-                    - datetime.fromisoformat(match_started_at)
+                    datetime.fromisoformat(ended_at) - datetime.fromisoformat(match_started_at)
                 ).total_seconds()
             ),
         )
@@ -494,6 +522,7 @@ def audit_database(db_path: Path = DEFAULT_DB_PATH) -> List[AuditFinding]:
         findings = []
         findings.extend(_format_queue_findings(conn))
         findings.extend(_turn_count_findings(conn))
+        findings.extend(_missing_turn_timing_findings(conn))
         findings.extend(_missing_deck_name_findings(conn))
         findings.extend(_unknown_card_label_findings(conn))
         findings.extend(_missing_completed_game_findings(conn))
@@ -588,17 +617,11 @@ def _repair_game_event_assignments(conn: sqlite3.Connection) -> int:
     return repaired
 
 
-def _repair_missing_completed_game(
-    conn: sqlite3.Connection, record: _MissingGameRecord
-) -> int:
+def _repair_missing_completed_game(conn: sqlite3.Connection, record: _MissingGameRecord) -> int:
     player_id = f"{record.game_id}:participant:player"
     opponent_id = f"{record.game_id}:participant:opponent"
     winner_id = (
-        player_id
-        if record.outcome == "win"
-        else opponent_id
-        if record.outcome == "loss"
-        else None
+        player_id if record.outcome == "win" else opponent_id if record.outcome == "loss" else None
     )
     conn.execute(
         """
@@ -796,6 +819,10 @@ def repair_database(db_path: Path = DEFAULT_DB_PATH, *, backup: bool = False) ->
                     (int(finding.suggested_value), finding.row_id),
                 )
                 repaired_count += 1
+            elif finding.code == "MISSING_TURN_TIMINGS":
+                recovered = AnalyticsStore.backfill_recovered_game_turn_times(conn, finding.row_id)
+                if recovered:
+                    repaired_count += 1
             elif finding.code == "MISSING_COMPLETED_GAME_RECORD":
                 record = missing_records.get(finding.row_id)
                 if record is not None:

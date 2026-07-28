@@ -1,4 +1,5 @@
 import type { FilterOptions, SnapshotFilters } from '../api';
+import { showInFormatAnalytics } from '../formatVisibility';
 
 interface FilterBarProps {
   filters: SnapshotFilters;
@@ -37,7 +38,7 @@ export function FilterBar({ filters, options, onChange }: FilterBarProps) {
           onChange={(event) => onChange({ ...filters, format: event.target.value || undefined })}
         >
           <option value="">All formats</option>
-          {options.formats.map((format) => (
+          {options.formats.filter(showInFormatAnalytics).map((format) => (
             <option key={format.raw_format} value={format.raw_format}>
               {format.format_label} ({format.raw_format})
             </option>

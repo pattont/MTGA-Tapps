@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import { fetchCardDetail, type CardByDeckRow, type CardByRoleRow, type CardDetail } from '../api';
+import { pageTitle } from '../branding';
+import {
+  cardPreviewImageUrl,
+  previewImageHasFailed,
+  rememberFailedPreviewImage,
+} from '../cardPreview';
 import { formatPercent } from '../dashboardData';
-import { formatNumber } from '../format';
+import { formatCardName, formatNumber } from '../format';
 import { DeckLink } from './DeckLink';
 import { MetricCard } from './MetricCard';
 import { SortableTable, type Column } from './SortableTable';
@@ -63,28 +69,36 @@ const deckColumns: Column<CardByDeckRow>[] = [
 ];
 
 const roleColumns: Column<CardByRoleRow>[] = [
-  { key: 'side_label', header: 'Card Used By' },
+  { key: 'side_label', header: 'Card Played By' },
   { key: 'games_seen', header: 'Games', numeric: true },
   { key: 'total_played', header: 'Plays', numeric: true },
   {
     key: 'wins',
-    header: 'User Record',
+    header: 'Your Record',
     render: (row) => `${row.wins}–${row.losses}`,
     sortValue: (row) => row.wins - row.losses,
     numeric: true,
   },
   {
     key: 'win_rate',
-    header: 'User Win Rate',
+    header: 'Your Win Rate',
     render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
     sortValue: (row) => row.win_rate,
     numeric: true,
   },
 ];
 
-export function CardDetailPage({ cardName }: { cardName: string }) {
+export function CardDetailPage({
+  cardName,
+  backHref = '#overview',
+}: {
+  cardName: string;
+  backHref?: string;
+}) {
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
   const [failedImageCard, setFailedImageCard] = useState<string | null>(null);
+  const [loadedImageCard, setLoadedImageCard] = useState<string | null>(null);
+  const backLabel = backHref.startsWith('#/game/') ? '← Back to game' : '← Back to dashboard';
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -125,7 +139,7 @@ export function CardDetailPage({ cardName }: { cardName: string }) {
 
   useEffect(() => {
     if (loadState.status === 'loaded') {
-      document.title = `${loadState.detail.card_name} – MTGA Tracker`;
+      document.title = pageTitle(formatCardName(loadState.detail.card_name));
     }
   }, [loadState]);
 
@@ -136,14 +150,15 @@ export function CardDetailPage({ cardName }: { cardName: string }) {
     return (
       <div className="state-panel error-state" role="alert">
         <p>{loadState.message}</p>
-        <a className="back-link" href="#overview">
-          ← Back to dashboard
+        <a className="back-link" href={backHref}>
+          {backLabel}
         </a>
       </div>
     );
   }
 
   const { detail } = loadState;
+  const displayName = formatCardName(detail.card_name);
   const metrics = [
     { label: 'Games Appeared', value: formatNumber(detail.all_usage.games_seen) },
     { label: 'Total Plays', value: formatNumber(detail.all_usage.total_played) },
@@ -152,29 +167,64 @@ export function CardDetailPage({ cardName }: { cardName: string }) {
     { label: 'Your Games', value: formatNumber(detail.all_usage.player_games_seen) },
     { label: 'Opponent Games', value: formatNumber(detail.all_usage.opponent_games_seen) },
   ];
-  const canShowImage = Boolean(detail.image_url) && failedImageCard !== detail.card_name;
+  const cardImageUrl = cardPreviewImageUrl(detail.card_name);
+  const canShowImage =
+    failedImageCard !== detail.card_name && !previewImageHasFailed(cardImageUrl);
+  const imageLoaded = loadedImageCard === detail.card_name;
+  const legacyOpponentRow = detail.by_role.find((row) => row.role === 'opponent');
+  const opponentImpact = detail.opponent_impact ?? {
+    games: legacyOpponentRow?.games_seen ?? 0,
+    plays: legacyOpponentRow?.total_played ?? 0,
+    wins: legacyOpponentRow?.losses ?? 0,
+    losses: legacyOpponentRow?.wins ?? 0,
+    win_rate: legacyOpponentRow?.win_rate == null ? null : 100 - legacyOpponentRow.win_rate,
+    loss_rate: legacyOpponentRow?.win_rate ?? null,
+  };
+  const roleRows = detail.opponent_impact
+    ? detail.by_role
+    : detail.by_role.map((row) =>
+        row.role === 'opponent'
+          ? {
+              ...row,
+              wins: row.losses,
+              losses: row.wins,
+              win_rate: row.win_rate == null ? null : 100 - row.win_rate,
+            }
+          : row,
+      );
 
   return (
     <>
       <div className="card-detail-header" id="card-summary">
-        <a className="back-link" href="#overview">
-          ← Back to dashboard
+        <a className="back-link" href={backHref}>
+          {backLabel}
         </a>
         <div className="card-detail-title">
           <div className="card-art-panel">
             {canShowImage ? (
-              <img
-                src={detail.image_url ?? ''}
-                alt={`${detail.card_name} art`}
-                onError={() => setFailedImageCard(detail.card_name)}
-              />
+              <>
+                {!imageLoaded ? <div className="card-art-loading">Loading card...</div> : null}
+                <img
+                  className={imageLoaded ? 'card-art-image card-art-image-loaded' : 'card-art-image'}
+                  src={cardImageUrl}
+                  alt={`${displayName} card`}
+                  onLoad={() => setLoadedImageCard(detail.card_name)}
+                  onError={() => {
+                    rememberFailedPreviewImage(cardImageUrl);
+                    setFailedImageCard(detail.card_name);
+                  }}
+                />
+              </>
             ) : (
-              <div className="card-art-fallback">{detail.card_name.slice(0, 1).toUpperCase()}</div>
+              <div className="card-art-fallback">
+                <strong>{displayName}</strong>
+                <span>Card image unavailable</span>
+              </div>
             )}
           </div>
           <div>
             <span className="eyebrow">Card drill-down</span>
-            <h2>{detail.card_name}</h2>
+            <h2>{displayName}</h2>
             <p>Usage by either player whenever this card appeared in a tracked game.</p>
           </div>
         </div>
@@ -190,15 +240,29 @@ export function CardDetailPage({ cardName }: { cardName: string }) {
 
       <Section
         id="card-usage-by-side"
-        title="Usage by Side"
-        description="Every tracked appearance. Record and win rate are from the card user's perspective."
+        title="When Opponent Plays This Card"
+        description="Your results only in games where the opponent actually played this card."
+      >
+        <section className="metric-grid metric-grid-deck" aria-label="Opponent card impact">
+          <MetricCard label="Games" value={formatNumber(opponentImpact.games)} />
+          <MetricCard label="Opponent Plays" value={formatNumber(opponentImpact.plays)} />
+          <MetricCard label="Your Record" value={`${opponentImpact.wins}–${opponentImpact.losses}`} />
+          <MetricCard label="Your Win Rate" value={formatPercent(opponentImpact.win_rate)} />
+          <MetricCard label="Your Loss Rate" value={formatPercent(opponentImpact.loss_rate)} />
+        </section>
+      </Section>
+
+      <Section
+        id="card-usage-comparison"
+        title="Played By Side"
+        description="Only games where that side played the card. Every record and win rate is shown from your perspective."
       >
         <SortableTable
-          caption="Card usage by player and opponent"
+          caption="Your results by card-playing side"
           columns={roleColumns}
           compact
           getRowKey={(row) => row.role}
-          rows={detail.by_role}
+          rows={roleRows}
         />
       </Section>
 

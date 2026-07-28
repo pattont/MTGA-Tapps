@@ -1,12 +1,28 @@
 """SQLite analytics persistence for MTGA tracker."""
 
+import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 from .log_sanitize import scrub_raw_log
+
+
+_PREVIOUS_TURN_DURATION_RE = re.compile(
+    r"^Previous Turn \((You|Opponent)\): " r"(?:(\d+)h )?(?:(\d+)m )?(\d+)s$"
+)
+
+
+def _previous_turn_duration(text: str) -> Optional[tuple[str, int]]:
+    """Parse one exact live duration emitted in a previous-turn header."""
+    match = _PREVIOUS_TURN_DURATION_RE.fullmatch(str(text or "").strip())
+    if match is None:
+        return None
+    label, hours, minutes, seconds = match.groups()
+    total_seconds = int(hours or 0) * 3600 + int(minutes or 0) * 60 + int(seconds)
+    return label, total_seconds
 
 
 @dataclass(frozen=True)
@@ -37,7 +53,10 @@ class AnalyticsStore:
         if self._conn is not None:
             return self._conn
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.path)
+        self._conn = sqlite3.connect(self.path, timeout=10.0)
+        self._conn.execute("PRAGMA busy_timeout = 10000")
+        self._conn.execute("PRAGMA journal_mode = WAL")
+        self._conn.execute("PRAGMA synchronous = NORMAL")
         self.ensure_schema(self._conn)
         return self._conn
 
@@ -161,6 +180,22 @@ class AnalyticsStore:
                 milled_count INTEGER NOT NULL DEFAULT 0,
                 exiled_count INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(game_id, participant_id, display_name),
+                FOREIGN KEY(game_id) REFERENCES games(id),
+                FOREIGN KEY(participant_id) REFERENCES participants(id),
+                FOREIGN KEY(card_id) REFERENCES cards(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS game_deck_cards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id TEXT NOT NULL,
+                participant_id TEXT NOT NULL,
+                card_id INTEGER,
+                arena_id INTEGER NOT NULL,
+                display_name TEXT NOT NULL,
+                type_category TEXT,
+                deck_zone TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                UNIQUE(game_id, participant_id, deck_zone, arena_id),
                 FOREIGN KEY(game_id) REFERENCES games(id),
                 FOREIGN KEY(participant_id) REFERENCES participants(id),
                 FOREIGN KEY(card_id) REFERENCES cards(id)
@@ -345,6 +380,9 @@ class AnalyticsStore:
             CREATE INDEX IF NOT EXISTS idx_game_card_summary_game_participant
             ON game_card_summary(game_id, participant_id);
 
+            CREATE INDEX IF NOT EXISTS idx_game_deck_cards_game_participant
+            ON game_deck_cards(game_id, participant_id);
+
             CREATE INDEX IF NOT EXISTS idx_opening_hand_game_participant
             ON game_opening_hand_cards(game_id, participant_id);
 
@@ -467,6 +505,134 @@ class AnalyticsStore:
               AND ROUND((julianday(ended_at) - julianday(started_at)) * 86400.0) > 0
             """
         )
+        return conn.total_changes - changes_before
+
+    @staticmethod
+    def backfill_recovered_game_turn_times(
+        conn: sqlite3.Connection, game_id: Optional[str] = None
+    ) -> int:
+        """Recover exact live turn durations preserved in console turn headers.
+
+        Each turn transition prints the completed turn's exact measured duration.
+        The final turn is reconstructed from its observed header and the persisted
+        game end. Existing timing rows are never overwritten.
+        """
+        changes_before = conn.total_changes
+        params: tuple[str, ...] = ()
+        game_filter = ""
+        if game_id is not None:
+            game_filter = "AND g.id = ?"
+            params = (game_id,)
+        games = conn.execute(
+            f"""
+            SELECT g.id, g.session_id, g.started_at, g.ended_at, g.total_turns
+            FROM games g
+            WHERE g.started_at IS NOT NULL
+              AND g.ended_at IS NOT NULL
+              AND COALESCE(g.total_turns, 0) > (
+                  SELECT COUNT(*) FROM game_turns gt WHERE gt.game_id = g.id
+              )
+              {game_filter}
+            ORDER BY g.started_at
+            """,
+            params,
+        ).fetchall()
+
+        for recovered_game_id, session_id, started_at, ended_at, total_turns in games:
+            seats = {
+                role: seat_id
+                for role, seat_id in conn.execute(
+                    "SELECT role, seat_id FROM participants WHERE game_id = ?",
+                    (recovered_game_id,),
+                )
+                if role in {"player", "opponent"} and seat_id in (1, 2)
+            }
+            duration_rows = conn.execute(
+                """
+                SELECT turn_number, created_at, text
+                FROM console_logs
+                WHERE session_id = ?
+                  AND substr(match_started_at, 1, 19) = substr(?, 1, 19)
+                  AND text LIKE 'Previous Turn (%'
+                ORDER BY turn_number, created_at
+                """,
+                (session_id, started_at),
+            ).fetchall()
+            for current_turn, completed_at, text in duration_rows:
+                parsed = _previous_turn_duration(text)
+                completed_turn = int(current_turn or 0) - 1
+                if parsed is None or completed_turn < 1:
+                    continue
+                label, duration_seconds = parsed
+                seat_id = seats.get("player" if label == "You" else "opponent")
+                try:
+                    ended_at_value = datetime.fromisoformat(str(completed_at))
+                except ValueError:
+                    continue
+                started_at_value = ended_at_value - timedelta(seconds=duration_seconds)
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO game_turns (
+                        game_id, turn_number, seat_id, started_at, ended_at,
+                        duration_seconds, timing_source
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'recovered_previous_turn_logs')
+                    """,
+                    (
+                        recovered_game_id,
+                        completed_turn,
+                        seat_id,
+                        started_at_value.isoformat(),
+                        ended_at_value.isoformat(),
+                        duration_seconds,
+                    ),
+                )
+
+            final_turn = int(total_turns or 0)
+            if final_turn < 1:
+                continue
+            final_exists = conn.execute(
+                "SELECT 1 FROM game_turns WHERE game_id = ? AND turn_number = ?",
+                (recovered_game_id, final_turn),
+            ).fetchone()
+            if final_exists is not None:
+                continue
+            final_header = conn.execute(
+                """
+                SELECT MIN(event_time), MAX(text)
+                FROM game_events
+                WHERE game_id = ?
+                  AND turn_number = ?
+                  AND text LIKE 'Turn % - %TURN'
+                """,
+                (recovered_game_id, final_turn),
+            ).fetchone()
+            if not final_header or not final_header[0]:
+                continue
+            try:
+                final_started_at = datetime.fromisoformat(str(final_header[0]))
+                final_ended_at = datetime.fromisoformat(str(ended_at))
+            except ValueError:
+                continue
+            final_duration = int((final_ended_at - final_started_at).total_seconds())
+            if final_duration <= 0:
+                continue
+            final_role = "player" if "YOUR TURN" in str(final_header[1] or "") else "opponent"
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO game_turns (
+                    game_id, turn_number, seat_id, started_at, ended_at,
+                    duration_seconds, timing_source
+                ) VALUES (?, ?, ?, ?, ?, ?, 'recovered_previous_turn_logs')
+                """,
+                (
+                    recovered_game_id,
+                    final_turn,
+                    seats.get(final_role),
+                    final_started_at.isoformat(),
+                    final_ended_at.isoformat(),
+                    final_duration,
+                ),
+            )
         return conn.total_changes - changes_before
 
     @staticmethod

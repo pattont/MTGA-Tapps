@@ -93,6 +93,8 @@ class CardTracker(
         self._metadata_backfilled = False
         self._format_from_backfill = False
         self._pending_event_format: Optional[str] = None
+        self._pending_submitted_deck_cards: List[int] = []
+        self._pending_submitted_sideboard_cards: List[int] = []
         self._parsing_backfilled_metadata = False
         self._current_event_time: Optional[datetime] = None
         self._require_explicit_game_start: bool = False

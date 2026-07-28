@@ -2,6 +2,10 @@ export function formatNumber(value: number | null | undefined): string {
   return value === null || value === undefined ? '—' : String(value);
 }
 
+export function formatCardName(cardName: string): string {
+  return cardName.replace(/\s*\/\/\s*/g, ' / ');
+}
+
 export function formatDateTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {

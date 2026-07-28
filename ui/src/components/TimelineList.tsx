@@ -1,22 +1,44 @@
 import { useMemo, useState } from 'react';
-import type { GameTimelineRow } from '../api';
+import type { GameTimelineRow, GameTurnTimingRow, TimelineTextSegment } from '../api';
+import { formatCardName, formatTurnDuration } from '../format';
+import { CardLink } from './CardLink';
+import { TypeChip } from './TypeChip';
 
 interface TurnGroup {
+  turnNumber: number | null;
   turnLabel: string;
   events: GameTimelineRow[];
+  timing: GameTurnTimingRow | null;
 }
 
-function groupByTurn(rows: GameTimelineRow[]): TurnGroup[] {
-  const groups: TurnGroup[] = [];
-  let current: TurnGroup | null = null;
-  for (const row of rows) {
-    const turnLabel = row.turn_number === null || row.turn_number === undefined ? 'Pre-game' : `Turn ${row.turn_number}`;
-    if (!current || current.turnLabel !== turnLabel) {
-      current = { turnLabel, events: [] };
-      groups.push(current);
+function groupByTurn(rows: GameTimelineRow[], timings: GameTurnTimingRow[]): TurnGroup[] {
+  const timingByTurn = new Map(timings.map((timing) => [timing.turn_number, timing]));
+  const turnNumbers = new Set<number>();
+  const pregameEvents: GameTimelineRow[] = [];
+
+  rows.forEach((row) => {
+    if (row.turn_number === null || row.turn_number === undefined) {
+      pregameEvents.push(row);
+    } else {
+      turnNumbers.add(row.turn_number);
     }
-    current.events.push(row);
+  });
+  timings.forEach((timing) => turnNumbers.add(timing.turn_number));
+
+  const groups: TurnGroup[] = [];
+  if (pregameEvents.length > 0) {
+    groups.push({ turnNumber: null, turnLabel: 'Pre-game', events: pregameEvents, timing: null });
   }
+  Array.from(turnNumbers)
+    .sort((left, right) => left - right)
+    .forEach((turnNumber) => {
+      groups.push({
+        turnNumber,
+        turnLabel: `Turn ${turnNumber}`,
+        events: rows.filter((row) => row.turn_number === turnNumber),
+        timing: timingByTurn.get(turnNumber) ?? null,
+      });
+    });
   return groups;
 }
 
@@ -50,30 +72,182 @@ function actorLabel(actorRole: string | null): string | null {
   return null;
 }
 
-export function TimelineList({ rows }: { rows: GameTimelineRow[] }) {
+function timingRoleLabel(role: GameTurnTimingRow['role']): string {
+  if (role === 'player') {
+    return 'You';
+  }
+  if (role === 'opponent') {
+    return 'Opponent';
+  }
+  return 'Unknown';
+}
+
+function cardMetadata(typeSuffix: string | null, cardType: string | null | undefined): string | null {
+  if (!typeSuffix) {
+    return null;
+  }
+  let metadata = typeSuffix.trim();
+  if (cardType) {
+    const escapedType = cardType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    metadata = metadata.replace(new RegExp(`\\b${escapedType}\\b`, 'i'), '').trim();
+  }
+  return metadata || null;
+}
+
+const TIMELINE_CARD_TYPES = [
+  'Planeswalker',
+  'Enchantment',
+  'Artifact',
+  'Creature',
+  'Sorcery',
+  'Instant',
+  'Battle',
+  'Land',
+];
+
+function inferredCardType(typeSuffix: string | null): string | null {
+  if (!typeSuffix) {
+    return null;
+  }
+  return (
+    TIMELINE_CARD_TYPES.find((type) =>
+      new RegExp(`\\b${type}\\b`, 'i').test(typeSuffix),
+    ) ?? null
+  );
+}
+
+interface TimelineCardDecoration {
+  bracketed: boolean;
+  cardType: string | null;
+  metadata: string | null;
+}
+
+function decorateCardSegments(segments: TimelineTextSegment[]): {
+  segments: TimelineTextSegment[];
+  decorations: Map<number, TimelineCardDecoration>;
+} {
+  const mutableSegments = segments.map((segment) => ({ ...segment }));
+  const decorations = new Map<number, TimelineCardDecoration>();
+
+  mutableSegments.forEach((segment, index) => {
+    if (segment.kind !== 'card') {
+      return;
+    }
+    const previous = mutableSegments[index - 1];
+    const next = mutableSegments[index + 1];
+    if (
+      previous?.kind !== 'text'
+      || next?.kind !== 'text'
+      || !previous.text.endsWith('[')
+    ) {
+      decorations.set(index, { bracketed: false, cardType: null, metadata: null });
+      return;
+    }
+    const closing = next.text.match(/^\s*(?:\(([^()]*)\))?\]/);
+    if (!closing) {
+      decorations.set(index, { bracketed: false, cardType: null, metadata: null });
+      return;
+    }
+    const typeSuffix = closing[1] ?? null;
+    const cardType = segment.card_type ?? inferredCardType(typeSuffix);
+    previous.text = previous.text.slice(0, -1);
+    next.text = next.text.slice(closing[0].length);
+    decorations.set(index, {
+      bracketed: true,
+      cardType,
+      metadata: cardMetadata(typeSuffix, cardType),
+    });
+  });
+
+  return { segments: mutableSegments, decorations };
+}
+
+function TimelineText({ event, returnHash }: { event: GameTimelineRow; returnHash?: string }) {
+  const sourceSegments = event.text_segments?.length
+    ? event.text_segments
+    : [{ kind: 'text' as const, text: event.text }];
+  const { decorations, segments } = decorateCardSegments(sourceSegments);
+  return (
+    <>
+      {segments.map((segment, index) => {
+        if (segment.kind === 'text') {
+          return segment.text ? <span key={`text-${index}`}>{segment.text}</span> : null;
+        }
+        const decoration = decorations.get(index);
+        if (!decoration?.bracketed) {
+          return (
+            <CardLink key={`${segment.card_name}-${index}`} cardName={segment.card_name} returnHash={returnHash}>
+              {formatCardName(segment.text)}
+            </CardLink>
+          );
+        }
+        const showCardType = !(
+          event.event_type?.toLocaleLowerCase() === 'land'
+          && decoration.cardType?.toLocaleLowerCase() === 'land'
+        );
+        return (
+          <span key={`${segment.card_name}-${index}`} className="timeline-card-entry">
+            <CardLink
+              className="timeline-card-reference"
+              cardName={segment.card_name}
+              returnHash={returnHash}
+            >
+              <span className="timeline-card-bracket">[</span>
+              {formatCardName(segment.text)}
+              <span className="timeline-card-bracket">]</span>
+            </CardLink>
+            {decoration.cardType && showCardType ? (
+              <TypeChip compact type={decoration.cardType} />
+            ) : null}
+            {decoration.metadata ? (
+              <span className="timeline-card-metadata">{decoration.metadata}</span>
+            ) : null}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+export function TimelineList({
+  rows,
+  timings = [],
+  cardReturnHash,
+}: {
+  rows: GameTimelineRow[];
+  timings?: GameTurnTimingRow[];
+  cardReturnHash?: string;
+}) {
   const [eventType, setEventType] = useState('');
   const [actor, setActor] = useState('');
 
+  const visibleRows = useMemo(
+    () => rows.filter((row) => row.event_type !== 'turn'),
+    [rows],
+  );
   const eventTypes = useMemo(
     () =>
       Array.from(
-        new Set(rows.map((row) => row.event_type).filter((value): value is string => Boolean(value))),
+        new Set(visibleRows.map((row) => row.event_type).filter((value): value is string => Boolean(value))),
       ).sort(),
-    [rows],
+    [visibleRows],
   );
 
   const filtered = useMemo(
     () =>
-      rows.filter(
+      visibleRows.filter(
         (row) =>
           (!eventType || row.event_type === eventType) &&
           (!actor || (row.actor_role ?? 'system') === actor),
       ),
-    [rows, eventType, actor],
+    [visibleRows, eventType, actor],
   );
-  const groups = useMemo(() => groupByTurn(filtered), [filtered]);
+  const groups = useMemo(
+    () => groupByTurn(filtered, eventType || actor ? [] : timings),
+    [actor, eventType, filtered, timings],
+  );
 
-  if (rows.length === 0) {
+  if (visibleRows.length === 0 && timings.length === 0) {
     return <p className="empty-state">No timeline events were captured for this game.</p>;
   }
 
@@ -101,7 +275,7 @@ export function TimelineList({ rows }: { rows: GameTimelineRow[] }) {
           </select>
         </label>
         <span className="timeline-count" role="status">
-          {filtered.length} of {rows.length} events
+          {filtered.length} of {visibleRows.length} events
         </span>
       </div>
       {groups.length === 0 ? (
@@ -114,7 +288,24 @@ export function TimelineList({ rows }: { rows: GameTimelineRow[] }) {
               <li key={`${group.turnLabel}-${groupIndex}`} className="timeline-turn">
                 <div className="timeline-turn-header">
                   <strong>{group.turnLabel}</strong>
-                  {life ? <span className="timeline-life" title="Life totals (you – opponent)">♥ {life}</span> : null}
+                  <div className="timeline-turn-meta">
+                    {group.timing ? (
+                      <span
+                        className="timeline-turn-duration"
+                        title={`${
+                          group.timing.timing_source === 'estimated_header_events' ? 'Estimated' : 'Live'
+                        } turn timing`}
+                      >
+                        {timingRoleLabel(group.timing.role)} · {formatTurnDuration(group.timing.duration_seconds)}
+                        {group.timing.timing_source === 'estimated_header_events' ? ' · Estimated' : ''}
+                      </span>
+                    ) : null}
+                    {life ? (
+                      <span className="timeline-life" title="Life totals (you – opponent)">
+                        ♥ {life}
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
                 <ul>
                   {group.events.map((event, eventIndex) => (
@@ -125,7 +316,9 @@ export function TimelineList({ rows }: { rows: GameTimelineRow[] }) {
                       <span className={`timeline-chip timeline-chip-${event.event_type ?? 'other'}`}>
                         {event.event_type ?? 'event'}
                       </span>
-                      <span className="timeline-text">{event.text}</span>
+                      <span className="timeline-text">
+                        <TimelineText event={event} returnHash={cardReturnHash} />
+                      </span>
                     </li>
                   ))}
                 </ul>

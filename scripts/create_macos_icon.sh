@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SOURCE="$ROOT_DIR/packaging/assets/app-icon.png"
+SOURCE="$ROOT_DIR/src/mtga_tracker/assets/app-icon.png"
 ICONSET="$ROOT_DIR/build/MTGATracker.iconset"
 OUTPUT="$ROOT_DIR/packaging/assets/MTGATracker.icns"
 

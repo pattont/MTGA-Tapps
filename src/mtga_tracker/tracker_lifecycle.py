@@ -298,6 +298,7 @@ class TrackerLifecycleMixin:
             # Always try to pick up match metadata (format, player name) from any line
             self._parse_match_metadata(line)
             for message in self._extract_gre_messages(line):
+                self._capture_submitted_deck_message(message)
                 self._capture_casting_time_options_requests(message)
             for payload in self._extract_client_gre_payloads(line):
                 self._handle_client_gre_payload(payload)
@@ -453,6 +454,12 @@ class TrackerLifecycleMixin:
         self.game_state.explicit_mulligan_count = 0
         self.game_state.opening_keep_confirmed = False
         self.game_state.opening_select_n_ids = []
+        self.game_state.submitted_deck_cards = list(
+            getattr(self, "_pending_submitted_deck_cards", [])
+        )
+        self.game_state.submitted_sideboard_cards = list(
+            getattr(self, "_pending_submitted_sideboard_cards", [])
+        )
         self.game_state.player_seat_id = None
         self.game_state.opponent_seat_id = None
         self.game_state.opponent_display_name = None

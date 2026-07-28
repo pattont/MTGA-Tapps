@@ -49,7 +49,17 @@ pip install -e '.[dev,gui]'
 
 ## Usage
 
-Run the tracker and dashboard together with the menu-bar application:
+On macOS, build and launch the native application for normal daily use:
+
+```bash
+scripts/build_macos_app.sh
+open "dist/MTGA Tracker.app"
+```
+
+The native `.app` supplies the `MTGA Tracker` bundle and Dock identity plus the adaptive menu-bar icon. Direct source launches execute through the Python interpreter and may expose Python runtime metadata in macOS.
+
+For source development or other platforms, run the tracker and dashboard together with:
+
 ```bash
 pip install -e '.[gui]'
 mtga-tracker-app
@@ -132,9 +142,9 @@ scripts/build_macos_installer.sh
 open dist/MTGA-Tracker.dmg
 ```
 
-Release builds compile `ui/dist`, install the GUI/build dependencies, and package the Python tracker and dashboard together. Installed builds store the database and logs under `~/Library/Application Support/MTGA Tracker`.
+Release builds compile `ui/dist`, install the GUI/build dependencies, and package the Python tracker and dashboard together. Installed builds store the database and logs under `~/Library/Application Support/MTGA Tracker`. Do not run the source and packaged launchers simultaneously.
 
-The installed app has an independent database and does not modify the repository database. To carry existing history into the app, quit both tracker versions and copy `data/mtga_tracker.sqlite3` to `~/Library/Application Support/MTGA Tracker/mtga_tracker.sqlite3` before launching the installed app.
+The installed app has an independent database and does not modify the repository database. Migrating existing history requires a deliberate cutover while both tracker versions are stopped: preserve the existing installed database, copy the repository database with SQLite's backup API, validate it, then launch the installed app. Never copy or replace the live database while either tracker owns it.
 
 The generated application is currently unsigned. macOS distribution outside the development machine will require an Apple Developer ID signature and notarization.
 

@@ -2,6 +2,7 @@ import sqlite3
 from datetime import datetime, timedelta
 
 from mtga_tracker.analytics import AnalyticsStore, SessionSnapshot
+from mtga_tracker.tracker_analytics import TrackerAnalyticsMixin
 
 
 def test_analytics_store_uses_persistent_connection(tmp_path):
@@ -146,9 +147,7 @@ def test_backfill_estimated_game_turn_times_is_idempotent_and_preserves_live_row
     conn.execute(
         "INSERT INTO tracker_sessions (id, started_at) VALUES ('session-1', '2026-07-01T12:00:00')"
     )
-    conn.execute(
-        "INSERT INTO matches (id, session_id) VALUES ('match-1', 'session-1')"
-    )
+    conn.execute("INSERT INTO matches (id, session_id) VALUES ('match-1', 'session-1')")
     conn.execute(
         """
         INSERT INTO games (id, session_id, match_id, ended_at, total_turns)
@@ -199,4 +198,103 @@ def test_backfill_estimated_game_turn_times_is_idempotent_and_preserves_live_row
         (1, 2, 5, "live"),
         (2, 1, 70, "estimated_header_events"),
         (3, 2, 60, "estimated_header_events"),
+    ]
+
+
+def test_connection_uses_wal_and_waits_for_transient_writers(tmp_path):
+    store = AnalyticsStore(tmp_path / "analytics.sqlite3")
+    conn = store.connect()
+    assert conn is not None
+
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 10_000
+    store.close()
+
+
+def test_analytics_write_retries_transient_database_locks(monkeypatch, tmp_path):
+    conn = sqlite3.connect(tmp_path / "analytics.sqlite3")
+    conn.execute("CREATE TABLE retries (attempt INTEGER)")
+    attempts = 0
+    monkeypatch.setattr("mtga_tracker.tracker_analytics.time.sleep", lambda _seconds: None)
+
+    def write_after_two_locks():
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise sqlite3.OperationalError("database is locked")
+        conn.execute("INSERT INTO retries (attempt) VALUES (?)", (attempts,))
+
+    TrackerAnalyticsMixin._run_analytics_write(conn, write_after_two_locks)
+
+    assert attempts == 3
+    assert conn.execute("SELECT attempt FROM retries").fetchall() == [(3,)]
+    conn.close()
+
+
+def test_backfill_recovered_game_turn_times_uses_exact_console_durations(tmp_path):
+    store = AnalyticsStore(tmp_path / "analytics.sqlite3")
+    conn = store.connect()
+    assert conn is not None
+    conn.execute(
+        "INSERT INTO tracker_sessions (id, started_at) VALUES ('session-1', '2026-07-01T12:00:00')"
+    )
+    conn.execute("INSERT INTO matches (id, session_id) VALUES ('match-1', 'session-1')")
+    conn.execute(
+        """
+        INSERT INTO games (
+            id, session_id, match_id, started_at, ended_at, total_turns, outcome
+        ) VALUES (
+            'game-1', 'session-1', 'match-1',
+            '2026-07-01T12:00:00', '2026-07-01T12:03:00', 3, 'win'
+        )
+        """
+    )
+    conn.executemany(
+        """
+        INSERT INTO participants (id, game_id, seat_id, role)
+        VALUES (?, 'game-1', ?, ?)
+        """,
+        (("player-1", 2, "player"), ("opponent-1", 1, "opponent")),
+    )
+    conn.executemany(
+        """
+        INSERT INTO game_events (
+            session_id, game_id, event_time, turn_number, event_type, text
+        ) VALUES ('session-1', 'game-1', ?, ?, 'turn', ?)
+        """,
+        (
+            ("2026-07-01T12:00:10", 1, "Turn 1 - YOUR TURN"),
+            ("2026-07-01T12:00:40", 2, "Turn 2 - OPPONENT'S TURN"),
+            ("2026-07-01T12:01:50", 3, "Turn 3 - YOUR TURN"),
+        ),
+    )
+    conn.executemany(
+        """
+        INSERT INTO console_logs (
+            session_id, created_at, match_started_at, turn_number, text
+        ) VALUES ('session-1', ?, '2026-07-01T12:00:00', ?, ?)
+        """,
+        (
+            ("2026-07-01T12:00:40", 2, "Previous Turn (You): 30s"),
+            ("2026-07-01T12:01:50", 3, "Previous Turn (Opponent): 1m 10s"),
+        ),
+    )
+
+    inserted = AnalyticsStore.backfill_recovered_game_turn_times(conn)
+    inserted_again = AnalyticsStore.backfill_recovered_game_turn_times(conn)
+    rows = conn.execute(
+        """
+        SELECT turn_number, seat_id, duration_seconds, timing_source
+        FROM game_turns
+        ORDER BY turn_number
+        """
+    ).fetchall()
+    store.close()
+
+    assert inserted == 3
+    assert inserted_again == 0
+    assert rows == [
+        (1, 2, 30, "recovered_previous_turn_logs"),
+        (2, 1, 70, "recovered_previous_turn_logs"),
+        (3, 2, 70, "recovered_previous_turn_logs"),
     ]

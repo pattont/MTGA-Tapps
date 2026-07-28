@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { DeckVisual as DeckVisualData } from '../api';
+import { formatCardName } from '../format';
 
 interface DeckVisualProps {
   deckName: string;
@@ -21,20 +22,21 @@ export function DeckVisual({ deckName, visual }: DeckVisualProps) {
   const typeCategory = visual.type_category || 'Other';
   const className = typeClass[typeCategory] ?? 'deck-visual-other';
   const showImage = Boolean(visual.image_url) && !imageFailed;
+  const visualName = visual.card_name ? formatCardName(visual.card_name) : deckName;
   return (
     <div className={`deck-visual ${className}`} aria-label={`${deckName} deck visual`}>
       {showImage ? (
         <img
           className="deck-visual-art"
           src={visual.image_url ?? undefined}
-          alt={visual.card_name || deckName}
+          alt={visualName}
           loading="lazy"
           onError={() => setImageFailed(true)}
         />
       ) : (
         <div className="deck-visual-frame">
           <span className="deck-visual-type">{typeCategory}</span>
-          <strong>{visual.card_name || deckName}</strong>
+          <strong>{visualName}</strong>
         </div>
       )}
     </div>
