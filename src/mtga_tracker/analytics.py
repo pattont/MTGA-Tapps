@@ -438,6 +438,7 @@ class AnalyticsStore:
             (2, AnalyticsStore._migrate_v2_backfill_card_arena_ids),
             (3, AnalyticsStore._migrate_v3_backfill_summary_drawn_counts),
             (4, AnalyticsStore._migrate_v4_game_annotations),
+            (5, AnalyticsStore._migrate_v5_backfill_drawn_card_names),
         )
         for version, migrate in migrations:
             if version in applied:
@@ -539,6 +540,81 @@ class AnalyticsStore:
             )
             """
         )
+
+    @staticmethod
+    def _migrate_v5_backfill_drawn_card_names(conn: sqlite3.Connection) -> None:
+        """Rewrite historical "drew a card" timeline events with the card name.
+
+        Visible drawn-card identities were persisted to game_drawn_cards all
+        along, but the rendered event text never included them. Pair each
+        game's draw events with its recorded draws — whole-game when the counts
+        match exactly, otherwise per-turn where the counts match — and leave
+        anything ambiguous untouched.
+        """
+        game_ids = [
+            row[0]
+            for row in conn.execute(
+                """
+                SELECT DISTINCT game_id FROM game_events
+                WHERE event_type = 'draw' AND text LIKE '%drew a card%'
+                  AND game_id IS NOT NULL
+                """
+            )
+        ]
+        for game_id in game_ids:
+            for role in ("player", "opponent"):
+                participant = conn.execute(
+                    "SELECT id FROM participants WHERE game_id = ? AND role = ?",
+                    (game_id, role),
+                ).fetchone()
+                if participant is None:
+                    continue
+                drawn = conn.execute(
+                    """
+                    SELECT display_name, turn_number
+                    FROM game_drawn_cards
+                    WHERE game_id = ? AND participant_id = ?
+                    ORDER BY draw_position
+                    """,
+                    (game_id, participant[0]),
+                ).fetchall()
+                events = conn.execute(
+                    """
+                    SELECT id, text, turn_number
+                    FROM game_events
+                    WHERE game_id = ? AND actor_role = ? AND event_type = 'draw'
+                      AND text LIKE '%drew a card%'
+                    ORDER BY event_time, id
+                    """,
+                    (game_id, role),
+                ).fetchall()
+                if not drawn or not events:
+                    continue
+                updates = []
+                if len(drawn) == len(events):
+                    for (event_id, text, _), (name, _) in zip(events, drawn):
+                        updates.append(
+                            (str(text).replace("drew a card", f"drew [{name}]", 1), event_id)
+                        )
+                else:
+                    events_by_turn: dict = {}
+                    drawn_by_turn: dict = {}
+                    for event in events:
+                        events_by_turn.setdefault(event[2], []).append(event)
+                    for card in drawn:
+                        drawn_by_turn.setdefault(card[1], []).append(card)
+                    for turn, turn_events in events_by_turn.items():
+                        turn_drawn = drawn_by_turn.get(turn, [])
+                        if turn is None or len(turn_events) != len(turn_drawn):
+                            continue
+                        for (event_id, text, _), (name, _) in zip(turn_events, turn_drawn):
+                            updates.append(
+                                (str(text).replace("drew a card", f"drew [{name}]", 1), event_id)
+                            )
+                if updates:
+                    conn.executemany(
+                        "UPDATE game_events SET text = ? WHERE id = ?", updates
+                    )
 
     @staticmethod
     def backfill_estimated_game_turn_times(conn: sqlite3.Connection) -> int:

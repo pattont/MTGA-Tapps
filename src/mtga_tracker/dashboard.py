@@ -315,6 +315,7 @@ def _deck_decklist_analysis(
                     "copies": 0,
                     "games_in_deck": 0,
                     "games_seen": 0,
+                    "games_seen_multiple": 0,
                     "times_seen": 0,
                     "expected_seen": 0.0,
                     "wins_when_seen": 0,
@@ -333,6 +334,8 @@ def _deck_decklist_analysis(
             if copies_seen:
                 entry["games_seen"] += 1
                 entry["times_seen"] += copies_seen
+                if copies_seen >= 2:
+                    entry["games_seen_multiple"] += 1
                 if outcome == "win":
                     entry["wins_when_seen"] += 1
                 elif outcome == "loss":
@@ -352,6 +355,11 @@ def _deck_decklist_analysis(
         decided_not = entry["wins_when_not_seen"] + entry["losses_when_not_seen"]
         entry["seen_pct"] = (
             round(100.0 * entry["games_seen"] / entry["games_in_deck"], 1)
+            if entry["games_in_deck"]
+            else None
+        )
+        entry["multiple_pct"] = (
+            round(100.0 * entry["games_seen_multiple"] / entry["games_in_deck"], 1)
             if entry["games_in_deck"]
             else None
         )

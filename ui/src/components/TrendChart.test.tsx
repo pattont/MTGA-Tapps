@@ -50,7 +50,8 @@ describe('TrendChart', () => {
   it('renders a right-edge current-value label', () => {
     const { container } = render(<TrendChart rows={rows} />);
 
-    const label = container.querySelector('text.chart-value-label');
+    // HTML float, not SVG <text>: SVG text distorts under preserveAspectRatio="none".
+    const label = container.querySelector('.chart-axis-float-right');
     expect(label).not.toBeNull();
     expect(label?.textContent).toBe('60%');
   });

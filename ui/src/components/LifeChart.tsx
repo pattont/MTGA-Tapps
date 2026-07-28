@@ -82,13 +82,11 @@ export function LifeChart({ points }: { points: LifePoint[] }) {
             y2={VIEW_HEIGHT}
           />
         ) : null}
-        <text className="chart-value-label" x={4} y={PADDING + 8}>
-          {maxLife}
-        </text>
-        <text className="chart-value-label" x={4} y={VIEW_HEIGHT - PADDING}>
-          0
-        </text>
       </svg>
+      <span className="chart-axis-float chart-axis-float-top" aria-hidden="true">
+        {maxLife}
+      </span>
+      <span className="chart-axis-float chart-axis-float-bottom" aria-hidden="true">0</span>
       {hoveredPoint !== null ? (
         <div className="chart-tooltip" style={{ left: `${hoverLeftPct}%`, top: '2.4rem' }}>
           Turn {hoveredPoint.turn_number ?? '—'} · You {hoveredPoint.player_life} · Opp {hoveredPoint.opponent_life}

@@ -46,8 +46,9 @@ type DeckListPerformanceRow = CardPerformanceRow & {
   quantity: number | null;
   deck_section: 'Main Deck' | 'Sideboard' | null;
   seen_pct: number | null;
+  multiple_pct: number | null;
   seen_delta: number | null;
-  win_rate_when_not_seen: number | null;
+  opener_pct: number | null;
 };
 
 function isAbortError(error: unknown): boolean {
@@ -70,6 +71,35 @@ function compositionByName(detail: DeckDetail): Map<string, DeckCompositionRow> 
 
 function deckListPerformanceRows(detail: DeckDetail): DeckListPerformanceRow[] {
   const composition = compositionByName(detail);
+  // Percentages of games use the deck's full game count. Composition stats
+  // (seen 2+, expected) are scoped to games with a captured decklist, which
+  // can be a much smaller set — do not mix the two denominators.
+  const totalGames = detail.summary.games;
+  const openerGames = new Map<string, number>();
+  for (const row of detail.opening_hands ?? []) {
+    cardNameAliases(row.display_name).forEach((alias) => openerGames.set(alias, row.games_in_opener));
+  }
+  const openerGamesFor = (name: string): number => {
+    for (const alias of cardNameAliases(name)) {
+      const found = openerGames.get(alias);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+    return 0;
+  };
+  const openerPct = (name: string): number | null => {
+    if (!totalGames) {
+      return null;
+    }
+    return Math.round((1000 * Math.min(openerGamesFor(name), totalGames)) / totalGames) / 10;
+  };
+  const gamesPct = (gamesSeen: number): number | null => {
+    if (!totalGames) {
+      return null;
+    }
+    return Math.round((1000 * Math.min(gamesSeen, totalGames)) / totalGames) / 10;
+  };
   const compositionFor = (name: string): DeckCompositionRow | undefined => {
     for (const alias of cardNameAliases(name)) {
       const match = composition.get(alias);
@@ -86,9 +116,10 @@ function deckListPerformanceRows(detail: DeckDetail): DeckListPerformanceRow[] {
         ...row,
         quantity: stats?.copies ?? null,
         deck_section: null,
-        seen_pct: stats?.seen_pct ?? null,
+        seen_pct: gamesPct(row.games_seen),
+        multiple_pct: stats?.multiple_pct ?? null,
         seen_delta: stats?.seen_delta ?? null,
-        win_rate_when_not_seen: stats?.win_rate_when_not_seen ?? null,
+        opener_pct: openerPct(row.display_name),
       };
     });
   }
@@ -117,9 +148,10 @@ function deckListPerformanceRows(detail: DeckDetail): DeckListPerformanceRow[] {
       wins_when_seen: matchingPerformance?.wins_when_seen ?? 0,
       losses_when_seen: matchingPerformance?.losses_when_seen ?? 0,
       win_rate_when_seen: matchingPerformance?.win_rate_when_seen ?? null,
-      seen_pct: stats?.seen_pct ?? null,
+      seen_pct: gamesPct(matchingPerformance?.games_seen ?? 0),
+      multiple_pct: stats?.multiple_pct ?? null,
       seen_delta: stats?.seen_delta ?? null,
-      win_rate_when_not_seen: stats?.win_rate_when_not_seen ?? null,
+      opener_pct: openerPct(card.display_name),
     };
   });
 }
@@ -144,38 +176,34 @@ const cardColumns: Column<DeckListPerformanceRow>[] = [
     render: (row) => <TypeChip type={row.type_category} />,
     sortValue: (row) => row.type_category,
   },
-  { key: 'games_seen', header: 'Games Seen', numeric: true },
   {
-    key: 'seen_pct',
-    header: 'Seen %',
-    render: (row) => formatPercent(row.seen_pct),
-    sortValue: (row) => row.seen_pct,
+    key: 'games_seen',
+    header: 'Games Seen',
+    render: (row) =>
+      row.seen_pct === null ? formatNumber(row.games_seen) : `${row.games_seen} (${row.seen_pct}%)`,
+    sortValue: (row) => row.games_seen,
     numeric: true,
   },
-  { key: 'times_played', header: 'Played', numeric: true },
-  { key: 'times_drawn', header: 'Drawn', numeric: true },
+  {
+    key: 'opener_pct',
+    header: 'In Opener',
+    render: (row) => formatPercent(row.opener_pct),
+    sortValue: (row) => row.opener_pct,
+    numeric: true,
+  },
+  {
+    key: 'multiple_pct',
+    header: 'Seen 2+ (decklist games)',
+    render: (row) => formatPercent(row.multiple_pct),
+    sortValue: (row) => row.multiple_pct,
+    numeric: true,
+  },
   {
     key: 'seen_delta',
     header: 'Seen vs Expected',
     render: (row) =>
       row.seen_delta === null ? '—' : `${row.seen_delta > 0 ? '+' : ''}${row.seen_delta}`,
     sortValue: (row) => row.seen_delta,
-    numeric: true,
-  },
-  {
-    key: 'win_rate_when_not_seen',
-    header: 'WR Not Seen',
-    render: (row) => formatPercent(row.win_rate_when_not_seen),
-    sortValue: (row) => row.win_rate_when_not_seen,
-    numeric: true,
-  },
-  {
-    key: 'win_rate_when_seen',
-    header: 'Win Rate When Seen',
-    render: (row) => (
-      <WinRateBar losses={row.losses_when_seen} winRate={row.win_rate_when_seen} wins={row.wins_when_seen} />
-    ),
-    sortValue: (row) => row.win_rate_when_seen,
     numeric: true,
   },
 ];
