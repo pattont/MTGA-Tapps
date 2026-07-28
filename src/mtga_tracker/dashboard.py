@@ -17,7 +17,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from .draw_quality import hypergeom_tail_at_least, hypergeom_tail_at_most
+from .draw_quality import (
+    deck_land_stats,
+    draw_quality_metrics,
+    hypergeom_tail_at_least,
+    hypergeom_tail_at_most,
+    is_land_row,
+)
 from .format_normalizer import format_label, normalize_match_format
 from .paths import DATA_DIR
 
@@ -117,52 +123,7 @@ def _timeline_text_segments(
 
 
 def _is_land_row(row: Dict[str, Any]) -> bool:
-    return (
-        str(row.get("type_category") or "").casefold() == "land"
-        or str(row.get("display_name") or "").rstrip().endswith("(Land)")
-    )
-
-
-def _longest_land_run(flags: List[bool]) -> int:
-    longest = 0
-    current = 0
-    for is_land in flags:
-        current = current + 1 if is_land else 0
-        longest = max(longest, current)
-    return longest
-
-
-def _max_lands_in_window(flags: List[bool], window_size: int = 8) -> Optional[int]:
-    if len(flags) < window_size:
-        return None
-    return max(
-        sum(flags[index : index + window_size])
-        for index in range(len(flags) - window_size + 1)
-    )
-
-
-def _longest_low_land_drought(
-    flags: List[Optional[bool]],
-    opening_lands: int,
-    land_ceiling: int = 2,
-) -> Tuple[int, Optional[int]]:
-    """Return the longest known nonland run while no more than land_ceiling lands were seen."""
-    lands_seen = opening_lands
-    longest = 0
-    longest_land_count = None
-    current = 0
-    for is_land in flags:
-        if is_land is True:
-            lands_seen += 1
-            current = 0
-        elif is_land is False and lands_seen <= land_ceiling:
-            current += 1
-            if current > longest:
-                longest = current
-                longest_land_count = lands_seen
-        else:
-            current = 0
-    return longest, longest_land_count
+    return is_land_row(row)
 
 
 def _draw_quality_metrics(
@@ -170,110 +131,16 @@ def _draw_quality_metrics(
     drawn: List[Dict[str, Any]],
     recorded_draws: int,
     deck_size: int,
+    deck_lands: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Calculate the shared draw-quality and flood metrics for one game."""
-    total_draws = max(int(recorded_draws or 0), len(drawn))
-    land_draws = sum(1 for row in drawn if _is_land_row(row))
-    land_draw_pct = round(100.0 * land_draws / total_draws, 1) if total_draws else None
-    opening_lands = sum(1 for row in opening_hand if _is_land_row(row))
-    total_cards_seen = len(opening_hand) + total_draws
-    lands_seen = opening_lands + land_draws
-    land_seen_pct = (
-        round(100.0 * lands_seen / total_cards_seen, 1) if total_cards_seen else None
+    return draw_quality_metrics(
+        opening_hand,
+        drawn,
+        recorded_draws,
+        deck_size,
+        deck_lands=deck_lands,
     )
-    expected_land_rate = 0.4 if deck_size >= 50 else 0.425
-    expected_deck_lands = max(0, min(deck_size, round(deck_size * expected_land_rate)))
-    expected_lands_seen = round(total_cards_seen * expected_land_rate, 1)
-    flood_probability_pct = None
-    screw_probability_pct = None
-    if total_cards_seen:
-        flood_probability_pct = round(
-            100.0
-            * hypergeom_tail_at_least(
-                lands_seen,
-                population_size=deck_size,
-                success_count=expected_deck_lands,
-                draw_count=min(total_cards_seen, deck_size),
-            ),
-            1,
-        )
-        if len(drawn) == total_draws:
-            screw_probability_pct = round(
-                100.0
-                * hypergeom_tail_at_most(
-                    lands_seen,
-                    population_size=deck_size,
-                    success_count=expected_deck_lands,
-                    draw_count=min(total_cards_seen, deck_size),
-                ),
-                1,
-            )
-
-    land_by_position = {
-        int(row.get("draw_position") or 0): _is_land_row(row)
-        for row in drawn
-        if int(row.get("draw_position") or 0) > 0
-    }
-    draw_land_flags = [
-        land_by_position.get(position, False) for position in range(1, total_draws + 1)
-    ]
-    known_draw_land_flags = [
-        land_by_position.get(position) for position in range(1, total_draws + 1)
-    ]
-    longest_land_streak = _longest_land_run(draw_land_flags)
-    max_lands_in_eight = _max_lands_in_window(draw_land_flags)
-    longest_low_land_drought, low_land_drought_lands = _longest_low_land_drought(
-        known_draw_land_flags,
-        opening_lands,
-    )
-    flood_reasons = []
-    if land_draw_pct is not None and land_draw_pct > 50.0:
-        flood_reasons.append(f"{land_draws} of {total_draws} post-opening draws were lands")
-    if flood_probability_pct is not None and flood_probability_pct <= 10.0:
-        flood_reasons.append(
-            f"Only a {flood_probability_pct:g}% chance of seeing at least {lands_seen} lands"
-        )
-    if longest_land_streak >= 4:
-        flood_reasons.append(f"{longest_land_streak} consecutive land draws")
-    if max_lands_in_eight is not None and max_lands_in_eight >= 6:
-        flood_reasons.append(f"{max_lands_in_eight} lands in an 8-draw window")
-
-    screw_reasons = []
-    if longest_low_land_drought >= 3 and low_land_drought_lands is not None:
-        land_label = "land" if low_land_drought_lands == 1 else "lands"
-        screw_reasons.append(
-            f"{longest_low_land_drought} consecutive nonland draws while stuck on "
-            f"{low_land_drought_lands} {land_label}"
-        )
-    if screw_probability_pct is not None and screw_probability_pct <= 10.0:
-        land_label = "land" if lands_seen == 1 else "lands"
-        screw_reasons.append(
-            f"Only a {screw_probability_pct:g}% chance of seeing at most "
-            f"{lands_seen} {land_label}"
-        )
-
-    return {
-        "total_draws": total_draws,
-        "identified_draws": len(drawn),
-        "land_draws": land_draws,
-        "land_draw_pct": land_draw_pct,
-        "total_cards_seen": total_cards_seen,
-        "opening_lands": opening_lands,
-        "lands_seen": lands_seen,
-        "land_seen_pct": land_seen_pct,
-        "expected_land_rate": round(expected_land_rate * 100.0, 1),
-        "expected_lands_seen": expected_lands_seen,
-        "flood_probability_pct": flood_probability_pct,
-        "screw_probability_pct": screw_probability_pct,
-        "longest_land_streak": longest_land_streak,
-        "max_lands_in_eight": max_lands_in_eight,
-        "longest_low_land_drought": longest_low_land_drought,
-        "low_land_drought_lands": low_land_drought_lands,
-        "flood_reasons": flood_reasons,
-        "is_flood": bool(flood_reasons),
-        "screw_reasons": screw_reasons,
-        "is_screw": bool(screw_reasons),
-    }
 
 
 def _game_draw_quality(
@@ -314,11 +181,16 @@ def _game_draw_quality(
         (game_id, participant_id),
     ).fetchone()
     recorded_draws = int(stats_drawn_row[0] or 0) if stats_drawn_row else 0
+    decklist = deck_land_stats(conn, game_id, participant_id)
+    deck_lands = None
+    if decklist is not None:
+        deck_size, deck_lands = decklist
     return _draw_quality_metrics(
         opening_hand,
         drawn,
         recorded_draws,
         int(deck_size or 60),
+        deck_lands,
     )
 
 
@@ -1202,8 +1074,8 @@ def deck_detail(
             elif row.get("outcome") == "loss":
                 aggregate["loss_game_ids"].add(row["game_id"])
 
-        # game_card_summary.drawn_count is never populated by the tracker;
-        # visible draw counts live in game_drawn_cards under the clean card name.
+        # game_drawn_cards stays the authoritative per-draw source (summary
+        # drawn_count is an aggregate maintained since schema migration 3).
         for row in _dict_rows(
             conn.execute(
                 f"""

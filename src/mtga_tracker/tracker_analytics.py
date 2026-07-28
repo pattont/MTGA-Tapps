@@ -711,12 +711,14 @@ class TrackerAnalyticsMixin:
             self.game_state.opponent_seat_id,
             len(self.opponent_cards),
         )
+        drawn_cards_by_seat = getattr(self.game_state, "drawn_card_events", {}) or {}
         persist_card_summary(
             conn,
             game_id,
             player_participant_id,
             self.player_cards,
             refresh_display_name=self._refresh_fallback_name_text,
+            drawn_events=drawn_cards_by_seat.get(self.game_state.player_seat_id, []),
         )
         persist_card_summary(
             conn,
@@ -724,6 +726,7 @@ class TrackerAnalyticsMixin:
             opponent_participant_id,
             self.opponent_cards,
             refresh_display_name=self._refresh_fallback_name_text,
+            drawn_events=drawn_cards_by_seat.get(self.game_state.opponent_seat_id, []),
         )
         if self.game_state.submitted_deck_cards:
             persist_submitted_deck(
@@ -743,7 +746,6 @@ class TrackerAnalyticsMixin:
             starting_hand=self.game_state.starting_hand,
             refresh_display_name=self._refresh_fallback_name_text,
         )
-        drawn_cards_by_seat = getattr(self.game_state, "drawn_card_events", {}) or {}
         persist_drawn_cards(
             conn,
             game_id,

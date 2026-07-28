@@ -10,7 +10,8 @@ def test_load_app_settings_creates_default_file(tmp_path):
 
     assert settings == AppSettings(live_log_width=1400, live_log_height=1020)
     assert json.loads(settings_path.read_text(encoding="utf-8")) == {
-        "live_log_window": {"width": 1400, "height": 1020}
+        "live_log_window": {"width": 1400, "height": 1020},
+        "dashboard": {"port": 8765},
     }
 
 
@@ -48,3 +49,25 @@ def test_load_app_settings_preserves_invalid_file(tmp_path):
 
     assert settings == AppSettings()
     assert settings_path.read_text(encoding="utf-8") == "not-json"
+
+
+def test_load_app_settings_reads_dashboard_port(tmp_path):
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps({"dashboard": {"port": 9001}}), encoding="utf-8"
+    )
+
+    settings = load_app_settings(settings_path)
+
+    assert settings.dashboard_port == 9001
+
+
+def test_load_app_settings_bounds_dashboard_port(tmp_path):
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps({"dashboard": {"port": 80}}), encoding="utf-8"
+    )
+
+    settings = load_app_settings(settings_path)
+
+    assert settings.dashboard_port == 1024
