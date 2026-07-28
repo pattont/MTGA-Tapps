@@ -755,7 +755,7 @@ describe('App', () => {
     expect((await screen.findAllByRole('heading', { name: 'Boros Mouse' })).length).toBeGreaterThan(0);
     expect(fetchMock).toHaveBeenCalledWith('/api/deck?name=Boros+Mouse', expect.anything());
     expect(document.title).toBe('MTGA Tracker – Boros Mouse');
-    ['Win Rate Trend', 'Deck List & Card Performance', 'Opening Hands', 'Mulligans', 'Formats', 'Recent Games'].forEach(
+    ['Win Rate Trend', 'Deck List & Card Performance', 'Mulligans', 'Decklist Changes', 'Formats', 'Recent Games'].forEach(
       (sectionName) => {
         expect(screen.getByRole('heading', { name: sectionName })).toBeInTheDocument();
       },
@@ -779,7 +779,7 @@ describe('App', () => {
 
     const nav = screen.getByRole('navigation', { name: 'Dashboard sections' });
     expect(within(nav).getByRole('link', { name: '← Back to dashboard' })).toHaveAttribute('href', '#overview');
-    ['Win Rate Trend', 'Deck List & Card Performance', 'Opening Hands', 'Mulligans', 'Formats', 'Recent Games'].forEach(
+    ['Win Rate Trend', 'Deck List & Card Performance', 'Mulligans', 'Decklist Changes', 'Formats', 'Recent Games'].forEach(
       (label) => {
         expect(within(nav).getByRole('link', { name: label })).toBeInTheDocument();
       },
