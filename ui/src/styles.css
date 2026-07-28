@@ -17,26 +17,48 @@
   --success: #7bd88f;
   --draw: #8ab4f8;
   --shadow: 0 16px 40px rgb(0 0 0 / 24%);
+  --row-alt-bg: color-mix(in srgb, var(--panel-strong) 34%, transparent);
+  --thead-bg: color-mix(in srgb, var(--panel-strong) 72%, transparent);
+  --row-hover-bg: color-mix(in srgb, var(--accent) 7%, var(--panel-strong));
+  --hover-tint: color-mix(in srgb, var(--panel-strong) 62%, transparent);
+  --card-danger-bg: color-mix(in srgb, var(--danger) 7%, var(--panel));
+  --card-info-bg: color-mix(in srgb, var(--draw) 7%, var(--panel));
+  --card-accent-bg: color-mix(in srgb, var(--accent) 7%, var(--panel));
+  --trend-fill: color-mix(in srgb, var(--accent) 18%, transparent);
+  --nav-active-bg: color-mix(in srgb, var(--accent) 14%, var(--panel-strong));
+  --preview-shadow: 0 18px 44px rgb(0 0 0 / 42%);
+  --pip-shadow: drop-shadow(0 1px 2px rgb(0 0 0 / 38%));
 }
 
 :root[data-theme="light"] {
-  color: #1c2430;
-  background: #f5f7fa;
+  color: #262019;
+  background: #e9e5dc;
   color-scheme: light;
-  --bg: #f5f7fa;
-  --panel: #ffffff;
-  --panel-strong: #eef2f6;
-  --surface: #ffffff;
-  --text: #1c2430;
-  --muted: #5b6877;
-  --subtle: #778392;
-  --border: #d7dee7;
-  --accent: #9d6b13;
-  --accent-strong: #74500e;
-  --danger: #b3261e;
-  --success: #137333;
-  --draw: #1558d6;
-  --shadow: 0 12px 28px rgb(38 50 68 / 10%);
+  --bg: #e9e5dc;
+  --panel: #f6f3ec;
+  --panel-strong: #fcfaf5;
+  --surface: #eae6dd;
+  --text: #262019;
+  --muted: #5d5648;
+  --subtle: #6b6355;
+  --border: #c9c1b0;
+  --accent: #8a5c14;
+  --accent-strong: #6b4708;
+  --danger: #a8271f;
+  --success: #1e6b33;
+  --draw: #1e56b0;
+  --shadow: 0 8px 22px rgb(76 62 34 / 18%);
+  --row-alt-bg: rgb(76 62 34 / 6%);
+  --thead-bg: rgb(76 62 34 / 9%);
+  --row-hover-bg: color-mix(in srgb, var(--accent) 10%, var(--panel));
+  --hover-tint: rgb(76 62 34 / 7%);
+  --card-danger-bg: color-mix(in srgb, var(--danger) 12%, var(--panel));
+  --card-info-bg: color-mix(in srgb, var(--draw) 12%, var(--panel));
+  --card-accent-bg: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  --trend-fill: color-mix(in srgb, var(--accent) 30%, transparent);
+  --nav-active-bg: color-mix(in srgb, var(--accent) 18%, var(--panel-strong));
+  --preview-shadow: 0 18px 44px rgb(76 62 34 / 25%);
+  --pip-shadow: drop-shadow(0 1px 2px rgb(76 62 34 / 30%));
 }
 
 * {
@@ -134,7 +156,7 @@ a {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 38%));
+  filter: var(--pip-shadow);
 }
 
 .sidebar h1,
@@ -177,7 +199,7 @@ a {
 
 .sidebar nav a.active {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  background: color-mix(in srgb, var(--accent) 14%, var(--panel-strong));
+  background: var(--nav-active-bg);
   color: var(--accent-strong);
 }
 
@@ -507,7 +529,7 @@ a {
 
 .metric-card-danger {
   border-color: color-mix(in srgb, var(--danger) 60%, var(--border));
-  background: color-mix(in srgb, var(--danger) 7%, var(--panel));
+  background: var(--card-danger-bg);
 }
 
 .metric-card-danger strong {
@@ -516,7 +538,7 @@ a {
 
 .metric-card-info {
   border-color: color-mix(in srgb, var(--draw) 60%, var(--border));
-  background: color-mix(in srgb, var(--draw) 7%, var(--panel));
+  background: var(--card-info-bg);
 }
 
 .metric-card-info strong {
@@ -525,7 +547,7 @@ a {
 
 .metric-card-warning {
   border-color: color-mix(in srgb, var(--accent-strong) 60%, var(--border));
-  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+  background: var(--card-accent-bg);
 }
 
 .metric-card-warning strong {
@@ -662,7 +684,7 @@ a {
 }
 
 .trend-area {
-  fill: color-mix(in srgb, var(--accent) 18%, transparent);
+  fill: var(--trend-fill);
 }
 
 .trend-line {
@@ -839,7 +861,7 @@ th {
 }
 
 thead tr {
-  background: color-mix(in srgb, var(--panel-strong) 72%, transparent);
+  background: var(--thead-bg);
 }
 
 td {
@@ -898,11 +920,11 @@ tbody tr:last-child td {
 }
 
 tbody tr:nth-child(even) {
-  background: color-mix(in srgb, var(--panel-strong) 34%, transparent);
+  background: var(--row-alt-bg);
 }
 
 tbody tr:hover {
-  background: color-mix(in srgb, var(--accent) 7%, var(--panel-strong));
+  background: var(--row-hover-bg);
 }
 
 .table-sort {
@@ -951,7 +973,7 @@ tbody tr:hover {
   border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
   border-radius: 8px;
   background: var(--panel);
-  box-shadow: 0 18px 44px rgb(0 0 0 / 42%);
+  box-shadow: var(--preview-shadow);
   pointer-events: none;
 }
 
@@ -1587,6 +1609,12 @@ tbody tr:hover {
 :root[data-theme="light"] .type-chip-enchantment { color: #6d4b96; }
 :root[data-theme="light"] .type-chip-planeswalker { color: #8a6d14; }
 
+:root[data-theme="light"] .timeline-chip-draw { color: #2a6a99; }
+:root[data-theme="light"] .timeline-chip-cast { color: #6d4b96; }
+:root[data-theme="light"] .timeline-chip-land { color: #4e7233; }
+:root[data-theme="light"] .timeline-chip-attack { color: #9c4a2c; }
+:root[data-theme="light"] .timeline-chip-ability { color: #8a6d14; }
+
 .type-chip {
   background: color-mix(in srgb, currentcolor 12%, transparent);
   border-color: color-mix(in srgb, currentcolor 35%, transparent);
@@ -1706,7 +1734,7 @@ tbody tr:hover {
 }
 
 .timeline-event:hover {
-  background: color-mix(in srgb, var(--panel-strong) 62%, transparent);
+  background: var(--hover-tint);
 }
 
 .timeline-actor {
