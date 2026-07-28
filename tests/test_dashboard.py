@@ -1096,7 +1096,7 @@ def test_game_detail_marks_flood_when_over_half_of_draws_are_lands(tmp_path):
         conn.execute(
             """
             insert or replace into game_participant_stats (game_id, participant_id, cards_drawn)
-            values ('game-1', 'player-1', 5)
+            values ('game-1', 'player-1', 6)
             """
         )
         conn.executemany(
@@ -1110,28 +1110,27 @@ def test_game_detail_marks_flood_when_over_half_of_draws_are_lands(tmp_path):
                 ("Plains", 2, 3),
                 ("Mountain", 3, 4),
                 ("Restless Anchorage", 4, 5),
+                ("Swamp", 5, 6),
             ],
         )
 
     detail = game_detail(db_path, "game-1")
 
     quality = detail["draw_quality"]
-    assert quality["total_draws"] == 5
-    assert quality["identified_draws"] == 4
-    assert quality["land_draws"] == 3
-    assert quality["land_draw_pct"] == 60.0
-    assert quality["total_cards_seen"] == 6
-    assert quality["lands_seen"] == 4
-    assert quality["longest_land_streak"] == 3
-    assert quality["flood_reasons"] == ["3 of 5 post-opening draws were lands"]
+    assert quality["total_draws"] == 6
+    assert quality["identified_draws"] == 5
+    assert quality["land_draws"] == 4
+    assert quality["land_draw_pct"] == 66.7
+    assert quality["total_cards_seen"] == 7
+    assert quality["lands_seen"] == 5
+    assert quality["longest_land_streak"] == 4
+    assert "4 of 6 post-opening draws were lands" in quality["flood_reasons"]
     assert quality["is_flood"] is True
     recent_games = {
         row["game_id"]: row for row in dashboard_snapshot(db_path)["recent"]
     }
     assert recent_games["game-1"]["is_flood"] is True
-    assert recent_games["game-1"]["flood_reasons"] == [
-        "3 of 5 post-opening draws were lands"
-    ]
+    assert "4 of 6 post-opening draws were lands" in recent_games["game-1"]["flood_reasons"]
 
 
 def test_game_detail_does_not_mark_exactly_half_land_draws_as_flood(tmp_path):

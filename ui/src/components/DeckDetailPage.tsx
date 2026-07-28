@@ -19,6 +19,7 @@ import {
   formatTurnDuration,
   outcomeLabel,
   outcomeTone,
+  shortFormatLabel,
 } from '../format';
 import { gameRouteHash } from '../routes';
 import { Badge } from './Badge';
@@ -284,12 +285,30 @@ const gameColumns: Column<DeckGameRow>[] = [
     render: (row) => <a href={gameRouteHash(row.game_id)}>{formatDateTime(row.started_at)}</a>,
     sortValue: (row) => row.started_at,
   },
-  { key: 'format_label', header: 'Format' },
+  {
+    key: 'format_label',
+    header: 'Format',
+    render: (row) => shortFormatLabel(row.format_label),
+    sortValue: (row) => row.format_label,
+  },
   {
     key: 'play_draw',
     header: 'Play / Draw',
     render: (row) => row.play_draw ?? 'Unknown',
     sortValue: (row) => row.play_draw,
+  },
+  {
+    key: 'is_flood',
+    header: 'Draw Status',
+    render: (row) =>
+      row.is_flood ? (
+        <Badge tone="draw">Flood</Badge>
+      ) : row.is_screw ? (
+        <Badge tone="screw">Mana Screwed</Badge>
+      ) : (
+        'Normal'
+      ),
+    sortValue: (row) => (row.is_flood ? 2 : row.is_screw ? 1 : 0),
   },
   {
     key: 'outcome',

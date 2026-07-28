@@ -286,7 +286,9 @@ def draw_quality_metrics(
         opening_lands,
     )
     flood_reasons = []
-    if land_draw_pct is not None and land_draw_pct > 50.0:
+    # The percentage rule needs a real sample: "2 of 2 draws were lands" in a
+    # short game is ordinary variance, not flood.
+    if land_draw_pct is not None and land_draw_pct > 50.0 and total_draws >= 6:
         flood_reasons.append(f"{land_draws} of {total_draws} post-opening draws were lands")
     if flood_probability_pct is not None and flood_probability_pct <= 10.0:
         flood_reasons.append(

@@ -1989,6 +1989,8 @@ def deck_detail(
                   m.format AS raw_format,
                   m.best_of,
                   p.mulligans,
+                  p.id AS player_participant_id,
+                  p.deck_size,
                   CASE p.went_first WHEN 1 THEN 'On the play' WHEN 0 THEN 'On the draw' ELSE NULL END AS play_draw
                 FROM games g
                 JOIN matches m ON m.id = g.match_id
@@ -2018,6 +2020,15 @@ def deck_detail(
         trend_rows.reverse()
         deck_visuals = _deck_visuals(conn)
         deck_export = _deck_export_snapshot(conn, where, params, deck_name)
+        for row in recent_rows:
+            quality = _game_draw_quality(
+                conn,
+                str(row.get("game_id")),
+                row.pop("player_participant_id", None),
+                row.pop("deck_size", None),
+            )
+            row["is_flood"] = quality["is_flood"]
+            row["is_screw"] = quality["is_screw"]
 
     for row in recent_rows:
         row["format_label"] = format_label(
