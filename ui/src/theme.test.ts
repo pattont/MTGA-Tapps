@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getInitialTheme, persistTheme, type ThemeName } from './theme';
+import { getInitialTheme, hasStoredTheme, persistTheme, systemTheme, type ThemeName } from './theme';
 
 function installLocalStorage(): void {
   const store = new Map<string, string>();
@@ -28,6 +28,36 @@ describe('theme helpers', () => {
 
   it('falls back to dark when no stored preference exists', () => {
     expect(getInitialTheme()).toBe('dark');
+  });
+
+  it('follows the OS light preference when nothing is stored', () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        matches: query.includes('light'),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+    expect(systemTheme()).toBe('light');
+    expect(getInitialTheme()).toBe('light');
+    vi.unstubAllGlobals();
+  });
+
+  it('prefers a stored theme over the OS preference', () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })),
+    );
+    localStorage.setItem('mtga-dashboard-theme', 'dark');
+    expect(getInitialTheme()).toBe('dark');
+    expect(hasStoredTheme()).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it('reports no stored theme for unknown values', () => {
+    localStorage.setItem('mtga-dashboard-theme', 'sepia');
+    expect(hasStoredTheme()).toBe(false);
   });
 
   it('persists theme to localStorage and the document element', () => {
