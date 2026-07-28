@@ -276,6 +276,49 @@ export interface DeckExport {
   text: string | null;
 }
 
+export interface DeckCompositionRow {
+  display_name: string;
+  type_category: string;
+  copies: number;
+  games_in_deck: number;
+  games_seen: number;
+  times_seen: number;
+  seen_pct: number | null;
+  expected_seen: number;
+  seen_delta: number;
+  wins_when_seen: number;
+  losses_when_seen: number;
+  win_rate_when_seen: number | null;
+  wins_when_not_seen: number;
+  losses_when_not_seen: number;
+  win_rate_when_not_seen: number | null;
+}
+
+export interface DeckVersionRow {
+  version: number;
+  first_played: string | null;
+  last_played: string | null;
+  games: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  added: string[];
+  removed: string[];
+}
+
+export interface DeckSideboardRecord {
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+}
+
+export interface DeckSideboardSummary {
+  matches: number;
+  game_one: DeckSideboardRecord;
+  post_board: DeckSideboardRecord;
+  boarded_in: { display_name: string; copies: number }[];
+}
+
 export interface DeckDetail {
   deck_name: string;
   deck_visual: DeckVisual;
@@ -283,6 +326,9 @@ export interface DeckDetail {
   summary: Summary;
   profile: DeckProfile;
   combat_profile: CombatDeckRow | null;
+  composition: DeckCompositionRow[];
+  versions: DeckVersionRow[];
+  sideboard: DeckSideboardSummary | null;
   formats: FormatRow[];
   midweek_formats: FormatRow[];
   card_performance: CardPerformanceRow[];

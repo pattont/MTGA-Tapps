@@ -1841,3 +1841,27 @@ tbody tr:hover {
     width: min(360px, calc(100vw - 24px));
   }
 }
+
+.version-changes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.version-change {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--panel-strong);
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.version-change-in {
+  color: var(--success);
+}
+
+.version-change-out {
+  color: var(--danger);
+}
