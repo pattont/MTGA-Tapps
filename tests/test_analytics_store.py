@@ -298,3 +298,106 @@ def test_backfill_recovered_game_turn_times_uses_exact_console_durations(tmp_pat
         (2, 1, 70, "recovered_previous_turn_logs"),
         (3, 2, 70, "recovered_previous_turn_logs"),
     ]
+
+
+def test_migration_backfills_card_arena_ids_from_deck_cards(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    store = AnalyticsStore(db_path)
+    conn = store.connect()
+
+    conn.execute(
+        "INSERT INTO cards (name, first_seen_at) VALUES ('Llanowar Elves', datetime('now'))"
+    )
+    card_id = conn.execute(
+        "SELECT id FROM cards WHERE name = 'Llanowar Elves'"
+    ).fetchone()[0]
+    conn.execute(
+        """
+        INSERT INTO game_deck_cards (
+            game_id, participant_id, card_id, arena_id, display_name,
+            type_category, deck_zone, quantity
+        )
+        VALUES ('game-1', 'part-1', ?, 12345, 'Llanowar Elves', 'Creature', 'deck', 4)
+        """,
+        (card_id,),
+    )
+    # Remove the applied marker and re-run so the migration sees the new rows.
+    conn.execute("DELETE FROM schema_migrations WHERE version = 2")
+    AnalyticsStore.apply_pending_migrations(conn)
+
+    arena_id = conn.execute(
+        "SELECT arena_id FROM cards WHERE name = 'Llanowar Elves'"
+    ).fetchone()[0]
+    assert arena_id == 12345
+
+    # Running again is a no-op.
+    AnalyticsStore.apply_pending_migrations(conn)
+    versions = {
+        row[0] for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
+    }
+    assert {1, 2, 3} <= versions
+    store.close()
+
+
+def test_migration_backfills_summary_drawn_counts(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    store = AnalyticsStore(db_path)
+    conn = store.connect()
+
+    conn.execute(
+        "INSERT INTO cards (name, first_seen_at) VALUES ('Opt', datetime('now'))"
+    )
+    card_id = conn.execute("SELECT id FROM cards WHERE name = 'Opt'").fetchone()[0]
+    conn.execute(
+        """
+        INSERT INTO game_card_summary (
+            game_id, participant_id, card_id, display_name, type_category, played_count
+        )
+        VALUES ('game-1', 'part-1', ?, 'Opt', 'Instant', 2)
+        """,
+        (card_id,),
+    )
+    for position in (1, 2, 3):
+        conn.execute(
+            """
+            INSERT INTO game_drawn_cards (
+                game_id, participant_id, card_id, display_name, type_category,
+                draw_position, copy_number
+            )
+            VALUES ('game-1', 'part-1', ?, 'Opt', 'Instant', ?, ?)
+            """,
+            (card_id, position, position),
+        )
+    # A drawn-but-never-played card should gain its own summary row.
+    conn.execute(
+        "INSERT INTO cards (name, first_seen_at) VALUES ('Consider', datetime('now'))"
+    )
+    other_id = conn.execute("SELECT id FROM cards WHERE name = 'Consider'").fetchone()[0]
+    conn.execute(
+        """
+        INSERT INTO game_drawn_cards (
+            game_id, participant_id, card_id, display_name, type_category,
+            draw_position, copy_number
+        )
+        VALUES ('game-1', 'part-1', ?, 'Consider', 'Instant', 4, 1)
+        """,
+        (other_id,),
+    )
+    conn.execute("DELETE FROM schema_migrations WHERE version = 3")
+    AnalyticsStore.apply_pending_migrations(conn)
+
+    drawn = conn.execute(
+        """
+        SELECT drawn_count FROM game_card_summary
+        WHERE game_id = 'game-1' AND participant_id = 'part-1' AND display_name = 'Opt'
+        """
+    ).fetchone()[0]
+    assert drawn == 3
+    row = conn.execute(
+        """
+        SELECT played_count, drawn_count FROM game_card_summary
+        WHERE game_id = 'game-1' AND participant_id = 'part-1' AND display_name = 'Consider'
+        """
+    ).fetchone()
+    assert row == (0, 1)
+    store.close()
