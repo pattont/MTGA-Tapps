@@ -206,7 +206,6 @@ a {
 .sidebar nav a:focus-visible {
   background: var(--panel-strong);
   color: var(--text);
-  outline: none;
 }
 
 .sidebar nav a.active {
@@ -294,7 +293,6 @@ a {
 .card-search-control:focus-within input,
 .card-search-control:focus-within button {
   border-color: var(--accent);
-  outline: none;
 }
 
 .card-search-results {
@@ -334,7 +332,6 @@ a {
 .card-search-results > a:hover,
 .card-search-results > a:focus-visible {
   background: var(--panel-strong);
-  outline: none;
 }
 
 .card-search-result-name {
@@ -362,7 +359,6 @@ a {
 .theme-toggle:hover,
 .theme-toggle:focus-visible {
   border-color: var(--accent);
-  outline: none;
 }
 
 .refresh-status {
@@ -401,7 +397,8 @@ a {
   text-transform: uppercase;
 }
 
-.filter-bar select {
+.filter-bar select,
+.filter-bar input[type="date"] {
   min-height: 36px;
   max-width: 260px;
   padding: 0 10px;
@@ -412,9 +409,10 @@ a {
 }
 
 .filter-bar select:hover,
-.filter-bar select:focus-visible {
+.filter-bar select:focus-visible,
+.filter-bar input[type="date"]:hover,
+.filter-bar input[type="date"]:focus-visible {
   border-color: var(--accent);
-  outline: none;
 }
 
 .filter-clear {
@@ -432,7 +430,6 @@ a {
 .filter-clear:hover,
 .filter-clear:focus-visible {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
-  outline: none;
 }
 
 .metric-grid {
@@ -958,7 +955,6 @@ tbody tr:hover {
 .table-sort:hover,
 .table-sort:focus-visible {
   color: var(--accent-strong);
-  outline: none;
 }
 
 .deck-link,
@@ -975,7 +971,6 @@ tbody tr:hover {
 .table-link:hover,
 .table-link:focus-visible {
   text-decoration: underline;
-  outline: none;
 }
 
 .card-preview {
@@ -1058,7 +1053,6 @@ tbody tr:hover {
 }
 
 .metric-link:focus-visible {
-  outline: none;
 }
 
 .back-link {
@@ -1071,7 +1065,6 @@ tbody tr:hover {
 .back-link:hover,
 .back-link:focus-visible {
   color: var(--accent-strong);
-  outline: none;
 }
 
 .deck-detail-header {
@@ -1428,7 +1421,6 @@ tbody tr:hover {
 
 .table-filter input:focus {
   border-color: var(--accent);
-  outline: none;
 }
 
 .badge {
@@ -1905,4 +1897,153 @@ tbody tr:hover {
 
 .draws-by-turn-spells {
   color: var(--draw);
+}
+
+/* Restored focus indicators (WCAG 2.4.7): color changes alone are not enough. */
+.sidebar nav a:focus-visible,
+.card-search-control input:focus-visible,
+.card-search-control button:focus-visible,
+.card-search-results > a:focus-visible,
+.theme-toggle:focus-visible,
+.filter-bar select:focus-visible,
+.filter-clear:focus-visible,
+.table-sort:focus-visible,
+.deck-link:focus-visible,
+.card-link:focus-visible,
+.table-link:focus-visible,
+.metric-link:focus-visible,
+.back-link:focus-visible,
+.table-filter input:focus-visible,
+.table-wrap:focus-visible,
+.draws-by-turn-cell:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Skip link for keyboard users (sidebar precedes main content). */
+.skip-link {
+  position: absolute;
+  top: -48px;
+  left: 12px;
+  z-index: 100;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 700;
+  text-decoration: none;
+  transition: top 0.15s ease;
+}
+
+.skip-link:focus-visible {
+  top: 12px;
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+/* Horizontal-scroll affordance for the mobile nav strip. */
+@media (max-width: 980px) {
+  .sidebar nav {
+    -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent 100%);
+    mask-image: linear-gradient(90deg, #000 88%, transparent 100%);
+  }
+
+  /* Sticky first column keeps row identity while tables scroll sideways. */
+  .table-wrap td:first-child,
+  .table-wrap th:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--panel);
+  }
+
+  .table-wrap thead th:first-child {
+    z-index: 3;
+  }
+}
+
+/* --- Chart improvements (appended) --- */
+
+.trend-chart,
+.life-chart {
+  position: relative;
+}
+
+.life-line-player,
+.life-line-opponent {
+  vector-effect: non-scaling-stroke;
+}
+
+.chart-value-label {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.chart-hover-line {
+  stroke: var(--muted);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.7;
+}
+
+.chart-tooltip {
+  position: absolute;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 2;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.76rem;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+}
+
+.life-legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border-radius: 2px;
+}
+
+.life-legend-swatch-player {
+  background: var(--success);
+}
+
+.life-legend-swatch-opponent {
+  background: var(--danger);
+}
+
+.chart-data-details {
+  margin-top: 6px;
+  color: var(--subtle);
+  font-size: 0.76rem;
+}
+
+.chart-data-details summary {
+  cursor: pointer;
+}
+
+.chart-data-details table {
+  margin-top: 4px;
+  border-collapse: collapse;
+}
+
+.chart-data-details th,
+.chart-data-details td {
+  padding: 2px 10px 2px 0;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.card-search-result-kind {
+  color: var(--accent-strong);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }

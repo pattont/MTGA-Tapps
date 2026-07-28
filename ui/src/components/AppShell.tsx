@@ -72,6 +72,9 @@ export function AppShell({
 
   return (
     <div className="app-layout">
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
       <aside className="sidebar">
         <div className="brand-row">
           <a
@@ -121,12 +124,20 @@ export function AppShell({
             ) : (
               <a
                 key={item.id}
+                aria-current={activeSection === item.id ? 'true' : undefined}
                 className={activeSection === item.id ? 'active' : undefined}
                 href={`#${item.id}`}
                 onClick={(event) => {
                   event.preventDefault();
                   setActiveSection(item.id);
                   scrollToSection(item.id);
+                  // Reflect the section in the URL without re-triggering routing
+                  // (raw hash assignment would clobber scroll behavior).
+                  try {
+                    window.history.replaceState(null, '', `#${item.id}`);
+                  } catch {
+                    // history API unavailable; scrolling still worked.
+                  }
                 }}
               >
                 {item.label}
@@ -135,12 +146,17 @@ export function AppShell({
           )}
         </nav>
       </aside>
-      <main className="dashboard-main">
+      <main className="dashboard-main" id="main-content">
         <header className="topbar">
           <h2>{heading}</h2>
           <div className="topbar-actions">
             <CardSearch />
-            <button className="theme-toggle" type="button" onClick={onToggleTheme}>
+            <button
+              aria-label={`Color theme: ${theme}. Switch to ${nextTheme} mode`}
+              className="theme-toggle"
+              type="button"
+              onClick={onToggleTheme}
+            >
               Switch to {nextTheme} mode
             </button>
           </div>

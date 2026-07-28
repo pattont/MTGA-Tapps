@@ -25,6 +25,8 @@ import { gameRouteHash } from '../routes';
 import { Badge } from './Badge';
 import { CardLink } from './CardLink';
 import { DeckVisual } from './DeckVisual';
+import { FilterBar } from './FilterBar';
+import { Section } from './Section';
 import { FormatsTable } from './FormatsTable';
 import { ManaReadinessTable } from './ManaReadinessTable';
 import { MetricCard } from './MetricCard';
@@ -37,7 +39,7 @@ const DETAIL_REFRESH_MS = 20_000;
 
 type LoadState =
   | { status: 'loading' }
-  | { status: 'loaded'; detail: DeckDetail }
+  | { status: 'loaded'; detail: DeckDetail; refreshError?: string }
   | { status: 'error'; message: string };
 
 type DeckListPerformanceRow = CardPerformanceRow & {
@@ -320,38 +322,17 @@ const gameColumns: Column<DeckGameRow>[] = [
   },
 ];
 
-function Section({
-  id,
-  title,
-  description,
-  children,
-}: {
-  id: string;
-  title: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="dashboard-section" id={id}>
-      <div className="section-heading">
-        <div>
-          <h3>{title}</h3>
-          {description ? <p className="section-description">{description}</p> : null}
-        </div>
-      </div>
-      {children}
-    </section>
-  );
-}
 
 export function DeckDetailPage({
   backHref = '#overview',
   deckName,
   filters = {},
+  onFiltersChange,
 }: {
   backHref?: string;
   deckName: string;
   filters?: SnapshotFilters;
+  onFiltersChange?: (filters: SnapshotFilters) => void;
 }) {
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
@@ -378,14 +359,20 @@ export function DeckDetailPage({
       } catch (error: unknown) {
         if (!ignore && !isAbortError(error)) {
           const message = error instanceof Error ? error.message : 'Dashboard API failed';
-          setLoadState((current) => (current.status === 'loaded' ? current : { status: 'error', message }));
+          setLoadState((current) =>
+            current.status === 'loaded'
+              ? { ...current, refreshError: message }
+              : { status: 'error', message },
+          );
         }
       }
     }
 
     void loadDetail();
     const refreshId = window.setInterval(() => {
-      void loadDetail();
+      if (!document.hidden) {
+        void loadDetail();
+      }
     }, DETAIL_REFRESH_MS);
 
     return () => {
@@ -396,7 +383,11 @@ export function DeckDetailPage({
   }, [deckName, filters]);
 
   if (loadState.status === 'loading') {
-    return <p className="state-panel">Loading deck details...</p>;
+    return (
+      <p className="state-panel" role="status" aria-busy="true">
+        Loading deck details...
+      </p>
+    );
   }
   if (loadState.status === 'error') {
     return (
@@ -409,7 +400,7 @@ export function DeckDetailPage({
     );
   }
 
-  const { detail } = loadState;
+  const { detail, refreshError } = loadState;
   const deckExport = detail.deck_export;
   const cardRows = deckListPerformanceRows(detail);
 
@@ -452,6 +443,11 @@ export function DeckDetailPage({
 
   return (
     <>
+      {refreshError ? (
+        <p className="refresh-status refresh-status-error" role="alert">
+          Refresh failed: {refreshError} — showing the last loaded data.
+        </p>
+      ) : null}
       <div className="deck-detail-header">
         <a className="back-link" href={backHref}>
           ← Back to dashboard
@@ -484,6 +480,24 @@ export function DeckDetailPage({
           </div>
         </div>
       </div>
+
+      {onFiltersChange ? (
+        <FilterBar
+          filters={filters}
+          hideDeck
+          onChange={onFiltersChange}
+          options={{
+            decks: [],
+            formats: detail.formats.flatMap((format) =>
+              (format.raw_formats ?? '')
+                .split(',')
+                .map((raw) => raw.trim())
+                .filter(Boolean)
+                .map((raw) => ({ raw_format: raw, format_label: format.format_label })),
+            ),
+          }}
+        />
+      ) : null}
 
       <section className="metric-grid metric-grid-deck" aria-label="Deck metrics">
         {metrics.map((metric) => (

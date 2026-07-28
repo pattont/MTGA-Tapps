@@ -265,6 +265,10 @@ export interface SnapshotFilters {
   format?: string;
   days?: number;
   season?: number;
+  /** ISO date (YYYY-MM-DD) lower bound, inclusive. */
+  since?: string;
+  /** ISO date (YYYY-MM-DD) upper bound, inclusive. */
+  until?: string;
 }
 
 export interface DashboardSnapshot {
@@ -682,6 +686,12 @@ export interface CardDetail {
   opener_impact: CardOpenerImpact;
 }
 
+export interface GlobalSearchResult {
+  cards: CardSearchResult[];
+  decks: { deck_name: string; games: number }[];
+  opponents: { display_name: string; games: number }[];
+}
+
 export interface CardSearchResult {
   card_name: string;
   type_category: string;
@@ -702,6 +712,12 @@ export async function fetchDeckDetail(
   }
   if (filters.days) {
     params.set('days', String(filters.days));
+  }
+  if (filters.since) {
+    params.set('since', filters.since);
+  }
+  if (filters.until) {
+    params.set('until', filters.until);
   }
   const response = await fetch(`/api/deck?${params.toString()}`, { signal });
   if (!response.ok) {
@@ -725,8 +741,31 @@ export async function fetchGameDetail(gameId: string, signal?: AbortSignal): Pro
   return response.json() as Promise<GameDetail>;
 }
 
-export async function fetchOpponentDetail(opponentName: string, signal?: AbortSignal): Promise<OpponentDetail> {
+function appendDetailFilters(params: URLSearchParams, filters: SnapshotFilters): void {
+  if (filters.deck) {
+    params.set('deck', filters.deck);
+  }
+  if (filters.format) {
+    params.set('format', filters.format);
+  }
+  if (filters.days) {
+    params.set('days', String(filters.days));
+  }
+  if (filters.since) {
+    params.set('since', filters.since);
+  }
+  if (filters.until) {
+    params.set('until', filters.until);
+  }
+}
+
+export async function fetchOpponentDetail(
+  opponentName: string,
+  filters: SnapshotFilters = {},
+  signal?: AbortSignal,
+): Promise<OpponentDetail> {
   const params = new URLSearchParams({ name: opponentName });
+  appendDetailFilters(params, filters);
   const response = await fetch(`/api/opponent?${params.toString()}`, { signal });
   if (!response.ok) {
     if (response.status === 404) {
@@ -737,8 +776,13 @@ export async function fetchOpponentDetail(opponentName: string, signal?: AbortSi
   return response.json() as Promise<OpponentDetail>;
 }
 
-export async function fetchCardDetail(cardName: string, signal?: AbortSignal): Promise<CardDetail> {
+export async function fetchCardDetail(
+  cardName: string,
+  filters: SnapshotFilters = {},
+  signal?: AbortSignal,
+): Promise<CardDetail> {
   const params = new URLSearchParams({ name: cardName });
+  appendDetailFilters(params, filters);
   const response = await fetch(`/api/card?${params.toString()}`, { signal });
   if (!response.ok) {
     if (response.status === 404) {
@@ -762,6 +806,19 @@ export async function fetchCardSearch(
   return response.json() as Promise<CardSearchResult[]>;
 }
 
+export async function fetchGlobalSearch(
+  query: string,
+  limit = 6,
+  signal?: AbortSignal,
+): Promise<GlobalSearchResult> {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  const response = await fetch(`/api/search?${params.toString()}`, { signal });
+  if (!response.ok) {
+    throw new Error(`Search API returned ${response.status}`);
+  }
+  return response.json() as Promise<GlobalSearchResult>;
+}
+
 export function snapshotQueryString(filters: SnapshotFilters): string {
   const params = new URLSearchParams();
   if (filters.deck) {
@@ -775,6 +832,12 @@ export function snapshotQueryString(filters: SnapshotFilters): string {
   }
   if (filters.season) {
     params.set('season', String(filters.season));
+  }
+  if (filters.since) {
+    params.set('since', filters.since);
+  }
+  if (filters.until) {
+    params.set('until', filters.until);
   }
   const query = params.toString();
   return query ? `?${query}` : '';

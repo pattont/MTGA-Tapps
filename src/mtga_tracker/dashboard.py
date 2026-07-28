@@ -915,7 +915,11 @@ def _combat_split_rows(conn: sqlite3.Connection, where: str, params: List[Any]) 
 
 
 def _games_filter(
-    deck: Optional[str], fmt: Optional[str], days: Optional[int]
+    deck: Optional[str],
+    fmt: Optional[str],
+    days: Optional[int],
+    since: Optional[str] = None,
+    until: Optional[str] = None,
 ) -> Tuple[str, List[Any]]:
     """WHERE fragment (referencing games alias `g`) plus bound params."""
     # Jump In games are intentionally untracked; hide them from every aggregate.
@@ -947,6 +951,12 @@ def _games_filter(
         cutoff = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
         clauses.append("COALESCE(g.started_at, g.ended_at) >= ?")
         params.append(cutoff)
+    if since:
+        clauses.append("COALESCE(g.started_at, g.ended_at) >= ?")
+        params.append(f"{since}T00:00:00" if len(since) == 10 else since)
+    if until:
+        clauses.append("COALESCE(g.started_at, g.ended_at) <= ?")
+        params.append(f"{until}T23:59:59" if len(until) == 10 else until)
     return " AND ".join(clauses), params
 
 
@@ -1240,6 +1250,8 @@ def dashboard_snapshot(
     fmt: Optional[str] = None,
     days: Optional[int] = None,
     season: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return dashboard-friendly aggregate data from SQLite.
 
@@ -1250,7 +1262,7 @@ def dashboard_snapshot(
     db_path = Path(db_path).expanduser()
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
-    where, params = _games_filter(deck, fmt, days)
+    where, params = _games_filter(deck, fmt, days, since, until)
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
@@ -1676,7 +1688,14 @@ def dashboard_snapshot(
         "rank_progress": rank_progress_rows,
         "matches": match_rows,
         "sessions": session_rows,
-        "filters": {"deck": deck, "format": fmt, "days": days, "season": season},
+        "filters": {
+            "deck": deck,
+            "format": fmt,
+            "days": days,
+            "season": season,
+            "since": since,
+            "until": until,
+        },
         "filter_options": {
             "decks": deck_options,
             "formats": format_options,
@@ -1690,6 +1709,8 @@ def deck_detail(
     deck_name: str = "(unknown)",
     fmt: Optional[str] = None,
     days: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return drill-down analytics for a single deck.
 
@@ -1698,7 +1719,7 @@ def deck_detail(
     db_path = Path(db_path).expanduser()
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
-    where, params = _games_filter(deck_name, fmt, days)
+    where, params = _games_filter(deck_name, fmt, days, since, until)
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
@@ -2026,7 +2047,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         conn.execute("PRAGMA query_only = ON")
         game_rows = _dict_rows(
             conn.execute(
-                """
+                f"""
                 SELECT
                   g.id AS game_id,
                   g.match_id,
@@ -2301,7 +2322,15 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
     }
 
 
-def opponent_detail(db_path: Path = DEFAULT_DB_PATH, opponent_name: str = "") -> Dict[str, Any]:
+def opponent_detail(
+    db_path: Path = DEFAULT_DB_PATH,
+    opponent_name: str = "",
+    deck: Optional[str] = None,
+    fmt: Optional[str] = None,
+    days: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> Dict[str, Any]:
     """Return head-to-head history for one exact Arena opponent name."""
     db_path = Path(db_path).expanduser()
     if not db_path.is_file():
@@ -2309,11 +2338,12 @@ def opponent_detail(db_path: Path = DEFAULT_DB_PATH, opponent_name: str = "") ->
     requested_name = str(opponent_name or "").strip()
     if not requested_name:
         raise LookupError("Opponent name is required")
+    where, filter_params = _games_filter(deck, fmt, days, since, until)
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
         summary = conn.execute(
-            """
+            f"""
             SELECT
               COUNT(*) AS games,
               SUM(g.outcome = 'win') AS wins,
@@ -2327,15 +2357,15 @@ def opponent_detail(db_path: Path = DEFAULT_DB_PATH, opponent_name: str = "") ->
               MAX(o.display_name) AS display_name
             FROM games g
             JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
-            WHERE o.display_name = ? COLLATE NOCASE
+            WHERE o.display_name = ? COLLATE NOCASE AND {where}
             """,
-            (requested_name,),
+            (requested_name, *filter_params),
         ).fetchone()
         if not summary or not summary[0]:
             raise LookupError(f"No recorded games against opponent: {requested_name}")
         game_rows = _dict_rows(
             conn.execute(
-                """
+                f"""
                 SELECT
                   g.id AS game_id,
                   g.started_at,
@@ -2358,10 +2388,10 @@ def opponent_detail(db_path: Path = DEFAULT_DB_PATH, opponent_name: str = "") ->
                 JOIN matches m ON m.id = g.match_id
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
                 JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
-                WHERE o.display_name = ? COLLATE NOCASE
+                WHERE o.display_name = ? COLLATE NOCASE AND {where}
                 ORDER BY g.started_at DESC, g.id DESC
                 """,
-                (requested_name,),
+                (requested_name, *filter_params),
             )
         )
     for row in game_rows:
@@ -2502,35 +2532,46 @@ def _card_multiplicity(
     return {"games": total_games, "buckets": bucket_rows}
 
 
-def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[str, Any]:
+def card_detail(
+    db_path: Path = DEFAULT_DB_PATH,
+    card_name: str = "",
+    deck: Optional[str] = None,
+    fmt: Optional[str] = None,
+    days: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> Dict[str, Any]:
     """Return drill-down analytics for one clean card name.
 
+    Accepts the shared deck/format/days/since/until filters so card stats can
+    match whatever slice the dashboard is showing.
     Raises LookupError when the card has no summary rows for either participant.
     """
     clean_name = _clean_card_name(card_name) or card_name
     db_path = Path(db_path).expanduser()
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
+    where, filter_params = _games_filter(deck, fmt, days, since, until)
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
-        match_params = (clean_name, f"{clean_name} (%")
+        match_params = (clean_name, f"{clean_name} (%", *filter_params)
         all_usage = conn.execute(
-            """
+            f"""
             SELECT
               COUNT(DISTINCT g.id) AS games_seen,
               COALESCE(SUM(s.played_count), 0) AS total_played
             FROM game_card_summary s
             JOIN participants p ON p.id = s.participant_id
             JOIN games g ON g.id = s.game_id
-            WHERE s.display_name = ? OR s.display_name LIKE ?
+            WHERE (s.display_name = ? OR s.display_name LIKE ?) AND {where}
             """,
             match_params,
         ).fetchone()
         if not all_usage or not all_usage[0]:
             raise LookupError(f"No recorded card for name: {clean_name}")
         summary = conn.execute(
-            """
+            f"""
             SELECT
               COUNT(DISTINCT g.id) AS games_seen,
               COALESCE(SUM(s.played_count), 0) AS total_played,
@@ -2541,13 +2582,13 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
             JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
             JOIN games g ON g.id = s.game_id
             WHERE (s.display_name = ? OR s.display_name LIKE ?)
-              AND s.played_count > 0
+              AND s.played_count > 0 AND {where}
             """,
             match_params,
         ).fetchone()
         by_role = _dict_rows(
             conn.execute(
-                """
+                f"""
                 SELECT
                   p.role,
                   CASE p.role WHEN 'player' THEN 'You' ELSE 'Opponent' END AS side_label,
@@ -2564,7 +2605,7 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
                 JOIN participants p ON p.id = s.participant_id
                 JOIN games g ON g.id = s.game_id
                 WHERE (s.display_name = ? OR s.display_name LIKE ?)
-                  AND s.played_count > 0
+                  AND s.played_count > 0 AND {where}
                 GROUP BY p.role
                 ORDER BY CASE p.role WHEN 'player' THEN 0 ELSE 1 END
                 """,
@@ -2573,7 +2614,7 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
         )
         by_deck = _dict_rows(
             conn.execute(
-                """
+                f"""
                 SELECT
                   COALESCE(p.deck_name, '(unknown)') AS deck_name,
                   COUNT(DISTINCT g.id) AS games_seen,
@@ -2585,7 +2626,7 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
                 JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
                 JOIN games g ON g.id = s.game_id
                 WHERE (s.display_name = ? OR s.display_name LIKE ?)
-                  AND s.played_count > 0
+                  AND s.played_count > 0 AND {where}
                 GROUP BY p.deck_name
                 ORDER BY games_seen DESC, win_rate DESC, deck_name
                 LIMIT 50
@@ -2594,7 +2635,7 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
             )
         )
         opener = conn.execute(
-            """
+            f"""
             SELECT
               COUNT(DISTINCT g.id) AS games_in_opener,
               SUM(g.outcome = 'win') AS wins,
@@ -2603,16 +2644,17 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
             FROM game_opening_hand_cards h
             JOIN participants p ON p.id = h.participant_id AND p.role = 'player'
             JOIN games g ON g.id = h.game_id
-            WHERE h.display_name = ? OR h.display_name LIKE ?
+            WHERE (h.display_name = ? OR h.display_name LIKE ?) AND {where}
             """,
             match_params,
         ).fetchone()
         drawn = conn.execute(
-            """
+            f"""
             SELECT COUNT(*) AS times_drawn
             FROM game_drawn_cards d
             JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
-            WHERE d.display_name = ? OR d.display_name LIKE ?
+            JOIN games g ON g.id = d.game_id
+            WHERE (d.display_name = ? OR d.display_name LIKE ?) AND {where}
             """,
             match_params,
         ).fetchone()
@@ -2677,6 +2719,60 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
             "times_drawn": int(drawn[0] or 0) if drawn else 0,
         },
     }
+
+
+def global_search(
+    db_path: Path = DEFAULT_DB_PATH, query: str = "", limit: int = 8
+) -> Dict[str, Any]:
+    """Search tracked cards, your decks, and opponent names in one call."""
+    cards = search_cards(db_path, query, limit)
+    clean_query = str(query or "").strip()
+    decks: List[Dict[str, Any]] = []
+    opponents: List[Dict[str, Any]] = []
+    if clean_query:
+        like = f"%{clean_query}%"
+        db_path = Path(db_path).expanduser()
+        db_uri = db_path.resolve().as_uri() + "?mode=ro"
+        with sqlite3.connect(db_uri, uri=True) as conn:
+            conn.execute("PRAGMA query_only = ON")
+            decks = _dict_rows(
+                conn.execute(
+                    """
+                    SELECT
+                      COALESCE(p.deck_name, '(unknown)') AS deck_name,
+                      COUNT(*) AS games
+                    FROM participants p
+                    JOIN games g ON g.id = p.game_id
+                    WHERE p.role = 'player'
+                      AND p.deck_name IS NOT NULL
+                      AND p.deck_name LIKE ?
+                    GROUP BY p.deck_name
+                    ORDER BY games DESC, deck_name COLLATE NOCASE
+                    LIMIT ?
+                    """,
+                    (like, max(1, min(int(limit), 25))),
+                )
+            )
+            opponents = _dict_rows(
+                conn.execute(
+                    """
+                    SELECT
+                      o.display_name,
+                      COUNT(*) AS games
+                    FROM participants o
+                    JOIN games g ON g.id = o.game_id
+                    WHERE o.role = 'opponent'
+                      AND o.display_name IS NOT NULL
+                      AND o.display_name != 'Opponent'
+                      AND o.display_name LIKE ?
+                    GROUP BY o.display_name
+                    ORDER BY games DESC, o.display_name COLLATE NOCASE
+                    LIMIT ?
+                    """,
+                    (like, max(1, min(int(limit), 25))),
+                )
+            )
+    return {"cards": cards, "decks": decks, "opponents": opponents}
 
 
 def search_cards(
@@ -2987,6 +3083,38 @@ def _content_type(path: Path) -> str:
     return guessed or "application/octet-stream"
 
 
+def _parse_common_filters(query: Dict[str, List[str]]) -> Dict[str, Any]:
+    """Parse deck/format/days/since/until filter params shared across endpoints."""
+    def first(key: str) -> Optional[str]:
+        return query.get(key, [None])[0] or None
+
+    days_raw = first("days")
+    try:
+        days: Optional[int] = int(days_raw) if days_raw else None
+    except ValueError:
+        days = None
+    if days is not None and days <= 0:
+        days = None
+
+    def date_param(key: str) -> Optional[str]:
+        value = (first(key) or "").strip()
+        if not value:
+            return None
+        try:
+            datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return value
+
+    return {
+        "deck": first("deck"),
+        "fmt": first("format"),
+        "days": days,
+        "since": date_param("since"),
+        "until": date_param("until"),
+    }
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     """HTTP handler rendering the dashboard on each request."""
 
@@ -3003,15 +3131,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         request_path = parsed.path
         if request_path == "/api/snapshot":
             query = parse_qs(parsed.query)
-            deck = query.get("deck", [None])[0] or None
-            fmt = query.get("format", [None])[0] or None
-            days_raw = query.get("days", [None])[0]
-            try:
-                days = int(days_raw) if days_raw else None
-            except ValueError:
-                days = None
-            if days is not None and days <= 0:
-                days = None
+            common = _parse_common_filters(query)
             season_raw = query.get("season", [None])[0]
             try:
                 season = int(season_raw) if season_raw else None
@@ -3019,7 +3139,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 season = None
             try:
                 body = render_snapshot_json(
-                    dashboard_snapshot(self.db_path, deck=deck, fmt=fmt, days=days, season=season)
+                    dashboard_snapshot(
+                        self.db_path,
+                        deck=common["deck"],
+                        fmt=common["fmt"],
+                        days=common["days"],
+                        season=season,
+                        since=common["since"],
+                        until=common["until"],
+                    )
                 )
             except FileNotFoundError as exc:
                 _send_bytes(
@@ -3044,14 +3172,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if request_path == "/api/deck":
             query = parse_qs(parsed.query)
             deck_name = query.get("name", [None])[0]
-            fmt = query.get("format", [None])[0] or None
-            days_raw = query.get("days", [None])[0]
-            try:
-                days = int(days_raw) if days_raw else None
-            except ValueError:
-                days = None
-            if days is not None and days <= 0:
-                days = None
+            common = _parse_common_filters(query)
+            fmt = common["fmt"]
+            days = common["days"]
             if not deck_name:
                 _send_bytes(
                     self,
@@ -3062,7 +3185,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 )
                 return
             try:
-                body = render_snapshot_json(deck_detail(self.db_path, deck_name, fmt=fmt, days=days))
+                body = render_snapshot_json(
+                    deck_detail(
+                        self.db_path,
+                        deck_name,
+                        fmt=fmt,
+                        days=days,
+                        since=common["since"],
+                        until=common["until"],
+                    )
+                )
             except (FileNotFoundError, LookupError) as exc:
                 _send_bytes(
                     self,
@@ -3129,8 +3261,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
+            common = _parse_common_filters(query)
             try:
-                body = render_snapshot_json(opponent_detail(self.db_path, name))
+                body = render_snapshot_json(
+                    opponent_detail(
+                        self.db_path,
+                        name,
+                        deck=common["deck"],
+                        fmt=common["fmt"],
+                        days=common["days"],
+                        since=common["since"],
+                        until=common["until"],
+                    )
+                )
             except (FileNotFoundError, LookupError) as exc:
                 _send_bytes(
                     self,
@@ -3154,6 +3297,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if request_path == "/api/card":
             query = parse_qs(parsed.query)
             name = query.get("name", [None])[0]
+            common = _parse_common_filters(query)
             if not name:
                 _send_bytes(
                     self,
@@ -3164,8 +3308,57 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 )
                 return
             try:
-                body = render_snapshot_json(card_detail(self.db_path, name))
+                body = render_snapshot_json(
+                    card_detail(
+                        self.db_path,
+                        name,
+                        deck=common["deck"],
+                        fmt=common["fmt"],
+                        days=common["days"],
+                        since=common["since"],
+                        until=common["until"],
+                    )
+                )
             except (FileNotFoundError, LookupError) as exc:
+                _send_bytes(
+                    self,
+                    404,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            except Exception as exc:
+                _send_bytes(
+                    self,
+                    500,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
+        if request_path == "/api/search":
+            query = parse_qs(parsed.query)
+            search_query = query.get("q", [None])[0]
+            limit_raw = query.get("limit", [None])[0]
+            if not search_query:
+                _send_bytes(
+                    self,
+                    400,
+                    b"Missing required query parameter: q",
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            try:
+                limit = int(limit_raw) if limit_raw else 8
+            except ValueError:
+                limit = 8
+            try:
+                body = render_snapshot_json(global_search(self.db_path, search_query, limit))
+            except FileNotFoundError as exc:
                 _send_bytes(
                     self,
                     404,

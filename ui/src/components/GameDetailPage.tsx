@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
 import {
   fetchGameDetail,
   type GameDetail,
@@ -15,6 +14,7 @@ import { gameRouteHash } from '../routes';
 import { DeckLink } from './DeckLink';
 import { Badge } from './Badge';
 import { CardLink } from './CardLink';
+import { Section } from './Section';
 import { LifeChart } from './LifeChart';
 import { MetricCard } from './MetricCard';
 import { OpponentLink } from './OpponentLink';
@@ -26,50 +26,13 @@ const DETAIL_REFRESH_MS = 20_000;
 
 type LoadState =
   | { status: 'loading' }
-  | { status: 'loaded'; detail: GameDetail }
+  | { status: 'loaded'; detail: GameDetail; refreshError?: string }
   | { status: 'error'; message: string };
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
 }
 
-function Section({
-  id,
-  title,
-  description,
-  children,
-}: {
-  id: string;
-  title: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
-  const [collapsed, setCollapsed] = useState(false);
-  const contentId = `${id}-content`;
-
-  return (
-    <section className={collapsed ? 'dashboard-section dashboard-section-collapsed' : 'dashboard-section'} id={id}>
-      <div className="section-heading">
-        <h3>{title}</h3>
-        <button
-          type="button"
-          className="section-collapse-button"
-          aria-controls={contentId}
-          aria-expanded={!collapsed}
-          aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${title}`}
-          title={`${collapsed ? 'Expand' : 'Collapse'} ${title}`}
-          onClick={() => setCollapsed((current) => !current)}
-        >
-          {collapsed ? <ChevronDown aria-hidden="true" /> : <ChevronUp aria-hidden="true" />}
-        </button>
-      </div>
-      <div className="section-content" id={contentId} hidden={collapsed}>
-        {description ? <p className="section-description">{description}</p> : null}
-      {children}
-      </div>
-    </section>
-  );
-}
 
 const openingColumns: Column<GameOpeningHandRow>[] = [
   { key: 'hand_position', header: '#', numeric: true },
@@ -244,14 +207,20 @@ export function GameDetailPage({
       } catch (error: unknown) {
         if (!ignore && !isAbortError(error)) {
           const message = error instanceof Error ? error.message : 'Dashboard API failed';
-          setLoadState((current) => (current.status === 'loaded' ? current : { status: 'error', message }));
+          setLoadState((current) =>
+            current.status === 'loaded'
+              ? { ...current, refreshError: message }
+              : { status: 'error', message },
+          );
         }
       }
     }
 
     void loadDetail();
     const refreshId = window.setInterval(() => {
-      void loadDetail();
+      if (!document.hidden) {
+        void loadDetail();
+      }
     }, DETAIL_REFRESH_MS);
 
     return () => {
@@ -262,7 +231,11 @@ export function GameDetailPage({
   }, [gameId]);
 
   if (loadState.status === 'loading') {
-    return <p className="state-panel">Loading game details...</p>;
+    return (
+      <p className="state-panel" role="status" aria-busy="true">
+        Loading game details...
+      </p>
+    );
   }
   if (loadState.status === 'error') {
     return (
@@ -275,7 +248,7 @@ export function GameDetailPage({
     );
   }
 
-  const { detail } = loadState;
+  const { detail, refreshError } = loadState;
   const playDraw = detail.player.went_first === 1 ? 'On the play' : detail.player.went_first === 0 ? 'On the draw' : 'Unknown';
   const landByPosition = new Map(detail.drawn.map((card) => [card.draw_position, isLandCard(card)]));
   const drawLandFlags = Array.from(
@@ -396,6 +369,11 @@ export function GameDetailPage({
   ];
   return (
     <>
+      {refreshError ? (
+        <p className="refresh-status refresh-status-error" role="alert">
+          Refresh failed: {refreshError} — showing the last loaded data.
+        </p>
+      ) : null}
       <div className="deck-detail-header" id="game-summary">
         <a className="back-link" href={backHref}>
           ← Back to dashboard
