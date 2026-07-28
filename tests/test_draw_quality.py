@@ -134,3 +134,34 @@ def test_draw_quality_analysis_uses_opening_hand_and_known_draws(tmp_path):
     assert game.target_card_seen == 4
     assert game.target_card_probability is not None
     assert game.flood_probability is not None
+
+
+def test_flood_counts_opening_hand_lands():
+    from mtga_tracker.draw_quality import draw_quality_metrics
+
+    land = {"display_name": "Swamp", "type_category": "Land"}
+    spell = {"display_name": "Spell", "type_category": "Creature"}
+    opener = [dict(land) for _ in range(3)] + [dict(spell) for _ in range(4)]
+    drawn = [
+        {**land, "draw_position": 1},
+        {**land, "draw_position": 2},
+        {**spell, "draw_position": 3},
+    ]
+
+    # 3-land keep plus 2 lands in only 3 draws: 5 of 10 cards seen were lands.
+    quality = draw_quality_metrics(opener, drawn, 3, 60, deck_lands=22)
+    assert quality["is_flood"] is True
+    assert any("opening hand included" in reason for reason in quality["flood_reasons"])
+
+    # Same pattern in a 17-land limited deck is within normal range.
+    limited = draw_quality_metrics(opener, drawn, 3, 40, deck_lands=17)
+    assert limited["is_flood"] is False
+
+    # A normal 4-of-10 land share never fires the combined rule.
+    normal_drawn = [
+        {**land, "draw_position": 1},
+        {**spell, "draw_position": 2},
+        {**spell, "draw_position": 3},
+    ]
+    normal = draw_quality_metrics(opener, normal_drawn, 3, 60, deck_lands=22)
+    assert normal["is_flood"] is False
