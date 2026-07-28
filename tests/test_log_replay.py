@@ -150,4 +150,4 @@ def test_replay_uses_source_timestamps_for_elapsed_output(capsys):
     tracker._process_line(draw_line, timestamp=datetime(2026, 5, 8, 22, 15, 7))
 
     out = capsys.readouterr().out
-    assert "[0:07] You: drew a card" in out
+    assert "[0:07] You: drew [Card9002]" in out

@@ -1745,6 +1745,8 @@ def test_deck_detail_reports_composition_and_versions(tmp_path):
     assert mountain["times_seen"] == 1
     # game-1 saw 2 cards from a 60-card deck: expected 2*24/60 = 0.8
     assert mountain["expected_seen"] == 0.8
+    assert mountain["games_seen_multiple"] == 0
+    assert mountain["multiple_pct"] == 0.0
     assert mountain["win_rate_when_seen"] == 100.0
     assert mountain["win_rate_when_not_seen"] == 0.0
 

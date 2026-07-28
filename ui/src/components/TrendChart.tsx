@@ -73,10 +73,14 @@ export function TrendChart({ rows }: { rows: TrendRow[] }) {
             y2={VIEW_HEIGHT}
           />
         ) : null}
-        <text className="chart-value-label" x={VIEW_WIDTH - 4} y={valueLabelY} textAnchor="end">
-          {latest.rate.toFixed(0)}%
-        </text>
       </svg>
+      <span
+        className="chart-axis-float chart-axis-float-right"
+        style={{ top: `${Math.min(84, Math.max(4, (valueLabelY / 120) * 100))}%` }}
+        aria-hidden="true"
+      >
+        {latest.rate.toFixed(0)}%
+      </span>
       {hovered !== null ? (
         <div className="chart-tooltip" style={{ left: `${hoverLeftPct}%`, top: '2.4rem' }}>
           {formatDate(points[hovered].started_at)} · {points[hovered].rate.toFixed(0)}%
