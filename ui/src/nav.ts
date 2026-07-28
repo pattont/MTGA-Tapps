@@ -25,6 +25,7 @@ export const deckNavItems: AppNavItem[] = [
   { id: 'deck-cards', label: 'Deck List & Card Performance' },
   { id: 'deck-openers', label: 'Opening Hands' },
   { id: 'deck-mulligans', label: 'Mulligans' },
+  { id: 'deck-versions', label: 'Decklist Changes' },
   { id: 'deck-formats', label: 'Formats' },
   { id: 'deck-games', label: 'Recent Games' },
 ];

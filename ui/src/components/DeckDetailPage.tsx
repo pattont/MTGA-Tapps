@@ -3,8 +3,10 @@ import { Check, Copy } from 'lucide-react';
 import {
   fetchDeckDetail,
   type CardPerformanceRow,
+  type DeckCompositionRow,
   type DeckDetail,
   type DeckGameRow,
+  type DeckVersionRow,
   type MulliganRow,
   type OpeningHandRow,
   type SnapshotFilters,
@@ -40,6 +42,9 @@ type LoadState =
 type DeckListPerformanceRow = CardPerformanceRow & {
   quantity: number | null;
   deck_section: 'Main Deck' | 'Sideboard' | null;
+  seen_pct: number | null;
+  seen_delta: number | null;
+  win_rate_when_not_seen: number | null;
 };
 
 function isAbortError(error: unknown): boolean {
@@ -52,13 +57,37 @@ function cardNameAliases(cardName: string): Set<string> {
   return aliases;
 }
 
+function compositionByName(detail: DeckDetail): Map<string, DeckCompositionRow> {
+  const map = new Map<string, DeckCompositionRow>();
+  for (const row of detail.composition ?? []) {
+    cardNameAliases(row.display_name).forEach((alias) => map.set(alias, row));
+  }
+  return map;
+}
+
 function deckListPerformanceRows(detail: DeckDetail): DeckListPerformanceRow[] {
+  const composition = compositionByName(detail);
+  const compositionFor = (name: string): DeckCompositionRow | undefined => {
+    for (const alias of cardNameAliases(name)) {
+      const match = composition.get(alias);
+      if (match) {
+        return match;
+      }
+    }
+    return undefined;
+  };
   if (!detail.deck_export.available) {
-    return detail.card_performance.map((row) => ({
-      ...row,
-      quantity: null,
-      deck_section: null,
-    }));
+    return detail.card_performance.map((row) => {
+      const stats = compositionFor(row.display_name);
+      return {
+        ...row,
+        quantity: stats?.copies ?? null,
+        deck_section: null,
+        seen_pct: stats?.seen_pct ?? null,
+        seen_delta: stats?.seen_delta ?? null,
+        win_rate_when_not_seen: stats?.win_rate_when_not_seen ?? null,
+      };
+    });
   }
 
   const performance = detail.card_performance.map((row) => ({
@@ -73,6 +102,7 @@ function deckListPerformanceRows(detail: DeckDetail): DeckListPerformanceRow[] {
     const matchingPerformance = performance.find(({ aliases: performanceAliases }) =>
       Array.from(aliases).some((name) => performanceAliases.has(name)),
     )?.row;
+    const stats = compositionFor(card.display_name);
     return {
       display_name: card.display_name,
       type_category: matchingPerformance?.type_category ?? card.type_category,
@@ -84,6 +114,9 @@ function deckListPerformanceRows(detail: DeckDetail): DeckListPerformanceRow[] {
       wins_when_seen: matchingPerformance?.wins_when_seen ?? 0,
       losses_when_seen: matchingPerformance?.losses_when_seen ?? 0,
       win_rate_when_seen: matchingPerformance?.win_rate_when_seen ?? null,
+      seen_pct: stats?.seen_pct ?? null,
+      seen_delta: stats?.seen_delta ?? null,
+      win_rate_when_not_seen: stats?.win_rate_when_not_seen ?? null,
     };
   });
 }
@@ -109,8 +142,30 @@ const cardColumns: Column<DeckListPerformanceRow>[] = [
     sortValue: (row) => row.type_category,
   },
   { key: 'games_seen', header: 'Games Seen', numeric: true },
+  {
+    key: 'seen_pct',
+    header: 'Seen %',
+    render: (row) => formatPercent(row.seen_pct),
+    sortValue: (row) => row.seen_pct,
+    numeric: true,
+  },
   { key: 'times_played', header: 'Played', numeric: true },
   { key: 'times_drawn', header: 'Drawn', numeric: true },
+  {
+    key: 'seen_delta',
+    header: 'Seen vs Expected',
+    render: (row) =>
+      row.seen_delta === null ? '—' : `${row.seen_delta > 0 ? '+' : ''}${row.seen_delta}`,
+    sortValue: (row) => row.seen_delta,
+    numeric: true,
+  },
+  {
+    key: 'win_rate_when_not_seen',
+    header: 'WR Not Seen',
+    render: (row) => formatPercent(row.win_rate_when_not_seen),
+    sortValue: (row) => row.win_rate_when_not_seen,
+    numeric: true,
+  },
   {
     key: 'win_rate_when_seen',
     header: 'Win Rate When Seen',
@@ -119,6 +174,52 @@ const cardColumns: Column<DeckListPerformanceRow>[] = [
     ),
     sortValue: (row) => row.win_rate_when_seen,
     numeric: true,
+  },
+];
+
+const versionColumns: Column<DeckVersionRow>[] = [
+  { key: 'version', header: 'Version', numeric: true },
+  {
+    key: 'first_played',
+    header: 'First Played',
+    render: (row) => (row.first_played ? formatDateTime(row.first_played) : '—'),
+    sortValue: (row) => row.first_played ?? '',
+  },
+  {
+    key: 'last_played',
+    header: 'Last Played',
+    render: (row) => (row.last_played ? formatDateTime(row.last_played) : '—'),
+    sortValue: (row) => row.last_played ?? '',
+  },
+  { key: 'games', header: 'Games', numeric: true },
+  {
+    key: 'win_rate',
+    header: 'Win Rate',
+    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
+    sortValue: (row) => row.win_rate,
+    numeric: true,
+  },
+  {
+    key: 'added',
+    header: 'Changes vs Previous',
+    render: (row) =>
+      row.added.length === 0 && row.removed.length === 0 ? (
+        row.version === 1 ? 'Initial list' : 'No changes'
+      ) : (
+        <span className="version-changes">
+          {row.added.map((change) => (
+            <span key={`in-${change}`} className="version-change version-change-in">
+              + {change}
+            </span>
+          ))}
+          {row.removed.map((change) => (
+            <span key={`out-${change}`} className="version-change version-change-out">
+              − {change}
+            </span>
+          ))}
+        </span>
+      ),
+    sortValue: (row) => row.added.length + row.removed.length,
   },
 ];
 
@@ -479,6 +580,63 @@ export function DeckDetailPage({
           getRowKey={(row) => String(row.mulligans)}
           rows={detail.mulligans}
         />
+      </Section>
+
+      <Section
+        id="deck-versions"
+        title="Decklist Changes"
+        description="Every distinct submitted maindeck, in play order, with its record and the diff against the previous version."
+      >
+        {(detail.versions ?? []).length > 0 ? (
+          <SortableTable
+            caption="Deck versions"
+            columns={versionColumns}
+            getRowKey={(row) => String(row.version)}
+            initialSort={{ key: 'version', direction: 'asc' }}
+            rows={detail.versions ?? []}
+          />
+        ) : (
+          <p className="empty-state">No submitted decklists recorded for this deck yet.</p>
+        )}
+        {detail.sideboard ? (
+          <>
+            <div className="section-heading">
+              <div>
+                <h3>Sideboarding (Bo3)</h3>
+                <p className="section-description">
+                  Game 1 record vs post-sideboard record across {detail.sideboard.matches}{' '}
+                  multi-game {detail.sideboard.matches === 1 ? 'match' : 'matches'}.
+                </p>
+              </div>
+            </div>
+            <section className="metric-grid metric-grid-deck" aria-label="Sideboard record">
+              <MetricCard
+                label="Game 1 Record"
+                value={`${detail.sideboard.game_one.wins}-${detail.sideboard.game_one.losses}`}
+              />
+              <MetricCard
+                label="Game 1 Win Rate"
+                value={formatPercent(detail.sideboard.game_one.win_rate)}
+              />
+              <MetricCard
+                label="Post-Board Record"
+                value={`${detail.sideboard.post_board.wins}-${detail.sideboard.post_board.losses}`}
+              />
+              <MetricCard
+                label="Post-Board Win Rate"
+                value={formatPercent(detail.sideboard.post_board.win_rate)}
+              />
+            </section>
+            {detail.sideboard.boarded_in.length > 0 ? (
+              <p className="section-description">
+                Most boarded in:{' '}
+                {detail.sideboard.boarded_in
+                  .map((card) => `${card.copies}x ${card.display_name}`)
+                  .join(', ')}
+              </p>
+            ) : null}
+          </>
+        ) : null}
       </Section>
 
       <Section id="deck-formats" title="Formats">

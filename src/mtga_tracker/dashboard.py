@@ -205,6 +205,286 @@ def _card_image_url(arena_id: Optional[int], card_name: Optional[str]) -> Option
     return None
 
 
+def _deck_decklist_analysis(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """Decklist-derived analytics for one deck's filtered games.
+
+    Returns (composition_rows, version_rows, sideboard_summary):
+    - composition: per card actually submitted in maindecks — copies, games in
+      deck, seen/drawn counts, hypergeometric expected draws, and win rates
+      when seen vs not seen (the dead-weight report).
+    - versions: distinct submitted-decklist snapshots over time with W/L and
+      the diff against the previous version.
+    - sideboard: Bo3 game-1 vs post-board record plus most-boarded cards.
+    """
+    games = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              g.id AS game_id,
+              COALESCE(g.started_at, g.ended_at) AS started_at,
+              g.game_number,
+              g.match_id,
+              g.outcome,
+              p.id AS participant_id
+            FROM games g
+            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            WHERE {where}
+            ORDER BY COALESCE(g.started_at, g.ended_at), g.id
+            """,
+            params,
+        )
+    )
+    if not games:
+        return [], [], None
+    participant_ids = {row["participant_id"] for row in games}
+    game_by_participant = {row["participant_id"]: row for row in games}
+
+    deck_rows_by_game: Dict[str, List[Dict[str, Any]]] = {}
+    sideboard_by_game: Dict[str, Dict[str, int]] = {}
+    placeholders = ",".join("?" for _ in participant_ids)
+    for row in _dict_rows(
+        conn.execute(
+            f"""
+            SELECT participant_id, display_name, type_category, deck_zone, quantity
+            FROM game_deck_cards
+            WHERE participant_id IN ({placeholders})
+            """,
+            list(participant_ids),
+        )
+    ):
+        game = game_by_participant.get(row["participant_id"])
+        if game is None:
+            continue
+        game_id = game["game_id"]
+        if row["deck_zone"] == "deck":
+            deck_rows_by_game.setdefault(game_id, []).append(row)
+        else:
+            sideboard_by_game.setdefault(game_id, {})[
+                _clean_card_name(row["display_name"])
+            ] = int(row["quantity"] or 0)
+
+    seen_by_game: Dict[str, Dict[str, int]] = {}
+    seen_totals_by_game: Dict[str, int] = {}
+    for table in ("game_opening_hand_cards", "game_drawn_cards"):
+        for row in _dict_rows(
+            conn.execute(
+                f"""
+                SELECT participant_id, display_name, COUNT(*) AS copies
+                FROM {table}
+                WHERE participant_id IN ({placeholders})
+                GROUP BY participant_id, display_name
+                """,
+                list(participant_ids),
+            )
+        ):
+            game = game_by_participant.get(row["participant_id"])
+            if game is None:
+                continue
+            game_id = game["game_id"]
+            clean = _clean_card_name(row["display_name"])
+            bucket = seen_by_game.setdefault(game_id, {})
+            bucket[clean] = bucket.get(clean, 0) + int(row["copies"] or 0)
+            seen_totals_by_game[game_id] = (
+                seen_totals_by_game.get(game_id, 0) + int(row["copies"] or 0)
+            )
+
+    # --- Composition / dead-weight rows ---
+    composition: Dict[str, Dict[str, Any]] = {}
+    latest_game_with_deck = None
+    for game in games:
+        if deck_rows_by_game.get(game["game_id"]):
+            latest_game_with_deck = game["game_id"]
+    for game in games:
+        game_id = game["game_id"]
+        deck_cards = deck_rows_by_game.get(game_id)
+        if not deck_cards:
+            continue
+        deck_size = sum(int(row["quantity"] or 0) for row in deck_cards)
+        seen_cards = seen_by_game.get(game_id, {})
+        seen_total = seen_totals_by_game.get(game_id, 0)
+        outcome = game.get("outcome")
+        for row in deck_cards:
+            clean = _clean_card_name(row["display_name"])
+            entry = composition.setdefault(
+                clean,
+                {
+                    "display_name": clean,
+                    "type_category": str(row.get("type_category") or "Other"),
+                    "copies": 0,
+                    "games_in_deck": 0,
+                    "games_seen": 0,
+                    "times_seen": 0,
+                    "expected_seen": 0.0,
+                    "wins_when_seen": 0,
+                    "losses_when_seen": 0,
+                    "wins_when_not_seen": 0,
+                    "losses_when_not_seen": 0,
+                },
+            )
+            quantity = int(row["quantity"] or 0)
+            entry["games_in_deck"] += 1
+            if game_id == latest_game_with_deck:
+                entry["copies"] = quantity
+            copies_seen = seen_cards.get(clean, 0)
+            if deck_size:
+                entry["expected_seen"] += seen_total * quantity / deck_size
+            if copies_seen:
+                entry["games_seen"] += 1
+                entry["times_seen"] += copies_seen
+                if outcome == "win":
+                    entry["wins_when_seen"] += 1
+                elif outcome == "loss":
+                    entry["losses_when_seen"] += 1
+            else:
+                if outcome == "win":
+                    entry["wins_when_not_seen"] += 1
+                elif outcome == "loss":
+                    entry["losses_when_not_seen"] += 1
+
+    composition_rows: List[Dict[str, Any]] = []
+    for entry in composition.values():
+        if not entry["copies"]:
+            # Card only in older versions; report the most common quantity seen.
+            entry["copies"] = 0
+        decided_seen = entry["wins_when_seen"] + entry["losses_when_seen"]
+        decided_not = entry["wins_when_not_seen"] + entry["losses_when_not_seen"]
+        entry["seen_pct"] = (
+            round(100.0 * entry["games_seen"] / entry["games_in_deck"], 1)
+            if entry["games_in_deck"]
+            else None
+        )
+        entry["expected_seen"] = round(entry["expected_seen"], 1)
+        entry["seen_delta"] = round(entry["times_seen"] - entry["expected_seen"], 1)
+        entry["win_rate_when_seen"] = (
+            round(100.0 * entry["wins_when_seen"] / decided_seen, 1) if decided_seen else None
+        )
+        entry["win_rate_when_not_seen"] = (
+            round(100.0 * entry["wins_when_not_seen"] / decided_not, 1) if decided_not else None
+        )
+        composition_rows.append(entry)
+    composition_rows.sort(
+        key=lambda row: (-row["games_in_deck"], -row["times_seen"], row["display_name"].casefold())
+    )
+
+    # --- Deck versions ---
+    signature_by_game: Dict[str, Tuple] = {}
+    for game in games:
+        deck_cards = deck_rows_by_game.get(game["game_id"])
+        if not deck_cards:
+            continue
+        signature = tuple(
+            sorted(
+                (_clean_card_name(row["display_name"]), int(row["quantity"] or 0))
+                for row in deck_cards
+            )
+        )
+        signature_by_game[game["game_id"]] = signature
+
+    version_rows: List[Dict[str, Any]] = []
+    version_index: Dict[Tuple, Dict[str, Any]] = {}
+    for game in games:
+        signature = signature_by_game.get(game["game_id"])
+        if signature is None:
+            continue
+        version = version_index.get(signature)
+        if version is None:
+            version = {
+                "version": len(version_rows) + 1,
+                "first_played": game.get("started_at"),
+                "last_played": game.get("started_at"),
+                "games": 0,
+                "wins": 0,
+                "losses": 0,
+                "added": [],
+                "removed": [],
+                "_signature": signature,
+            }
+            previous = version_rows[-1] if version_rows else None
+            if previous is not None:
+                before = dict(previous["_signature"])
+                after = dict(signature)
+                for name in sorted(set(after) - set(before)):
+                    version["added"].append(f"{after[name]}x {name}")
+                for name in sorted(set(before) - set(after)):
+                    version["removed"].append(f"{before[name]}x {name}")
+                for name in sorted(set(before) & set(after)):
+                    if after[name] != before[name]:
+                        delta = after[name] - before[name]
+                        target = version["added"] if delta > 0 else version["removed"]
+                        target.append(f"{abs(delta)}x {name}")
+            version_index[signature] = version
+            version_rows.append(version)
+        version["last_played"] = game.get("started_at")
+        version["games"] += 1
+        if game.get("outcome") == "win":
+            version["wins"] += 1
+        elif game.get("outcome") == "loss":
+            version["losses"] += 1
+    for version in version_rows:
+        decided = version["wins"] + version["losses"]
+        version["win_rate"] = round(100.0 * version["wins"] / decided, 1) if decided else None
+        version.pop("_signature", None)
+
+    # --- Bo3 sideboard summary ---
+    matches: Dict[str, List[Dict[str, Any]]] = {}
+    for game in games:
+        matches.setdefault(str(game.get("match_id")), []).append(game)
+    game_one = {"wins": 0, "losses": 0}
+    post_board = {"wins": 0, "losses": 0}
+    boarded_in: Dict[str, int] = {}
+    multi_game_matches = 0
+    for match_games in matches.values():
+        if len(match_games) < 2:
+            continue
+        multi_game_matches += 1
+        ordered = sorted(match_games, key=lambda row: (row.get("game_number") or 0))
+        base_signature = signature_by_game.get(ordered[0]["game_id"])
+        for index, game in enumerate(ordered):
+            bucket = game_one if index == 0 else post_board
+            if game.get("outcome") == "win":
+                bucket["wins"] += 1
+            elif game.get("outcome") == "loss":
+                bucket["losses"] += 1
+            if index > 0 and base_signature is not None:
+                signature = signature_by_game.get(game["game_id"])
+                if signature is not None:
+                    before = dict(base_signature)
+                    after = dict(signature)
+                    for name, quantity in after.items():
+                        delta = quantity - before.get(name, 0)
+                        if delta > 0:
+                            boarded_in[name] = boarded_in.get(name, 0) + delta
+    sideboard_summary = None
+    if multi_game_matches:
+        decided_one = game_one["wins"] + game_one["losses"]
+        decided_post = post_board["wins"] + post_board["losses"]
+        sideboard_summary = {
+            "matches": multi_game_matches,
+            "game_one": {
+                **game_one,
+                "win_rate": round(100.0 * game_one["wins"] / decided_one, 1)
+                if decided_one
+                else None,
+            },
+            "post_board": {
+                **post_board,
+                "win_rate": round(100.0 * post_board["wins"] / decided_post, 1)
+                if decided_post
+                else None,
+            },
+            "boarded_in": [
+                {"display_name": name, "copies": copies}
+                for name, copies in sorted(
+                    boarded_in.items(), key=lambda item: (-item[1], item[0].casefold())
+                )[:15]
+            ],
+        }
+
+    return composition_rows, version_rows, sideboard_summary
+
+
 def _combat_deck_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> List[Dict[str, Any]]:
     """Per-deck combat/aggression profile from game_participant_stats."""
     rows = _dict_rows(
@@ -1065,6 +1345,9 @@ def deck_detail(
         ).fetchone()
         combat_rows = _combat_deck_rows(conn, where, params)
         combat_profile = combat_rows[0] if combat_rows else None
+        composition_rows, version_rows, sideboard_summary = _deck_decklist_analysis(
+            conn, where, params
+        )
         format_rows, midweek_rows = _grouped_format_rows(conn, where, params)
         submitted_cards_by_game: Dict[str, Set[str]] = {}
         if _table_exists(conn, "game_deck_cards"):
@@ -1328,6 +1611,9 @@ def deck_detail(
             "on_play_pct": profile[3],
         },
         "combat_profile": combat_profile,
+        "composition": composition_rows,
+        "versions": version_rows,
+        "sideboard": sideboard_summary,
         "formats": format_rows,
         "midweek_formats": midweek_rows,
         "card_performance": card_rows,
