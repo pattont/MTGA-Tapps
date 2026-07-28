@@ -12,7 +12,6 @@ export const dashboardNavItems: AppNavItem[] = [
   { id: 'recent-games', label: 'Recent Games' },
   { id: 'decks', label: 'Decks' },
   { id: 'formats', label: 'Formats' },
-  { id: 'deck-play-draw', label: 'Deck Play / Draw' },
   { id: 'visible-drawn-cards', label: 'Visible Drawn Cards' },
   { id: 'matches', label: 'Bo3 Matches' },
   { id: 'sessions', label: 'Sessions' },
@@ -21,7 +20,7 @@ export const dashboardNavItems: AppNavItem[] = [
 export const deckNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
   { id: 'deck-trend', label: 'Win Rate Trend' },
-  { id: 'deck-cards', label: 'Card Performance' },
+  { id: 'deck-cards', label: 'Deck List & Card Performance' },
   { id: 'deck-openers', label: 'Opening Hands' },
   { id: 'deck-mulligans', label: 'Mulligans' },
   { id: 'deck-formats', label: 'Formats' },
@@ -44,7 +43,8 @@ export const gameNavItems: AppNavItem[] = [
 export const cardNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
   { id: 'card-summary', label: 'Card Summary' },
-  { id: 'card-usage-by-side', label: 'Usage by Side' },
+  { id: 'card-usage-by-side', label: 'Opponent Impact' },
+  { id: 'card-usage-comparison', label: 'Played by Side' },
   { id: 'card-decks', label: 'Your Decks' },
   { id: 'card-opener-impact', label: 'Opening Hand Impact' },
 ];

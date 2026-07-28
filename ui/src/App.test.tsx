@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
+import { cardRouteHash, gameRouteHash } from './routes';
 
 const snapshot = {
   summary: { games: 2, wins: 1, losses: 1, draws: 0, win_rate: 50 },
@@ -21,7 +22,10 @@ const snapshot = {
       },
     },
   ],
-  formats: [{ format_label: 'Standard Best-of-1 (Unranked)', raw_formats: 'Play, Unknown', games: 2, wins: 1, losses: 1, win_rate: 50 }],
+  formats: [
+    { format_label: 'Standard Best-of-1 (Unranked)', raw_formats: 'Play, Unknown', games: 2, wins: 1, losses: 1, win_rate: 50 },
+    { format_label: 'Midweek Magic', raw_formats: 'MWM_Brawl_20260623', games: 35, wins: 18, losses: 17, win_rate: 51.4 },
+  ],
   midweek_formats: [{ format_label: 'Midweek Magic - Slow Start', raw_formats: 'MWM_SlowStart_20260602', games: 1, wins: 1, losses: 0, win_rate: 100 }],
   play_draw: [{ play_draw: 'On the play', games: 1, wins: 1, losses: 0, win_rate: 100 }],
   deck_play_draw: [{ deck_name: 'Boros Mouse', play_draw: 'On the play', games: 1, wins: 1, losses: 0, win_rate: 100 }],
@@ -44,7 +48,7 @@ const snapshot = {
       outcome: 'loss',
       cards_seen: 10,
       lands_seen: 7,
-      land_seen_pct: 70,
+      land_seen_pct: 70.1,
       opening_cards: 7,
       known_draws: 3,
     },
@@ -62,8 +66,11 @@ const snapshot = {
       outcome: 'loss',
       mulligans: 1,
       duration_seconds: 300,
-      player_avg_turn_seconds: 25,
-      opponent_avg_turn_seconds: 40,
+      total_turns: 10,
+      flood_reasons: ['3 of 3 post-opening draws were lands'],
+      is_flood: true,
+      screw_reasons: [],
+      is_screw: false,
     },
   ],
   matches: [
@@ -109,10 +116,11 @@ const snapshot = {
       season_ordinal: 91,
       rank_class: 'Platinum',
       rank_level: 3,
-      rank_step: 3,
+      rank_step: 4,
       rank_steps: 6,
-      rank_score: 81,
-      rank_label: 'Platinum 3 (3/6)',
+      raw_step: 4,
+      rank_score: 82,
+      rank_label: 'Platinum 3 (4/6)',
       matches_won: 60,
       matches_lost: 43,
       mythic_percentile: null,
@@ -126,7 +134,10 @@ const snapshot = {
   filters: { deck: null, format: null, days: null },
   filter_options: {
     decks: ['Boros Mouse', 'Izzet Wizards'],
-    formats: [{ raw_format: 'Play', format_label: 'Standard Best-of-1' }],
+    formats: [
+      { raw_format: 'Play', format_label: 'Standard Best-of-1' },
+      { raw_format: 'MWM_Brawl_20260623', format_label: 'Midweek Magic - Brawl' },
+    ],
   },
 };
 
@@ -138,6 +149,16 @@ const deckDetail = {
     type_category: 'Creature',
     image_url: null,
     source: 'local_metadata',
+  },
+  deck_export: {
+    available: true,
+    source_game_id: 'game-1',
+    main_deck: [
+      { display_name: 'Mountain', quantity: 20, type_category: 'Land' },
+      { display_name: 'Mouse Mentor', quantity: 4, type_category: 'Creature' },
+    ],
+    sideboard: [{ display_name: 'Duress', quantity: 1, type_category: 'Sorcery' }],
+    text: 'About\nName Boros Mouse\n\nDeck\n20 Mountain\n4 Mouse Mentor\n\nSideboard\n1 Duress',
   },
   summary: { games: 2, wins: 1, losses: 1, draws: 0, win_rate: 50 },
   profile: { avg_duration_seconds: 270, avg_turns: 9, avg_mulligans: 0.5, on_play_pct: 50 },
@@ -273,6 +294,7 @@ const gameDetail = {
       event_type: 'turn',
       actor_role: 'player',
       text: 'Turn 1 begins',
+      text_segments: [{ kind: 'text', text: 'Turn 1 begins' }],
       player_life: 20,
       opponent_life: 20,
     },
@@ -282,7 +304,19 @@ const gameDetail = {
       step: 'damage',
       event_type: 'damage',
       actor_role: 'player',
-      text: 'Mouse Mentor attacks',
+      text: '[0:20] [Mouse Mentor (2/1)] attacked [Graveyard Trespasser (3/3)] [resolved] [you] [Skeleton Pirate]',
+      text_segments: [
+        { kind: 'text', text: '[0:20] [' },
+        { kind: 'card', text: 'Mouse Mentor', card_name: 'Mouse Mentor', card_type: 'Creature' },
+        { kind: 'text', text: ' (2/1)] attacked [' },
+        {
+          kind: 'card',
+          text: 'Graveyard Trespasser',
+          card_name: 'Graveyard Trespasser',
+          card_type: 'Creature',
+        },
+        { kind: 'text', text: ' (3/3)] [resolved] [you] [Skeleton Pirate]' },
+      ],
       player_life: 12,
       opponent_life: 0,
     },
@@ -348,6 +382,7 @@ const cardDetail = {
     { role: 'player', side_label: 'You', games_seen: 2, total_played: 3, wins: 1, losses: 1, win_rate: 50 },
     { role: 'opponent', side_label: 'Opponent', games_seen: 2, total_played: 3, wins: 1, losses: 1, win_rate: 50 },
   ],
+  opponent_impact: { games: 2, plays: 3, wins: 1, losses: 1, win_rate: 50, loss_rate: 50 },
   by_deck: [
     { deck_name: 'Boros Mouse', games_seen: 2, total_played: 3, wins: 1, losses: 1, win_rate: 50 },
   ],
@@ -376,6 +411,25 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'MTGA Tracker – Go to overview' })).toHaveAttribute(
+      'href',
+      '#overview',
+    );
+    expect(
+      Array.from(document.querySelectorAll<HTMLImageElement>('.mana-pip')).map((image) =>
+        image.getAttribute('src'),
+      ),
+    ).toEqual([
+      '/icons/W.svg',
+      '/icons/U.svg',
+      '/icons/B.svg',
+      '/icons/R.svg',
+      '/icons/G.svg',
+    ]);
+    expect(screen.getByRole('heading', { name: 'Performance Overview' })).toBeInTheDocument();
+    expect(screen.queryByText(/SQLite analytics/i)).not.toBeInTheDocument();
+    expect(document.title).toBe('MTGA Tracker – Overview');
+    expect(screen.getByText('50% WR · 1–1 · 2 games')).toBeInTheDocument();
     expect(screen.getAllByText('Boros Mouse').length).toBeGreaterThan(0);
     [
       ['Overview', '#overview'],
@@ -383,7 +437,6 @@ describe('App', () => {
       ['Recent Games', '#recent-games'],
       ['Decks', '#decks'],
       ['Formats', '#formats'],
-      ['Deck Play / Draw', '#deck-play-draw'],
       ['Visible Drawn Cards', '#visible-drawn-cards'],
       ['Bo3 Matches', '#matches'],
       ['Sessions', '#sessions'],
@@ -396,7 +449,6 @@ describe('App', () => {
       'Decks',
       'Formats',
       'Play / Draw',
-      'Deck Play / Draw',
       'Visible Drawn Cards',
       'Momentum',
       'Recent Games',
@@ -426,7 +478,6 @@ describe('App', () => {
       'recent-games',
       'decks',
       'formats',
-      'deck-play-draw',
       'visible-drawn-cards',
       'matches',
       'sessions',
@@ -437,6 +488,8 @@ describe('App', () => {
     expect(within(overviewSection as HTMLElement).getByRole('table', { name: 'Momentum splits' })).toBeInTheDocument();
     expect(within(dashboardNav).queryByRole('link', { name: 'Play / Draw' })).not.toBeInTheDocument();
     expect(within(dashboardNav).queryByRole('link', { name: 'Momentum' })).not.toBeInTheDocument();
+    expect(within(dashboardNav).queryByRole('link', { name: 'Deck Play / Draw' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Midweek Magic/i)).not.toBeInTheDocument();
 
     const trendLink = within(dashboardNav).getByRole('link', { name: 'Win Rate Trend' });
     await user.click(trendLink);
@@ -444,6 +497,12 @@ describe('App', () => {
     const overviewLink = within(dashboardNav).getByRole('link', { name: 'Overview' });
     await user.click(overviewLink);
     expect(overviewLink).toHaveClass('active');
+    expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0 });
+
+    vi.mocked(window.scrollTo).mockClear();
+    await user.click(
+      screen.getByRole('link', { name: 'MTGA Tracker – Go to overview' }),
+    );
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0 });
 
     await user.click(screen.getByRole('button', { name: /switch to light mode/i }));
@@ -455,9 +514,9 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
-    // Decks table, Best Deck metric, Deck Play / Draw, Recent Games, and Matches.
+    // Decks table, Best Deck metric, Recent Games, and Matches.
     const deckLinks = screen.getAllByRole('link', { name: 'Boros Mouse' });
-    expect(deckLinks.length).toBe(5);
+    expect(deckLinks.length).toBe(4);
     deckLinks.forEach((link) => {
       expect(link).toHaveAttribute('href', '#/deck/Boros%20Mouse');
     });
@@ -483,18 +542,32 @@ describe('App', () => {
 
     expect((await screen.findAllByRole('heading', { name: 'Boros Mouse' })).length).toBeGreaterThan(0);
     expect(fetchMock).toHaveBeenCalledWith('/api/deck?name=Boros+Mouse', expect.anything());
-    expect(document.title).toBe('Boros Mouse – MTGA Tracker');
-    ['Win Rate Trend', 'Card Performance', 'Opening Hands', 'Mulligans', 'Formats', 'Recent Games'].forEach(
+    expect(document.title).toBe('MTGA Tracker – Boros Mouse');
+    ['Win Rate Trend', 'Deck List & Card Performance', 'Opening Hands', 'Mulligans', 'Formats', 'Recent Games'].forEach(
       (sectionName) => {
         expect(screen.getByRole('heading', { name: sectionName })).toBeInTheDocument();
       },
     );
     expect(screen.getAllByText('Mouse Mentor').length).toBeGreaterThan(0);
     expect(screen.getByText('Signature card: Mouse Mentor')).toBeInTheDocument();
+    const deckListTable = screen.getByRole('table', { name: 'Deck list and card performance' });
+    const mountainRow = within(deckListTable).getByRole('link', { name: 'Mountain' }).closest('tr');
+    const mentorRow = within(deckListTable).getByRole('link', { name: 'Mouse Mentor' }).closest('tr');
+    const duressRow = within(deckListTable).getByRole('link', { name: 'Duress' }).closest('tr');
+    expect(mountainRow).not.toBeNull();
+    expect(mentorRow).not.toBeNull();
+    expect(duressRow).not.toBeNull();
+    expect(within(mountainRow as HTMLElement).getAllByRole('cell')[0]).toHaveTextContent('20');
+    expect(within(mountainRow as HTMLElement).getAllByRole('cell')[2]).toHaveTextContent('Main Deck');
+    expect(within(mentorRow as HTMLElement).getAllByRole('cell')[0]).toHaveTextContent('4');
+    expect(within(mentorRow as HTMLElement).getAllByRole('cell')[4]).toHaveTextContent('2');
+    expect(within(duressRow as HTMLElement).getAllByRole('cell')[0]).toHaveTextContent('1');
+    expect(within(duressRow as HTMLElement).getAllByRole('cell')[2]).toHaveTextContent('Sideboard');
+    expect(within(duressRow as HTMLElement).getAllByRole('cell')[4]).toHaveTextContent('0');
 
     const nav = screen.getByRole('navigation', { name: 'Dashboard sections' });
     expect(within(nav).getByRole('link', { name: '← Back to dashboard' })).toHaveAttribute('href', '#overview');
-    ['Win Rate Trend', 'Card Performance', 'Opening Hands', 'Mulligans', 'Formats', 'Recent Games'].forEach(
+    ['Win Rate Trend', 'Deck List & Card Performance', 'Opening Hands', 'Mulligans', 'Formats', 'Recent Games'].forEach(
       (label) => {
         expect(within(nav).getByRole('link', { name: label })).toBeInTheDocument();
       },
@@ -506,8 +579,28 @@ describe('App', () => {
     });
 
     expect(await screen.findByLabelText('Overview metrics')).toBeInTheDocument();
-    expect(document.title).toBe('MTGA Tracker Dashboard');
-    expect(screen.queryByRole('heading', { name: 'Card Performance' })).not.toBeInTheDocument();
+    expect(document.title).toBe('MTGA Tracker – Overview');
+    expect(screen.queryByRole('heading', { name: 'Deck List & Card Performance' })).not.toBeInTheDocument();
+  });
+
+  it('copies an exact Arena deck export from deck detail', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) =>
+        new Response(JSON.stringify(String(url).startsWith('/api/deck') ? deckDetail : snapshot), {
+          status: 200,
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText');
+    window.location.hash = '#/deck/Boros%20Mouse';
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: 'Copy Arena Deck' }));
+
+    expect(writeText).toHaveBeenCalledWith(deckDetail.deck_export.text);
+    expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument();
   });
 
   it('carries dashboard filters into deck links and deck detail fetches', async () => {
@@ -597,6 +690,30 @@ describe('App', () => {
     expect(within(cardTable).queryByText('Llanowar Elves')).not.toBeInTheDocument();
   });
 
+  it('shows fifteen decks at a time and pages through the remaining decks', async () => {
+    const pagedSnapshot = {
+      ...snapshot,
+      decks: Array.from({ length: 17 }, (_, index) => ({
+        ...snapshot.decks[0],
+        deck_name: `Deck ${String(index + 1).padStart(2, '0')}`,
+        games: index + 1,
+      })),
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(pagedSnapshot), { status: 200 })));
+    const user = userEvent.setup();
+    render(<App />);
+
+    const deckTable = await screen.findByRole('table', { name: 'Deck performance' });
+    expect(within(deckTable).getAllByRole('row')).toHaveLength(16);
+    expect(within(deckTable).getByText('Deck 17')).toBeInTheDocument();
+    expect(within(deckTable).queryByText('Deck 01')).not.toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Deck performance pagination' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(within(deckTable).getAllByRole('row')).toHaveLength(3);
+    expect(within(deckTable).getByText('Deck 01')).toBeInTheDocument();
+  });
+
   it('shows setup guidance when there are no tracked games yet', async () => {
     const emptySnapshot = {
       ...snapshot,
@@ -632,13 +749,104 @@ describe('App', () => {
       '#/game/game-2?return=%23recent-games',
     );
     const recentTable = screen.getByRole('table', { name: 'Recent games' });
-    expect(within(recentTable).getByRole('columnheader', { name: /Cards Seen/i })).toBeInTheDocument();
-    expect(within(recentTable).getByRole('columnheader', { name: /Lands Seen/i })).toBeInTheDocument();
-    expect(within(recentTable).getByRole('columnheader', { name: /Your Avg Turn/i })).toBeInTheDocument();
-    expect(within(recentTable).getByRole('columnheader', { name: /Opp\. Avg Turn/i })).toBeInTheDocument();
-    expect(within(recentTable).getByText('25 sec')).toBeInTheDocument();
-    expect(within(recentTable).getByText('40 sec')).toBeInTheDocument();
-    expect(within(recentTable).getByText('70%')).toBeInTheDocument();
+    const headers = within(recentTable)
+      .getAllByRole('columnheader')
+      .map((header) => header.textContent?.replace(/[↕↑↓]/g, '').trim());
+    expect(headers).toEqual([
+      'Started',
+      'Deck',
+      'Format',
+      'Outcome',
+      'Draw Status',
+      'Mulligan(s)',
+      'Total Turns',
+      'Cards Seen',
+      'Lands Seen',
+      'Game Time',
+    ]);
+    expect(within(recentTable).queryByRole('columnheader', { name: 'Land Seen' })).not.toBeInTheDocument();
+    expect(within(recentTable).queryByRole('columnheader', { name: /Your Avg Turn/i })).not.toBeInTheDocument();
+    expect(within(recentTable).queryByRole('columnheader', { name: /Opp\. Avg Turn/i })).not.toBeInTheDocument();
+    const recentGameRow = within(recentTable).getAllByRole('row')[1];
+    expect(within(recentGameRow).getByText('Flood')).toHaveClass('badge-draw');
+    expect(within(recentGameRow).getAllByText('10')).toHaveLength(2);
+    expect(within(recentGameRow).getByText('7 (71%)')).toBeInTheDocument();
+  });
+
+  it('shows mana-screwed games in Recent Games with the legacy API shape', async () => {
+    const manaScrewedSnapshot = {
+      ...snapshot,
+      draw_quality: snapshot.draw_quality.map((row) =>
+        row.game_id === 'game-1'
+          ? { ...row, cards_seen: 10, lands_seen: 1, land_seen_pct: 10 }
+          : row,
+      ),
+      recent: [
+        {
+          game_id: 'game-1',
+          started_at: '2026-06-04T00:01:00',
+          deck_name: 'Boros Mouse',
+          format_label: 'Standard Best-of-1',
+          outcome: 'loss',
+          mulligans: 0,
+          duration_seconds: 120,
+          total_turns: 7,
+          flood_reasons: [],
+          is_flood: false,
+        },
+      ],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(manaScrewedSnapshot), { status: 200 })),
+    );
+
+    render(<App />);
+
+    const recentTable = await screen.findByRole('table', { name: 'Recent games' });
+    expect(within(recentTable).getByText('Mana Screwed')).toHaveClass('badge-screw');
+  });
+
+  it('corrects a legacy zero-step rank snapshot after a same-tier win', async () => {
+    const legacyRankSnapshot = {
+      ...snapshot,
+      rank_progress: [
+        {
+          ...snapshot.rank_progress[0],
+          id: 1,
+          captured_at: '2026-07-26T01:46:01',
+          rank_class: 'Diamond',
+          rank_level: 4,
+          rank_step: 0,
+          raw_step: undefined,
+          rank_score: 96,
+          rank_label: 'Diamond 4 (0/6)',
+          matches_won: 81,
+          matches_lost: 62,
+        },
+        {
+          ...snapshot.rank_progress[0],
+          id: 2,
+          captured_at: '2026-07-26T02:00:22',
+          rank_class: 'Diamond',
+          rank_level: 4,
+          rank_step: 0,
+          raw_step: undefined,
+          rank_score: 96,
+          rank_label: 'Diamond 4 (0/6)',
+          matches_won: 82,
+          matches_lost: 62,
+        },
+      ],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(legacyRankSnapshot), { status: 200 })),
+    );
+
+    render(<App />);
+
+    expect(await screen.findByText('Diamond 4 (1/6)')).toBeInTheDocument();
   });
 
   it('returns from a game to the dashboard section that opened it', async () => {
@@ -687,6 +895,7 @@ describe('App', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     window.location.hash = '#/game/game-1';
+    const user = userEvent.setup();
 
     render(<App />);
 
@@ -696,13 +905,108 @@ describe('App', () => {
     ['Turn Timing', 'Draw Quality', 'Life Totals', 'Opening Hand', 'Drawn Cards', 'Cards Played', 'Opponent Revealed Cards', 'Timeline'].forEach((sectionName) => {
       expect(screen.getByRole('heading', { name: sectionName })).toBeInTheDocument();
     });
-    expect(screen.getByRole('table', { name: 'Turn timing' })).toBeInTheDocument();
-    expect(screen.getByText('Estimated')).toBeInTheDocument();
-    expect(screen.getByText('70%')).toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: 'Turn timing' })).not.toBeInTheDocument();
+    expect(screen.getByText('You · 40 sec')).toBeInTheDocument();
+    expect(screen.getByText('Opponent · 30 sec · Estimated')).toBeInTheDocument();
+    const gameMetrics = screen.getByRole('region', { name: 'Game metrics' });
+    expect(within(gameMetrics).queryByText('Outcome')).not.toBeInTheDocument();
+    expect(within(gameMetrics).queryByText('Format')).not.toBeInTheDocument();
+    expect(within(gameMetrics).getAllByRole('article')).toHaveLength(5);
+    expect(screen.getByText('8 (73%)')).toBeInTheDocument();
+    expect(screen.getByText('7 (70%)')).toBeInTheDocument();
     expect(screen.getAllByText('Flood').length).toBeGreaterThan(0);
-    expect(screen.getByText('Turn 1 begins')).toBeInTheDocument();
+    const drawStatus = screen.getByText('Draw Status').closest('.metric-card');
+    expect(drawStatus).toHaveClass('metric-card-info');
+    expect(within(drawStatus as HTMLElement).getByText('Flood')).toBeInTheDocument();
+    expect(screen.getByText('Flood evidence')).toHaveClass('badge-draw');
+    screen
+      .getAllByText('Flood')
+      .filter((element) => element.classList.contains('badge'))
+      .forEach((badge) => expect(badge).toHaveClass('badge-draw'));
+    expect(screen.queryByText('Turn 1 begins')).not.toBeInTheDocument();
+    const timelineFilters = screen.getByRole('group', { name: 'Timeline filters' });
+    expect(within(timelineFilters).queryByRole('option', { name: 'turn' })).not.toBeInTheDocument();
+    expect(screen.getByText('1 of 1 events')).toBeInTheDocument();
+    const timelineSection = screen.getByRole('heading', { name: 'Timeline' }).closest('section');
+    expect(timelineSection).not.toBeNull();
+    const timeline = within(timelineSection as HTMLElement);
+    const timelineReturnHash = gameRouteHash('game-1', '#overview', 'game-timeline');
+    expect(timeline.getByRole('link', { name: '[Mouse Mentor]' })).toHaveAttribute(
+      'href',
+      cardRouteHash('Mouse Mentor', timelineReturnHash),
+    );
+    expect(timeline.getByRole('link', { name: '[Graveyard Trespasser]' })).toHaveAttribute(
+      'href',
+      cardRouteHash('Graveyard Trespasser', timelineReturnHash),
+    );
+    expect(timeline.queryByRole('link', { name: 'resolved' })).not.toBeInTheDocument();
+    expect(timeline.queryByRole('link', { name: 'you' })).not.toBeInTheDocument();
+    expect(timeline.queryByRole('link', { name: 'Skeleton Pirate' })).not.toBeInTheDocument();
+    expect(timelineSection).toHaveTextContent('[0:20] [Mouse Mentor]Creature2/1');
     expect(screen.getByRole('link', { name: 'Boros Mouse' })).toHaveAttribute('href', '#/deck/Boros%20Mouse');
     expect(screen.getByRole('link', { name: 'Opponent' })).toHaveAttribute('href', '#/opponent/Opponent');
+    expect(screen.getAllByRole('button', { name: /^Collapse / })).toHaveLength(8);
+
+    const timingToggle = screen.getByRole('button', { name: 'Collapse Turn Timing' });
+    await user.click(timingToggle);
+    expect(timingToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByText('Your Turn Time')).not.toBeVisible();
+    expect(screen.getByRole('button', { name: 'Expand Turn Timing' })).toBeInTheDocument();
+  });
+
+  it('marks a three-draw low-land drought as mana screw', async () => {
+    const manaScrewDetail = {
+      ...gameDetail,
+      opening_hand: [
+        { display_name: 'Swamp', type_category: 'Land', hand_position: 1, copy_number: 1 },
+      ],
+      drawn: [
+        { display_name: 'First Nonland', type_category: 'Creature', turn_number: 2, draw_position: 1, copy_number: 1 },
+        { display_name: 'Second Nonland', type_category: 'Instant', turn_number: 4, draw_position: 2, copy_number: 1 },
+        { display_name: 'Third Nonland', type_category: 'Creature', turn_number: 6, draw_position: 3, copy_number: 1 },
+      ],
+      draw_quality: {
+        total_draws: 3,
+        identified_draws: 3,
+        land_draws: 0,
+        land_draw_pct: 0,
+        opening_lands: 1,
+        total_cards_seen: 10,
+        lands_seen: 1,
+        land_seen_pct: 10,
+        expected_land_rate: 40,
+        expected_lands_seen: 4,
+        longest_land_streak: 0,
+        max_lands_in_eight: null,
+        longest_low_land_drought: 3,
+        low_land_drought_lands: 1,
+        flood_reasons: [],
+        is_flood: false,
+        screw_reasons: ['3 consecutive nonland draws while stuck on 1 land'],
+        is_screw: true,
+      },
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) =>
+        new Response(JSON.stringify(String(url).startsWith('/api/game') ? manaScrewDetail : snapshot), {
+          status: 200,
+        }),
+      ),
+    );
+    window.location.hash = '#/game/game-1';
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: /Game Jun 4/i })).toBeInTheDocument();
+    expect(screen.getAllByText('Mana Screwed').length).toBeGreaterThan(0);
+    const drawStatus = screen.getByText('Draw Status').closest('.metric-card');
+    expect(drawStatus).toHaveClass('metric-card-warning');
+    expect(within(drawStatus as HTMLElement).getByText('Mana Screwed')).toBeInTheDocument();
+    expect(screen.getByText('3 draws')).toBeInTheDocument();
+    expect(screen.getByText('Mana Screwed Evidence')).toHaveClass('badge-screw');
+    expect(screen.getByText('3 consecutive nonland draws while stuck on 1 land')).toBeInTheDocument();
+    expect(screen.queryByText('Flood evidence')).not.toBeInTheDocument();
   });
 
   it('renders sortable head-to-head history for an opponent route', async () => {
@@ -787,12 +1091,74 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByRole('heading', { name: 'Mouse Mentor' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Mouse Mentor card' })).toHaveAttribute(
+      'src',
+      'https://api.scryfall.com/cards/named?exact=Mouse+Mentor&format=image&version=normal',
+    );
     expect(fetchMock).toHaveBeenCalledWith('/api/card?name=Mouse+Mentor', expect.anything());
-    expect(document.title).toBe('Mouse Mentor – MTGA Tracker');
-    ['Card Summary', 'Usage by Side', 'Your Decks', 'Opening Hand Impact'].forEach((sectionName) => {
+    expect(document.title).toBe('MTGA Tracker – Mouse Mentor');
+    [
+      'Card Summary',
+      'When Opponent Plays This Card',
+      'Played By Side',
+      'Your Decks',
+      'Opening Hand Impact',
+    ].forEach((sectionName) => {
       expect(screen.getByRole('heading', { name: sectionName })).toBeInTheDocument();
     });
+    expect(screen.getByRole('region', { name: 'Opponent card impact' })).toHaveTextContent('Your Loss Rate50%');
     expect(screen.getByRole('link', { name: 'Boros Mouse' })).toHaveAttribute('href', '#/deck/Boros%20Mouse');
+    screen.getAllByRole('link', { name: '← Back to dashboard' }).forEach((link) => {
+      expect(link).toHaveAttribute('href', '#overview');
+    });
+  });
+
+  it('returns a card opened from the timeline to the originating game', async () => {
+    const gameHash = gameRouteHash('game-1', '#recent-games', 'game-timeline');
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).startsWith('/api/card')) {
+        return new Response(JSON.stringify(cardDetail), { status: 200 });
+      }
+      if (String(url).startsWith('/api/game')) {
+        return new Response(JSON.stringify(gameDetail), { status: 200 });
+      }
+      return new Response(JSON.stringify(snapshot), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    window.location.hash = cardRouteHash('Mouse Mentor', gameHash);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Mouse Mentor' })).toBeInTheDocument();
+    const backLinks = screen.getAllByRole('link', { name: '← Back to game' });
+    backLinks.forEach((link) => expect(link).toHaveAttribute('href', gameHash));
+    await user.click(backLinks[0]);
+
+    await waitFor(() => expect(window.location.hash).toBe(gameHash));
+    expect(await screen.findByRole('heading', { name: /Game Jun 4/i })).toBeInTheDocument();
+  });
+
+  it('derives your opponent-card record from the legacy API perspective', async () => {
+    const legacyCardDetail = {
+      ...cardDetail,
+      opponent_impact: undefined,
+      by_role: cardDetail.by_role.map((row) =>
+        row.role === 'opponent' ? { ...row, wins: 3, losses: 1, win_rate: 75 } : row,
+      ),
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(legacyCardDetail), { status: 200 })),
+    );
+    window.location.hash = '#/card/Mouse%20Mentor';
+
+    render(<App />);
+
+    const impact = await screen.findByRole('region', { name: 'Opponent card impact' });
+    expect(impact).toHaveTextContent('Your Record1–3');
+    expect(impact).toHaveTextContent('Your Win Rate25%');
+    expect(impact).toHaveTextContent('Your Loss Rate75%');
   });
 
   it('shows an error with a way back when the deck detail API fails', async () => {

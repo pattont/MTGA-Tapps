@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
+import { TRACKER_NAME } from '../branding';
 import { dashboardNavItems, type AppNavItem } from '../nav';
 import type { ThemeName } from '../theme';
 import { CardSearch } from './CardSearch';
@@ -8,8 +9,7 @@ interface AppShellProps {
   theme: ThemeName;
   onToggleTheme: () => void;
   navItems?: AppNavItem[];
-  eyebrow?: string;
-  heading?: string;
+  heading: string;
   children: ReactNode;
 }
 
@@ -25,8 +25,7 @@ export function AppShell({
   theme,
   onToggleTheme,
   navItems = dashboardNavItems,
-  eyebrow = 'SQLite analytics',
-  heading = 'Performance overview',
+  heading,
   children,
 }: AppShellProps) {
   const nextTheme = theme === 'dark' ? 'light' : 'dark';
@@ -75,15 +74,43 @@ export function AppShell({
     <div className="app-layout">
       <aside className="sidebar">
         <div className="brand-row">
-          <div>
-            <h1 className="brand-wordmark">MTGA Tracker</h1>
+          <a
+            aria-label={`${TRACKER_NAME} – Go to overview`}
+            className="brand-home"
+            href="#overview"
+            onClick={(event) => {
+              if (
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              ) {
+                return;
+              }
+              event.preventDefault();
+              if (window.location.hash !== '#overview') {
+                window.location.hash = '#overview';
+              }
+              setActiveSection('overview');
+              scrollToSection('overview');
+            }}
+          >
+            <h1 className="brand-wordmark">{TRACKER_NAME}</h1>
             <p>Local analytics dashboard</p>
             <div className="mana-row" aria-hidden="true">
               {['W', 'U', 'B', 'R', 'G'].map((color) => (
-                <img key={color} alt="" className="mana-pip" height={20} src={`/icons/${color}.webp`} width={20} />
+                <img
+                  key={color}
+                  alt=""
+                  className="mana-pip"
+                  height={22}
+                  src={`/icons/${color}.svg`}
+                  width={22}
+                />
               ))}
             </div>
-          </div>
+          </a>
         </div>
         <nav aria-label="Dashboard sections">
           {navItems.map((item) =>
@@ -110,10 +137,7 @@ export function AppShell({
       </aside>
       <main className="dashboard-main">
         <header className="topbar">
-          <div>
-            <span className="eyebrow">{eyebrow}</span>
-            <h2>{heading}</h2>
-          </div>
+          <h2>{heading}</h2>
           <div className="topbar-actions">
             <CardSearch />
             <button className="theme-toggle" type="button" onClick={onToggleTheme}>

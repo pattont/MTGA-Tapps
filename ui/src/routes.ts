@@ -8,6 +8,12 @@ export interface DeckRoute {
 export interface GameRoute {
   id: string;
   returnHash: string;
+  focusId: 'game-timeline' | null;
+}
+
+export interface CardRoute {
+  name: string;
+  returnHash: string;
 }
 
 function routeQuery(filters: SnapshotFilters, includeDeck = false): string {
@@ -33,17 +39,29 @@ export function deckRouteHashWithFilters(deckName: string, filters: SnapshotFilt
   return `#/deck/${encodeURIComponent(deckName)}${query ? `?${query}` : ''}`;
 }
 
-export function gameRouteHash(gameId: string, returnHash?: string): string {
+export function gameRouteHash(
+  gameId: string,
+  returnHash?: string,
+  focusId?: 'game-timeline',
+): string {
   const params = new URLSearchParams();
   if (returnHash?.startsWith('#')) {
     params.set('return', returnHash);
+  }
+  if (focusId === 'game-timeline') {
+    params.set('focus', focusId);
   }
   const query = params.toString();
   return `#/game/${encodeURIComponent(gameId)}${query ? `?${query}` : ''}`;
 }
 
-export function cardRouteHash(cardName: string): string {
-  return `#/card/${encodeURIComponent(cardName)}`;
+export function cardRouteHash(cardName: string, returnHash?: string): string {
+  const params = new URLSearchParams();
+  if (returnHash && parseGameRoute(returnHash)) {
+    params.set('return', returnHash);
+  }
+  const query = params.toString();
+  return `#/card/${encodeURIComponent(cardName)}${query ? `?${query}` : ''}`;
 }
 
 export function opponentRouteHash(opponentName: string): string {
@@ -109,25 +127,29 @@ export function parseGameRoute(hash: string): GameRoute | null {
   const returnParam = new URLSearchParams(query).get('return');
   const requestedReturnHash = returnParam?.startsWith('#') ? returnParam : '#overview';
   const returnHash = requestedReturnHash === '#draw-quality' ? '#recent-games' : requestedReturnHash;
+  const focusId = new URLSearchParams(query).get('focus') === 'game-timeline' ? 'game-timeline' : null;
   try {
-    return { id: decodeURIComponent(encoded), returnHash };
+    return { id: decodeURIComponent(encoded), returnHash, focusId };
   } catch {
-    return { id: encoded, returnHash };
+    return { id: encoded, returnHash, focusId };
   }
 }
 
-export function parseCardRoute(hash: string): string | null {
+export function parseCardRoute(hash: string): CardRoute | null {
   if (!hash.startsWith('#/card/')) {
     return null;
   }
-  const encoded = hash.slice('#/card/'.length);
+  const route = hash.slice('#/card/'.length);
+  const [encoded, query = ''] = route.split('?');
   if (!encoded) {
     return null;
   }
+  const returnParam = new URLSearchParams(query).get('return');
+  const returnHash = returnParam && parseGameRoute(returnParam) ? returnParam : '#overview';
   try {
-    return decodeURIComponent(encoded);
+    return { name: decodeURIComponent(encoded), returnHash };
   } catch {
-    return encoded;
+    return { name: encoded, returnHash };
   }
 }
 

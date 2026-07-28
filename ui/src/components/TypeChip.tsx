@@ -9,8 +9,18 @@ const typeClass: Record<string, string> = {
   Battle: 'type-chip-other',
 };
 
-export function TypeChip({ type }: { type: string | null | undefined }) {
+export function TypeChip({
+  type,
+  compact = false,
+}: {
+  type: string | null | undefined;
+  compact?: boolean;
+}) {
   const label = type || 'Other';
   const className = typeClass[label] ?? 'type-chip-other';
-  return <span className={`type-chip ${className}`}>{label}</span>;
+  return (
+    <span className={`type-chip ${className}${compact ? ' type-chip-compact' : ''}`}>
+      {label}
+    </span>
+  );
 }

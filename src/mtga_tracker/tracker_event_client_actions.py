@@ -96,6 +96,37 @@ class TrackerClientActionsMixin:
                 "modal_options": selected_options,
             }
 
+    def _store_submitted_deck(
+        self,
+        deck_cards: List[Any],
+        sideboard_cards: List[Any],
+    ) -> None:
+        """Keep the latest authoritative deck submission for the next game."""
+        parsed_deck = [int(card) for card in deck_cards]
+        parsed_sideboard = [int(card) for card in sideboard_cards]
+        self._pending_submitted_deck_cards = parsed_deck
+        self._pending_submitted_sideboard_cards = parsed_sideboard
+        if not self.game_state.in_match or (
+            not self.game_state.match_complete
+            and self.game_state.last_turn_announced <= 0
+        ):
+            self.game_state.submitted_deck_cards = parsed_deck.copy()
+            self.game_state.submitted_sideboard_cards = parsed_sideboard.copy()
+
+    def _capture_submitted_deck_message(self, message: Dict[str, Any]) -> None:
+        """Capture the deck bundled with Arena's game connection response."""
+        if message.get("type") != "GREMessageType_ConnectResp":
+            return
+        connect_response = message.get("connectResp") or {}
+        deck_message = connect_response.get("deckMessage") or {}
+        deck_cards = deck_message.get("deckCards")
+        sideboard_cards = deck_message.get("sideboardCards")
+        if isinstance(deck_cards, list):
+            self._store_submitted_deck(
+                deck_cards,
+                sideboard_cards if isinstance(sideboard_cards, list) else [],
+            )
+
     def _mode_text(self, ability_grp_id: int) -> Optional[str]:
         """Return concise display text for one selected modal ability."""
         get_text = getattr(self.card_db, "get_ability_text", None)
@@ -183,9 +214,10 @@ class TrackerClientActionsMixin:
             deck_cards = normalized.get("deck_cards")
             sideboard_cards = normalized.get("sideboard_cards")
             if isinstance(deck_cards, list):
-                self.game_state.submitted_deck_cards = [int(card) for card in deck_cards]
-            if isinstance(sideboard_cards, list):
-                self.game_state.submitted_sideboard_cards = [int(card) for card in sideboard_cards]
+                self._store_submitted_deck(
+                    deck_cards,
+                    sideboard_cards if isinstance(sideboard_cards, list) else [],
+                )
             return
 
         if payload_type != "ClientMessageType_SelectNResp":

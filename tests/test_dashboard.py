@@ -8,6 +8,7 @@ import pytest
 
 from mtga_tracker.analytics import AnalyticsStore
 from mtga_tracker.dashboard import (
+    _timeline_text_segments,
     card_detail,
     DashboardHandler,
     dashboard_snapshot,
@@ -17,6 +18,53 @@ from mtga_tracker.dashboard import (
     render_dashboard_html,
     search_cards,
 )
+from mtga_tracker.format_normalizer import normalize_match_format
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_cards"),
+    [
+        ("You: cast [Sheltered by Ghosts (Enchantment)]", ["Sheltered by Ghosts"]),
+        (
+            "You: [Sheltered by Ghosts] - exile target -> [Mouse Mentor (2/1)]",
+            ["Sheltered by Ghosts", "Mouse Mentor"],
+        ),
+        (
+            "Stack: [Sheltered by Ghosts (Enchantment)] [resolved]",
+            ["Sheltered by Ghosts"],
+        ),
+        ("You: [Mouse Mentor] was exiled", ["Mouse Mentor"]),
+        (
+            "Combat: [Mouse Mentor (2/1)] dealt damage to [you]",
+            ["Mouse Mentor"],
+        ),
+    ],
+)
+def test_timeline_text_segments_link_cards_across_event_formats(text, expected_cards):
+    segments = _timeline_text_segments(
+        text, {"Sheltered by Ghosts", "Mouse Mentor"}
+    )
+
+    assert [
+        segment["card_name"] for segment in segments if segment["kind"] == "card"
+    ] == expected_cards
+    assert "".join(segment["text"] for segment in segments) == text
+
+
+def test_timeline_text_segments_include_known_card_types():
+    segments = _timeline_text_segments(
+        "You: cast [Sheltered by Ghosts (Enchantment)]",
+        {"Sheltered by Ghosts": "Enchantment"},
+    )
+
+    assert [segment for segment in segments if segment["kind"] == "card"] == [
+        {
+            "kind": "card",
+            "text": "Sheltered by Ghosts",
+            "card_name": "Sheltered by Ghosts",
+            "card_type": "Enchantment",
+        }
+    ]
 
 
 def _sample_dashboard_db(tmp_path):
@@ -171,7 +219,10 @@ def _sample_dashboard_db(tmp_path):
                     "damage",
                     "player",
                     "damage",
-                    "Mouse Mentor attacks",
+                    (
+                        "[0:20] Combat: [Mouse Mentor (2/1)] dealt 2 damage to "
+                        "[Graveyard Trespasser (3/3)] [resolved] [you] [Skeleton Pirate]"
+                    ),
                     12,
                     0,
                 ),
@@ -198,10 +249,13 @@ def test_dashboard_snapshot_and_html_render_latest_game(tmp_path):
     assert snapshot["draw_quality"][1]["known_draws"] == 1
     assert snapshot["drawn_cards"][0]["display_name"] == "Llanowar Elves"
     assert snapshot["momentum"][0]["split"] == "After a win"
-    assert snapshot["recent"][0]["player_avg_turn_seconds"] == 25.0
-    assert snapshot["recent"][0]["opponent_avg_turn_seconds"] == 40.0
-    assert snapshot["rank_progress"][0]["rank_label"] == "Platinum 3 (3/6)"
-    assert snapshot["rank_progress"][0]["rank_score"] == 81
+    assert snapshot["recent"][0]["total_turns"] == 10
+    assert "player_avg_turn_seconds" not in snapshot["recent"][0]
+    assert "opponent_avg_turn_seconds" not in snapshot["recent"][0]
+    assert snapshot["recent"][0]["is_flood"] is False
+    assert snapshot["recent"][0]["is_screw"] is False
+    assert snapshot["rank_progress"][0]["rank_label"] == "Platinum 3 (4/6)"
+    assert snapshot["rank_progress"][0]["rank_score"] == 82
     # Bo1 matches duplicate Recent Games rows, so the matches section is Bo3-only.
     assert snapshot["matches"] == []
     assert snapshot["sessions"][0]["session_id"] == "session-1"
@@ -221,6 +275,25 @@ def test_dashboard_snapshot_missing_db_does_not_create_file(tmp_path):
         dashboard_snapshot(db_path)
 
     assert not db_path.exists()
+
+
+def test_fallback_recent_games_combines_lands_seen_with_ceiling_percentage(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into game_drawn_cards (
+                game_id, participant_id, display_name, type_category,
+                draw_position, turn_number, copy_number
+            ) values ('game-1', 'player-1', 'Mouse Mentor', 'Creature', 2, 3, 1)
+            """
+        )
+
+    html = render_dashboard_html(dashboard_snapshot(db_path))
+
+    assert "1 (34%)" in html
+    assert "Mulligan(s)" in html
+    assert "Total Turns" in html
 
 
 def test_dashboard_handler_serves_snapshot_json(tmp_path):
@@ -514,13 +587,12 @@ def test_dashboard_snapshot_groups_formats_and_excludes_jump_in(tmp_path):
     assert by_label["Unknown"]["raw_formats"] == "Unknown"
     assert by_label["Standard Best-of-1 (Ranked)"]["games"] == 1
     assert by_label["Standard Best-of-3 (Ranked)"]["games"] == 2
-    # Midweek Magic rolls up into a single category with a separate breakdown.
-    assert by_label["Midweek Magic"]["games"] == 2
-    assert "Midweek Magic - Slow Start" not in by_label
-    assert {row["format_label"]: row["games"] for row in snapshot["midweek_formats"]} == {
-        "Midweek Magic - Slow Start": 1,
-        "Midweek Magic - Brawl": 1,
-    }
+    assert all("Midweek Magic" not in label for label in by_label)
+    assert snapshot["midweek_formats"] == []
+    assert all(
+        not normalize_match_format(option["raw_format"]).is_midweek
+        for option in snapshot["filter_options"]["formats"]
+    )
 
     # Matches section only reports Bo3 matches.
     assert [row["match_id"] for row in snapshot["matches"]] == ["match-bo3"]
@@ -600,6 +672,7 @@ def test_deck_detail_reports_cards_openers_and_mulligans(tmp_path):
             """,
             [
                 ("game-1", "player-1", 11, "Mouse Mentor (Creature 2/1)", "Creature", 2, 0),
+                ("game-1", "player-1", 13, "Stolen Dragon (Creature 5/5)", "Creature", 1, 0),
                 ("game-2", "player-2", 11, "Mouse Mentor (Creature 2/1)", "Creature", 1, 0),
                 ("game-2", "player-2", 12, "Mountain (Land)", "Land", 3, 0),
             ],
@@ -635,6 +708,9 @@ def test_deck_detail_reports_cards_openers_and_mulligans(tmp_path):
     assert mentor["times_played"] == 3
     assert mentor["times_drawn"] == 1
     assert mentor["win_rate_when_seen"] == 50.0
+    assert "Stolen Dragon" not in {
+        row["display_name"] for row in detail["card_performance"]
+    }
 
     # game-1 opener has a Mountain (from the shared fixture); game-2 adds another.
     mountain = next(row for row in detail["opening_hands"] if row["display_name"] == "Mountain")
@@ -647,6 +723,81 @@ def test_deck_detail_reports_cards_openers_and_mulligans(tmp_path):
     assert [row["game_id"] for row in detail["recent"]] == ["game-2", "game-1"]
     assert detail["recent"][0]["play_draw"] == "On the draw"
     assert [row["game_id"] for row in detail["trend"]] == ["game-1", "game-2"]
+
+
+def test_deck_detail_uses_submitted_deck_for_card_performance_and_arena_export(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            insert into cards (id, arena_id, name, primary_type, first_seen_at)
+            values (?, ?, ?, ?, '2026-07-27')
+            """,
+            [
+                (21, 1001, "Mouse Mentor", "Creature"),
+                (22, 1002, "Unholy Annex", "Enchantment"),
+                (23, 1003, "Duress", "Sorcery"),
+                (24, 1004, "Stolen Dragon", "Creature"),
+                (25, None, "Unholy Annex // Ritual Chamber", "Enchantment"),
+            ],
+        )
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            )
+            values (?, 'player-1', ?, ?, ?, 1)
+            """,
+            [
+                ("game-1", 21, "Mouse Mentor (Creature 2/1)", "Creature"),
+                ("game-1", 22, "Unholy Annex (Enchantment)", "Enchantment"),
+                ("game-1", 24, "Stolen Dragon (Creature 5/5)", "Creature"),
+            ],
+        )
+        conn.executemany(
+            """
+            insert into game_deck_cards (
+                game_id, participant_id, card_id, arena_id, display_name,
+                type_category, deck_zone, quantity
+            )
+            values ('game-1', 'player-1', ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (21, 1001, "Mouse Mentor", "Creature", "deck", 4),
+                (22, 1002, "Unholy Annex", "Enchantment", "deck", 1),
+                (23, 1003, "Duress", "Sorcery", "sideboard", 2),
+            ],
+        )
+
+    detail = deck_detail(db_path, "Boros Mouse")
+
+    assert [row["display_name"] for row in detail["card_performance"]] == [
+        "Mouse Mentor",
+        "Unholy Annex",
+    ]
+    assert detail["deck_export"]["available"] is True
+    assert detail["deck_export"]["main_deck"] == [
+        {"display_name": "Mouse Mentor", "quantity": 4, "type_category": "Creature"},
+        {
+            "display_name": "Unholy Annex // Ritual Chamber",
+            "quantity": 1,
+            "type_category": "Enchantment",
+        },
+    ]
+    assert detail["deck_export"]["sideboard"] == [
+        {"display_name": "Duress", "quantity": 2, "type_category": "Sorcery"}
+    ]
+    assert detail["deck_export"]["text"] == (
+        "About\n"
+        "Name Boros Mouse\n"
+        "\n"
+        "Deck\n"
+        "4 Mouse Mentor\n"
+        "1 Unholy Annex // Ritual Chamber\n"
+        "\n"
+        "Sideboard\n"
+        "2 Duress"
+    )
 
 
 def test_deck_detail_applies_format_filter_to_all_sections(tmp_path):
@@ -767,13 +918,27 @@ def test_game_detail_reports_header_cards_and_timeline(tmp_path):
             "copy_number": 1,
         }
     ]
-    assert detail["draw_quality"] == {
-        "total_draws": 1,
-        "identified_draws": 1,
-        "land_draws": 0,
-        "land_draw_pct": 0.0,
-        "is_flood": False,
-    }
+    quality = detail["draw_quality"]
+    assert quality["total_draws"] == 1
+    assert quality["identified_draws"] == 1
+    assert quality["land_draws"] == 0
+    assert quality["land_draw_pct"] == 0.0
+    assert quality["total_cards_seen"] == 2
+    assert quality["opening_lands"] == 1
+    assert quality["lands_seen"] == 1
+    assert quality["land_seen_pct"] == 50.0
+    assert quality["expected_land_rate"] == 40.0
+    assert quality["expected_lands_seen"] == 0.8
+    assert quality["flood_probability_pct"] == 64.4
+    assert quality["screw_probability_pct"] == 84.4
+    assert quality["longest_land_streak"] == 0
+    assert quality["max_lands_in_eight"] is None
+    assert quality["longest_low_land_drought"] == 1
+    assert quality["low_land_drought_lands"] == 1
+    assert quality["flood_reasons"] == []
+    assert quality["is_flood"] is False
+    assert quality["screw_reasons"] == []
+    assert quality["is_screw"] is False
     assert detail["turn_timing"] == {
         "player": {"total_seconds": 60, "turns_timed": 2, "avg_seconds": 30.0},
         "opponent": {"total_seconds": 30, "turns_timed": 1, "avg_seconds": 30.0},
@@ -822,6 +987,37 @@ def test_game_detail_reports_header_cards_and_timeline(tmp_path):
         }
     ]
     assert [row["event_type"] for row in detail["timeline"]] == ["turn", "damage"]
+    damage_event = detail["timeline"][1]
+    assert "".join(segment["text"] for segment in damage_event["text_segments"]) == damage_event["text"]
+    assert [
+        segment
+        for segment in damage_event["text_segments"]
+        if segment["kind"] == "card"
+    ] == [
+        {
+            "kind": "card",
+            "text": "Mouse Mentor",
+            "card_name": "Mouse Mentor",
+            "card_type": "Creature",
+        },
+        {
+            "kind": "card",
+            "text": "Graveyard Trespasser",
+            "card_name": "Graveyard Trespasser",
+            "card_type": "Creature",
+        },
+    ]
+    plain_timeline_text = "".join(
+        segment["text"]
+        for segment in damage_event["text_segments"]
+        if segment["kind"] == "text"
+    )
+    assert "[0:20]" in plain_timeline_text
+    assert "(2/1)" in plain_timeline_text
+    assert "(3/3)" in plain_timeline_text
+    assert "[resolved]" in plain_timeline_text
+    assert "[you]" in plain_timeline_text
+    assert "[Skeleton Pirate]" in plain_timeline_text
     assert detail["life_curve"] == [
         {"turn_number": 1, "player_life": 20, "opponent_life": 20},
         {"turn_number": 4, "player_life": 12, "opponent_life": 0},
@@ -879,13 +1075,23 @@ def test_game_detail_marks_flood_when_over_half_of_draws_are_lands(tmp_path):
 
     detail = game_detail(db_path, "game-1")
 
-    assert detail["draw_quality"] == {
-        "total_draws": 5,
-        "identified_draws": 4,
-        "land_draws": 3,
-        "land_draw_pct": 60.0,
-        "is_flood": True,
+    quality = detail["draw_quality"]
+    assert quality["total_draws"] == 5
+    assert quality["identified_draws"] == 4
+    assert quality["land_draws"] == 3
+    assert quality["land_draw_pct"] == 60.0
+    assert quality["total_cards_seen"] == 6
+    assert quality["lands_seen"] == 4
+    assert quality["longest_land_streak"] == 3
+    assert quality["flood_reasons"] == ["3 of 5 post-opening draws were lands"]
+    assert quality["is_flood"] is True
+    recent_games = {
+        row["game_id"]: row for row in dashboard_snapshot(db_path)["recent"]
     }
+    assert recent_games["game-1"]["is_flood"] is True
+    assert recent_games["game-1"]["flood_reasons"] == [
+        "3 of 5 post-opening draws were lands"
+    ]
 
 
 def test_game_detail_does_not_mark_exactly_half_land_draws_as_flood(tmp_path):
@@ -910,6 +1116,128 @@ def test_game_detail_does_not_mark_exactly_half_land_draws_as_flood(tmp_path):
 
     assert quality["land_draw_pct"] == 50.0
     assert quality["is_flood"] is False
+
+
+def test_game_detail_marks_three_nonland_draws_while_stuck_on_one_land_as_screw(
+    tmp_path,
+):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            insert into game_opening_hand_cards (
+                game_id, participant_id, display_name, type_category,
+                hand_position, copy_number
+            ) values ('game-1', 'player-1', ?, 'Creature', ?, 1)
+            """,
+            [(f"Opening Nonland {position}", position) for position in range(2, 8)],
+        )
+        conn.execute(
+            """
+            insert into game_participant_stats (game_id, participant_id, cards_drawn)
+            values ('game-1', 'player-1', 3)
+            """
+        )
+        conn.executemany(
+            """
+            insert into game_drawn_cards (
+                game_id, participant_id, display_name, type_category,
+                draw_position, turn_number, copy_number
+            ) values ('game-1', 'player-1', ?, 'Creature', ?, ?, 1)
+            """,
+            [
+                ("Second Nonland", 2, 4),
+                ("Third Nonland", 3, 6),
+            ],
+        )
+
+    quality = game_detail(db_path, "game-1")["draw_quality"]
+
+    assert quality["opening_lands"] == 1
+    assert quality["land_draws"] == 0
+    assert quality["longest_low_land_drought"] == 3
+    assert quality["low_land_drought_lands"] == 1
+    assert quality["screw_probability_pct"] <= 10.0
+    assert quality["is_screw"] is True
+    assert "3 consecutive nonland draws while stuck on 1 land" in quality["screw_reasons"]
+
+    recent_games = {
+        row["game_id"]: row for row in dashboard_snapshot(db_path)["recent"]
+    }
+    assert recent_games["game-1"]["is_screw"] is True
+
+
+def test_game_detail_does_not_treat_unidentified_draws_as_nonland_drought(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into game_participant_stats (game_id, participant_id, cards_drawn)
+            values ('game-1', 'player-1', 3)
+            """
+        )
+
+    quality = game_detail(db_path, "game-1")["draw_quality"]
+
+    assert quality["identified_draws"] == 1
+    assert quality["longest_low_land_drought"] == 1
+    assert quality["screw_probability_pct"] is None
+    assert quality["is_screw"] is False
+
+
+def test_game_detail_marks_four_consecutive_land_draws_as_flood(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into game_participant_stats (game_id, participant_id, cards_drawn)
+            values ('game-1', 'player-1', 10)
+            """
+        )
+        conn.executemany(
+            """
+            insert into game_drawn_cards (
+                game_id, participant_id, display_name, type_category,
+                draw_position, turn_number, copy_number
+            ) values ('game-1', 'player-1', ?, 'Land', ?, ?, 1)
+            """,
+            [(f"Land {position}", position, position) for position in range(2, 7)],
+        )
+
+    quality = game_detail(db_path, "game-1")["draw_quality"]
+
+    assert quality["land_draw_pct"] == 50.0
+    assert quality["longest_land_streak"] == 5
+    assert quality["is_flood"] is True
+    assert "5 consecutive land draws" in quality["flood_reasons"]
+
+
+def test_game_detail_marks_six_lands_in_eight_draws_as_flood(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into game_participant_stats (game_id, participant_id, cards_drawn)
+            values ('game-1', 'player-1', 20)
+            """
+        )
+        conn.executemany(
+            """
+            insert into game_drawn_cards (
+                game_id, participant_id, display_name, type_category,
+                draw_position, turn_number, copy_number
+            ) values ('game-1', 'player-1', ?, 'Land', ?, ?, 1)
+            """,
+            [(f"Land {position}", position, position) for position in (2, 3, 5, 6, 8, 9)],
+        )
+
+    quality = game_detail(db_path, "game-1")["draw_quality"]
+
+    assert quality["land_draw_pct"] == 30.0
+    assert quality["longest_land_streak"] == 2
+    assert quality["max_lands_in_eight"] == 6
+    assert quality["is_flood"] is True
+    assert "6 lands in an 8-draw window" in quality["flood_reasons"]
 
 
 def test_game_detail_rejects_unknown_game(tmp_path):
@@ -1020,11 +1348,19 @@ def test_card_detail_reports_summary_by_deck_and_opener_impact(tmp_path):
             "side_label": "Opponent",
             "games_seen": 1,
             "total_played": 1,
-            "wins": 0,
-            "losses": 1,
-            "win_rate": 0.0,
+            "wins": 1,
+            "losses": 0,
+            "win_rate": 100.0,
         },
     ]
+    assert detail["opponent_impact"] == {
+        "games": 1,
+        "plays": 1,
+        "wins": 1,
+        "losses": 0,
+        "win_rate": 100.0,
+        "loss_rate": 0.0,
+    }
     assert detail["by_deck"] == [
         {
             "deck_name": "Boros Mouse",
@@ -1070,7 +1406,41 @@ def test_card_detail_supports_cards_seen_only_from_opponents(tmp_path):
     assert detail["summary"]["games_seen"] == 0
     assert detail["all_usage"]["games_seen"] == 1
     assert detail["all_usage"]["opponent_played"] == 2
+    assert detail["opponent_impact"] == {
+        "games": 1,
+        "plays": 2,
+        "wins": 1,
+        "losses": 0,
+        "win_rate": 100.0,
+        "loss_rate": 0.0,
+    }
     assert detail["by_deck"] == []
+
+
+def test_card_detail_excludes_revealed_only_cards_from_opponent_impact(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, display_name, type_category,
+                played_count, exiled_count
+            ) values ('game-1', 'opponent-1', 'Revealed Tech', 'Instant', 0, 1)
+            """
+        )
+
+    detail = card_detail(db_path, "Revealed Tech")
+
+    assert detail["all_usage"]["games_seen"] == 1
+    assert detail["all_usage"]["opponent_games_seen"] == 0
+    assert detail["opponent_impact"] == {
+        "games": 0,
+        "plays": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": None,
+        "loss_rate": None,
+    }
 
 
 def test_card_search_finds_partial_names_and_ranks_prefixes(tmp_path):

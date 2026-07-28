@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import { pageTitle } from './branding';
 import {
   fetchDashboardSnapshot,
   type DashboardSnapshot,
-  type DeckPlayDrawRow,
   type DeckRow,
   type DrawQualityRow,
   type DrawnCardRow,
@@ -31,7 +31,7 @@ import { TypeChip } from './components/TypeChip';
 import { WinRateBar } from './components/WinRateBar';
 import { AppShell } from './components/AppShell';
 import { formatPercent, metricCards } from './dashboardData';
-import { formatDateTime, formatDuration, formatNumber, formatTurnDuration, outcomeLabel, outcomeTone } from './format';
+import { formatCardName, formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone } from './format';
 import { cardNavItems, deckNavItems, gameNavItems, opponentNavItems } from './nav';
 import { RouteFiltersContext } from './routeFilters';
 import {
@@ -55,6 +55,17 @@ type RecentGameWithDrawQuality = RecentGameRow &
   Pick<DrawQualityRow, 'cards_seen' | 'lands_seen' | 'land_seen_pct'>;
 
 const SNAPSHOT_REFRESH_MS = 20_000;
+const DASHBOARD_TITLE = 'Performance Overview';
+
+function formatLandsSeen(
+  landsSeen: number | null | undefined,
+  landSeenPct: number | null | undefined,
+): string {
+  const count = formatNumber(landsSeen);
+  return landSeenPct === null || landSeenPct === undefined
+    ? count
+    : `${count} (${Math.ceil(landSeenPct)}%)`;
+}
 
 function readInitialTheme(): ThemeName {
   try {
@@ -125,7 +136,11 @@ const deckColumns: Column<DeckRow>[] = [
           <DeckLink deckName={row.deck_name}>
             <strong>{row.deck_name}</strong>
           </DeckLink>
-          <span>{row.deck_visual.source === 'local_metadata' && row.deck_visual.card_name ? row.deck_visual.card_name : 'No card data yet'}</span>
+          <span>
+            {row.deck_visual.source === 'local_metadata' && row.deck_visual.card_name
+              ? formatCardName(row.deck_visual.card_name)
+              : 'No card data yet'}
+          </span>
         </div>
       </div>
     ),
@@ -144,31 +159,6 @@ const deckColumns: Column<DeckRow>[] = [
 ];
 
 const playDrawColumns: Column<PlayDrawRow>[] = [
-  {
-    key: 'play_draw',
-    header: 'Play / Draw',
-    render: (row) => row.play_draw ?? 'Unknown',
-    sortValue: (row) => row.play_draw,
-  },
-  { key: 'games', header: 'Games', numeric: true },
-  { key: 'wins', header: 'Wins', numeric: true },
-  { key: 'losses', header: 'Losses', numeric: true },
-  {
-    key: 'win_rate',
-    header: 'Win Rate',
-    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
-    sortValue: (row) => row.win_rate,
-    numeric: true,
-  },
-];
-
-const deckPlayDrawColumns: Column<DeckPlayDrawRow>[] = [
-  {
-    key: 'deck_name',
-    header: 'Deck',
-    render: (row) => <DeckLink deckName={row.deck_name} />,
-    sortValue: (row) => row.deck_name,
-  },
   {
     key: 'play_draw',
     header: 'Play / Draw',
@@ -260,6 +250,33 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
     sortValue: (row) => row.outcome,
   },
   {
+    key: 'is_flood',
+    header: 'Draw Status',
+    render: (row) =>
+      row.is_flood ? (
+        <Badge tone="draw">Flood</Badge>
+      ) : row.is_screw ? (
+        <Badge tone="screw">Mana Screwed</Badge>
+      ) : (
+        'Normal'
+      ),
+    sortValue: (row) => (row.is_flood ? 2 : row.is_screw ? 1 : 0),
+  },
+  {
+    key: 'mulligans',
+    header: 'Mulligan(s)',
+    render: (row) => formatNumber(row.mulligans),
+    sortValue: (row) => row.mulligans,
+    numeric: true,
+  },
+  {
+    key: 'total_turns',
+    header: 'Total Turns',
+    render: (row) => formatNumber(row.total_turns),
+    sortValue: (row) => row.total_turns,
+    numeric: true,
+  },
+  {
     key: 'cards_seen',
     header: 'Cards Seen',
     render: (row) => formatNumber(row.cards_seen),
@@ -269,22 +286,8 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
   {
     key: 'lands_seen',
     header: 'Lands Seen',
-    render: (row) => formatNumber(row.lands_seen),
+    render: (row) => formatLandsSeen(row.lands_seen, row.land_seen_pct),
     sortValue: (row) => row.lands_seen,
-    numeric: true,
-  },
-  {
-    key: 'land_seen_pct',
-    header: 'Land Seen',
-    render: (row) => formatPercent(row.land_seen_pct),
-    sortValue: (row) => row.land_seen_pct,
-    numeric: true,
-  },
-  {
-    key: 'mulligans',
-    header: 'Mulligans',
-    render: (row) => formatNumber(row.mulligans),
-    sortValue: (row) => row.mulligans,
     numeric: true,
   },
   {
@@ -292,20 +295,6 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
     header: 'Game Time',
     render: (row) => formatDuration(row.duration_seconds),
     sortValue: (row) => row.duration_seconds,
-    numeric: true,
-  },
-  {
-    key: 'player_avg_turn_seconds',
-    header: 'Your Avg Turn',
-    render: (row) => formatTurnDuration(row.player_avg_turn_seconds),
-    sortValue: (row) => row.player_avg_turn_seconds,
-    numeric: true,
-  },
-  {
-    key: 'opponent_avg_turn_seconds',
-    header: 'Opp. Avg Turn',
-    render: (row) => formatTurnDuration(row.opponent_avg_turn_seconds),
-    sortValue: (row) => row.opponent_avg_turn_seconds,
     numeric: true,
   },
 ];
@@ -378,6 +367,7 @@ export default function App() {
   const opponentRoute = useMemo(() => parseOpponentRoute(routeHash), [routeHash]);
   const deckName = deckRoute?.name ?? null;
   const gameId = gameRoute?.id ?? null;
+  const cardName = cardRoute?.name ?? null;
   const deckRouteFilters = deckRoute?.filters ?? {};
   const activeRouteFilters = deckRoute ? deckRouteFilters : filters;
   const deckBackHref = deckRoute ? dashboardRouteHash(deckRoute.filters) : '#overview';
@@ -398,6 +388,21 @@ export default function App() {
           )
         : gameNavItems,
     [gameRoute],
+  );
+  const cardPageNavItems = useMemo(
+    () =>
+      cardRoute
+        ? cardNavItems.map((item) =>
+            item.id === 'back-to-dashboard'
+              ? {
+                  ...item,
+                  label: cardRoute.returnHash.startsWith('#/game/') ? '← Back to game' : '← Back to dashboard',
+                  route: cardRoute.returnHash,
+                }
+              : item,
+          )
+        : cardNavItems,
+    [cardRoute],
   );
 
   useEffect(() => {
@@ -438,18 +443,18 @@ export default function App() {
 
   useEffect(() => {
     document.title = deckRoute
-      ? `${deckRoute.name} – MTGA Tracker`
+      ? pageTitle(deckRoute.name)
       : gameRoute
-        ? 'Game – MTGA Tracker'
+        ? pageTitle('Game')
         : cardRoute
-          ? `${cardRoute} – MTGA Tracker`
+          ? pageTitle(cardRoute.name)
           : opponentRoute
-            ? `${opponentRoute} – MTGA Tracker`
-            : 'MTGA Tracker Dashboard';
+            ? pageTitle(opponentRoute)
+            : pageTitle('Overview');
   }, [deckRoute, gameRoute, cardRoute, opponentRoute]);
 
   useEffect(() => {
-    if (deckName || gameId || cardRoute || opponentRoute) {
+    if (deckName || gameId || cardName || opponentRoute) {
       return;
     }
     let ignore = false;
@@ -487,7 +492,7 @@ export default function App() {
       activeController?.abort();
       window.clearInterval(refreshId);
     };
-  }, [filters, deckName, gameId, cardRoute, opponentRoute]);
+  }, [filters, deckName, gameId, cardName, opponentRoute]);
 
   function toggleTheme() {
     setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
@@ -500,7 +505,7 @@ export default function App() {
         onToggleTheme={toggleTheme}
         navItems={
           cardRoute
-            ? cardNavItems
+            ? cardPageNavItems
             : gameId
               ? gamePageNavItems
               : deckName
@@ -509,23 +514,21 @@ export default function App() {
                   ? opponentNavItems
                   : undefined
         }
-        eyebrow={
-          cardRoute
-            ? 'Card breakdown'
-            : gameRoute
-              ? 'Game breakdown'
-              : deckName
-                ? 'Deck breakdown'
-                : opponentRoute
-                  ? 'Opponent history'
-                  : 'SQLite analytics'
-        }
-        heading={cardRoute ?? (gameRoute ? 'Game detail' : deckName ?? opponentRoute ?? 'Performance overview')}
+        heading={cardName ? formatCardName(cardName) : (gameRoute ? 'Game Detail' : deckName ?? opponentRoute ?? DASHBOARD_TITLE)}
       >
         {cardRoute ? (
-          <CardDetailPage key={cardRoute} cardName={cardRoute} />
+          <CardDetailPage
+            key={`${cardRoute.name}-${cardRoute.returnHash}`}
+            backHref={cardRoute.returnHash}
+            cardName={cardRoute.name}
+          />
         ) : gameRoute ? (
-          <GameDetailPage key={gameRoute.id} backHref={gameRoute.returnHash} gameId={gameRoute.id} />
+          <GameDetailPage
+            key={gameRoute.id}
+            backHref={gameRoute.returnHash}
+            focusId={gameRoute.focusId}
+            gameId={gameRoute.id}
+          />
         ) : deckName ? (
           <DeckDetailPage
             key={`${deckName}-${deckBackHref}`}
@@ -592,11 +595,19 @@ function Dashboard({
     const qualityByGame = new Map(snapshot.draw_quality.map((row) => [row.game_id, row]));
     return snapshot.recent.map((row) => {
       const quality = qualityByGame.get(row.game_id);
+      const aggregateManaScrew =
+        quality?.cards_seen !== null &&
+        quality?.cards_seen !== undefined &&
+        quality.cards_seen >= 10 &&
+        quality?.lands_seen !== null &&
+        quality?.lands_seen !== undefined &&
+        quality.lands_seen <= 2;
       return {
         ...row,
         cards_seen: quality?.cards_seen ?? null,
         lands_seen: quality?.lands_seen ?? null,
         land_seen_pct: quality?.land_seen_pct ?? null,
+        is_screw: Boolean(row.is_screw) || aggregateManaScrew,
       };
     });
   }, [snapshot.draw_quality, snapshot.recent]);
@@ -618,7 +629,13 @@ function Dashboard({
       <section className="overview-section" id="overview" aria-label="Overview">
         <section className="metric-grid" aria-label="Overview metrics">
           {metricCards(snapshot, filters).map((metric) => (
-            <MetricCard key={metric.label} href={metric.href} label={metric.label} value={metric.value} />
+            <MetricCard
+              key={metric.label}
+              detail={metric.detail}
+              href={metric.href}
+              label={metric.label}
+              value={metric.value}
+            />
           ))}
         </section>
         <div className="overview-analytics">
@@ -677,7 +694,7 @@ function Dashboard({
       <Section
         id="recent-games"
         title="Recent Games"
-        description="Recent results with draw distribution, total game time, and average turn pace."
+        description="Recent results with draw distribution, flood or mana-screw status, total turns, and game time."
       >
         <SortableTable
           caption="Recent games"
@@ -705,21 +722,14 @@ function Dashboard({
           columns={deckColumns}
           getRowKey={(row) => row.deck_name}
           initialSort={{ key: 'games', direction: 'desc' }}
+          pageSize={15}
+          paginationKey={deckSearch.trim().toLocaleLowerCase()}
           rows={filteredDecks}
         />
       </Section>
 
       <Section id="formats" title="Formats">
-        <FormatsTable caption="Format performance" midweekRows={snapshot.midweek_formats} rows={snapshot.formats} />
-      </Section>
-
-      <Section id="deck-play-draw" title="Deck Play / Draw">
-        <SortableTable
-          caption="Deck play and draw performance"
-          columns={deckPlayDrawColumns}
-          getRowKey={(row) => `${row.deck_name}-${row.play_draw ?? 'unknown'}`}
-          rows={snapshot.deck_play_draw}
-        />
+        <FormatsTable caption="Format performance" rows={snapshot.formats} />
       </Section>
 
       <Section id="visible-drawn-cards" title="Visible Drawn Cards">

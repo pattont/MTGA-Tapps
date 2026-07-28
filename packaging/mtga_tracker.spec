@@ -63,9 +63,10 @@ app = BUNDLE(
     icon=str(app_icon),
     bundle_identifier="com.travispatton.mtgatracker",
     info_plist={
+        "CFBundleName": "MTGA Tracker",
         "CFBundleDisplayName": "MTGA Tracker",
         "CFBundleShortVersionString": "0.1.0",
-        "LSUIElement": True,
+        "LSUIElement": False,
         "NSHighResolutionCapable": True,
     },
 )

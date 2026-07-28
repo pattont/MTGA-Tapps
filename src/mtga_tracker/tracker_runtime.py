@@ -35,6 +35,7 @@ class TrackerRuntimeMixin:
         self._print_line("=" * 75 + "\n")
 
         # Deck metadata is often logged before startup; backfill from recent lines once.
+        self._recover_missing_turn_timings()
         self._backfill_recent_match_metadata()
         self._backfill_rank_progress()
 

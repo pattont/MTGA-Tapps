@@ -11,6 +11,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@floating-ui/react": "^0.27.20",
+    "lucide-react": "^1.26.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },

@@ -2,7 +2,13 @@
 
 ## Unreleased
 
+- Added an adaptive macOS menu-bar template icon, transparent app artwork, canonical icon generation, a native `MTGA Tracker` Dock identity, and explicit packaged-app launch guidance.
+- Saved the deferred full-card hover preview design in `docs/CARD_HOVER_PREVIEW_PLAN.md`.
+- Prevented the macOS menu-bar controller from opening a second overlapping copy of its menu.
 - Prevent repeated turn-one state messages from creating duplicate timing rows, and coalesce duplicate timing segments defensively during persistence.
+- Made SQLite analytics resilient to concurrent dashboard reads with WAL, busy waits, and bounded
+  write retries; exact missing turn durations now recover from durable console headers at startup
+  and through the database audit repair.
 - Prevent optional analytics failures from removing completed games and recover missing Recent Games rows from local event and console history.
 - Prevent source and packaged desktop launchers from running simultaneously; the packaged app supplies the native MTGA Tracker identity while source launches retain Python runtime metadata.
 - Added user-editable `settings.json` sizing for the desktop live-log window and increased its default size to 1400 by 1020.
@@ -11,6 +17,23 @@
 
 ### Dashboard UI
 
+- Ranked Best Deck by confidence-adjusted win rate instead of raw win rate alone, and exposed the
+  selected deck's win rate, record, and game count on the overview metric.
+- Sorted Formats alphabetically by default and defensively removed Midweek Magic/Momir rows and
+  filter options from stale dashboard responses.
+- Added exact submitted deck snapshots, deck-membership-aware Card Performance that excludes
+  temporarily controlled opponent cards, and one-click MTG Arena deck export on Deck Detail.
+- Modernized the sidebar wordmark to match dashboard heading typography, made the full brand link
+  to Overview, and replaced low-resolution mana pips with crisp local vector symbols.
+- Made the `MTGA Tracker` logo reliably return to the very top of Overview and standardized
+  browser titles as `MTGA Tracker – <page>`.
+- Enlarged Card Drill-Down imagery and persistently loaded the full card through the same
+  Scryfall image path used by card hover previews.
+- Added lazy full-card hover and keyboard-focus previews to every card link, plus linked yellow Timeline brackets and compact inline card-type chips.
+- Removed the obsolete analytics eyebrow from every page header, realigned titles with the header controls, and standardized `Performance Overview` title casing.
+- Removed redundant turn-start event rows from the Game Detail Timeline because each turn header already shows the turn boundary and active player.
+- Added links from validated card references in Game Detail Timeline events to Card Detail, with return-to-Timeline navigation.
+- Changed Game Detail flood indicators from red danger styling to the existing blue draw-quality styling.
 - Added game detail routes with life charts, opening hand, drawn cards, played cards, and filterable event timeline.
 - Added card drill-down routes with card art, by-deck performance, and opening-hand impact.
 - Added filter-aware deck routes, sidebar scrollspy, deck/card table search, match recap rows, session recap rows, and empty-dashboard setup guidance.
@@ -18,13 +41,17 @@
 - Added global tracked-card search with usage-ranked autocomplete results and direct card detail navigation.
 - Expanded card analytics to include player and opponent usage, with compact side-by-side and deck tables.
 - Added per-game draw totals, land-draw percentage, and Flood detection for games above 50% land draws.
+- Expanded Flood detection to include total-land probability, consecutive land streaks, and six-land eight-draw windows, with the triggering evidence shown in Game Detail.
 - Preserved dashboard section context when opening a game so Back returns to the originating table and scroll position.
 - Merged Draw Quality into Recent Games and moved Recent Games directly below Win Rate Trend in dashboard navigation.
 - Reordered dashboard content so its top-to-bottom section sequence exactly matches sidebar navigation.
 - Consolidated Play / Draw and Momentum into Overview and replaced intersection-based navigation highlighting with position-based scroll tracking.
 - Added game length and average turn pace to Recent Games and deck history, plus sortable per-turn timing with player/opponent totals and live/estimated provenance in Game Detail.
+- Moved individual turn durations from the Game Detail timing table into Timeline turn headers while retaining the timing summary metrics.
+- Added top-right collapse controls to every Game Detail section.
 - Added every identified opponent card to Game Detail with played, revealed-draw, discarded, milled, and exiled counts.
 - Added linked opponent names to Game Detail with a sortable head-to-head game history for each Arena player.
+- Clarified card drill-down analytics with your record and loss rate when the opponent actually played the card, excluding revealed-only appearances.
 - Added current-season constructed rank tracking and a Bronze-to-Mythic progress chart shared by ranked Standard Best-of-1 and Best-of-3, including existing-log backfill.
 
 ### Desktop Launcher

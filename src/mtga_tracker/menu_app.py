@@ -40,6 +40,7 @@ from .settings import AppSettings, load_app_settings
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _ASSET_DIR = Path(__file__).resolve().parent / "assets"
+_APP_NAME = "MTGA Tracker"
 _XTERM_BASE_COLORS = (
     "#000000",
     "#800000",
@@ -101,6 +102,10 @@ def _acquire_instance_lock() -> QLockFile | None:
     if not lock.tryLock(0):
         return None
     return lock
+
+
+def _set_tray_tooltip(tray: QSystemTrayIcon) -> None:
+    tray.setToolTip(_APP_NAME)
 
 
 class AppSignals(QObject):
@@ -208,7 +213,7 @@ class MenuBarController(QObject):
         self._shutting_down = False
 
         self.tray = QSystemTrayIcon(self._tray_icon(), self)
-        self.tray.setToolTip("MTGA Tracker")
+        _set_tray_tooltip(self.tray)
         self.menu = QMenu()
 
         self.status_action = QAction("Tracker: Starting", self)
@@ -247,6 +252,8 @@ class MenuBarController(QObject):
     def _tray_icon(self) -> QIcon:
         icon = QIcon(str(_ASSET_DIR / "tray-iconTemplate.svg"))
         if not icon.isNull():
+            if sys.platform == "darwin":
+                icon.setIsMask(True)
             return icon
         return self.app.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
 
@@ -302,7 +309,12 @@ class MenuBarController(QObject):
                 )
 
     def _tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
-        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+        # macOS opens the registered context menu automatically. Manually
+        # popping it there creates a second, overlapping copy of the menu.
+        if (
+            sys.platform != "darwin"
+            and reason == QSystemTrayIcon.ActivationReason.Trigger
+        ):
             self.menu.popup(QCursor.pos())
 
     def shutdown(self) -> None:
@@ -315,9 +327,10 @@ class MenuBarController(QObject):
 
 
 def run_menu_app(args: Any) -> int:
-    _set_macos_process_name("MTGA Tracker")
-    QApplication.setApplicationName("MTGA Tracker")
-    QApplication.setOrganizationName("MTGA Tracker")
+    _set_macos_process_name(_APP_NAME)
+    QApplication.setApplicationName(_APP_NAME)
+    QApplication.setApplicationDisplayName(_APP_NAME)
+    QApplication.setOrganizationName(_APP_NAME)
     app = QApplication.instance() or QApplication([])
     instance_lock = _acquire_instance_lock()
     if instance_lock is None:

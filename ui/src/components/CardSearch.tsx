@@ -1,6 +1,8 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { fetchCardSearch, type CardSearchResult } from '../api';
+import { formatCardName } from '../format';
 import { cardRouteHash } from '../routes';
+import { CardLink } from './CardLink';
 import { TypeChip } from './TypeChip';
 
 const SEARCH_DELAY_MS = 180;
@@ -111,19 +113,19 @@ export function CardSearch() {
           {status === 'error' ? <p>Card search is unavailable.</p> : null}
           {status === 'loaded' && results.length === 0 ? <p>No tracked cards found.</p> : null}
           {results.map((result) => (
-            <a
+            <CardLink
               key={result.card_name}
-              href={cardRouteHash(result.card_name)}
+              cardName={result.card_name}
               role="option"
               aria-selected={false}
               onClick={closeSearch}
             >
-              <span className="card-search-result-name">{result.card_name}</span>
+              <span className="card-search-result-name">{formatCardName(result.card_name)}</span>
               <TypeChip type={result.type_category} />
               <span className="card-search-result-stats">
                 {result.games_seen} {result.games_seen === 1 ? 'game' : 'games'} · {result.total_played} played
               </span>
-            </a>
+            </CardLink>
           ))}
         </div>
       ) : null}

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import math
 import mimetypes
 import os
 import re
@@ -13,9 +14,10 @@ import sys
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
+from .draw_quality import hypergeom_tail_at_least, hypergeom_tail_at_most
 from .format_normalizer import format_label, normalize_match_format
 from .paths import DATA_DIR
 
@@ -49,7 +51,18 @@ def _dict_rows(cursor: sqlite3.Cursor) -> List[Dict[str, Any]]:
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table_name,),
+        ).fetchone()
+        is not None
+    )
+
+
 _TYPE_SUFFIX_RE = re.compile(r"\s*\([^()]*\)\s*$")
+_BRACKET_CONTENT_RE = re.compile(r"\[([^\]\n]+)\]")
 
 
 def _clean_card_name(display_name: Optional[str]) -> Optional[str]:
@@ -58,6 +71,255 @@ def _clean_card_name(display_name: Optional[str]) -> Optional[str]:
         return display_name
     cleaned = _TYPE_SUFFIX_RE.sub("", display_name).strip()
     return cleaned or display_name
+
+
+def _card_name_aliases(display_name: Optional[str]) -> Set[str]:
+    """Return a card name plus either face name for split/double-faced cards."""
+    clean_name = _clean_card_name(display_name)
+    if not clean_name:
+        return set()
+    aliases = {clean_name}
+    if " // " in clean_name:
+        aliases.update(part.strip() for part in clean_name.split(" // ") if part.strip())
+    return aliases
+
+
+def _timeline_text_segments(
+    text: str, linkable_cards: Set[str] | Dict[str, Optional[str]]
+) -> List[Dict[str, str]]:
+    """Split timeline text into plain text and validated card-name segments."""
+    linkable_card_names = (
+        set(linkable_cards)
+        if isinstance(linkable_cards, dict)
+        else linkable_cards
+    )
+    segments: List[Dict[str, str]] = []
+    cursor = 0
+    for match in _BRACKET_CONTENT_RE.finditer(text):
+        bracket_content = match.group(1)
+        card_name = _clean_card_name(bracket_content)
+        if not card_name or card_name not in linkable_card_names:
+            continue
+        card_offset = bracket_content.find(card_name)
+        if card_offset < 0:
+            continue
+        card_start = match.start(1) + card_offset
+        if card_start > cursor:
+            segments.append({"kind": "text", "text": text[cursor:card_start]})
+        card_segment = {"kind": "card", "text": card_name, "card_name": card_name}
+        if isinstance(linkable_cards, dict) and linkable_cards.get(card_name):
+            card_segment["card_type"] = str(linkable_cards[card_name])
+        segments.append(card_segment)
+        cursor = card_start + len(card_name)
+    if cursor < len(text):
+        segments.append({"kind": "text", "text": text[cursor:]})
+    return segments or [{"kind": "text", "text": text}]
+
+
+def _is_land_row(row: Dict[str, Any]) -> bool:
+    return (
+        str(row.get("type_category") or "").casefold() == "land"
+        or str(row.get("display_name") or "").rstrip().endswith("(Land)")
+    )
+
+
+def _longest_land_run(flags: List[bool]) -> int:
+    longest = 0
+    current = 0
+    for is_land in flags:
+        current = current + 1 if is_land else 0
+        longest = max(longest, current)
+    return longest
+
+
+def _max_lands_in_window(flags: List[bool], window_size: int = 8) -> Optional[int]:
+    if len(flags) < window_size:
+        return None
+    return max(
+        sum(flags[index : index + window_size])
+        for index in range(len(flags) - window_size + 1)
+    )
+
+
+def _longest_low_land_drought(
+    flags: List[Optional[bool]],
+    opening_lands: int,
+    land_ceiling: int = 2,
+) -> Tuple[int, Optional[int]]:
+    """Return the longest known nonland run while no more than land_ceiling lands were seen."""
+    lands_seen = opening_lands
+    longest = 0
+    longest_land_count = None
+    current = 0
+    for is_land in flags:
+        if is_land is True:
+            lands_seen += 1
+            current = 0
+        elif is_land is False and lands_seen <= land_ceiling:
+            current += 1
+            if current > longest:
+                longest = current
+                longest_land_count = lands_seen
+        else:
+            current = 0
+    return longest, longest_land_count
+
+
+def _draw_quality_metrics(
+    opening_hand: List[Dict[str, Any]],
+    drawn: List[Dict[str, Any]],
+    recorded_draws: int,
+    deck_size: int,
+) -> Dict[str, Any]:
+    """Calculate the shared draw-quality and flood metrics for one game."""
+    total_draws = max(int(recorded_draws or 0), len(drawn))
+    land_draws = sum(1 for row in drawn if _is_land_row(row))
+    land_draw_pct = round(100.0 * land_draws / total_draws, 1) if total_draws else None
+    opening_lands = sum(1 for row in opening_hand if _is_land_row(row))
+    total_cards_seen = len(opening_hand) + total_draws
+    lands_seen = opening_lands + land_draws
+    land_seen_pct = (
+        round(100.0 * lands_seen / total_cards_seen, 1) if total_cards_seen else None
+    )
+    expected_land_rate = 0.4 if deck_size >= 50 else 0.425
+    expected_deck_lands = max(0, min(deck_size, round(deck_size * expected_land_rate)))
+    expected_lands_seen = round(total_cards_seen * expected_land_rate, 1)
+    flood_probability_pct = None
+    screw_probability_pct = None
+    if total_cards_seen:
+        flood_probability_pct = round(
+            100.0
+            * hypergeom_tail_at_least(
+                lands_seen,
+                population_size=deck_size,
+                success_count=expected_deck_lands,
+                draw_count=min(total_cards_seen, deck_size),
+            ),
+            1,
+        )
+        if len(drawn) == total_draws:
+            screw_probability_pct = round(
+                100.0
+                * hypergeom_tail_at_most(
+                    lands_seen,
+                    population_size=deck_size,
+                    success_count=expected_deck_lands,
+                    draw_count=min(total_cards_seen, deck_size),
+                ),
+                1,
+            )
+
+    land_by_position = {
+        int(row.get("draw_position") or 0): _is_land_row(row)
+        for row in drawn
+        if int(row.get("draw_position") or 0) > 0
+    }
+    draw_land_flags = [
+        land_by_position.get(position, False) for position in range(1, total_draws + 1)
+    ]
+    known_draw_land_flags = [
+        land_by_position.get(position) for position in range(1, total_draws + 1)
+    ]
+    longest_land_streak = _longest_land_run(draw_land_flags)
+    max_lands_in_eight = _max_lands_in_window(draw_land_flags)
+    longest_low_land_drought, low_land_drought_lands = _longest_low_land_drought(
+        known_draw_land_flags,
+        opening_lands,
+    )
+    flood_reasons = []
+    if land_draw_pct is not None and land_draw_pct > 50.0:
+        flood_reasons.append(f"{land_draws} of {total_draws} post-opening draws were lands")
+    if flood_probability_pct is not None and flood_probability_pct <= 10.0:
+        flood_reasons.append(
+            f"Only a {flood_probability_pct:g}% chance of seeing at least {lands_seen} lands"
+        )
+    if longest_land_streak >= 4:
+        flood_reasons.append(f"{longest_land_streak} consecutive land draws")
+    if max_lands_in_eight is not None and max_lands_in_eight >= 6:
+        flood_reasons.append(f"{max_lands_in_eight} lands in an 8-draw window")
+
+    screw_reasons = []
+    if longest_low_land_drought >= 3 and low_land_drought_lands is not None:
+        land_label = "land" if low_land_drought_lands == 1 else "lands"
+        screw_reasons.append(
+            f"{longest_low_land_drought} consecutive nonland draws while stuck on "
+            f"{low_land_drought_lands} {land_label}"
+        )
+    if screw_probability_pct is not None and screw_probability_pct <= 10.0:
+        land_label = "land" if lands_seen == 1 else "lands"
+        screw_reasons.append(
+            f"Only a {screw_probability_pct:g}% chance of seeing at most "
+            f"{lands_seen} {land_label}"
+        )
+
+    return {
+        "total_draws": total_draws,
+        "identified_draws": len(drawn),
+        "land_draws": land_draws,
+        "land_draw_pct": land_draw_pct,
+        "total_cards_seen": total_cards_seen,
+        "opening_lands": opening_lands,
+        "lands_seen": lands_seen,
+        "land_seen_pct": land_seen_pct,
+        "expected_land_rate": round(expected_land_rate * 100.0, 1),
+        "expected_lands_seen": expected_lands_seen,
+        "flood_probability_pct": flood_probability_pct,
+        "screw_probability_pct": screw_probability_pct,
+        "longest_land_streak": longest_land_streak,
+        "max_lands_in_eight": max_lands_in_eight,
+        "longest_low_land_drought": longest_low_land_drought,
+        "low_land_drought_lands": low_land_drought_lands,
+        "flood_reasons": flood_reasons,
+        "is_flood": bool(flood_reasons),
+        "screw_reasons": screw_reasons,
+        "is_screw": bool(screw_reasons),
+    }
+
+
+def _game_draw_quality(
+    conn: sqlite3.Connection,
+    game_id: str,
+    participant_id: Optional[str],
+    deck_size: Optional[int],
+) -> Dict[str, Any]:
+    """Load one game's visible cards and calculate its shared flood metrics."""
+    opening_hand = _dict_rows(
+        conn.execute(
+            """
+            SELECT display_name, COALESCE(type_category, 'Other') AS type_category
+            FROM game_opening_hand_cards
+            WHERE game_id = ? AND participant_id = ?
+            ORDER BY hand_position, copy_number
+            """,
+            (game_id, participant_id),
+        )
+    )
+    drawn = _dict_rows(
+        conn.execute(
+            """
+            SELECT display_name, COALESCE(type_category, 'Other') AS type_category, draw_position
+            FROM game_drawn_cards
+            WHERE game_id = ? AND participant_id = ?
+            ORDER BY draw_position
+            """,
+            (game_id, participant_id),
+        )
+    )
+    stats_drawn_row = conn.execute(
+        """
+        SELECT cards_drawn
+        FROM game_participant_stats
+        WHERE game_id = ? AND participant_id = ?
+        """,
+        (game_id, participant_id),
+    ).fetchone()
+    recorded_draws = int(stats_drawn_row[0] or 0) if stats_drawn_row else 0
+    return _draw_quality_metrics(
+        opening_hand,
+        drawn,
+        recorded_draws,
+        int(deck_size or 60),
+    )
 
 
 def _card_image_url(arena_id: Optional[int], card_name: Optional[str]) -> Optional[str]:
@@ -126,10 +388,9 @@ def _grouped_format_rows(
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Format performance grouped by display label.
 
-    Returns (top_level_rows, midweek_breakdown_rows). All Midweek Magic events
-    collapse into a single top-level "Midweek Magic" row; the per-event split is
-    reported separately. Raw queue identifiers are kept on each row (comma
-    joined) for debugging but are not meant for display.
+    Midweek Magic events are intentionally omitted because those rotating queues
+    are not part of the tracker's supported format analytics. The second return
+    value remains an empty compatibility field for older dashboard clients.
     """
     raw_rows = _dict_rows(
         conn.execute(
@@ -149,7 +410,6 @@ def _grouped_format_rows(
         )
     )
     top: Dict[str, Dict[str, Any]] = {}
-    midweek: Dict[str, Dict[str, Any]] = {}
 
     def _accumulate(bucket: Dict[str, Dict[str, Any]], label: str, row: Dict[str, Any]) -> None:
         entry = bucket.setdefault(
@@ -167,10 +427,8 @@ def _grouped_format_rows(
             row["raw_format"], default_best_of=int(row["best_of"] or 1)
         )
         if normalized.is_midweek:
-            _accumulate(top, "Midweek Magic", row)
-            _accumulate(midweek, normalized.label, row)
-        else:
-            _accumulate(top, normalized.label, row)
+            continue
+        _accumulate(top, normalized.label, row)
 
     def _finish(bucket: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
         rows = []
@@ -181,7 +439,7 @@ def _grouped_format_rows(
         rows.sort(key=lambda item: (-item["games"], item["format_label"]))
         return rows
 
-    return _finish(top)[:20], _finish(midweek)
+    return _finish(top)[:20], []
 
 
 def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
@@ -279,6 +537,119 @@ def _empty_deck_visual(deck_name: str) -> Dict[str, Any]:
         "type_category": "Other",
         "image_url": None,
         "source": "deck_name",
+    }
+
+
+def _arena_export_card_name(conn: sqlite3.Connection, display_name: str) -> str:
+    """Prefer the full split-card name already known to the card dimension."""
+    clean_name = _clean_card_name(display_name) or display_name
+    if " // " in clean_name:
+        return clean_name
+    row = conn.execute(
+        """
+        SELECT name
+        FROM cards
+        WHERE name LIKE ? OR name LIKE ?
+        ORDER BY LENGTH(name) DESC
+        LIMIT 1
+        """,
+        (f"{clean_name} // %", f"% // {clean_name}"),
+    ).fetchone()
+    return str(row[0]) if row else clean_name
+
+
+def _deck_export_snapshot(
+    conn: sqlite3.Connection,
+    where: str,
+    params: List[Any],
+    deck_name: str,
+) -> Dict[str, Any]:
+    """Return an exact Arena export from the newest submitted deck snapshot."""
+    unavailable = {
+        "available": False,
+        "source_game_id": None,
+        "main_deck": [],
+        "sideboard": [],
+        "text": None,
+    }
+    if not _table_exists(conn, "game_deck_cards"):
+        return unavailable
+    source = conn.execute(
+        f"""
+        SELECT g.id
+        FROM games g
+        JOIN matches m ON m.id = g.match_id
+        WHERE {where}
+          AND EXISTS (
+            SELECT 1
+            FROM game_deck_cards dc
+            JOIN participants dp ON dp.id = dc.participant_id AND dp.role = 'player'
+            WHERE dc.game_id = g.id
+          )
+        ORDER BY
+          COALESCE(m.started_at, g.started_at, g.ended_at) DESC,
+          CASE WHEN g.game_number = 1 THEN 0 ELSE 1 END,
+          COALESCE(g.started_at, g.ended_at) ASC
+        LIMIT 1
+        """,
+        params,
+    ).fetchone()
+    if source is None:
+        return unavailable
+
+    source_game_id = str(source[0])
+    grouped: Dict[str, Dict[str, Dict[str, Any]]] = {"deck": {}, "sideboard": {}}
+    for row in _dict_rows(
+        conn.execute(
+            """
+            SELECT
+              dc.deck_zone,
+              dc.display_name,
+              COALESCE(dc.type_category, 'Other') AS type_category,
+              dc.quantity
+            FROM game_deck_cards dc
+            JOIN participants p ON p.id = dc.participant_id AND p.role = 'player'
+            WHERE dc.game_id = ?
+            ORDER BY dc.id
+            """,
+            (source_game_id,),
+        )
+    ):
+        deck_zone = str(row.get("deck_zone") or "")
+        if deck_zone not in grouped:
+            continue
+        card_name = _arena_export_card_name(conn, str(row["display_name"]))
+        card = grouped[deck_zone].setdefault(
+            card_name,
+            {
+                "quantity": 0,
+                "type_category": str(row.get("type_category") or "Other"),
+            },
+        )
+        card["quantity"] += int(row.get("quantity") or 0)
+
+    main_deck = [
+        {"display_name": name, **card}
+        for name, card in grouped["deck"].items()
+    ]
+    sideboard = [
+        {"display_name": name, **card}
+        for name, card in grouped["sideboard"].items()
+    ]
+    if not main_deck:
+        return unavailable
+
+    lines = ["About", f"Name {deck_name}", "", "Deck"]
+    lines.extend(f"{row['quantity']} {row['display_name']}" for row in main_deck)
+    if sideboard:
+        lines.extend(["", "Sideboard"])
+        lines.extend(f"{row['quantity']} {row['display_name']}" for row in sideboard)
+    return {
+        "available": True,
+        "source_game_id": source_game_id,
+        "main_deck": main_deck,
+        "sideboard": sideboard,
+        "text": "\n".join(lines),
     }
 
 
@@ -470,20 +841,9 @@ def dashboard_snapshot(
                   g.started_at,
                   g.outcome,
                   g.duration_seconds,
-                  (
-                    SELECT ROUND(AVG(gt.duration_seconds), 1)
-                    FROM game_turns gt
-                    WHERE gt.game_id = g.id AND gt.seat_id = p.seat_id
-                  ) AS player_avg_turn_seconds,
-                  (
-                    SELECT ROUND(AVG(gt.duration_seconds), 1)
-                    FROM game_turns gt
-                    JOIN participants timing_opponent
-                      ON timing_opponent.game_id = gt.game_id
-                     AND timing_opponent.role = 'opponent'
-                     AND timing_opponent.seat_id = gt.seat_id
-                    WHERE gt.game_id = g.id
-                  ) AS opponent_avg_turn_seconds,
+                  g.total_turns,
+                  p.id AS player_participant_id,
+                  p.deck_size,
                   m.format AS raw_format,
                   m.best_of,
                   COALESCE(p.deck_name, '(unknown)') AS deck_name,
@@ -525,6 +885,7 @@ def dashboard_snapshot(
                   r.rank_level,
                   r.rank_step,
                   r.rank_steps,
+                  r.raw_step,
                   r.matches_won,
                   r.matches_lost,
                   r.mythic_percentile,
@@ -612,12 +973,8 @@ def dashboard_snapshot(
                 """
             )
         ]
-        format_options = [
-            {
-                "raw_format": row[0],
-                "format_label": format_label(row[0], default_best_of=int(row[1] or 1)),
-            }
-            for row in conn.execute(
+        format_options = []
+        for row in conn.execute(
                 """
                 SELECT COALESCE(format, '(unknown)') AS raw_format, MAX(COALESCE(best_of, 1))
                 FROM matches
@@ -625,12 +982,30 @@ def dashboard_snapshot(
                 GROUP BY raw_format
                 ORDER BY raw_format COLLATE NOCASE
                 """
+        ):
+            normalized = normalize_match_format(
+                row[0], default_best_of=int(row[1] or 1)
             )
-        ]
+            if normalized.is_midweek:
+                continue
+            format_options.append(
+                {"raw_format": row[0], "format_label": normalized.label}
+            )
         deck_visuals = _deck_visuals(conn)
         for row in deck_rows:
             deck_name = row["deck_name"]
             row["deck_visual"] = deck_visuals.get(deck_name, _empty_deck_visual(deck_name))
+        for row in recent_rows:
+            quality = _game_draw_quality(
+                conn,
+                str(row.get("game_id")),
+                row.pop("player_participant_id", None),
+                row.pop("deck_size", None),
+            )
+            row["flood_reasons"] = quality["flood_reasons"]
+            row["is_flood"] = quality["is_flood"]
+            row["screw_reasons"] = quality["screw_reasons"]
+            row["is_screw"] = quality["is_screw"]
 
     summary_dict = {
         "games": int(summary[0] or 0),
@@ -655,8 +1030,13 @@ def dashboard_snapshot(
     for row in rank_progress_rows:
         rank_class = str(row.get("rank_class") or "Bronze")
         rank_level = int(row.get("rank_level") or 1)
-        rank_step = int(row.get("rank_step") or 0)
+        rank_step = int(
+            row.get("raw_step")
+            if row.get("raw_step") is not None
+            else row.get("rank_step") or 0
+        )
         rank_steps = int(row.get("rank_steps") or 6)
+        row["rank_step"] = rank_step
         row["rank_score"] = _rank_score(rank_class, rank_level, rank_step, rank_steps)
         row["rank_label"] = (
             f"{rank_class} {rank_level} ({rank_step}/{rank_steps})"
@@ -731,46 +1111,144 @@ def deck_detail(
             params,
         ).fetchone()
         format_rows, midweek_rows = _grouped_format_rows(conn, where, params)
-        card_rows = _dict_rows(
+        submitted_cards_by_game: Dict[str, Set[str]] = {}
+        if _table_exists(conn, "game_deck_cards"):
+            for row in _dict_rows(
+                conn.execute(
+                    f"""
+                    SELECT dc.game_id, dc.display_name
+                    FROM game_deck_cards dc
+                    JOIN participants p ON p.id = dc.participant_id AND p.role = 'player'
+                    JOIN games g ON g.id = dc.game_id
+                    WHERE {where}
+                    """,
+                    params,
+                )
+            ):
+                canonical_name = _arena_export_card_name(conn, str(row["display_name"]))
+                submitted_cards_by_game.setdefault(row["game_id"], set()).update(
+                    _card_name_aliases(canonical_name)
+                )
+
+        observed_deck_cards: Set[str] = set()
+        for table_name in ("game_opening_hand_cards", "game_drawn_cards"):
+            for row in _dict_rows(
+                conn.execute(
+                    f"""
+                    SELECT owned.display_name
+                    FROM {table_name} owned
+                    JOIN participants p ON p.id = owned.participant_id AND p.role = 'player'
+                    JOIN games g ON g.id = owned.game_id
+                    WHERE {where}
+                    """,
+                    params,
+                )
+            ):
+                observed_deck_cards.update(_card_name_aliases(row.get("display_name")))
+        for names in submitted_cards_by_game.values():
+            observed_deck_cards.update(names)
+
+        def is_deck_member(game_id: str, display_name: Optional[str]) -> bool:
+            aliases = _card_name_aliases(display_name)
+            if not aliases:
+                return False
+            submitted_names = submitted_cards_by_game.get(game_id)
+            if submitted_names is not None:
+                return not aliases.isdisjoint(submitted_names)
+            return not observed_deck_cards or not aliases.isdisjoint(observed_deck_cards)
+
+        raw_card_rows = _dict_rows(
             conn.execute(
                 f"""
                 SELECT
+                  s.game_id,
                   s.display_name,
                   COALESCE(s.type_category, 'Other') AS type_category,
-                  COUNT(*) AS games_seen,
-                  SUM(COALESCE(s.played_count, 0)) AS times_played,
-                  SUM(g.outcome = 'win') AS wins_when_seen,
-                  SUM(g.outcome = 'loss') AS losses_when_seen,
-                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate_when_seen
+                  COALESCE(s.played_count, 0) AS times_played,
+                  g.outcome
                 FROM game_card_summary s
                 JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
                 JOIN games g ON g.id = s.game_id
                 WHERE {where}
-                GROUP BY s.display_name, s.type_category
-                ORDER BY games_seen DESC, s.display_name
-                LIMIT 100
                 """,
                 params,
             )
         )
+        card_aggregates: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for row in raw_card_rows:
+            if not is_deck_member(row["game_id"], row.get("display_name")):
+                continue
+            clean_name = _clean_card_name(row.get("display_name"))
+            if not clean_name:
+                continue
+            type_category = str(row.get("type_category") or "Other")
+            key = (clean_name, type_category)
+            aggregate = card_aggregates.setdefault(
+                key,
+                {
+                    "display_name": clean_name,
+                    "type_category": type_category,
+                    "game_ids": set(),
+                    "times_played": 0,
+                    "win_game_ids": set(),
+                    "loss_game_ids": set(),
+                    "times_drawn": 0,
+                },
+            )
+            aggregate["game_ids"].add(row["game_id"])
+            aggregate["times_played"] += int(row.get("times_played") or 0)
+            if row.get("outcome") == "win":
+                aggregate["win_game_ids"].add(row["game_id"])
+            elif row.get("outcome") == "loss":
+                aggregate["loss_game_ids"].add(row["game_id"])
+
         # game_card_summary.drawn_count is never populated by the tracker;
         # visible draw counts live in game_drawn_cards under the clean card name.
-        drawn_counts = {
-            row["display_name"]: row["times_drawn"]
-            for row in _dict_rows(
-                conn.execute(
-                    f"""
-                    SELECT d.display_name, COUNT(*) AS times_drawn
-                    FROM game_drawn_cards d
-                    JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
-                    JOIN games g ON g.id = d.game_id
-                    WHERE {where}
-                    GROUP BY d.display_name
-                    """,
-                    params,
-                )
+        for row in _dict_rows(
+            conn.execute(
+                f"""
+                SELECT d.game_id, d.display_name, COALESCE(d.type_category, 'Other') AS type_category
+                FROM game_drawn_cards d
+                JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
+                JOIN games g ON g.id = d.game_id
+                WHERE {where}
+                """,
+                params,
             )
-        }
+        ):
+            if not is_deck_member(row["game_id"], row.get("display_name")):
+                continue
+            clean_name = _clean_card_name(row.get("display_name"))
+            type_category = str(row.get("type_category") or "Other")
+            aggregate = card_aggregates.get((clean_name, type_category))
+            if aggregate is None:
+                aggregate = next(
+                    (
+                        item
+                        for (name, _category), item in card_aggregates.items()
+                        if name == clean_name
+                    ),
+                    None,
+                )
+            if aggregate is not None:
+                aggregate["times_drawn"] += 1
+
+        card_rows = []
+        for aggregate in card_aggregates.values():
+            wins = len(aggregate.pop("win_game_ids"))
+            losses = len(aggregate.pop("loss_game_ids"))
+            games_seen = len(aggregate.pop("game_ids"))
+            aggregate.update(
+                {
+                    "games_seen": games_seen,
+                    "wins_when_seen": wins,
+                    "losses_when_seen": losses,
+                    "win_rate_when_seen": _win_rate(wins, losses),
+                }
+            )
+            card_rows.append(aggregate)
+        card_rows.sort(key=lambda row: (-row["games_seen"], row["display_name"]))
+        card_rows = card_rows[:100]
         opener_rows = _dict_rows(
             conn.execute(
                 f"""
@@ -869,19 +1347,18 @@ def deck_detail(
         )
         trend_rows.reverse()
         deck_visuals = _deck_visuals(conn)
+        deck_export = _deck_export_snapshot(conn, where, params, deck_name)
 
     for row in recent_rows:
         row["format_label"] = format_label(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )
-    for row in card_rows:
-        row["display_name"] = _clean_card_name(row.get("display_name"))
-        row["times_drawn"] = drawn_counts.get(row["display_name"], 0)
     for row in opener_rows:
         row["display_name"] = _clean_card_name(row.get("display_name"))
     return {
         "deck_name": deck_name,
         "deck_visual": deck_visuals.get(deck_name, _empty_deck_visual(deck_name)),
+        "deck_export": deck_export,
         "summary": {
             "games": int(summary[0] or 0),
             "wins": int(summary[1] or 0),
@@ -956,6 +1433,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                   seat_id,
                   display_name,
                   deck_name,
+                  deck_size,
                   went_first,
                   mulligans,
                   opening_hand_size,
@@ -1050,21 +1528,13 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
             (game_id, player_participant_id),
         ).fetchone()
         recorded_draws = int(stats_drawn_row[0] or 0) if stats_drawn_row else 0
-        total_draws = max(recorded_draws, len(drawn))
-        land_draws = sum(
-            1
-            for row in drawn
-            if str(row.get("type_category") or "").casefold() == "land"
-            or str(row.get("display_name") or "").rstrip().endswith("(Land)")
+        deck_size = int((player or {}).get("deck_size") or 60)
+        draw_quality = _draw_quality_metrics(
+            opening_hand,
+            drawn,
+            recorded_draws,
+            deck_size,
         )
-        land_draw_pct = round(100.0 * land_draws / total_draws, 1) if total_draws else None
-        draw_quality = {
-            "total_draws": total_draws,
-            "identified_draws": len(drawn),
-            "land_draws": land_draws,
-            "land_draw_pct": land_draw_pct,
-            "is_flood": land_draw_pct is not None and land_draw_pct > 50.0,
-        }
         cards_played = _dict_rows(
             conn.execute(
                 """
@@ -1129,6 +1599,22 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                 (game_id,),
             )
         )
+        linkable_cards: Dict[str, Optional[str]] = {}
+        for display_name, type_category in conn.execute(
+            """
+            SELECT DISTINCT display_name, type_category
+            FROM game_card_summary
+            """
+        ):
+            clean_name = _clean_card_name(display_name)
+            if clean_name and (
+                clean_name not in linkable_cards or not linkable_cards[clean_name]
+            ):
+                linkable_cards[clean_name] = type_category
+        for row in timeline:
+            row["text_segments"] = _timeline_text_segments(
+                str(row.get("text") or ""), linkable_cards
+            )
         life_curve = [
             {
                 "turn_number": row.get("turn_number"),
@@ -1273,7 +1759,8 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
             FROM game_card_summary s
             JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
             JOIN games g ON g.id = s.game_id
-            WHERE s.display_name = ? OR s.display_name LIKE ?
+            WHERE (s.display_name = ? OR s.display_name LIKE ?)
+              AND s.played_count > 0
             """,
             match_params,
         ).fetchone()
@@ -1285,34 +1772,18 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
                   CASE p.role WHEN 'player' THEN 'You' ELSE 'Opponent' END AS side_label,
                   COUNT(DISTINCT g.id) AS games_seen,
                   COALESCE(SUM(s.played_count), 0) AS total_played,
-                  SUM(
-                    CASE
-                      WHEN p.role = 'player' AND g.outcome = 'win' THEN 1
-                      WHEN p.role = 'opponent' AND g.outcome = 'loss' THEN 1
-                      ELSE 0
-                    END
-                  ) AS wins,
-                  SUM(
-                    CASE
-                      WHEN p.role = 'player' AND g.outcome = 'loss' THEN 1
-                      WHEN p.role = 'opponent' AND g.outcome = 'win' THEN 1
-                      ELSE 0
-                    END
-                  ) AS losses,
+                  SUM(g.outcome = 'win') AS wins,
+                  SUM(g.outcome = 'loss') AS losses,
                   ROUND(
-                    100.0 * SUM(
-                      CASE
-                        WHEN p.role = 'player' AND g.outcome = 'win' THEN 1
-                        WHEN p.role = 'opponent' AND g.outcome = 'loss' THEN 1
-                        ELSE 0
-                      END
-                    ) / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0),
+                    100.0 * SUM(g.outcome = 'win')
+                    / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0),
                     1
                   ) AS win_rate
                 FROM game_card_summary s
                 JOIN participants p ON p.id = s.participant_id
                 JOIN games g ON g.id = s.game_id
-                WHERE s.display_name = ? OR s.display_name LIKE ?
+                WHERE (s.display_name = ? OR s.display_name LIKE ?)
+                  AND s.played_count > 0
                 GROUP BY p.role
                 ORDER BY CASE p.role WHEN 'player' THEN 0 ELSE 1 END
                 """,
@@ -1332,7 +1803,8 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
                 FROM game_card_summary s
                 JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
                 JOIN games g ON g.id = s.game_id
-                WHERE s.display_name = ? OR s.display_name LIKE ?
+                WHERE (s.display_name = ? OR s.display_name LIKE ?)
+                  AND s.played_count > 0
                 GROUP BY p.deck_name
                 ORDER BY games_seen DESC, win_rate DESC, deck_name
                 LIMIT 50
@@ -1363,6 +1835,12 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
             """,
             match_params,
         ).fetchone()
+
+    opponent_usage = next((row for row in by_role if row["role"] == "opponent"), None)
+    opponent_games = int(opponent_usage["games_seen"] or 0) if opponent_usage else 0
+    opponent_wins = int(opponent_usage["wins"] or 0) if opponent_usage else 0
+    opponent_losses = int(opponent_usage["losses"] or 0) if opponent_usage else 0
+    opponent_decided = opponent_wins + opponent_losses
 
     return {
         "card_name": clean_name,
@@ -1395,6 +1873,18 @@ def card_detail(db_path: Path = DEFAULT_DB_PATH, card_name: str = "") -> Dict[st
             ),
         },
         "by_role": by_role,
+        "opponent_impact": {
+            "games": opponent_games,
+            "plays": int(opponent_usage["total_played"] or 0) if opponent_usage else 0,
+            "wins": opponent_wins,
+            "losses": opponent_losses,
+            "win_rate": opponent_usage["win_rate"] if opponent_usage else None,
+            "loss_rate": (
+                round(100.0 * opponent_losses / opponent_decided, 1)
+                if opponent_decided
+                else None
+            ),
+        },
         "by_deck": by_deck,
         "opener_impact": {
             "games_in_opener": int(opener[0] or 0) if opener else 0,
@@ -1548,17 +2038,6 @@ def render_dashboard_html(snapshot: Dict[str, Any]) -> str:
         }
         for row in snapshot["play_draw"]
     ]
-    deck_play_draw_rows = [
-        {
-            "Deck": row["deck_name"],
-            "Split": row["play_draw"],
-            "Games": row["games"],
-            "Wins": row["wins"],
-            "Losses": row["losses"],
-            "WR": row["win_rate"],
-        }
-        for row in snapshot["deck_play_draw"]
-    ]
     draw_quality_rows = [
         {
             "Started": row["started_at"],
@@ -1594,14 +2073,31 @@ def render_dashboard_html(snapshot: Dict[str, Any]) -> str:
         }
         for row in snapshot["momentum"]
     ]
+    draw_quality_by_game = {
+        row["game_id"]: row for row in snapshot["draw_quality"]
+    }
     recent_rows = [
         {
             "Started": row["started_at"],
             "Deck": row["deck_name"],
             "Format": row["format_label"],
             "Outcome": row["outcome"],
-            "Mulligans": row["mulligans"],
-            "Minutes": round((row["duration_seconds"] or 0) / 60.0, 1),
+            "Draw Status": (
+                "Flood"
+                if row.get("is_flood")
+                else ("Mana Screwed" if row.get("is_screw") else "Normal")
+            ),
+            "Mulligan(s)": row["mulligans"],
+            "Total Turns": row["total_turns"],
+            "Cards Seen": draw_quality_by_game.get(row["game_id"], {}).get("cards_seen"),
+            "Lands Seen": (
+                f"{draw_quality_by_game[row['game_id']]['lands_seen']} "
+                f"({math.ceil(draw_quality_by_game[row['game_id']]['land_seen_pct'])}%)"
+                if draw_quality_by_game.get(row["game_id"], {}).get("land_seen_pct")
+                is not None
+                else draw_quality_by_game.get(row["game_id"], {}).get("lands_seen")
+            ),
+            "Game Time": f"{round((row['duration_seconds'] or 0) / 60.0)} min",
         }
         for row in snapshot["recent"]
     ]
@@ -1641,7 +2137,6 @@ def render_dashboard_html(snapshot: Dict[str, Any]) -> str:
   <h2>Decks</h2>{_table(["Deck", "Games", "Wins", "Losses", "WR"], deck_rows)}
   <h2>Formats</h2>{_table(["Format", "Raw", "Games", "WR"], format_rows)}
   <h2>Play / Draw</h2>{_table(["Split", "Games", "Wins", "Losses", "WR"], play_draw_rows)}
-  <h2>Deck Play / Draw</h2>{_table(["Deck", "Split", "Games", "Wins", "Losses", "WR"], deck_play_draw_rows)}
   <h2>Draw Quality</h2>
   <p class="note">Opening hands plus known visible draws. Older games may only have opening-hand data.</p>
   {_table(["Started", "Deck", "Outcome", "Seen", "Lands", "Land %", "Opening", "Known Draws"], draw_quality_rows)}
@@ -1649,7 +2144,7 @@ def render_dashboard_html(snapshot: Dict[str, Any]) -> str:
   <h2>Momentum</h2>
   <p class="note">Next-game results after wins and losses, including mulligans and on-play percentage.</p>
   {_table(["Split", "Games", "Wins", "Losses", "WR", "Avg Mulligans", "On Play %"], momentum_rows)}
-  <h2>Recent Games</h2>{_table(["Started", "Deck", "Format", "Outcome", "Mulligans", "Minutes"], recent_rows)}
+  <h2>Recent Games</h2>{_table(["Started", "Deck", "Format", "Outcome", "Flood", "Mulligan(s)", "Total Turns", "Cards Seen", "Lands Seen", "Game Time"], recent_rows)}
 </main>
 </body>
 </html>"""
