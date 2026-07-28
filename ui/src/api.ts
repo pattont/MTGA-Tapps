@@ -141,6 +141,25 @@ export interface OpenerLandRow {
   win_rate: number | null;
 }
 
+export interface OpponentThreatRow {
+  display_name: string;
+  type_category: string;
+  games: number;
+  plays: number;
+  wins: number;
+  losses: number;
+  loss_rate: number | null;
+}
+
+export interface MatchupRow {
+  deck_name: string;
+  opponent_archetype: string;
+  games: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+}
+
 export interface ManaReadinessRow {
   threshold: number;
   label: string;
@@ -266,6 +285,8 @@ export interface DashboardSnapshot {
   streaks: StreakSummary;
   outcome_reasons: OutcomeReasonRow[];
   opener_lands: OpenerLandRow[];
+  opponent_threats: OpponentThreatRow[];
+  matchups: MatchupRow[];
   recent: RecentGameRow[];
   matches: MatchRow[];
   sessions: SessionRow[];
