@@ -290,6 +290,20 @@ def draw_quality_metrics(
     # short game is ordinary variance, not flood.
     if land_draw_pct is not None and land_draw_pct > 50.0 and total_draws >= 6:
         flood_reasons.append(f"{land_draws} of {total_draws} post-opening draws were lands")
+    # Combined rule counting the opening hand: a 3-land keep followed by
+    # land-heavy draws floods even when no single post-opening rule fires.
+    # Requires being clearly above the deck's own expected land count so a
+    # normal land share never triggers it.
+    if (
+        total_cards_seen >= 9
+        and land_seen_pct is not None
+        and land_seen_pct >= max(50.0, expected_land_rate * 100.0 + 12.0)
+        and lands_seen - expected_lands_seen >= 1.2
+    ):
+        flood_reasons.append(
+            f"{lands_seen} of {total_cards_seen} cards seen were lands "
+            "(opening hand included)"
+        )
     if flood_probability_pct is not None and flood_probability_pct <= 10.0:
         flood_reasons.append(
             f"Only a {flood_probability_pct:g}% chance of seeing at least {lands_seen} lands"
