@@ -1,9 +1,13 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { SortableTable } from './SortableTable';
 
 describe('SortableTable', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
   const rows = [
     { deck: 'Boros', games: 1, winRate: '50%' },
     { deck: 'Azorius', games: 4, winRate: '75%' },

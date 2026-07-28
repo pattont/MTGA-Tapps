@@ -31,6 +31,7 @@ import { FilterBar } from './components/FilterBar';
 import { FormatsTable } from './components/FormatsTable';
 import { GameDetailPage } from './components/GameDetailPage';
 import { MetricCard } from './components/MetricCard';
+import { AuditPage } from './components/AuditPage';
 import { OpponentDetailPage } from './components/OpponentDetailPage';
 import { RankProgressChart } from './components/RankProgressChart';
 import { SortableTable, type Column } from './components/SortableTable';
@@ -42,12 +43,13 @@ import { Section } from './components/Section';
 import { ManaReadinessTable } from './components/ManaReadinessTable';
 import { formatPercent, metricCards } from './dashboardData';
 import { formatCardName, formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone } from './format';
-import { cardNavItems, deckNavItems, gameNavItems, opponentNavItems } from './nav';
+import { auditNavItems, cardNavItems, deckNavItems, gameNavItems, opponentNavItems } from './nav';
 import { RouteFiltersContext } from './routeFilters';
 import {
   dashboardRouteHash,
   deckRouteHashWithFilters,
   gameRouteHash,
+  parseAuditRoute,
   parseCardRoute,
   parseDashboardRouteFilters,
   parseDeckRoute,
@@ -579,6 +581,7 @@ export default function App() {
   const gameRoute = useMemo(() => parseGameRoute(routeHash), [routeHash]);
   const cardRoute = useMemo(() => parseCardRoute(routeHash), [routeHash]);
   const opponentRoute = useMemo(() => parseOpponentRoute(routeHash), [routeHash]);
+  const auditRoute = useMemo(() => parseAuditRoute(routeHash), [routeHash]);
   const deckName = deckRoute?.name ?? null;
   const gameId = gameRoute?.id ?? null;
   const cardName = cardRoute?.name ?? null;
@@ -667,6 +670,7 @@ export default function App() {
       || gameRoute
       || cardRoute
       || opponentRoute
+      || auditRoute
       || loadState.status !== 'loaded'
       || !routeHash.startsWith('#')
     ) {
@@ -678,7 +682,7 @@ export default function App() {
     } else if (sectionId && !sectionId.startsWith('/')) {
       document.getElementById(sectionId)?.scrollIntoView?.({ block: 'start' });
     }
-  }, [cardRoute, deckRoute, gameRoute, loadState.status, opponentRoute, routeHash]);
+  }, [auditRoute, cardRoute, deckRoute, gameRoute, loadState.status, opponentRoute, routeHash]);
 
   useEffect(() => {
     document.title = deckRoute
@@ -689,11 +693,13 @@ export default function App() {
           ? pageTitle(cardRoute.name)
           : opponentRoute
             ? pageTitle(opponentRoute.name)
-            : pageTitle('Overview');
-  }, [deckRoute, gameRoute, cardRoute, opponentRoute]);
+            : auditRoute
+              ? pageTitle('DB Health')
+              : pageTitle('Overview');
+  }, [auditRoute, deckRoute, gameRoute, cardRoute, opponentRoute]);
 
   useEffect(() => {
-    if (deckName || gameId || cardName || opponentRoute) {
+    if (deckName || gameId || cardName || opponentRoute || auditRoute) {
       return;
     }
     let ignore = false;
@@ -731,7 +737,7 @@ export default function App() {
       activeController?.abort();
       window.clearInterval(refreshId);
     };
-  }, [filters, deckName, gameId, cardName, opponentRoute]);
+  }, [filters, deckName, gameId, cardName, opponentRoute, auditRoute]);
 
   function toggleTheme() {
     themeChosenRef.current = true;
@@ -758,7 +764,9 @@ export default function App() {
         theme={theme}
         onToggleTheme={toggleTheme}
         navItems={
-          cardRoute
+          auditRoute
+            ? auditNavItems
+          : cardRoute
             ? cardPageNavItems
             : gameId
               ? gamePageNavItems
@@ -768,9 +776,11 @@ export default function App() {
                   ? opponentNavItems
                   : undefined
         }
-        heading={cardName ? formatCardName(cardName) : (gameRoute ? 'Game Detail' : deckName ?? opponentRoute?.name ?? DASHBOARD_TITLE)}
+        heading={auditRoute ? 'Database Health' : cardName ? formatCardName(cardName) : (gameRoute ? 'Game Detail' : deckName ?? opponentRoute?.name ?? DASHBOARD_TITLE)}
       >
-        {cardRoute ? (
+        {auditRoute ? (
+          <AuditPage />
+        ) : cardRoute ? (
           <CardDetailPage
             key={`${cardRoute.name}-${cardRoute.returnHash}`}
             backHref={cardRoute.returnHash}
