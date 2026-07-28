@@ -158,6 +158,24 @@ def _sample_dashboard_db(tmp_path):
         )
         conn.executemany(
             """
+            insert into game_deck_cards (
+                game_id, participant_id, card_id, arena_id, display_name,
+                type_category, deck_zone, quantity
+            ) values (?, ?, NULL, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("game-1", "player-1", 90001, "Mountain", "Land", "deck", 24),
+                ("game-1", "player-1", 90002, "Mouse Mentor", "Creature", "deck", 4),
+                ("game-1", "player-1", 90003, "Shock", "Instant", "deck", 32),
+                ("game-1", "player-1", 90004, "Sheltered by Ghosts", "Enchantment", "sideboard", 2),
+                ("game-2", "player-2", 90001, "Mountain", "Land", "deck", 24),
+                ("game-2", "player-2", 90002, "Mouse Mentor", "Creature", "deck", 2),
+                ("game-2", "player-2", 90003, "Shock", "Instant", "deck", 32),
+                ("game-2", "player-2", 90004, "Sheltered by Ghosts", "Enchantment", "deck", 2),
+            ],
+        )
+        conn.executemany(
+            """
             insert into game_participant_stats (
                 game_id, participant_id, attack_steps, attacking_creatures,
                 attackers_lost, blocking_creatures, blockers_lost, damage_dealt,
@@ -744,6 +762,8 @@ def test_deck_detail_reports_cards_openers_and_mulligans(tmp_path):
 def test_deck_detail_uses_submitted_deck_for_card_performance_and_arena_export(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
     with sqlite3.connect(db_path) as conn:
+        # This test pins its own submitted decklist; drop the shared fixture's.
+        conn.execute("delete from game_deck_cards")
         conn.executemany(
             """
             insert into cards (id, arena_id, name, primary_type, first_seen_at)
@@ -1707,3 +1727,35 @@ def test_game_detail_includes_participant_stats(tmp_path):
     assert stats[0]["damage_dealt"] == 20
     assert stats[0]["damage_taken"] == 6
     assert stats[1]["damage_dealt"] == 8
+
+
+def test_deck_detail_reports_composition_and_versions(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+
+    detail = deck_detail(db_path, "Boros Mouse")
+
+    composition = {row["display_name"]: row for row in detail["composition"]}
+    mountain = composition["Mountain"]
+    assert mountain["games_in_deck"] == 2
+    assert mountain["games_seen"] == 1
+    assert mountain["times_seen"] == 1
+    # game-1 saw 2 cards from a 60-card deck: expected 2*24/60 = 0.8
+    assert mountain["expected_seen"] == 0.8
+    assert mountain["win_rate_when_seen"] == 100.0
+    assert mountain["win_rate_when_not_seen"] == 0.0
+
+    versions = detail["versions"]
+    assert len(versions) == 2
+    assert versions[0]["games"] == 1
+    assert versions[0]["wins"] == 1
+    assert versions[1]["games"] == 1
+    assert versions[1]["losses"] == 1
+    assert versions[1]["added"] == ["2x Sheltered by Ghosts"]
+    assert versions[1]["removed"] == ["2x Mouse Mentor"]
+
+    sideboard = detail["sideboard"]
+    assert sideboard is not None
+    assert sideboard["matches"] == 1
+    assert sideboard["game_one"]["wins"] == 1
+    assert sideboard["post_board"]["losses"] == 1
+    assert sideboard["boarded_in"][0]["display_name"] == "Sheltered by Ghosts"
