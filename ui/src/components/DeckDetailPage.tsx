@@ -304,7 +304,7 @@ const gameColumns: Column<DeckGameRow>[] = [
       row.is_flood ? (
         <Badge tone="draw">Flood</Badge>
       ) : row.is_screw ? (
-        <Badge tone="screw">Mana Screwed</Badge>
+        <Badge tone="screw">Mana Screw</Badge>
       ) : (
         'Normal'
       ),

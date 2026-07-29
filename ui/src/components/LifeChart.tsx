@@ -3,7 +3,9 @@ import type { LifePoint } from '../api';
 
 const VIEW_WIDTH = 600;
 const VIEW_HEIGHT = 130;
-const PADDING = 10;
+// Generous vertical padding keeps the max/zero gridlines clear of the
+// floating axis labels rendered above and below them.
+const PADDING = 22;
 
 function pathFor(values: number[], maxLife: number): string {
   if (values.length === 0) {
@@ -56,37 +58,39 @@ export function LifeChart({ points }: { points: LifePoint[] }) {
   return (
     <figure className="life-chart" aria-label="Life totals over the game">
       <div className="trend-meta">
-        <span>Life totals</span>
+        <span>Final (You / Opp)</span>
         <strong>
           {latest.player_life} / {latest.opponent_life}
         </strong>
       </div>
-      <svg
-        viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
-        preserveAspectRatio="none"
-        role="img"
-        aria-label={`Life totals over ${points.length} recorded points, final ${latest.player_life} versus ${latest.opponent_life}`}
-        focusable="false"
-        onMouseMove={handleMouseMove}
-        onMouseLeave={() => setHoverIndex(null)}
-      >
-        <line className="trend-guide" x1="0" y1={VIEW_HEIGHT / 2} x2={VIEW_WIDTH} y2={VIEW_HEIGHT / 2} />
-        <path className="life-line-player" d={playerPath} />
-        <path className="life-line-opponent" strokeDasharray="5 3" d={opponentPath} />
-        {hovered !== null ? (
-          <line
-            className="chart-hover-line"
-            x1={hovered * step}
-            y1={0}
-            x2={hovered * step}
-            y2={VIEW_HEIGHT}
-          />
-        ) : null}
-      </svg>
-      <span className="chart-axis-float chart-axis-float-top" aria-hidden="true">
-        {maxLife}
-      </span>
-      <span className="chart-axis-float chart-axis-float-bottom" aria-hidden="true">0</span>
+      <div className="life-svg-wrap">
+        <svg
+          viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
+          preserveAspectRatio="none"
+          role="img"
+          aria-label={`Life totals over ${points.length} recorded points, final ${latest.player_life} versus ${latest.opponent_life}`}
+          focusable="false"
+          onMouseMove={handleMouseMove}
+          onMouseLeave={() => setHoverIndex(null)}
+        >
+          <line className="trend-guide" x1="0" y1={VIEW_HEIGHT / 2} x2={VIEW_WIDTH} y2={VIEW_HEIGHT / 2} />
+          <path className="life-line-player" d={playerPath} />
+          <path className="life-line-opponent" strokeDasharray="5 3" d={opponentPath} />
+          {hovered !== null ? (
+            <line
+              className="chart-hover-line"
+              x1={hovered * step}
+              y1={0}
+              x2={hovered * step}
+              y2={VIEW_HEIGHT}
+            />
+          ) : null}
+        </svg>
+        <span className="life-axis-label life-axis-label-top" aria-hidden="true">
+          {maxLife}
+        </span>
+        <span className="life-axis-label life-axis-label-bottom" aria-hidden="true">0</span>
+      </div>
       {hoveredPoint !== null ? (
         <div className="chart-tooltip" style={{ left: `${hoverLeftPct}%`, top: '2.4rem' }}>
           Turn {hoveredPoint.turn_number ?? '—'} · You {hoveredPoint.player_life} · Opp {hoveredPoint.opponent_life}

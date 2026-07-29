@@ -327,36 +327,48 @@ export function GameDetailPage({
       : isFlood
         ? 'Flood'
         : isScrew
-          ? 'Mana Screwed'
+          ? 'Mana Screw'
           : 'Normal';
   const playerStats = detail.participant_stats.find((row) => row.role === 'player');
   const opponentStats = detail.participant_stats.find((row) => row.role === 'opponent');
-  const combatStatRows =
-    playerStats || opponentStats
-      ? (
-          [
-            ['Attack steps', 'attack_steps'],
-            ['Attacking creatures', 'attacking_creatures'],
-            ['Attackers lost', 'attackers_lost'],
-            ['Blocking creatures', 'blocking_creatures'],
-            ['Blockers lost', 'blockers_lost'],
-            ['Damage dealt', 'damage_dealt'],
-            ['Damage taken', 'damage_taken'],
-            ['Life lost', 'life_lost'],
-            ['Self damage', 'self_damage'],
-            ['Life gained', 'life_gained'],
-            ['Cards played', 'cards_played'],
-            ['Cards drawn', 'cards_drawn'],
-            ['Cards discarded', 'cards_discarded'],
-            ['Cards milled', 'cards_milled'],
-            ['Cards exiled', 'cards_exiled'],
-          ] as const
-        ).map(([label, key]) => ({
-          label,
-          player: playerStats ? playerStats[key] : null,
-          opponent: opponentStats ? opponentStats[key] : null,
-        }))
-      : [];
+  const combatGroups = [
+    {
+      title: 'Attack',
+      rows: [
+        ['Attack steps', 'attack_steps'],
+        ['Attacking creatures', 'attacking_creatures'],
+        ['Attackers lost', 'attackers_lost'],
+      ],
+    },
+    {
+      title: 'Block',
+      rows: [
+        ['Blocking creatures', 'blocking_creatures'],
+        ['Blockers lost', 'blockers_lost'],
+      ],
+    },
+    {
+      title: 'Life',
+      rows: [
+        ['Damage dealt', 'damage_dealt'],
+        ['Damage taken', 'damage_taken'],
+        ['Life lost', 'life_lost'],
+        ['Self damage', 'self_damage'],
+        ['Life gained', 'life_gained'],
+      ],
+    },
+    {
+      title: 'Cards',
+      rows: [
+        ['Played', 'cards_played'],
+        ['Drawn', 'cards_drawn'],
+        ['Discarded', 'cards_discarded'],
+        ['Milled', 'cards_milled'],
+        ['Exiled', 'cards_exiled'],
+      ],
+    },
+  ] as const;
+  const mulliganHands = detail.mulligan_hands ?? [];
   async function saveAnnotation() {
     setNoteStatus('saving');
     try {
@@ -416,7 +428,7 @@ export function GameDetailPage({
             <div className="game-title-row">
               <h2>Game {formatDateTime(detail.game.started_at)}</h2>
               {isFlood ? <Badge tone="draw">Flood</Badge> : null}
-              {!isFlood && isScrew ? <Badge tone="screw">Mana Screwed</Badge> : null}
+              {!isFlood && isScrew ? <Badge tone="screw">Mana Screw</Badge> : null}
             </div>
             <p>
               {detail.player.deck_name ? <DeckLink deckName={detail.player.deck_name} /> : 'Unknown deck'} ·{' '}
@@ -488,7 +500,7 @@ export function GameDetailPage({
         ) : null}
         {!isFlood && isScrew && screwReasons.length > 0 ? (
           <p className="draw-quality-reason">
-            <Badge tone="screw">Mana Screwed Evidence</Badge>
+            <Badge tone="screw">Mana Screw Evidence</Badge>
             <span>{screwReasons.join(' · ')}</span>
           </p>
         ) : null}
@@ -500,26 +512,30 @@ export function GameDetailPage({
         description="Per-seat combat, damage, and resource totals recorded for this game."
       >
         {detail.participant_stats.length > 0 ? (
-          <div className="table-wrap">
-            <table>
-              <caption className="visually-hidden">Combat and resource stats by seat</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Stat</th>
-                  <th scope="col" className="numeric">You</th>
-                  <th scope="col" className="numeric">Opponent</th>
-                </tr>
-              </thead>
-              <tbody>
-                {combatStatRows.map((stat) => (
-                  <tr key={stat.label}>
-                    <td>{stat.label}</td>
-                    <td className="numeric">{formatNumber(stat.player)}</td>
-                    <td className="numeric">{formatNumber(stat.opponent)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="combat-groups">
+            {combatGroups.map((group) => (
+              <div key={group.title} className="combat-group">
+                <table className="combat-group-table">
+                  <caption className="visually-hidden">{group.title} stats by seat</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">{group.title}</th>
+                      <th scope="col" className="numeric">You</th>
+                      <th scope="col" className="numeric">Opp</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {group.rows.map(([label, key]) => (
+                      <tr key={key}>
+                        <td>{label}</td>
+                        <td className="numeric">{formatNumber(playerStats ? playerStats[key] : null)}</td>
+                        <td className="numeric">{formatNumber(opponentStats ? opponentStats[key] : null)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
           </div>
         ) : (
           <p className="empty-state">No combat telemetry recorded for this game.</p>
@@ -532,9 +548,55 @@ export function GameDetailPage({
         </div>
       </Section>
 
-      <Section id="game-opening-hand" title="Opening Hand">
+      <Section
+        id="game-opening-hand"
+        title="Opening Hand"
+        description={
+          mulliganHands.length > 0
+            ? 'Every hand seen before keeping: mulliganed hands go back whole, and the final hand bottoms one card per mulligan.'
+            : undefined
+        }
+      >
+        {mulliganHands.length > 0 ? (
+          <div className="mulligan-history">
+            {mulliganHands.map((hand, index) => {
+              const bottomedCount = hand.cards.filter((card) => card.bottomed).length;
+              const kept = bottomedCount > 0;
+              return (
+                <div key={hand.hand_number} className="mulligan-hand">
+                  <div className="mulligan-hand-head">
+                    <span className="mulligan-hand-title">
+                      {index === 0 ? 'Hand 1 — first seven' : `Hand ${hand.hand_number} — after mulligan ${hand.hand_number - 1}`}
+                    </span>
+                    <span className={kept ? 'mulligan-hand-verdict mulligan-hand-kept' : 'mulligan-hand-verdict'}>
+                      {kept
+                        ? `Kept · bottomed ${bottomedCount} ${bottomedCount === 1 ? 'card' : 'cards'}`
+                        : 'Mulliganed away'}
+                    </span>
+                  </div>
+                  <ul className="mulligan-cards">
+                    {hand.cards.map((card) => (
+                      <li
+                        key={`${hand.hand_number}-${card.hand_position}`}
+                        className={card.bottomed ? 'mulligan-card mulligan-card-bottomed' : 'mulligan-card'}
+                      >
+                        <CardLink cardName={card.display_name} />
+                        {card.bottomed ? <span className="mulligan-card-note">bottomed</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+            <h4 className="mulligan-kept-title">Kept hand</h4>
+          </div>
+        ) : (detail.player.mulligans ?? 0) > 0 ? (
+          <p className="mulligan-history-missing">
+            This game was recorded before mulligan-history support, so only the kept hand below was saved.
+          </p>
+        ) : null}
         <SortableTable
-          caption="Opening hand"
+          caption={mulliganHands.length > 0 ? 'Kept hand' : 'Opening hand'}
           columns={openingColumns}
           getRowKey={(row) => `${row.hand_position}-${row.display_name}`}
           rows={detail.opening_hand}
