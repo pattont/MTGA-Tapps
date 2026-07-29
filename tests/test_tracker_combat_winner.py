@@ -3733,6 +3733,21 @@ def test_match_started_block_marks_momir_games_not_saved(capsys):
     assert "Players: Tapps vs Rival123 (Log Not Saved to DB)" in out
 
 
+def test_all_midweek_magic_matches_are_untracked(capsys):
+    tracker = make_tracker()
+    tracker.game_state.game_start_time = datetime(2026, 7, 15, 22, 51, 32)
+    tracker.game_state.format_str = "MWM_SlowStart_20260602"
+    tracker.game_state.player_display_name = "Tapps"
+    tracker.game_state.opponent_display_name = "Rival123"
+
+    assert tracker._is_untracked_match()
+
+    tracker._print_match_started_block()
+    out = capsys.readouterr().out
+    assert "Format: Midweek Magic - Slow Start" in out
+    assert "Players: Tapps vs Rival123 (Log Not Saved to DB)" in out
+
+
 def test_active_momir_match_room_survives_game_start_reset(tmp_path):
     tracker = make_tracker()
     log_path = tmp_path / "Player.log"
@@ -4920,7 +4935,7 @@ def test_game_summary_persists_brawl_starting_life(capsys, tmp_path):
     tracker.session_start_time = datetime(2026, 6, 23, 20, 0, 0)
     tracker.game_state.player_seat_id = 2
     tracker.game_state.opponent_seat_id = 1
-    tracker.game_state.format_str = "MWM_Brawl_20260623"
+    tracker.game_state.format_str = "Brawl"
     tracker.game_state.player_life = 15
     tracker.game_state.opponent_life = 20
     tracker.game_state.game_start_time = datetime(2026, 6, 23, 20, 40, 0)
