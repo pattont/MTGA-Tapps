@@ -2,7 +2,12 @@ import sqlite3
 
 from mtga_tracker.analytics import AnalyticsStore
 from mtga_tracker.db_audit import audit_database, repair_database
-from mtga_tracker.format_normalizer import format_label, is_momir_format, normalize_match_format
+from mtga_tracker.format_normalizer import (
+    format_label,
+    is_midweek_format,
+    is_momir_format,
+    normalize_match_format,
+)
 
 
 def test_format_normalizer_labels_constructed_queues():
@@ -22,6 +27,16 @@ def test_momir_format_detection_handles_midweek_and_plain_labels():
     assert is_momir_format("MWM_Momir")
     assert is_momir_format("Midweek Magic - Momir")
     assert not is_momir_format("MWM_SlowStart_20260602")
+
+
+def test_midweek_format_detection_covers_event_and_label_spellings():
+    assert is_midweek_format("MWM_SlowStart_20260602")
+    assert is_midweek_format("MWM_Momir")
+    assert is_midweek_format("Midweek Magic - Slow Start")
+    assert is_midweek_format("MidWeekMagic_Brawl")
+    assert not is_midweek_format("Play")
+    assert not is_midweek_format("TraditionalLadder")
+    assert not is_midweek_format(None)
 
 
 def test_audit_database_finds_safe_format_queue_mismatch(tmp_path):

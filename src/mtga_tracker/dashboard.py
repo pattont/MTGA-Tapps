@@ -937,11 +937,18 @@ def _games_filter(
     until: Optional[str] = None,
 ) -> Tuple[str, List[Any]]:
     """WHERE fragment (referencing games alias `g`) plus bound params."""
-    # Jump In games are intentionally untracked; hide them from every aggregate.
+    # Jump In and Midweek Magic games are intentionally untracked; hide them
+    # from every aggregate even if legacy rows linger in the database.
     clauses = [
         """NOT EXISTS (
           SELECT 1 FROM matches mj
-          WHERE mj.id = g.match_id AND mj.format LIKE 'Jump!_In%' ESCAPE '!'
+          WHERE mj.id = g.match_id AND (
+            mj.format LIKE 'Jump!_In%' ESCAPE '!'
+            OR mj.format LIKE 'MWM%'
+            OR mj.format LIKE 'Midweek%'
+            OR COALESCE(mj.queue, '') LIKE 'MWM%'
+            OR COALESCE(mj.event_name, '') LIKE 'MWM%'
+          )
         )"""
     ]
     params: List[Any] = []
