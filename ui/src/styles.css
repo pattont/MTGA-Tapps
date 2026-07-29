@@ -2203,3 +2203,178 @@ tbody tr:hover {
   font-size: 0.85rem;
   font-weight: 700;
 }
+
+/* ---- Combat & Resources subsections ---- */
+
+.combat-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 14px;
+  padding: 12px 16px 16px;
+}
+
+.combat-group {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.combat-group-table {
+  width: 100%;
+  min-width: 0;
+  border-collapse: collapse;
+}
+
+.combat-group-table th,
+.combat-group-table td {
+  padding: 7px 12px;
+  font-size: 0.88rem;
+}
+
+.combat-group-table thead th {
+  text-align: left;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  background: var(--panel-strong);
+  border-bottom: 1px solid var(--border);
+}
+
+.combat-group-table thead th:first-child {
+  color: var(--accent);
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+}
+
+.combat-group-table td {
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.combat-group-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.combat-group-table th.numeric,
+.combat-group-table td.numeric {
+  text-align: right;
+  width: 58px;
+  font-variant-numeric: tabular-nums;
+}
+
+.combat-group-table td.numeric {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ---- Life chart axis labels ---- */
+
+.life-svg-wrap {
+  position: relative;
+}
+
+.life-axis-label {
+  position: absolute;
+  left: 4px;
+  color: var(--subtle);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.life-axis-label-top {
+  top: 2px;
+}
+
+.life-axis-label-bottom {
+  bottom: 4px;
+}
+
+/* ---- Mulligan history ---- */
+
+.mulligan-history {
+  padding: 12px 16px 0;
+}
+
+.mulligan-hand {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px 12px;
+  margin-bottom: 10px;
+}
+
+.mulligan-hand-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.mulligan-hand-title {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.mulligan-hand-verdict {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.mulligan-hand-kept {
+  color: var(--success);
+}
+
+.mulligan-cards {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+
+.mulligan-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  font-size: 0.85rem;
+}
+
+.mulligan-card-bottomed {
+  opacity: 0.65;
+  border-style: dashed;
+}
+
+.mulligan-card-note {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--danger);
+}
+
+.mulligan-kept-title {
+  margin: 4px 0 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.mulligan-history-missing {
+  margin: 0;
+  padding: 12px 16px 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}

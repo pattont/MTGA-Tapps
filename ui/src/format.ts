@@ -54,6 +54,8 @@ export function outcomeLabel(outcome: string | null | undefined): string {
 /** "Standard Best-of-1 (Ranked)" -> "Standard BO1 (Ranked)" for tight table columns. */
 export function shortFormatLabel(label: string | null | undefined): string {
   return String(label ?? '')
+    .replace('Standard ', 'Std. ')
     .replace('Best-of-1', 'BO1')
-    .replace('Best-of-3', 'BO3');
+    .replace('Best-of-3', 'BO3')
+    .replace(' (Unranked)', '');
 }

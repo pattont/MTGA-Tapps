@@ -51,7 +51,7 @@ describe('LifeChart', () => {
     const { container } = render(<LifeChart points={points} />);
 
     // HTML floats, not SVG <text>: SVG text distorts under preserveAspectRatio="none".
-    const labels = Array.from(container.querySelectorAll('.chart-axis-float')).map(
+    const labels = Array.from(container.querySelectorAll('.life-axis-label')).map(
       (node) => node.textContent,
     );
     expect(labels).toEqual(['20', '0']);

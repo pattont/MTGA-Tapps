@@ -487,6 +487,16 @@ export interface GameOpeningHandRow extends GameCardRow {
   copy_number: number;
 }
 
+export interface MulliganHandCard extends GameCardRow {
+  hand_position: number;
+  bottomed: boolean;
+}
+
+export interface MulliganHand {
+  hand_number: number;
+  cards: MulliganHandCard[];
+}
+
 export interface GameDrawnCardRow extends GameCardRow {
   turn_number: number | null;
   draw_position: number;
@@ -615,6 +625,7 @@ export interface GameDetail {
   annotation?: GameAnnotation;
   participant_stats: GameParticipantStatsRow[];
   opening_hand: GameOpeningHandRow[];
+  mulligan_hands?: MulliganHand[];
   drawn: GameDrawnCardRow[];
   draw_quality: GameDrawQuality;
   turn_timing: {
