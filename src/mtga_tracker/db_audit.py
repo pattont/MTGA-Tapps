@@ -136,12 +136,117 @@ def _turn_count_findings(conn: sqlite3.Connection) -> Iterable[AuditFinding]:
         )
 
 
+def _recoverable_missing_turns(
+    conn: sqlite3.Connection,
+    *,
+    game_id: str,
+    session_id: str,
+    started_at: str,
+    ended_at: str,
+    total_turns: int,
+) -> List[int]:
+    """Return the missing turn numbers whose timings can actually be restored.
+
+    A missing turn is recoverable when the next turn's console header preserved
+    its exact duration, or when the turn's own header event exists together with
+    a strictly-later end boundary (the next turn's header, the next turn's
+    persisted timing row, or — for the final turn — the game's recorded end
+    time). Header bursts replayed when the tracker attaches mid-game share one
+    timestamp, so a zero-length bracket is treated as unrecoverable, matching
+    the estimated-backfill insert rules.
+    """
+    if total_turns < 1:
+        return []
+
+    def parse_time(value: object) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value))
+        except ValueError:
+            return None
+
+    timed_turns = set()
+    turn_starts: dict[int, datetime] = {}
+    for row in conn.execute(
+        "SELECT turn_number, started_at FROM game_turns WHERE game_id = ?", (game_id,)
+    ):
+        if row[0] is None:
+            continue
+        timed_turns.add(int(row[0]))
+        row_started = parse_time(row[1])
+        if row_started is not None:
+            turn_starts[int(row[0])] = row_started
+    missing = [turn for turn in range(1, total_turns + 1) if turn not in timed_turns]
+    if not missing:
+        return []
+    console_turns = {
+        int(row[0])
+        for row in conn.execute(
+            """
+            SELECT turn_number
+            FROM console_logs
+            WHERE session_id = ?
+              AND substr(match_started_at, 1, 19) = substr(?, 1, 19)
+              AND text LIKE 'Previous Turn (%'
+              AND turn_number IS NOT NULL
+            """,
+            (session_id, started_at),
+        )
+    }
+    header_starts: dict[int, datetime] = {}
+    for row in conn.execute(
+        """
+        SELECT turn_number, MIN(event_time)
+        FROM game_events
+        WHERE game_id = ?
+          AND turn_number IS NOT NULL
+          AND (
+              text LIKE 'Turn % - YOUR TURN'
+              OR text LIKE "Turn % - OPPONENT'S TURN"
+          )
+        GROUP BY turn_number
+        """,
+        (game_id,),
+    ):
+        header_started = parse_time(row[1])
+        if header_started is not None:
+            header_starts[int(row[0])] = header_started
+    game_ended = parse_time(ended_at)
+
+    recoverable: List[int] = []
+    for turn in missing:
+        # The console line printed at the start of turn N+1 carries turn N's
+        # exact measured duration.
+        if turn + 1 in console_turns:
+            recoverable.append(turn)
+            continue
+        turn_started = header_starts.get(turn)
+        if turn_started is None:
+            continue
+        end_boundary = header_starts.get(turn + 1) or turn_starts.get(turn + 1)
+        if end_boundary is None and turn == total_turns:
+            end_boundary = game_ended
+        # Mirror the backfill: the estimated duration must round to >= 1 second.
+        if end_boundary is not None and (end_boundary - turn_started).total_seconds() >= 0.5:
+            recoverable.append(turn)
+    return recoverable
+
+
 def _missing_turn_timing_findings(conn: sqlite3.Connection) -> Iterable[AuditFinding]:
-    """Report completed games whose durable turn headers can restore timing rows."""
-    for game_id, total_turns, timed_turns in conn.execute(
+    """Report completed games whose missing turn timings are actually restorable.
+
+    Games whose only timing gaps predate the tracker attaching (no console
+    history and no turn-header events for those turns) are expected data loss
+    and are not flagged.
+    """
+    for game_id, session_id, started_at, ended_at, total_turns, timed_turns in conn.execute(
         """
         SELECT
             g.id,
+            g.session_id,
+            g.started_at,
+            g.ended_at,
             g.total_turns,
             (SELECT COUNT(*) FROM game_turns gt WHERE gt.game_id = g.id) AS timed_turns
         FROM games g
@@ -149,28 +254,31 @@ def _missing_turn_timing_findings(conn: sqlite3.Connection) -> Iterable[AuditFin
           AND COALESCE(g.total_turns, 0) > (
               SELECT COUNT(*) FROM game_turns gt WHERE gt.game_id = g.id
           )
-          AND EXISTS (
-              SELECT 1
-              FROM console_logs cl
-              WHERE cl.session_id = g.session_id
-                AND substr(cl.match_started_at, 1, 19) = substr(g.started_at, 1, 19)
-                AND cl.text LIKE 'Previous Turn (%'
-          )
         ORDER BY g.started_at
         """
     ):
-        missing_turns = int(total_turns or 0) - int(timed_turns or 0)
+        recoverable = _recoverable_missing_turns(
+            conn,
+            game_id=str(game_id),
+            session_id=str(session_id or ""),
+            started_at=str(started_at or ""),
+            ended_at=str(ended_at or ""),
+            total_turns=int(total_turns or 0),
+        )
+        if not recoverable:
+            continue
+        turn_list = ", ".join(str(turn) for turn in recoverable)
         yield AuditFinding(
             code="MISSING_TURN_TIMINGS",
             severity="error",
             table_name="game_turns",
             row_id=str(game_id),
             message=(
-                f"Completed game has {timed_turns} of {total_turns} turn timings, "
-                "but exact previous-turn durations remain recoverable from console history."
+                f"Completed game has {timed_turns} of {total_turns} turn timings; "
+                f"turn(s) {turn_list} remain recoverable from console and turn-header history."
             ),
             current_value=str(timed_turns),
-            suggested_value=f"recover {missing_turns} missing turn timing row(s)",
+            suggested_value=f"recover {len(recoverable)} missing turn timing row(s)",
             repairable=True,
         )
 
@@ -834,7 +942,8 @@ def repair_database(db_path: Path = DEFAULT_DB_PATH, *, backup: bool = False) ->
                 repaired_count += 1
             elif finding.code == "MISSING_TURN_TIMINGS":
                 recovered = AnalyticsStore.backfill_recovered_game_turn_times(conn, finding.row_id)
-                if recovered:
+                estimated = AnalyticsStore.backfill_estimated_game_turn_times(conn)
+                if recovered or estimated:
                     repaired_count += 1
             elif finding.code == "MISSING_COMPLETED_GAME_RECORD":
                 record = missing_records.get(finding.row_id)

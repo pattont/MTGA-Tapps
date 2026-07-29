@@ -157,6 +157,134 @@ def test_audit_repairs_missing_exact_turn_timings_from_console_history(tmp_path)
     ]
 
 
+def test_audit_skips_turn_timings_lost_before_tracker_attached(tmp_path):
+    """Turns with no console history and no header events are expected loss."""
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            "INSERT INTO tracker_sessions (id, started_at) VALUES ('session-1', '2026-07-22T01:00:00')"
+        )
+        conn.execute("INSERT INTO matches (id, session_id) VALUES ('match-1', 'session-1')")
+        conn.execute(
+            """
+            INSERT INTO games (
+                id, session_id, match_id, started_at, ended_at, total_turns,
+                player_turns, opponent_turns, outcome
+            ) VALUES (
+                'game-1', 'session-1', 'match-1',
+                '2026-07-22T01:16:00', '2026-07-22T01:20:00', 6, 3, 3, 'win'
+            )
+            """
+        )
+        conn.executemany(
+            """
+            INSERT INTO participants (id, game_id, seat_id, role)
+            VALUES (?, 'game-1', ?, ?)
+            """,
+            (("player-1", 1, "player"), ("opponent-1", 2, "opponent")),
+        )
+        # The tracker attached mid-game: turns 3-6 have timings, 1-2 have nothing.
+        conn.executemany(
+            """
+            INSERT INTO game_turns (
+                game_id, turn_number, seat_id, started_at, ended_at, duration_seconds
+            ) VALUES ('game-1', ?, ?, ?, ?, 30)
+            """,
+            (
+                (3, 1, "2026-07-22T01:17:00", "2026-07-22T01:17:30"),
+                (4, 2, "2026-07-22T01:17:30", "2026-07-22T01:18:00"),
+                (5, 1, "2026-07-22T01:18:00", "2026-07-22T01:18:30"),
+                (6, 2, "2026-07-22T01:18:30", "2026-07-22T01:19:00"),
+            ),
+        )
+
+    findings = audit_database(db_path)
+    assert [finding for finding in findings if finding.code == "MISSING_TURN_TIMINGS"] == []
+
+
+def test_audit_repairs_missing_turn_bracketed_by_persisted_next_turn(tmp_path):
+    """A headered turn whose next header was lost still recovers from the next timing row."""
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            "INSERT INTO tracker_sessions (id, started_at) VALUES ('session-1', '2026-07-21T01:00:00')"
+        )
+        conn.execute("INSERT INTO matches (id, session_id) VALUES ('match-1', 'session-1')")
+        conn.execute(
+            """
+            INSERT INTO games (
+                id, session_id, match_id, started_at, ended_at, total_turns,
+                player_turns, opponent_turns, outcome
+            ) VALUES (
+                'game-1', 'session-1', 'match-1',
+                '2026-07-21T01:28:00', '2026-07-21T01:31:00', 4, 2, 2, 'win'
+            )
+            """
+        )
+        conn.executemany(
+            """
+            INSERT INTO participants (id, game_id, seat_id, role)
+            VALUES (?, 'game-1', ?, ?)
+            """,
+            (("player-1", 2, "player"), ("opponent-1", 1, "opponent")),
+        )
+        # Turn 3's header exists, but turn 4's header was never logged; turn 4's
+        # timing row was recovered from console history instead.
+        conn.executemany(
+            """
+            INSERT INTO game_events (
+                session_id, game_id, event_time, turn_number, event_type, text
+            ) VALUES ('session-1', 'game-1', ?, ?, 'turn', ?)
+            """,
+            (("2026-07-21T01:29:17", 3, "Turn 3 - YOUR TURN"),),
+        )
+        conn.executemany(
+            """
+            INSERT INTO game_turns (
+                game_id, turn_number, seat_id, started_at, ended_at,
+                duration_seconds, timing_source
+            ) VALUES ('game-1', ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (1, 2, "2026-07-21T01:28:30", "2026-07-21T01:28:50", 20, "live"),
+                (2, 1, "2026-07-21T01:28:50", "2026-07-21T01:29:17", 27, "live"),
+                (4, 1, "2026-07-21T01:29:24", "2026-07-21T01:29:47", 23, "recovered_previous_turn_logs"),
+            ),
+        )
+
+    findings = audit_database(db_path)
+    missing = [finding for finding in findings if finding.code == "MISSING_TURN_TIMINGS"]
+    assert [finding.row_id for finding in missing] == ["game-1"]
+    assert "turn(s) 3" in missing[0].message
+
+    result = repair_database(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT seat_id, started_at, ended_at, duration_seconds, timing_source
+            FROM game_turns
+            WHERE game_id = 'game-1' AND turn_number = 3
+            """
+        ).fetchone()
+    assert result.repaired_count == 1
+    assert row == (
+        2,
+        "2026-07-21T01:29:17",
+        "2026-07-21T01:29:24",
+        7,
+        "estimated_header_events",
+    )
+
+    assert [
+        finding
+        for finding in audit_database(db_path)
+        if finding.code == "MISSING_TURN_TIMINGS"
+    ] == []
+
+
 def test_repair_database_reassigns_events_to_game_time_interval(tmp_path):
     db_path = tmp_path / "analytics.sqlite3"
     with sqlite3.connect(db_path) as conn:

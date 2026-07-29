@@ -620,9 +620,11 @@ class AnalyticsStore:
     def backfill_estimated_game_turn_times(conn: sqlite3.Connection) -> int:
         """Estimate missing turn durations from adjacent historical turn-header events.
 
-        Only adjacent turn numbers are used. The last observed header is used only
-        when it matches the game's stored total-turn count. Existing rows are never
-        overwritten, so exact live timings remain authoritative.
+        A turn's end boundary comes from the next adjacent turn header, or — when
+        that header was never logged — from the next turn's already-persisted
+        timing row. The last observed header is used only when it matches the
+        game's stored total-turn count. Existing rows are never overwritten, so
+        exact live timings remain authoritative.
         """
         changes_before = conn.total_changes
         conn.execute(
@@ -664,11 +666,20 @@ class AnalyticsStore:
                     h.turn_number,
                     p.seat_id,
                     h.started_at,
-                    CASE
-                        WHEN h.next_turn_number = h.turn_number + 1 THEN h.next_started_at
-                        WHEN h.next_turn_number IS NULL AND h.turn_number = g.total_turns
-                        THEN g.ended_at
-                    END AS ended_at
+                    COALESCE(
+                        CASE
+                            WHEN h.next_turn_number = h.turn_number + 1 THEN h.next_started_at
+                        END,
+                        (
+                            SELECT gt.started_at
+                            FROM game_turns gt
+                            WHERE gt.game_id = h.game_id
+                              AND gt.turn_number = h.turn_number + 1
+                        ),
+                        CASE
+                            WHEN h.turn_number = g.total_turns THEN g.ended_at
+                        END
+                    ) AS ended_at
                 FROM ordered_headers h
                 JOIN games g ON g.id = h.game_id
                 LEFT JOIN participants p
