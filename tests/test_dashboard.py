@@ -954,6 +954,7 @@ def test_game_detail_reports_header_cards_and_timeline(tmp_path):
     assert detail["opening_hand"] == [
         {"display_name": "Mountain", "type_category": "Land", "hand_position": 1, "copy_number": 1}
     ]
+    assert detail["mulligan_hands"] == []
     assert detail["drawn"] == [
         {
             "display_name": "Llanowar Elves",
@@ -1093,6 +1094,45 @@ def test_opponent_detail_rejects_unknown_name(tmp_path):
 
     with pytest.raises(LookupError, match="No recorded games against opponent"):
         opponent_detail(db_path, "Missing Opponent")
+
+
+def test_game_detail_groups_mulligan_hands_in_order(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            insert into game_mulligan_hands (
+                game_id, participant_id, hand_number, hand_position,
+                display_name, type_category, bottomed
+            )
+            values ('game-1', 'player-1', ?, ?, ?, ?, ?)
+            """,
+            [
+                (1, 1, "Swamp", "Land", 0),
+                (1, 2, "Duress", "Sorcery", 0),
+                (2, 1, "Mountain", "Land", 0),
+                (2, 2, "Lightning Strike", "Instant", 1),
+            ],
+        )
+
+    detail = game_detail(db_path, "game-1")
+
+    assert detail["mulligan_hands"] == [
+        {
+            "hand_number": 1,
+            "cards": [
+                {"hand_position": 1, "display_name": "Swamp", "type_category": "Land", "bottomed": False},
+                {"hand_position": 2, "display_name": "Duress", "type_category": "Sorcery", "bottomed": False},
+            ],
+        },
+        {
+            "hand_number": 2,
+            "cards": [
+                {"hand_position": 1, "display_name": "Mountain", "type_category": "Land", "bottomed": False},
+                {"hand_position": 2, "display_name": "Lightning Strike", "type_category": "Instant", "bottomed": True},
+            ],
+        },
+    ]
 
 
 def test_game_detail_marks_flood_when_over_half_of_draws_are_lands(tmp_path):

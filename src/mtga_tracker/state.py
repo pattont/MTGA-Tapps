@@ -83,6 +83,9 @@ class GameState:
 
         self.starting_hand: List[str] = []
         self.starting_hand_events: List[CardEvent] = []
+        # Every full hand that was mulliganed away (or bottomed from), in order.
+        # Entries: {"events": List[CardEvent], "bottomed": List[int] (0-based positions)}.
+        self.mulligan_hand_history: List[Dict[str, Any]] = []
         self.mulligan_count = 0
         self.initial_hand_size = 7
         self._hand_before_mulligan: List[str] = []

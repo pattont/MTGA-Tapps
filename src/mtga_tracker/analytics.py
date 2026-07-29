@@ -216,6 +216,22 @@ class AnalyticsStore:
                 FOREIGN KEY(card_id) REFERENCES cards(id)
             );
 
+            CREATE TABLE IF NOT EXISTS game_mulligan_hands (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id TEXT NOT NULL,
+                participant_id TEXT NOT NULL,
+                hand_number INTEGER NOT NULL,
+                hand_position INTEGER NOT NULL,
+                card_id INTEGER,
+                display_name TEXT NOT NULL,
+                type_category TEXT,
+                bottomed INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(game_id, participant_id, hand_number, hand_position),
+                FOREIGN KEY(game_id) REFERENCES games(id),
+                FOREIGN KEY(participant_id) REFERENCES participants(id),
+                FOREIGN KEY(card_id) REFERENCES cards(id)
+            );
+
             CREATE TABLE IF NOT EXISTS game_drawn_cards (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 game_id TEXT NOT NULL,
@@ -385,6 +401,9 @@ class AnalyticsStore:
 
             CREATE INDEX IF NOT EXISTS idx_opening_hand_game_participant
             ON game_opening_hand_cards(game_id, participant_id);
+
+            CREATE INDEX IF NOT EXISTS idx_mulligan_hands_game_participant
+            ON game_mulligan_hands(game_id, participant_id);
 
             CREATE INDEX IF NOT EXISTS idx_opening_hand_card
             ON game_opening_hand_cards(display_name);

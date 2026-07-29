@@ -2201,6 +2201,35 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                 (game_id, player_participant_id),
             )
         )
+        try:
+            mulligan_hand_rows = _dict_rows(
+                conn.execute(
+                    """
+                    SELECT hand_number, hand_position, display_name,
+                           COALESCE(type_category, 'Other') AS type_category, bottomed
+                    FROM game_mulligan_hands
+                    WHERE game_id = ? AND participant_id = ?
+                    ORDER BY hand_number, hand_position
+                    """,
+                    (game_id, player_participant_id),
+                )
+            )
+        except sqlite3.OperationalError:
+            # Databases written before the mulligan-history feature lack this table.
+            mulligan_hand_rows = []
+        mulligan_hands: List[Dict[str, Any]] = []
+        for row in mulligan_hand_rows:
+            hand_number = int(row["hand_number"] or 0)
+            while len(mulligan_hands) < hand_number:
+                mulligan_hands.append({"hand_number": len(mulligan_hands) + 1, "cards": []})
+            mulligan_hands[hand_number - 1]["cards"].append(
+                {
+                    "hand_position": row["hand_position"],
+                    "display_name": row["display_name"],
+                    "type_category": row["type_category"],
+                    "bottomed": bool(row["bottomed"]),
+                }
+            )
         drawn = _dict_rows(
             conn.execute(
                 """
@@ -2354,6 +2383,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         "annotation": annotation,
         "participant_stats": participant_stats,
         "opening_hand": opening_hand,
+        "mulligan_hands": mulligan_hands,
         "drawn": drawn,
         "draw_quality": draw_quality,
         "turn_timing": turn_timing_summary,
@@ -3246,7 +3276,7 @@ def render_dashboard_html(snapshot: Dict[str, Any]) -> str:
             "Draw Status": (
                 "Flood"
                 if row.get("is_flood")
-                else ("Mana Screwed" if row.get("is_screw") else "Normal")
+                else ("Mana Screw" if row.get("is_screw") else "Normal")
             ),
             "Mulligan(s)": row["mulligans"],
             "Total Turns": row["total_turns"],
