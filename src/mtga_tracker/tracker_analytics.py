@@ -14,6 +14,7 @@ from .analytics_persistence import (
     persist_card_summary,
     persist_commanders,
     persist_drawn_cards,
+    persist_mulligan_hands,
     persist_opening_hand,
     persist_submitted_deck,
 )
@@ -801,6 +802,13 @@ class TrackerAnalyticsMixin:
             player_participant_id,
             starting_hand_events=self.game_state.starting_hand_events,
             starting_hand=self.game_state.starting_hand,
+            refresh_display_name=self._refresh_fallback_name_text,
+        )
+        persist_mulligan_hands(
+            conn,
+            game_id,
+            player_participant_id,
+            self.game_state.mulligan_hand_history,
             refresh_display_name=self._refresh_fallback_name_text,
         )
         persist_drawn_cards(

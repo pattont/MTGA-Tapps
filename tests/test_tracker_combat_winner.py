@@ -3733,6 +3733,41 @@ def test_match_started_block_marks_momir_games_not_saved(capsys):
     assert "Players: Tapps vs Rival123 (Log Not Saved to DB)" in out
 
 
+def test_london_mulligan_records_hand_history_for_persistence():
+    tracker = make_tracker()
+    g = tracker.game_state
+    first = ["Swamp", "Swamp", "Duress", "Alpha", "Beta", "Gamma", "Delta"]
+    g._hand_before_mulligan = list(first)
+    g._hand_before_mulligan_ids = [1, 2, 3, 4, 5, 6, 7]
+    g._hand_before_mulligan_instance_ids = [11, 12, 13, 14, 15, 16, 17]
+    g._hand_before_mulligan_events = [CardEvent(card, "player") for card in first]
+
+    second = ["Epsilon", "Zeta", "Eta", "Theta", "Iota", "Kappa", "Lambda"]
+    tracker._handle_opening_hand_snapshot(
+        {
+            "hand_cards": list(second),
+            "hand_grp_ids": [8, 9, 10, 11, 12, 13, 14],
+            "hand_instance_ids": [21, 22, 23, 24, 25, 26, 27],
+            "hand_events": [CardEvent(card, "player") for card in second],
+        },
+        turn_num=0,
+        mulligan_prompt_present=True,
+    )
+
+    assert g.mulligan_count == 1
+    assert len(g.mulligan_hand_history) == 1
+    assert [event.card_name for event in g.mulligan_hand_history[0]["events"]] == first
+    assert g.mulligan_hand_history[0]["bottomed"] == []
+
+    g.opening_select_n_ids = [21]
+    tracker._finalize_opening_hand_after_bottom_selection()
+
+    assert len(g.mulligan_hand_history) == 2
+    assert [event.card_name for event in g.mulligan_hand_history[1]["events"]] == second
+    assert g.mulligan_hand_history[1]["bottomed"] == [0]
+    assert g.starting_hand == second[1:]
+
+
 def test_all_midweek_magic_matches_are_untracked(capsys):
     tracker = make_tracker()
     tracker.game_state.game_start_time = datetime(2026, 7, 15, 22, 51, 32)

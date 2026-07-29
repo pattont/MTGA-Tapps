@@ -1181,6 +1181,24 @@ class TrackerOpeningDeckMixin:
             return True
         return False
 
+    def _record_mulliganed_hand(
+        self,
+        *,
+        bottomed_indexes: List[int],
+        events_override: Optional[List[CardEvent]] = None,
+        cards_override: Optional[List[str]] = None,
+    ) -> None:
+        """Snapshot a full pre-mulligan hand into the game's mulligan history."""
+        cards = cards_override if cards_override is not None else self.game_state._hand_before_mulligan
+        events = events_override if events_override is not None else self.game_state._hand_before_mulligan_events
+        if not cards:
+            return
+        if len(events) != len(cards):
+            events = [CardEvent(card_name, "player") for card_name in cards]
+        self.game_state.mulligan_hand_history.append(
+            {"events": list(events), "bottomed": list(bottomed_indexes)}
+        )
+
     def _finalize_starting_hand(
         self,
         hand_cards: List[str],
@@ -1275,6 +1293,11 @@ class TrackerOpeningDeckMixin:
 
         if not selected_indexes:
             return
+        self._record_mulliganed_hand(
+            bottomed_indexes=sorted(selected_indexes),
+            events_override=hand_events,
+            cards_override=hand_cards,
+        )
         kept_cards = [
             card for index, card in enumerate(hand_cards) if index not in selected_indexes
         ]
@@ -1414,6 +1437,7 @@ class TrackerOpeningDeckMixin:
                 return
             elif current_sig != previous_sig:
                 self.game_state.mulligan_count += 1
+                self._record_mulliganed_hand(bottomed_indexes=[])
                 self.game_state._hand_before_mulligan = hand_cards
                 self.game_state._hand_before_mulligan_ids = hand_grp_ids
                 self.game_state._hand_before_mulligan_instance_ids = hand_instance_ids

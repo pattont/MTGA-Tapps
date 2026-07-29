@@ -872,6 +872,7 @@ def _delete_empty_game(conn: sqlite3.Connection, game_id: str) -> int:
     )
     for table_name in (
         "game_opening_hand_cards",
+        "game_mulligan_hands",
         "game_drawn_cards",
         "game_card_summary",
         "game_participant_stats",

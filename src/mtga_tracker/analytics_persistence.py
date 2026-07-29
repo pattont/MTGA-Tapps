@@ -4,7 +4,7 @@ import re
 import sqlite3
 from collections import Counter
 from datetime import datetime
-from typing import Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from .state import CardEvent
 
@@ -249,6 +249,55 @@ def persist_opening_hand(
                 copy_counts[display_name],
             ),
         )
+
+
+def persist_mulligan_hands(
+    conn: sqlite3.Connection,
+    game_id: str,
+    participant_id: str,
+    hands: List[Dict[str, Any]],
+    *,
+    refresh_display_name: Callable[[str], str],
+) -> None:
+    """Persist each full pre-mulligan hand, flagging London-bottomed cards."""
+    conn.execute(
+        "DELETE FROM game_mulligan_hands WHERE game_id = ? AND participant_id = ?",
+        (game_id, participant_id),
+    )
+    for hand_number, hand in enumerate(hands, start=1):
+        events = hand.get("events") or []
+        bottomed_positions = {int(index) for index in (hand.get("bottomed") or [])}
+        for index, event in enumerate(events):
+            display_name = refresh_display_name(event.card_name)
+            if not display_name:
+                continue
+            type_category = event.card_type_category
+            card_id = upsert_card(conn, display_name, type_category)
+            conn.execute(
+                """
+                INSERT INTO game_mulligan_hands (
+                    game_id,
+                    participant_id,
+                    hand_number,
+                    hand_position,
+                    card_id,
+                    display_name,
+                    type_category,
+                    bottomed
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    game_id,
+                    participant_id,
+                    hand_number,
+                    index + 1,
+                    card_id,
+                    display_name,
+                    type_category,
+                    1 if index in bottomed_positions else 0,
+                ),
+            )
 
 
 def persist_drawn_cards(
