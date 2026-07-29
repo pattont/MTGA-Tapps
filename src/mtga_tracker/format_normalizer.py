@@ -31,6 +31,12 @@ def is_momir_format(value: Optional[str]) -> bool:
     return "momir" in normalize_match_text(value)
 
 
+def is_midweek_format(value: Optional[str]) -> bool:
+    """Return True when Arena metadata identifies a Midweek Magic event."""
+    normalized = normalize_match_text(value)
+    return normalized.startswith("mwm") or "midweekmagic" in normalized
+
+
 def friendly_midweek_label(raw_format: str) -> str:
     """Convert MWM event identifiers into readable Midweek Magic labels."""
     text = re.sub(r"^MWM[_-]?", "", raw_format.strip(), flags=re.IGNORECASE)

@@ -613,10 +613,14 @@ def test_dashboard_snapshot_groups_formats_and_excludes_jump_in(tmp_path):
 
     snapshot = dashboard_snapshot(db_path)
 
-    # Jump In games are fully untracked.
-    assert snapshot["summary"]["games"] == 8
-    assert all(row["game_id"] != "game-jump" for row in snapshot["recent"])
-    assert all("Jump" not in opt["raw_format"] for opt in snapshot["filter_options"]["formats"])
+    # Jump In and Midweek Magic games are fully untracked.
+    assert snapshot["summary"]["games"] == 6
+    excluded = {"game-jump", "game-mwm1", "game-mwm2"}
+    assert all(row["game_id"] not in excluded for row in snapshot["recent"])
+    assert all(
+        "Jump" not in opt["raw_format"] and "MWM" not in opt["raw_format"]
+        for opt in snapshot["filter_options"]["formats"]
+    )
 
     by_label = {row["format_label"]: row for row in snapshot["formats"]}
     # Missing metadata remains unknown rather than being assumed to be Play.

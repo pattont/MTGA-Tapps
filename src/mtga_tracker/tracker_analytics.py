@@ -17,7 +17,7 @@ from .analytics_persistence import (
     persist_opening_hand,
     persist_submitted_deck,
 )
-from .format_normalizer import is_momir_format, normalize_match_format
+from .format_normalizer import is_midweek_format, is_momir_format, normalize_match_format
 from .deck_llm import identify_deck, is_deck_llm_enabled
 from .rank_progress import (
     iter_constructed_rank_snapshots,
@@ -40,7 +40,11 @@ class TrackerAnalyticsMixin:
 
     def _is_untracked_match(self) -> bool:
         """Return True for matches intentionally excluded from saved analytics."""
-        return self._is_bot_match() or is_momir_format(self.game_state.format_str)
+        return (
+            self._is_bot_match()
+            or is_momir_format(self.game_state.format_str)
+            or is_midweek_format(self.game_state.format_str)
+        )
 
     def _session_snapshot(self) -> SessionSnapshot:
         """Return the current session counters for analytics persistence."""
