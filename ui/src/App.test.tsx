@@ -1015,7 +1015,7 @@ describe('App', () => {
     render(<App />);
 
     const recentTable = await screen.findByRole('table', { name: 'Recent games' });
-    expect(within(recentTable).getByText('Mana Screwed')).toHaveClass('badge-screw');
+    expect(within(recentTable).getByText('Mana Screw')).toHaveClass('badge-screw');
   });
 
   it('corrects a legacy zero-step rank snapshot after a same-tier win', async () => {
@@ -1210,12 +1210,12 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByRole('heading', { name: /Game Jun 4/i })).toBeInTheDocument();
-    expect(screen.getAllByText('Mana Screwed').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Mana Screw').length).toBeGreaterThan(0);
     const drawStatus = screen.getByText('Draw Status').closest('.metric-card');
     expect(drawStatus).toHaveClass('metric-card-warning');
-    expect(within(drawStatus as HTMLElement).getByText('Mana Screwed')).toBeInTheDocument();
+    expect(within(drawStatus as HTMLElement).getByText('Mana Screw')).toBeInTheDocument();
     expect(screen.getByText('3 draws')).toBeInTheDocument();
-    expect(screen.getByText('Mana Screwed Evidence')).toHaveClass('badge-screw');
+    expect(screen.getByText('Mana Screw Evidence')).toHaveClass('badge-screw');
     expect(screen.getByText('3 consecutive nonland draws while stuck on 1 land')).toBeInTheDocument();
     expect(screen.queryByText('Flood evidence')).not.toBeInTheDocument();
   });
