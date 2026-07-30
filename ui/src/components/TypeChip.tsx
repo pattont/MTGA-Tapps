@@ -1,13 +1,4 @@
-const typeClass: Record<string, string> = {
-  Land: 'type-chip-land',
-  Creature: 'type-chip-creature',
-  Instant: 'type-chip-instant',
-  Sorcery: 'type-chip-sorcery',
-  Artifact: 'type-chip-artifact',
-  Enchantment: 'type-chip-enchantment',
-  Planeswalker: 'type-chip-planeswalker',
-  Battle: 'type-chip-other',
-};
+import { cardTypeToneClass as typeClass } from '../cardTypes';
 
 export function TypeChip({
   type,

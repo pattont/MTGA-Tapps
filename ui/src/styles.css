@@ -2347,15 +2347,21 @@ tbody tr:hover {
   align-items: center;
   gap: 6px;
   padding: 3px 10px;
-  border: 1px solid var(--border);
+  /* The type-chip-* color class on each chip drives currentColor here,
+     tinting lands green, instants blue, and so on. */
+  border: 1px solid color-mix(in srgb, currentColor 45%, var(--border));
   border-radius: 999px;
-  background: var(--panel);
+  background: color-mix(in srgb, currentColor 10%, var(--panel));
   font-size: 0.85rem;
 }
 
 .mulligan-card-bottomed {
-  opacity: 0.65;
+  opacity: 0.7;
   border-style: dashed;
+}
+
+.mulligan-card-bottomed a {
+  text-decoration: line-through;
 }
 
 .mulligan-card-note {
