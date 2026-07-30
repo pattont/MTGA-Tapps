@@ -2239,11 +2239,13 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
             mulligan_hand_rows = _dict_rows(
                 conn.execute(
                     """
-                    SELECT hand_number, hand_position, display_name,
-                           COALESCE(type_category, 'Other') AS type_category, bottomed
-                    FROM game_mulligan_hands
-                    WHERE game_id = ? AND participant_id = ?
-                    ORDER BY hand_number, hand_position
+                    SELECT m.hand_number, m.hand_position, m.display_name,
+                           COALESCE(m.type_category, c.primary_type, 'Other') AS type_category,
+                           m.bottomed
+                    FROM game_mulligan_hands m
+                    LEFT JOIN cards c ON c.id = m.card_id
+                    WHERE m.game_id = ? AND m.participant_id = ?
+                    ORDER BY m.hand_number, m.hand_position
                     """,
                     (game_id, player_participant_id),
                 )
