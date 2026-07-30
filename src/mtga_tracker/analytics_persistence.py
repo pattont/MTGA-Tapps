@@ -22,6 +22,41 @@ def analytics_card_power_toughness(display_name: str) -> tuple:
     return match.group(1), match.group(2)
 
 
+SPLIT_NAME_SEPARATOR = " // "
+
+
+def split_card_half_map(conn: sqlite3.Connection) -> Dict[str, str]:
+    """Map each half of a known split/room/adventure card to its full name.
+
+    Arena resolves each door/half of these cards as its own game object, so
+    play events can arrive as "Ritual Chamber" while draws and decklists use
+    "Unholy Annex // Ritual Chamber". The cards table accumulates the full
+    names from decklists and visible draws.
+    """
+    mapping: Dict[str, str] = {}
+    for (name,) in conn.execute(
+        "SELECT name FROM cards WHERE name LIKE '% // %'"
+    ):
+        full = analytics_card_base_name(name)
+        if SPLIT_NAME_SEPARATOR not in full:
+            continue
+        for half in full.split(SPLIT_NAME_SEPARATOR):
+            half = half.strip()
+            if half and half not in mapping:
+                mapping[half] = full
+    return mapping
+
+
+def canonical_split_display(display_name: str, half_map: Dict[str, str]) -> str:
+    """Rewrite a split-card half display name to the full-card name."""
+    base = analytics_card_base_name(display_name)
+    full = half_map.get(base)
+    if not full or base == full:
+        return display_name
+    suffix = display_name[len(base):] if display_name.startswith(base) else ""
+    return f"{full}{suffix}"
+
+
 def upsert_card(
     conn: sqlite3.Connection,
     display_name: str,
@@ -83,8 +118,17 @@ def persist_card_summary(
     """
     counts: Dict[str, Dict[str, object]] = {}
     base_to_display: Dict[str, str] = {}
+    half_map = split_card_half_map(conn)
+    # Names in this batch may introduce split cards not yet in the cards table.
+    for event in list(events) + list(drawn_events or []):
+        batch_base = analytics_card_base_name(str(event.card_name or ""))
+        if SPLIT_NAME_SEPARATOR in batch_base:
+            for half in batch_base.split(SPLIT_NAME_SEPARATOR):
+                half = half.strip()
+                if half and half not in half_map:
+                    half_map[half] = batch_base
     for event in events:
-        display_name = refresh_display_name(event.card_name)
+        display_name = canonical_split_display(refresh_display_name(event.card_name), half_map)
         if display_name not in counts:
             counts[display_name] = {
                 "played_count": 0,
@@ -99,7 +143,7 @@ def persist_card_summary(
             base_to_display[base_name] = display_name
 
     for event in drawn_events or []:
-        display_name = refresh_display_name(event.card_name)
+        display_name = canonical_split_display(refresh_display_name(event.card_name), half_map)
         base_name = analytics_card_base_name(display_name)
         target_name = base_to_display.get(base_name, display_name)
         if target_name not in counts:

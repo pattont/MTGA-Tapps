@@ -194,6 +194,40 @@ def _game_draw_quality(
     )
 
 
+def _split_name_variants(conn: sqlite3.Connection, clean_name: str) -> List[str]:
+    """All base names that refer to the same physical card as clean_name.
+
+    Split/room/adventure cards resolve each half as its own game object, so
+    stats can exist under "Unholy Annex", "Ritual Chamber", and the full
+    "Unholy Annex // Ritual Chamber". Given any one of those, return them all.
+    """
+    variants = {clean_name}
+    full_base: Optional[str] = None
+    if " // " in clean_name:
+        full_base = clean_name
+    else:
+        for (name,) in conn.execute("SELECT name FROM cards WHERE name LIKE '% // %'"):
+            base = _clean_card_name(name) or str(name)
+            halves = [half.strip() for half in base.split(" // ")]
+            if clean_name in halves:
+                full_base = base
+                break
+    if full_base:
+        variants.add(full_base)
+        variants.update(half.strip() for half in full_base.split(" // ") if half.strip())
+    return sorted(variants)
+
+
+def _card_name_clause(alias: str, variants: List[str]) -> str:
+    """SQL fragment matching a display-name column against every variant."""
+    column = f"{alias}.display_name" if alias else "display_name"
+    return "(" + " OR ".join([f"{column} = ? OR {column} LIKE ?"] * len(variants)) + ")"
+
+
+def _card_name_params(variants: List[str]) -> Tuple[str, ...]:
+    return tuple(param for variant in variants for param in (variant, f"{variant} (%"))
+
+
 def _card_image_url(arena_id: Optional[int], card_name: Optional[str]) -> Optional[str]:
     """Best-effort Scryfall art-crop URL for a card; None when unresolvable."""
     if arena_id:
@@ -2485,7 +2519,7 @@ def opponent_detail(
 
 
 def _card_multiplicity(
-    conn: sqlite3.Connection, clean_name: str
+    conn: sqlite3.Connection, variants: List[str]
 ) -> Dict[str, Any]:
     """Repeat-draw analysis for one card across the player's games.
 
@@ -2494,10 +2528,11 @@ def _card_multiplicity(
     (opening hand + visible draws) and compare against the hypergeometric
     expectation from the decklist copies and total cards seen that game.
     """
-    like_param = f"{clean_name} (%"
+    name_clause = _card_name_clause("", variants)
+    name_params = _card_name_params(variants)
     seen_rows = _dict_rows(
         conn.execute(
-            """
+            f"""
             SELECT
               g.id AS game_id,
               g.outcome,
@@ -2511,13 +2546,13 @@ def _card_multiplicity(
             LEFT JOIN (
               SELECT participant_id, COUNT(*) AS copies
               FROM game_opening_hand_cards
-              WHERE display_name = ? OR display_name LIKE ?
+              WHERE {name_clause}
               GROUP BY participant_id
             ) oh ON oh.participant_id = p.id
             LEFT JOIN (
               SELECT participant_id, COUNT(*) AS copies
               FROM game_drawn_cards
-              WHERE display_name = ? OR display_name LIKE ?
+              WHERE {name_clause}
               GROUP BY participant_id
             ) dr ON dr.participant_id = p.id
             LEFT JOIN (
@@ -2533,7 +2568,7 @@ def _card_multiplicity(
             LEFT JOIN (
               SELECT participant_id, SUM(quantity) AS quantity
               FROM game_deck_cards
-              WHERE deck_zone = 'deck' AND (display_name = ? OR display_name LIKE ?)
+              WHERE deck_zone = 'deck' AND {name_clause}
               GROUP BY participant_id
             ) dc ON dc.participant_id = p.id
             LEFT JOIN (
@@ -2545,7 +2580,7 @@ def _card_multiplicity(
             WHERE COALESCE(dc.quantity, 0) > 0
                OR COALESCE(oh.copies, 0) + COALESCE(dr.copies, 0) > 0
             """,
-            (clean_name, like_param) * 3,
+            name_params * 3,
         )
     )
     if not seen_rows:
@@ -2628,7 +2663,12 @@ def card_detail(
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
-        match_params = (clean_name, f"{clean_name} (%", *filter_params)
+        variants = _split_name_variants(conn, clean_name)
+        canonical_name = next((v for v in variants if " // " in v), clean_name)
+        name_clause_s = _card_name_clause("s", variants)
+        name_clause_h = _card_name_clause("h", variants)
+        name_clause_d = _card_name_clause("d", variants)
+        match_params = (*_card_name_params(variants), *filter_params)
         all_usage = conn.execute(
             f"""
             SELECT
@@ -2637,7 +2677,7 @@ def card_detail(
             FROM game_card_summary s
             JOIN participants p ON p.id = s.participant_id
             JOIN games g ON g.id = s.game_id
-            WHERE (s.display_name = ? OR s.display_name LIKE ?) AND {where}
+            WHERE {name_clause_s} AND {where}
             """,
             match_params,
         ).fetchone()
@@ -2654,7 +2694,7 @@ def card_detail(
             FROM game_card_summary s
             JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
             JOIN games g ON g.id = s.game_id
-            WHERE (s.display_name = ? OR s.display_name LIKE ?)
+            WHERE {name_clause_s}
               AND s.played_count > 0 AND {where}
             """,
             match_params,
@@ -2677,7 +2717,7 @@ def card_detail(
                 FROM game_card_summary s
                 JOIN participants p ON p.id = s.participant_id
                 JOIN games g ON g.id = s.game_id
-                WHERE (s.display_name = ? OR s.display_name LIKE ?)
+                WHERE {name_clause_s}
                   AND s.played_count > 0 AND {where}
                 GROUP BY p.role
                 ORDER BY CASE p.role WHEN 'player' THEN 0 ELSE 1 END
@@ -2698,7 +2738,7 @@ def card_detail(
                 FROM game_card_summary s
                 JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
                 JOIN games g ON g.id = s.game_id
-                WHERE (s.display_name = ? OR s.display_name LIKE ?)
+                WHERE {name_clause_s}
                   AND s.played_count > 0 AND {where}
                 GROUP BY p.deck_name
                 ORDER BY games_seen DESC, win_rate DESC, deck_name
@@ -2717,7 +2757,7 @@ def card_detail(
             FROM game_opening_hand_cards h
             JOIN participants p ON p.id = h.participant_id AND p.role = 'player'
             JOIN games g ON g.id = h.game_id
-            WHERE (h.display_name = ? OR h.display_name LIKE ?) AND {where}
+            WHERE {name_clause_h} AND {where}
             """,
             match_params,
         ).fetchone()
@@ -2727,11 +2767,11 @@ def card_detail(
             FROM game_drawn_cards d
             JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
             JOIN games g ON g.id = d.game_id
-            WHERE (d.display_name = ? OR d.display_name LIKE ?) AND {where}
+            WHERE {name_clause_d} AND {where}
             """,
             match_params,
         ).fetchone()
-        multiplicity = _card_multiplicity(conn, clean_name)
+        multiplicity = _card_multiplicity(conn, variants)
 
     opponent_usage = next((row for row in by_role if row["role"] == "opponent"), None)
     opponent_games = int(opponent_usage["games_seen"] or 0) if opponent_usage else 0
@@ -2740,8 +2780,8 @@ def card_detail(
     opponent_decided = opponent_wins + opponent_losses
 
     return {
-        "card_name": clean_name,
-        "image_url": _card_image_url(None, clean_name),
+        "card_name": canonical_name,
+        "image_url": _card_image_url(None, canonical_name),
         "summary": {
             "games_seen": int(summary[0] or 0),
             "total_played": int(summary[1] or 0),
