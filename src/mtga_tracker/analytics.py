@@ -459,6 +459,7 @@ class AnalyticsStore:
             (4, AnalyticsStore._migrate_v4_game_annotations),
             (5, AnalyticsStore._migrate_v5_backfill_drawn_card_names),
             (6, AnalyticsStore._migrate_v6_merge_split_card_summary_rows),
+            (7, AnalyticsStore._migrate_v7_backfill_bottomed_hands_from_console),
         )
         for version, migrate in migrations:
             if version in applied:
@@ -560,6 +561,108 @@ class AnalyticsStore:
             )
             """
         )
+
+    @staticmethod
+    def _migrate_v7_backfill_bottomed_hands_from_console(conn: sqlite3.Connection) -> None:
+        """Reconstruct the final mulligan hand from historical console logs.
+
+        The tracker has always printed "Mulliganed away: <cards>" at keep
+        time, and those lines persist in console_logs. For games recorded
+        before mulligan-hand history (or before bottomed-card capture), the
+        final full hand is kept hand + thrown cards with the thrown cards
+        flagged as bottomed — applied only when the counts reconcile exactly
+        (thrown == mulligans and kept + thrown == 7), so ambiguous lines
+        (e.g. comma-named cards in multi-mulligan keeps) are left alone.
+        """
+        games = conn.execute(
+            """
+            SELECT g.id, p.id, p.mulligans, g.session_id, g.started_at
+            FROM games g
+            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            WHERE COALESCE(p.mulligans, 0) > 0
+            """
+        ).fetchall()
+        for game_id, participant_id, mulligans, session_id, started_at in games:
+            mulligans = int(mulligans or 0)
+            have_bottomed = conn.execute(
+                """
+                SELECT 1 FROM game_mulligan_hands
+                WHERE game_id = ? AND participant_id = ? AND bottomed = 1
+                LIMIT 1
+                """,
+                (game_id, participant_id),
+            ).fetchone()
+            if have_bottomed:
+                continue
+            kept = conn.execute(
+                """
+                SELECT display_name, type_category, card_id
+                FROM game_opening_hand_cards
+                WHERE game_id = ? AND participant_id = ?
+                ORDER BY hand_position
+                """,
+                (game_id, participant_id),
+            ).fetchall()
+            if not kept:
+                continue
+            line = conn.execute(
+                """
+                SELECT text FROM console_logs
+                WHERE session_id = ?
+                  AND substr(match_started_at, 1, 19) = substr(?, 1, 19)
+                  AND text LIKE '%Mulliganed away:%'
+                ORDER BY id
+                LIMIT 1
+                """,
+                (session_id, started_at),
+            ).fetchone()
+            if not line:
+                continue
+            remainder = str(line[0]).split("Mulliganed away:", 1)[1].strip()
+            thrown = [name.strip() for name in remainder.split(",") if name.strip()]
+            if len(thrown) != mulligans and mulligans == 1 and remainder:
+                # A single bottomed card whose name contains a comma.
+                thrown = [remainder]
+            if len(thrown) != mulligans or len(kept) + len(thrown) != 7:
+                continue
+            existing_max = conn.execute(
+                """
+                SELECT COALESCE(MAX(hand_number), 0) FROM game_mulligan_hands
+                WHERE game_id = ? AND participant_id = ?
+                """,
+                (game_id, participant_id),
+            ).fetchone()[0]
+            hand_number = max(mulligans + 1, int(existing_max) + 1)
+            position = 0
+            for display_name, type_category, card_id in kept:
+                position += 1
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO game_mulligan_hands (
+                        game_id, participant_id, hand_number, hand_position,
+                        card_id, display_name, type_category, bottomed
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                    """,
+                    (game_id, participant_id, hand_number, position,
+                     card_id, display_name, type_category),
+                )
+            for name in thrown:
+                position += 1
+                card_row = conn.execute(
+                    "SELECT id, primary_type FROM cards WHERE name = ? OR name LIKE ? LIMIT 1",
+                    (name, f"{name} (%"),
+                ).fetchone()
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO game_mulligan_hands (
+                        game_id, participant_id, hand_number, hand_position,
+                        card_id, display_name, type_category, bottomed
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                    """,
+                    (game_id, participant_id, hand_number, position,
+                     card_row[0] if card_row else None, name,
+                     card_row[1] if card_row else None),
+                )
 
     @staticmethod
     def _migrate_v6_merge_split_card_summary_rows(conn: sqlite3.Connection) -> None:
