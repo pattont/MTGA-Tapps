@@ -1096,6 +1096,44 @@ def test_opponent_detail_rejects_unknown_name(tmp_path):
         opponent_detail(db_path, "Missing Opponent")
 
 
+def test_card_detail_combines_split_card_name_variants(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into cards (name, primary_type, first_seen_at)
+            values ('Unholy Annex // Ritual Chamber', 'Enchantment', '2026-06-04T00:00:00')
+            """
+        )
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, display_name, type_category, played_count, drawn_count
+            )
+            values (?, ?, ?, 'Enchantment', ?, ?)
+            """,
+            [
+                ("game-1", "player-1", "Unholy Annex (Enchantment)", 2, 0),
+                ("game-1", "player-1", "Unholy Annex // Ritual Chamber", 0, 1),
+                ("game-2", "player-2", "Ritual Chamber (Enchantment)", 1, 0),
+            ],
+        )
+
+    detail = card_detail(db_path, "Unholy Annex")
+
+    # Door plays, half plays, and full-name draws all count as one card.
+    assert detail["card_name"] == "Unholy Annex // Ritual Chamber"
+    assert detail["all_usage"]["games_seen"] == 2
+    assert detail["all_usage"]["total_played"] == 3
+    assert detail["summary"]["games_seen"] == 2
+
+    # Looking it up by the other half or the full name gives the same card.
+    assert card_detail(db_path, "Ritual Chamber")["all_usage"]["total_played"] == 3
+    assert (
+        card_detail(db_path, "Unholy Annex // Ritual Chamber")["all_usage"]["total_played"] == 3
+    )
+
+
 def test_game_detail_groups_mulligan_hands_in_order(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
     with sqlite3.connect(db_path) as conn:

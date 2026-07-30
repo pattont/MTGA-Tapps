@@ -458,6 +458,7 @@ class AnalyticsStore:
             (3, AnalyticsStore._migrate_v3_backfill_summary_drawn_counts),
             (4, AnalyticsStore._migrate_v4_game_annotations),
             (5, AnalyticsStore._migrate_v5_backfill_drawn_card_names),
+            (6, AnalyticsStore._migrate_v6_merge_split_card_summary_rows),
         )
         for version, migrate in migrations:
             if version in applied:
@@ -559,6 +560,102 @@ class AnalyticsStore:
             )
             """
         )
+
+    @staticmethod
+    def _migrate_v6_merge_split_card_summary_rows(conn: sqlite3.Connection) -> None:
+        """Merge card-summary rows recorded under split-card half names.
+
+        Arena resolves each door/half of a split or Room card as its own game
+        object, so historical play events were summarized under half names
+        ("Unholy Annex", "Ritual Chamber") while draws and decklists used the
+        full name ("Unholy Annex // Ritual Chamber"). Rewrite half rows to the
+        full name and merge counts where both variants exist in one game.
+        """
+        from .analytics_persistence import (
+            analytics_card_base_name,
+            canonical_split_display,
+            split_card_half_map,
+        )
+
+        half_map = split_card_half_map(conn)
+        if not half_map:
+            return
+        full_card_ids = {
+            analytics_card_base_name(name): card_id
+            for card_id, name in conn.execute(
+                "SELECT id, name FROM cards WHERE name LIKE '% // %'"
+            )
+        }
+        rows = conn.execute(
+            """
+            SELECT id, game_id, participant_id, display_name, type_category,
+                   played_count, drawn_count, discarded_count, milled_count, exiled_count
+            FROM game_card_summary
+            """
+        ).fetchall()
+        for (
+            row_id,
+            game_id,
+            participant_id,
+            display_name,
+            type_category,
+            played,
+            drawn,
+            discarded,
+            milled,
+            exiled,
+        ) in rows:
+            canonical = canonical_split_display(str(display_name or ""), half_map)
+            if canonical == display_name:
+                continue
+            base = analytics_card_base_name(canonical)
+            target = conn.execute(
+                """
+                SELECT id, type_category FROM game_card_summary
+                WHERE game_id = ? AND participant_id = ? AND id != ?
+                  AND (display_name = ? OR display_name LIKE ?)
+                """,
+                (game_id, participant_id, row_id, base, f"{base} (%"),
+            ).fetchone()
+            if target is None:
+                conn.execute(
+                    """
+                    UPDATE game_card_summary
+                    SET display_name = ?, card_id = COALESCE(?, card_id)
+                    WHERE id = ?
+                    """,
+                    (canonical, full_card_ids.get(base), row_id),
+                )
+                continue
+            target_id, target_type = target
+            conn.execute(
+                """
+                UPDATE game_card_summary
+                SET played_count = played_count + ?,
+                    drawn_count = drawn_count + ?,
+                    discarded_count = discarded_count + ?,
+                    milled_count = milled_count + ?,
+                    exiled_count = exiled_count + ?,
+                    card_id = COALESCE(?, card_id),
+                    type_category = CASE
+                        WHEN COALESCE(type_category, 'Other') = 'Other'
+                             AND COALESCE(?, 'Other') != 'Other'
+                        THEN ? ELSE type_category END
+                WHERE id = ?
+                """,
+                (
+                    played,
+                    drawn,
+                    discarded,
+                    milled,
+                    exiled,
+                    full_card_ids.get(base),
+                    type_category,
+                    type_category,
+                    target_id,
+                ),
+            )
+            conn.execute("DELETE FROM game_card_summary WHERE id = ?", (row_id,))
 
     @staticmethod
     def _migrate_v5_backfill_drawn_card_names(conn: sqlite3.Connection) -> None:
