@@ -1217,6 +1217,26 @@ class TrackerOpeningDeckMixin:
         if not self._is_untracked_match():
             self.session_total_mulligans += self.game_state.mulligan_count
         self._resolve_player_deck_from_hand_ids(hand_grp_ids)
+        before_cards = self.game_state._hand_before_mulligan
+        before_ids = self.game_state._hand_before_mulligan_ids
+        if before_cards and len(hand_cards) < len(before_cards):
+            # The kept hand is the last full hand minus its bottomed cards.
+            bottomed: List[int] = []
+            if len(before_ids) == len(before_cards) and len(hand_grp_ids) == len(hand_cards):
+                remaining_ids = [int(grp_id) for grp_id in hand_grp_ids]
+                for index, grp_id in enumerate(before_ids):
+                    if int(grp_id) in remaining_ids:
+                        remaining_ids.remove(int(grp_id))
+                    else:
+                        bottomed.append(index)
+            else:
+                remaining_names = list(hand_cards)
+                for index, card_name in enumerate(before_cards):
+                    if card_name in remaining_names:
+                        remaining_names.remove(card_name)
+                    else:
+                        bottomed.append(index)
+            self._record_mulliganed_hand(bottomed_indexes=bottomed)
         if self.game_state._hand_before_mulligan:
             thrown = [c for c in self.game_state._hand_before_mulligan if c not in hand_cards]
             if thrown:
@@ -1293,11 +1313,6 @@ class TrackerOpeningDeckMixin:
 
         if not selected_indexes:
             return
-        self._record_mulliganed_hand(
-            bottomed_indexes=sorted(selected_indexes),
-            events_override=hand_events,
-            cards_override=hand_cards,
-        )
         kept_cards = [
             card for index, card in enumerate(hand_cards) if index not in selected_indexes
         ]

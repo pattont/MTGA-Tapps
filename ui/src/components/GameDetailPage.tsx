@@ -21,6 +21,7 @@ import { MetricCard } from './MetricCard';
 import { OpponentLink } from './OpponentLink';
 import { SortableTable, type Column } from './SortableTable';
 import { TimelineList } from './TimelineList';
+import { typeToneClass } from '../cardTypes';
 import { TypeChip } from './TypeChip';
 
 const DETAIL_REFRESH_MS = 20_000;
@@ -578,7 +579,9 @@ export function GameDetailPage({
                     {hand.cards.map((card) => (
                       <li
                         key={`${hand.hand_number}-${card.hand_position}`}
-                        className={card.bottomed ? 'mulligan-card mulligan-card-bottomed' : 'mulligan-card'}
+                        className={`mulligan-card ${typeToneClass(card.type_category)}${
+                          card.bottomed ? ' mulligan-card-bottomed' : ''
+                        }`}
                       >
                         <CardLink cardName={card.display_name} />
                         {card.bottomed ? <span className="mulligan-card-note">bottomed</span> : null}

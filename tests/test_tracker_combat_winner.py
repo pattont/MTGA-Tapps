@@ -3768,6 +3768,34 @@ def test_london_mulligan_records_hand_history_for_persistence():
     assert g.starting_hand == second[1:]
 
 
+def test_short_hand_snapshot_finalize_records_bottomed_card():
+    """Keeping via a 6-card hand snapshot still records the bottomed card."""
+    tracker = make_tracker()
+    g = tracker.game_state
+    full = ["Fomori Vault", "Swamp", "Swamp", "Requiting Hex", "Firdoch Core", "Arc Reactor", "Ancient Vendetta"]
+    g._hand_before_mulligan = list(full)
+    g._hand_before_mulligan_ids = [1, 2, 3, 4, 5, 6, 7]
+    g._hand_before_mulligan_events = [CardEvent(card, "player") for card in full]
+    g.mulligan_count = 1
+
+    kept = full[:6]  # Ancient Vendetta went to the bottom
+    tracker._handle_opening_hand_snapshot(
+        {
+            "hand_cards": list(kept),
+            "hand_grp_ids": [1, 2, 3, 4, 5, 6],
+            "hand_events": [CardEvent(card, "player") for card in kept],
+        },
+        turn_num=0,
+        mulligan_prompt_present=True,
+    )
+
+    assert g.starting_hand == kept
+    assert len(g.mulligan_hand_history) == 1
+    entry = g.mulligan_hand_history[0]
+    assert [event.card_name for event in entry["events"]] == full
+    assert entry["bottomed"] == [6]
+
+
 def test_all_midweek_magic_matches_are_untracked(capsys):
     tracker = make_tracker()
     tracker.game_state.game_start_time = datetime(2026, 7, 15, 22, 51, 32)
