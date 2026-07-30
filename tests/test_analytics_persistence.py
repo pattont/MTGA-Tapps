@@ -174,6 +174,82 @@ def test_persist_mulligan_hands_records_each_hand_and_bottomed_cards(tmp_path):
     ]
 
 
+def test_persist_card_summary_normalizes_split_card_half_names(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    store = AnalyticsStore(db_path)
+    conn = store.connect()
+    assert conn is not None
+    with conn:
+        conn.execute(
+            "insert into tracker_sessions (id, started_at) values ('session-1', '2026-07-29T00:00:00')"
+        )
+        conn.execute("insert into matches (id, session_id) values ('match-1', 'session-1')")
+        conn.execute("insert into games (id, session_id, match_id) values ('game-1', 'session-1', 'match-1')")
+        conn.execute("insert into participants (id, game_id, role) values ('participant-1', 'game-1', 'player')")
+        # The full split-card name is already known from decklists/draws.
+        conn.execute("insert into cards (name, primary_type, first_seen_at) values ('Unholy Annex // Ritual Chamber', 'Enchantment', '2026-07-29T00:00:00')")
+        drawn = CardEvent("Unholy Annex // Ritual Chamber", "player", card_type_category="Enchantment")
+        persist_card_summary(
+            conn,
+            "game-1",
+            "participant-1",
+            [
+                CardEvent("Unholy Annex (Enchantment)", "player", card_type_category="Enchantment"),
+                CardEvent("Ritual Chamber (Enchantment)", "player", card_type_category="Enchantment"),
+            ],
+            drawn_events=[drawn],
+            refresh_display_name=lambda name: name,
+        )
+    store.close()
+
+    with sqlite3.connect(db_path) as check:
+        rows = check.execute(
+            "select display_name, played_count, drawn_count from game_card_summary order by display_name"
+        ).fetchall()
+
+    # Both door plays and the draw collapse into one full-name row.
+    assert rows == [("Unholy Annex // Ritual Chamber (Enchantment)", 2, 1)]
+
+
+def test_migration_v6_merges_split_card_half_summary_rows(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            "insert into tracker_sessions (id, started_at) values ('session-1', '2026-07-29T00:00:00')"
+        )
+        conn.execute("insert into matches (id, session_id) values ('match-1', 'session-1')")
+        conn.execute("insert into games (id, session_id, match_id) values ('game-1', 'session-1', 'match-1')")
+        conn.execute("insert into participants (id, game_id, role) values ('participant-1', 'game-1', 'player')")
+        conn.execute("insert into cards (name, primary_type, first_seen_at) values ('Unholy Annex // Ritual Chamber', 'Enchantment', '2026-07-29T00:00:00')")
+        conn.executemany(
+            """
+            insert into game_card_summary (game_id, participant_id, display_name, type_category, played_count, drawn_count)
+            values ('game-1', 'participant-1', ?, ?, ?, ?)
+            """,
+            [
+                ("Unholy Annex (Enchantment)", "Enchantment", 2, 0),
+                ("Ritual Chamber (Enchantment)", "Enchantment", 1, 0),
+                ("Unholy Annex // Ritual Chamber", "Enchantment", 0, 2),
+                ("Llanowar Elves (Creature 1/1)", "Creature", 1, 1),
+            ],
+        )
+        # Re-run migrations: v6 should merge the three variants into one row.
+        conn.execute("delete from schema_migrations where version = 6")
+        AnalyticsStore.apply_pending_migrations(conn)
+
+    with sqlite3.connect(db_path) as check:
+        rows = check.execute(
+            "select display_name, played_count, drawn_count from game_card_summary order by display_name"
+        ).fetchall()
+
+    assert ("Llanowar Elves (Creature 1/1)", 1, 1) in rows
+    merged = [row for row in rows if "Unholy Annex" in row[0] or "Ritual Chamber" in row[0]]
+    assert len(merged) == 1
+    assert merged[0][1] == 3  # both doors' plays merged
+    assert merged[0][2] == 2  # draws preserved
+
+
 def test_persist_submitted_deck_groups_main_deck_and_sideboard(tmp_path):
     db_path = tmp_path / "analytics.sqlite3"
     store = AnalyticsStore(db_path)
