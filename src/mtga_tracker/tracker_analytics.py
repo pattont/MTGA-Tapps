@@ -176,7 +176,11 @@ class TrackerAnalyticsMixin:
             conn = self._analytics_store().connect()
             if conn is None:
                 return None
-            self._upsert_session_row(conn)
+            # Commit (or roll back) immediately: leaving this upsert pending
+            # would hold the WAL write lock for as long as the tracker idles,
+            # blocking the dashboard's note saves with "database is locked".
+            with conn:
+                self._upsert_session_row(conn)
             return conn
         except (OSError, sqlite3.Error, TypeError, ValueError):
             return None
