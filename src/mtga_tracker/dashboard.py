@@ -10,6 +10,7 @@ import mimetypes
 import os
 import re
 import sqlite3
+import time
 import traceback
 import sys
 from datetime import datetime, timedelta
@@ -3016,37 +3017,54 @@ def save_game_annotation(
             clean_tags.append(cleaned)
         if len(clean_tags) >= MAX_ANNOTATION_TAGS:
             break
-    with sqlite3.connect(db_path, timeout=10.0) as conn:
-        conn.execute("PRAGMA busy_timeout = 10000")
-        exists = conn.execute("SELECT 1 FROM games WHERE id = ?", (game_id,)).fetchone()
-        if not exists:
-            raise LookupError(f"No recorded game for id: {game_id}")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS game_annotations (
-                game_id TEXT PRIMARY KEY,
-                note TEXT,
-                tags TEXT,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        if not clean_note and not clean_tags:
-            conn.execute("DELETE FROM game_annotations WHERE game_id = ?", (game_id,))
-        else:
-            conn.execute(
-                """
-                INSERT INTO game_annotations (game_id, note, tags, updated_at)
-                VALUES (?, ?, ?, datetime('now'))
-                ON CONFLICT(game_id) DO UPDATE SET
-                    note = excluded.note,
-                    tags = excluded.tags,
-                    updated_at = excluded.updated_at
-                """,
-                (game_id, clean_note, ",".join(clean_tags)),
-            )
-        conn.commit()
-    return {"game_id": game_id, "note": clean_note, "tags": clean_tags}
+    last_error: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                conn.execute("PRAGMA busy_timeout = 5000")
+                exists = conn.execute(
+                    "SELECT 1 FROM games WHERE id = ?", (game_id,)
+                ).fetchone()
+                if not exists:
+                    raise LookupError(f"No recorded game for id: {game_id}")
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS game_annotations (
+                        game_id TEXT PRIMARY KEY,
+                        note TEXT,
+                        tags TEXT,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                if not clean_note and not clean_tags:
+                    conn.execute(
+                        "DELETE FROM game_annotations WHERE game_id = ?", (game_id,)
+                    )
+                else:
+                    conn.execute(
+                        """
+                        INSERT INTO game_annotations (game_id, note, tags, updated_at)
+                        VALUES (?, ?, ?, datetime('now'))
+                        ON CONFLICT(game_id) DO UPDATE SET
+                            note = excluded.note,
+                            tags = excluded.tags,
+                            updated_at = excluded.updated_at
+                        """,
+                        (game_id, clean_note, ",".join(clean_tags)),
+                    )
+                conn.commit()
+            return {"game_id": game_id, "note": clean_note, "tags": clean_tags}
+        except sqlite3.OperationalError as exc:
+            message = str(exc).lower()
+            if "locked" not in message and "busy" not in message:
+                raise
+            last_error = exc
+            time.sleep(0.4 * (attempt + 1))
+    raise sqlite3.OperationalError(
+        "the database write lock is held by another process (usually the "
+        "tracker) — make sure the tracker is on the latest build and restart it"
+    ) from last_error
 
 
 def audit_report(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
