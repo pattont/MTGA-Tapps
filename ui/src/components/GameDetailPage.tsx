@@ -560,14 +560,16 @@ export function GameDetailPage({
       >
         {mulliganHands.length > 0 ? (
           <div className="mulligan-history">
-            {mulliganHands.map((hand, index) => {
+            {mulliganHands.map((hand) => {
               const bottomedCount = hand.cards.filter((card) => card.bottomed).length;
               const kept = bottomedCount > 0;
               return (
                 <div key={hand.hand_number} className="mulligan-hand">
                   <div className="mulligan-hand-head">
                     <span className="mulligan-hand-title">
-                      {index === 0 ? 'Hand 1 — first seven' : `Hand ${hand.hand_number} — after mulligan ${hand.hand_number - 1}`}
+                      {hand.hand_number === 1
+                        ? 'Hand 1 — first seven'
+                        : `Hand ${hand.hand_number} — after mulligan ${hand.hand_number - 1}`}
                     </span>
                     <span className={kept ? 'mulligan-hand-verdict mulligan-hand-kept' : 'mulligan-hand-verdict'}>
                       {kept
