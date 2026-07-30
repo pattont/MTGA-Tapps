@@ -10,6 +10,7 @@ import mimetypes
 import os
 import re
 import sqlite3
+import traceback
 import sys
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -3535,10 +3536,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             )
             return
         except Exception as exc:
+            # Surface the failure in the server console too — the UI shows
+            # the same message, but the traceback only lives here.
+            traceback.print_exc()
             _send_bytes(
                 self,
                 500,
-                str(exc).encode("utf-8"),
+                f"{type(exc).__name__}: {exc}".encode("utf-8"),
                 "text/plain; charset=utf-8",
                 {"Cache-Control": "no-store"},
             )

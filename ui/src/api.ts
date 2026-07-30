@@ -901,7 +901,15 @@ export async function saveGameAnnotation(
     signal,
   });
   if (!response.ok) {
-    throw new Error(`Annotation save failed (${response.status})`);
+    let detail = '';
+    try {
+      detail = (await response.text()).trim();
+    } catch {
+      // Body unavailable; fall back to the status code alone.
+    }
+    throw new Error(
+      detail ? `HTTP ${response.status} — ${detail}` : `Annotation save failed (HTTP ${response.status})`,
+    );
   }
   return response.json() as Promise<GameAnnotation>;
 }

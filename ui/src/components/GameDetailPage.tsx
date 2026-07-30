@@ -179,6 +179,7 @@ export function GameDetailPage({
   const [noteDraft, setNoteDraft] = useState('');
   const [tagsDraft, setTagsDraft] = useState('');
   const [noteStatus, setNoteStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [noteError, setNoteError] = useState<string | null>(null);
   const [, setAnnotationLoaded] = useState(false);
 
   useEffect(() => {
@@ -381,7 +382,9 @@ export function GameDetailPage({
       setNoteDraft(saved.note);
       setTagsDraft(saved.tags.join(', '));
       setNoteStatus('saved');
-    } catch {
+      setNoteError(null);
+    } catch (error: unknown) {
+      setNoteError(error instanceof Error ? error.message : null);
       setNoteStatus('error');
     }
   }
@@ -701,7 +704,7 @@ export function GameDetailPage({
             ) : null}
             {noteStatus === 'error' ? (
               <span className="annotation-status annotation-status-error" role="alert">
-                Save failed — is the tracker running?
+                Save failed — {noteError || 'is the dashboard server running?'}
               </span>
             ) : null}
           </div>
