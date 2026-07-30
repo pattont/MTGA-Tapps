@@ -250,6 +250,105 @@ def test_migration_v6_merges_split_card_half_summary_rows(tmp_path):
     assert merged[0][2] == 2  # draws preserved
 
 
+def test_migration_v7_backfills_bottomed_card_from_console_line(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            "insert into tracker_sessions (id, started_at) values ('session-1', '2026-07-29T00:00:00')"
+        )
+        conn.execute("insert into matches (id, session_id) values ('match-1', 'session-1')")
+        conn.execute(
+            """
+            insert into games (id, session_id, match_id, started_at)
+            values ('game-1', 'session-1', 'match-1', '2026-07-29T00:05:00')
+            """
+        )
+        conn.execute(
+            "insert into participants (id, game_id, role, mulligans) values ('participant-1', 'game-1', 'player', 1)"
+        )
+        kept = [
+            ("Fomori Vault", "Land"),
+            ("Swamp", "Land"),
+            ("Swamp", "Land"),
+            ("Requiting Hex", "Instant"),
+            ("Firdoch Core", "Artifact"),
+            ("Arc Reactor", "Artifact"),
+        ]
+        conn.executemany(
+            """
+            insert into game_opening_hand_cards (game_id, participant_id, display_name, type_category, hand_position, copy_number)
+            values ('game-1', 'participant-1', ?, ?, ?, 1)
+            """,
+            [(name, cat, position + 1) for position, (name, cat) in enumerate(kept)],
+        )
+        conn.execute(
+            "insert into cards (name, primary_type, first_seen_at) values ('Ancient Vendetta', 'Sorcery', '2026-07-29T00:00:00')"
+        )
+        conn.execute(
+            """
+            insert into console_logs (session_id, created_at, match_started_at, text)
+            values ('session-1', '2026-07-29T00:06:00', '2026-07-29T00:05:00', '🔄 Mulliganed away: Ancient Vendetta')
+            """
+        )
+        conn.execute("delete from schema_migrations where version = 7")
+        AnalyticsStore.apply_pending_migrations(conn)
+
+    with sqlite3.connect(db_path) as check:
+        rows = check.execute(
+            """
+            select hand_number, hand_position, display_name, type_category, bottomed
+            from game_mulligan_hands
+            order by hand_position
+            """
+        ).fetchall()
+
+    assert len(rows) == 7
+    assert all(hand_number == 2 for hand_number, *_ in rows)
+    assert rows[-1] == (2, 7, "Ancient Vendetta", "Sorcery", 1)
+    assert all(bottomed == 0 for *_, bottomed in rows[:-1])
+
+
+def test_migration_v7_skips_unreconcilable_mulligan_lines(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            "insert into tracker_sessions (id, started_at) values ('session-1', '2026-07-29T00:00:00')"
+        )
+        conn.execute("insert into matches (id, session_id) values ('match-1', 'session-1')")
+        conn.execute(
+            """
+            insert into games (id, session_id, match_id, started_at)
+            values ('game-1', 'session-1', 'match-1', '2026-07-29T00:05:00')
+            """
+        )
+        # Two mulligans but the console line names only one card: ambiguous.
+        conn.execute(
+            "insert into participants (id, game_id, role, mulligans) values ('participant-1', 'game-1', 'player', 2)"
+        )
+        conn.executemany(
+            """
+            insert into game_opening_hand_cards (game_id, participant_id, display_name, type_category, hand_position, copy_number)
+            values ('game-1', 'participant-1', ?, 'Land', ?, 1)
+            """,
+            [("Swamp", position) for position in range(1, 6)],
+        )
+        conn.execute(
+            """
+            insert into console_logs (session_id, created_at, match_started_at, text)
+            values ('session-1', '2026-07-29T00:06:00', '2026-07-29T00:05:00', '🔄 Mulliganed away: Duress')
+            """
+        )
+        conn.execute("delete from schema_migrations where version = 7")
+        AnalyticsStore.apply_pending_migrations(conn)
+
+    with sqlite3.connect(db_path) as check:
+        count = check.execute("select count(*) from game_mulligan_hands").fetchone()[0]
+
+    assert count == 0
+
+
 def test_persist_submitted_deck_groups_main_deck_and_sideboard(tmp_path):
     db_path = tmp_path / "analytics.sqlite3"
     store = AnalyticsStore(db_path)

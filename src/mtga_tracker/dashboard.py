@@ -2253,12 +2253,13 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         except sqlite3.OperationalError:
             # Databases written before the mulligan-history feature lack this table.
             mulligan_hand_rows = []
-        mulligan_hands: List[Dict[str, Any]] = []
+        hands_by_number: Dict[int, Dict[str, Any]] = {}
         for row in mulligan_hand_rows:
             hand_number = int(row["hand_number"] or 0)
-            while len(mulligan_hands) < hand_number:
-                mulligan_hands.append({"hand_number": len(mulligan_hands) + 1, "cards": []})
-            mulligan_hands[hand_number - 1]["cards"].append(
+            entry = hands_by_number.setdefault(
+                hand_number, {"hand_number": hand_number, "cards": []}
+            )
+            entry["cards"].append(
                 {
                     "hand_position": row["hand_position"],
                     "display_name": row["display_name"],
@@ -2266,6 +2267,9 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                     "bottomed": bool(row["bottomed"]),
                 }
             )
+        # Backfilled games may only know the final hand; return only hands
+        # whose cards were actually recorded.
+        mulligan_hands = [hands_by_number[key] for key in sorted(hands_by_number)]
         drawn = _dict_rows(
             conn.execute(
                 """
