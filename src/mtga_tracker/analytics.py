@@ -1184,37 +1184,39 @@ class AnalyticsStore:
         conn = self.connect()
         if conn is None:
             return
-        self.upsert_session_row(conn, session, now=created_at)
-        conn.execute(
-            """
-            INSERT INTO console_logs (
-                session_id,
-                created_at,
-                match_started_at,
-                elapsed_seconds,
-                turn_number,
-                active_player,
-                style,
-                text,
-                player_life,
-                opponent_life
+        # One scoped transaction: commits on success, rolls back on error, so
+        # a failed write can never leave the WAL write lock held while idle.
+        with conn:
+            self.upsert_session_row(conn, session, now=created_at)
+            conn.execute(
+                """
+                INSERT INTO console_logs (
+                    session_id,
+                    created_at,
+                    match_started_at,
+                    elapsed_seconds,
+                    turn_number,
+                    active_player,
+                    style,
+                    text,
+                    player_life,
+                    opponent_life
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session.session_id,
+                    created_at.isoformat(),
+                    match_started_at.isoformat() if match_started_at else None,
+                    elapsed_seconds,
+                    turn_number,
+                    active_player,
+                    style,
+                    text,
+                    player_life,
+                    opponent_life,
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                session.session_id,
-                created_at.isoformat(),
-                match_started_at.isoformat() if match_started_at else None,
-                elapsed_seconds,
-                turn_number,
-                active_player,
-                style,
-                text,
-                player_life,
-                opponent_life,
-            ),
-        )
-        conn.commit()
 
     def record_raw_payload(
         self,
@@ -1231,28 +1233,28 @@ class AnalyticsStore:
         if conn is None:
             return
         now = created_at or datetime.now()
-        conn.execute(
-            """
-            INSERT INTO raw_game_payloads (
-                session_id,
-                match_id,
-                game_id,
-                created_at,
-                payload_type,
-                payload_json
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO raw_game_payloads (
+                    session_id,
+                    match_id,
+                    game_id,
+                    created_at,
+                    payload_type,
+                    payload_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    match_id,
+                    game_id,
+                    now.isoformat(),
+                    payload_type,
+                    scrub_raw_log(payload_json),
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                session_id,
-                match_id,
-                game_id,
-                now.isoformat(),
-                payload_type,
-                scrub_raw_log(payload_json),
-            ),
-        )
-        conn.commit()
 
     def record_rank_snapshot(
         self,
@@ -1277,57 +1279,61 @@ class AnalyticsStore:
         conn = self.connect()
         if conn is None:
             return False
-        self.upsert_session_row(conn, session, now=captured_at)
-        previous = conn.execute(
-            """
-            SELECT rank_class, rank_level, rank_step, rank_steps, matches_won, matches_lost,
-                   mythic_percentile, mythic_rank
-            FROM rank_snapshots
-            WHERE rank_format = ? AND season_ordinal = ?
-            ORDER BY captured_at DESC, id DESC
-            LIMIT 1
-            """,
-            (rank_format, season_ordinal),
-        ).fetchone()
-        current = (
-            rank_class,
-            rank_level,
-            rank_step,
-            rank_steps,
-            matches_won,
-            matches_lost,
-            mythic_percentile,
-            mythic_rank,
-        )
-        if previous == current:
-            return False
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO rank_snapshots (
-                session_id, match_id, game_id, captured_at, season_ordinal, rank_format,
-                rank_class, rank_level, rank_step, rank_steps, raw_step,
-                matches_won, matches_lost, mythic_percentile, mythic_rank
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                session.session_id,
-                match_id,
-                game_id,
-                captured_at.isoformat(),
-                season_ordinal,
-                rank_format,
+        # The whole check-and-insert runs in one scoped transaction. The
+        # unchanged-rank early return previously left the session upsert
+        # uncommitted, holding the WAL write lock for as long as the tracker
+        # idled and blocking dashboard writes with "database is locked".
+        with conn:
+            self.upsert_session_row(conn, session, now=captured_at)
+            previous = conn.execute(
+                """
+                SELECT rank_class, rank_level, rank_step, rank_steps, matches_won, matches_lost,
+                       mythic_percentile, mythic_rank
+                FROM rank_snapshots
+                WHERE rank_format = ? AND season_ordinal = ?
+                ORDER BY captured_at DESC, id DESC
+                LIMIT 1
+                """,
+                (rank_format, season_ordinal),
+            ).fetchone()
+            current = (
                 rank_class,
                 rank_level,
                 rank_step,
                 rank_steps,
-                raw_step,
                 matches_won,
                 matches_lost,
                 mythic_percentile,
                 mythic_rank,
-            ),
-        )
-        added = conn.execute("SELECT changes()").fetchone()[0] > 0
-        conn.commit()
+            )
+            if previous == current:
+                return False
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO rank_snapshots (
+                    session_id, match_id, game_id, captured_at, season_ordinal, rank_format,
+                    rank_class, rank_level, rank_step, rank_steps, raw_step,
+                    matches_won, matches_lost, mythic_percentile, mythic_rank
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session.session_id,
+                    match_id,
+                    game_id,
+                    captured_at.isoformat(),
+                    season_ordinal,
+                    rank_format,
+                    rank_class,
+                    rank_level,
+                    rank_step,
+                    rank_steps,
+                    raw_step,
+                    matches_won,
+                    matches_lost,
+                    mythic_percentile,
+                    mythic_rank,
+                ),
+            )
+            added = conn.execute("SELECT changes()").fetchone()[0] > 0
         return added

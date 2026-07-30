@@ -113,6 +113,11 @@ def test_rank_snapshot_store_deduplicates_unchanged_rank(tmp_path):
     assert not store.record_rank_snapshot(
         session, captured_at=datetime(2026, 7, 23, 1, 26, 18), **values
     )
+    # The unchanged-rank early return must not leave a write transaction open:
+    # a pending transaction here holds the WAL write lock while the tracker
+    # idles, blocking every dashboard note save with "database is locked".
+    assert store.connect() is not None
+    assert not store.connect().in_transaction
     store.close()
 
     with sqlite3.connect(db_path) as conn:
