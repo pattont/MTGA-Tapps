@@ -3854,6 +3854,72 @@ def test_graveyard_to_hand_put_is_not_a_draw(capsys):
     assert tracker._seat_stats(1)["cards_drawn"] == 0
 
 
+def test_mid_game_attach_shows_live_but_is_not_saved(capsys):
+    """Joining a game past turn 1 tracks nothing to the DB."""
+    tracker = make_tracker()
+    line = json.dumps(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "type": "GameStateType_Full",
+                            "turnInfo": {"turnNumber": 7, "activePlayer": 1},
+                        },
+                    }
+                ]
+            }
+        }
+    )
+
+    tracker._check_game_start(line)
+    out = capsys.readouterr().out
+
+    assert tracker.game_state.in_match
+    assert tracker.game_state.mid_game_attach
+    assert tracker._is_untracked_match()
+    assert "Joined mid-game at turn 7" in out
+    assert "won't be saved" in out
+
+
+def test_turn_one_start_is_not_mid_game_attach(capsys):
+    tracker = make_tracker()
+    line = json.dumps(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "type": "GameStateType_Full",
+                            "turnInfo": {"turnNumber": 1, "activePlayer": 1},
+                        },
+                    }
+                ]
+            }
+        }
+    )
+
+    tracker._check_game_start(line)
+    capsys.readouterr()
+
+    assert tracker.game_state.in_match
+    assert not tracker.game_state.mid_game_attach
+    assert not tracker._is_untracked_match()
+
+
+def test_next_game_after_mid_game_attach_is_tracked_again(capsys):
+    tracker = make_tracker()
+    tracker.game_state.mid_game_attach = True
+
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=True)
+    capsys.readouterr()
+
+    assert not tracker.game_state.mid_game_attach
+    assert not tracker._is_untracked_match()
+
+
 def test_all_midweek_magic_matches_are_untracked(capsys):
     tracker = make_tracker()
     tracker.game_state.game_start_time = datetime(2026, 7, 15, 22, 51, 32)

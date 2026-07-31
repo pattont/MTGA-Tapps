@@ -43,6 +43,7 @@ class TrackerAnalyticsMixin:
         """Return True for matches intentionally excluded from saved analytics."""
         return (
             self._is_bot_match()
+            or self.game_state.mid_game_attach
             or is_momir_format(self.game_state.format_str)
             or is_midweek_format(self.game_state.format_str)
         )
@@ -135,7 +136,11 @@ class TrackerAnalyticsMixin:
             return
         match_id = None
         game_id = None
-        if self.game_state.game_start_time and self.game_state.match_complete:
+        if (
+            self.game_state.game_start_time
+            and self.game_state.match_complete
+            and not self._is_untracked_match()
+        ):
             normalized = normalize_match_format(
                 self.game_state.format_str,
                 default_best_of=3 if self.game_state.match_type == "best_of_3" else 1,
