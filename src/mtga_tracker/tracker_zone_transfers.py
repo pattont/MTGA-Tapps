@@ -353,6 +353,7 @@ class TrackerZoneTransferMixin:
         annotation: Dict[str, Any],
         game_objects_by_id: Dict[int, Dict[str, Any]],
         zones_by_id: Optional[Dict[int, Dict[str, Any]]],
+        zone_src: Optional[int],
         zone_dest: Optional[int],
         source_id: Optional[int],
         affector_id: Optional[int],
@@ -480,6 +481,19 @@ class TrackerZoneTransferMixin:
                 ),
                 "zone",
             )
+            # Any card that leaves the library for a hand is a draw for
+            # analytics purposes (explore, discover, impulse-to-hand, ...):
+            # it must count toward drawn cards and flood/screw detection.
+            source_zone = (
+                (zones_by_id or {}).get(int(zone_src)) if zone_src is not None else None
+            )
+            source_type = (
+                source_zone.get("type") if isinstance(source_zone, dict) else None
+            )
+            if source_type == "ZoneType_Library":
+                self._record_library_card_to_hand(
+                    card_obj, determining_seat, turn_for_display
+                )
             return
 
         # "Put" is a generic Arena category used for several destinations, including
@@ -521,6 +535,41 @@ class TrackerZoneTransferMixin:
                 ),
                 "zone",
             )
+
+    def _record_library_card_to_hand(
+        self,
+        card_obj: Dict[str, Any],
+        owner_seat: Optional[int],
+        turn_for_display: int,
+    ) -> None:
+        """Count a non-draw library-to-hand transfer as a drawn card."""
+        if owner_seat not in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+            return
+        stats = self._seat_stats(owner_seat)
+        if stats is not None:
+            stats["cards_drawn"] += 1
+        grp_id = card_obj.get("grpId") if isinstance(card_obj, dict) else None
+        if not grp_id:
+            return
+        try:
+            seat_id = int(owner_seat)
+        except (TypeError, ValueError):
+            return
+        card_name = self.card_db.get_card_name(grp_id)
+        card_types = card_obj.get("cardTypes") or []
+        type_category = self._get_card_type_category(card_types)
+        if type_category == "Other":
+            resolve_type = getattr(self.card_db, "get_card_type_category", None)
+            if callable(resolve_type):
+                type_category = resolve_type(grp_id) or "Other"
+        draw_event = CardEvent(
+            card_name,
+            "player" if seat_id == self.game_state.player_seat_id else "opponent",
+            timestamp=self._now(),
+            card_type_category=type_category,
+        )
+        draw_event.turn_number = turn_for_display if turn_for_display > 0 else None
+        self.game_state.drawn_card_events.setdefault(seat_id, []).append(draw_event)
 
     def _card_name_from_game_object(self, card_obj: Dict[str, Any]) -> str:
         """Resolve a display card name from DB, overlay ID, or embedded log fields."""
@@ -895,6 +944,7 @@ class TrackerZoneTransferMixin:
                 annotation,
                 game_objects_by_id,
                 zones_by_id,
+                zone_src,
                 zone_dest,
                 source_id,
                 affector_id,

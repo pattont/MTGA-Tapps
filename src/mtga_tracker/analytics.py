@@ -460,6 +460,7 @@ class AnalyticsStore:
             (5, AnalyticsStore._migrate_v5_backfill_drawn_card_names),
             (6, AnalyticsStore._migrate_v6_merge_split_card_summary_rows),
             (7, AnalyticsStore._migrate_v7_backfill_bottomed_hands_from_console),
+            (8, AnalyticsStore._migrate_v8_backfill_library_to_hand_draws),
         )
         for version, migrate in migrations:
             if version in applied:
@@ -561,6 +562,207 @@ class AnalyticsStore:
             )
             """
         )
+
+    @staticmethod
+    def _migrate_v8_backfill_library_to_hand_draws(conn: sqlite3.Connection) -> None:
+        """Count historical library-to-hand transfers as drawn cards.
+
+        Explore, discover, and similar effects printed "put [X] into your
+        hand" timeline events but never recorded the card in game_drawn_cards,
+        so those cards were invisible to the drawn list and flood/screw
+        detection. Merge them into the draw order (by event time when the
+        game's named draw events pair cleanly with its drawn rows, otherwise
+        by turn), renumber positions, and update the summary/stat counters.
+        """
+        put_pattern = re.compile(r"put \[([^\]]+)\] into your hand")
+        games = conn.execute(
+            """
+            SELECT DISTINCT game_id FROM game_events
+            WHERE actor_role = 'player' AND text LIKE '%into your hand%'
+              AND game_id IS NOT NULL
+            """
+        ).fetchall()
+        for (game_id,) in games:
+            participant_row = conn.execute(
+                "SELECT id FROM participants WHERE game_id = ? AND role = 'player'",
+                (game_id,),
+            ).fetchone()
+            if not participant_row:
+                continue
+            participant_id = str(participant_row[0])
+            put_events = []
+            for event_time, event_id, text in conn.execute(
+                """
+                SELECT event_time, id, text FROM game_events
+                WHERE game_id = ? AND actor_role = 'player'
+                  AND text LIKE '%put [%] into your hand%'
+                ORDER BY event_time, id
+                """,
+                (game_id,),
+            ):
+                match = put_pattern.search(str(text or ""))
+                if match:
+                    turn_row = conn.execute(
+                        "SELECT turn_number FROM game_events WHERE id = ?", (event_id,)
+                    ).fetchone()
+                    put_events.append(
+                        {
+                            "name": match.group(1).strip(),
+                            "time": str(event_time or ""),
+                            "turn": turn_row[0] if turn_row else None,
+                        }
+                    )
+            if not put_events:
+                continue
+            drawn_rows = [
+                {
+                    "id": row[0],
+                    "name": str(row[1] or ""),
+                    "turn": row[2],
+                    "position": int(row[3] or 0),
+                }
+                for row in conn.execute(
+                    """
+                    SELECT id, display_name, turn_number, draw_position
+                    FROM game_drawn_cards
+                    WHERE game_id = ? AND participant_id = ?
+                    ORDER BY draw_position
+                    """,
+                    (game_id, participant_id),
+                )
+            ]
+            already_counted = {
+                (entry["name"], entry["turn"]) for entry in put_events
+            } & {
+                (row["name"], row["turn"]) for row in drawn_rows
+            }
+            if already_counted:
+                # A tracker new enough to record these already counted them.
+                continue
+            named_draws = [
+                str(row[0] or "")
+                for row in conn.execute(
+                    """
+                    SELECT event_time FROM game_events
+                    WHERE game_id = ? AND actor_role = 'player'
+                      AND text LIKE '%drew [%'
+                    ORDER BY event_time, id
+                    """,
+                    (game_id,),
+                )
+            ]
+            if len(named_draws) == len(drawn_rows):
+                for row, event_time in zip(drawn_rows, named_draws):
+                    row["time"] = event_time
+                merged = sorted(
+                    drawn_rows + [
+                        {"name": e["name"], "turn": e["turn"], "time": e["time"], "id": None}
+                        for e in put_events
+                    ],
+                    key=lambda item: item.get("time") or "",
+                )
+            else:
+                # No clean event pairing: slot each put after the last draw of
+                # the same or an earlier turn.
+                merged = list(drawn_rows)
+                for entry in put_events:
+                    insert_at = len(merged)
+                    for index in range(len(merged) - 1, -1, -1):
+                        row_turn = merged[index].get("turn")
+                        if (
+                            row_turn is not None
+                            and entry["turn"] is not None
+                            and int(row_turn) <= int(entry["turn"])
+                        ):
+                            insert_at = index + 1
+                            break
+                        if row_turn is not None and entry["turn"] is not None:
+                            insert_at = index
+                    merged.insert(
+                        insert_at,
+                        {"name": entry["name"], "turn": entry["turn"], "time": None, "id": None},
+                    )
+            # Renumber every position (moving existing rows out of the way of
+            # the UNIQUE constraint first), then insert the new put rows.
+            conn.execute(
+                """
+                UPDATE game_drawn_cards SET draw_position = draw_position + 1000
+                WHERE game_id = ? AND participant_id = ?
+                """,
+                (game_id, participant_id),
+            )
+            copy_counts: dict = {}
+            for position, item in enumerate(merged, start=1):
+                copy_counts[item["name"]] = copy_counts.get(item["name"], 0) + 1
+                if item["id"] is not None:
+                    conn.execute(
+                        """
+                        UPDATE game_drawn_cards
+                        SET draw_position = ?, copy_number = ?
+                        WHERE id = ?
+                        """,
+                        (position, copy_counts[item["name"]], item["id"]),
+                    )
+                    continue
+                card_row = conn.execute(
+                    "SELECT id, primary_type FROM cards WHERE name = ? OR name LIKE ? LIMIT 1",
+                    (item["name"], f"{item['name']} (%"),
+                ).fetchone()
+                conn.execute(
+                    """
+                    INSERT INTO game_drawn_cards (
+                        game_id, participant_id, card_id, display_name,
+                        type_category, draw_position, turn_number, copy_number
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        game_id,
+                        participant_id,
+                        card_row[0] if card_row else None,
+                        item["name"],
+                        card_row[1] if card_row else None,
+                        position,
+                        item["turn"],
+                        copy_counts[item["name"]],
+                    ),
+                )
+                summary = conn.execute(
+                    """
+                    SELECT id FROM game_card_summary
+                    WHERE game_id = ? AND participant_id = ?
+                      AND (display_name = ? OR display_name LIKE ?)
+                    """,
+                    (game_id, participant_id, item["name"], f"{item['name']} (%"),
+                ).fetchone()
+                if summary:
+                    conn.execute(
+                        "UPDATE game_card_summary SET drawn_count = drawn_count + 1 WHERE id = ?",
+                        (summary[0],),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        INSERT INTO game_card_summary (
+                            game_id, participant_id, card_id, display_name,
+                            type_category, played_count, drawn_count
+                        ) VALUES (?, ?, ?, ?, ?, 0, 1)
+                        """,
+                        (
+                            game_id,
+                            participant_id,
+                            card_row[0] if card_row else None,
+                            item["name"],
+                            card_row[1] if card_row else None,
+                        ),
+                    )
+            conn.execute(
+                """
+                UPDATE game_participant_stats
+                SET cards_drawn = cards_drawn + ?
+                WHERE game_id = ? AND participant_id = ?
+                """,
+                (len(put_events), game_id, participant_id),
+            )
 
     @staticmethod
     def _migrate_v7_backfill_bottomed_hands_from_console(conn: sqlite3.Connection) -> None:
