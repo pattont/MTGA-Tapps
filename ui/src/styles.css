@@ -2384,3 +2384,32 @@ tbody tr:hover {
   color: var(--muted);
   font-size: 0.9rem;
 }
+
+/* ---- Life chart turn axis ---- */
+
+.life-turn-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.55;
+  stroke-dasharray: 2 4;
+}
+
+.life-axis-x {
+  position: relative;
+  height: 16px;
+  margin-top: 2px;
+}
+
+.life-axis-tick {
+  position: absolute;
+  transform: translateX(-50%);
+  color: var(--subtle);
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.life-axis-tick:first-child {
+  transform: none;
+}
