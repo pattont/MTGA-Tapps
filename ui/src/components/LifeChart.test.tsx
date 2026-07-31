@@ -1,4 +1,4 @@
-import { createEvent, fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { LifePoint } from '../api';
 import { LifeChart } from './LifeChart';
@@ -9,11 +9,10 @@ const points: LifePoint[] = [
   { turn_number: 3, player_life: 12, opponent_life: 8 },
 ];
 
-function hoverAt(svg: SVGSVGElement, offsetX: number, clientWidth = 600) {
-  Object.defineProperty(svg, 'clientWidth', { value: clientWidth, configurable: true });
-  const event = createEvent.mouseMove(svg);
-  Object.defineProperty(event, 'offsetX', { value: offsetX, configurable: true });
-  fireEvent(svg, event);
+function hoverAt(wrap: HTMLElement, clientX: number, width = 600) {
+  wrap.getBoundingClientRect = () =>
+    ({ left: 0, top: 0, width, height: 150, right: width, bottom: 150, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+  fireEvent.mouseMove(wrap, { clientX });
 }
 
 describe('LifeChart', () => {
@@ -69,9 +68,9 @@ describe('LifeChart', () => {
 
   it('shows a tooltip on hover and clears it on mouse leave', () => {
     const { container } = render(<LifeChart points={points} />);
-    const svg = container.querySelector('svg') as SVGSVGElement;
+    const wrap = container.querySelector('.life-svg-wrap') as HTMLElement;
 
-    hoverAt(svg, 300);
+    hoverAt(wrap, 300);
 
     const tooltip = container.querySelector('.chart-tooltip');
     expect(tooltip).not.toBeNull();
@@ -79,16 +78,26 @@ describe('LifeChart', () => {
     expect(tooltip?.textContent).toContain('18');
     expect(tooltip?.textContent).toContain('15');
 
-    fireEvent.mouseLeave(svg);
+    fireEvent.mouseLeave(wrap);
 
     expect(container.querySelector('.chart-tooltip')).toBeNull();
   });
 
-  it('ignores hover when the svg has no measurable width (jsdom default)', () => {
+  it('renders a turn axis with one tick per turn', () => {
     const { container } = render(<LifeChart points={points} />);
-    const svg = container.querySelector('svg') as SVGSVGElement;
 
-    fireEvent.mouseMove(svg);
+    const ticks = Array.from(container.querySelectorAll('.life-axis-tick')).map(
+      (node) => node.textContent,
+    );
+    expect(ticks).toEqual(['T1', 'T2', 'T3']);
+    expect(container.querySelectorAll('.life-turn-grid')).toHaveLength(3);
+  });
+
+  it('ignores hover when the chart has no measurable width (jsdom default)', () => {
+    const { container } = render(<LifeChart points={points} />);
+    const wrap = container.querySelector('.life-svg-wrap') as HTMLElement;
+
+    fireEvent.mouseMove(wrap);
 
     expect(container.querySelector('.chart-tooltip')).toBeNull();
   });
