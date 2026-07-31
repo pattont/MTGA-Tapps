@@ -349,6 +349,71 @@ def test_migration_v7_skips_unreconcilable_mulligan_lines(tmp_path):
     assert count == 0
 
 
+def test_migration_v8_merges_explored_cards_into_draw_order(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            "insert into tracker_sessions (id, started_at) values ('session-1', '2026-07-30T00:00:00')"
+        )
+        conn.execute("insert into matches (id, session_id) values ('match-1', 'session-1')")
+        conn.execute(
+            "insert into games (id, session_id, match_id, started_at) values ('game-1', 'session-1', 'match-1', '2026-07-30T01:00:00')"
+        )
+        conn.execute(
+            "insert into participants (id, game_id, role) values ('participant-1', 'game-1', 'player')"
+        )
+        conn.execute(
+            "insert into game_participant_stats (game_id, participant_id, cards_drawn) values ('game-1', 'participant-1', 2)"
+        )
+        conn.executemany(
+            """
+            insert into game_drawn_cards (game_id, participant_id, display_name, type_category, draw_position, turn_number, copy_number)
+            values ('game-1', 'participant-1', ?, ?, ?, ?, ?)
+            """,
+            [
+                ("Swamp", "Land", 1, 3, 1),
+                ("Corpses of the Lost", "Creature", 2, 7, 1),
+            ],
+        )
+        conn.executemany(
+            """
+            insert into game_events (session_id, game_id, event_time, turn_number, actor_role, event_type, text)
+            values ('session-1', 'game-1', ?, ?, 'player', 'zone', ?)
+            """,
+            [
+                ("2026-07-30T01:01:00", 3, "[0:30] You: drew [Swamp]"),
+                ("2026-07-30T01:03:00", 5, "[2:30] You: put [Soulstone Sanctuary] into your hand"),
+                ("2026-07-30T01:05:00", 7, "[4:30] You: drew [Corpses of the Lost]"),
+            ],
+        )
+        conn.execute("delete from schema_migrations where version = 8")
+        AnalyticsStore.apply_pending_migrations(conn)
+
+    with sqlite3.connect(db_path) as check:
+        rows = check.execute(
+            """
+            select draw_position, display_name, turn_number from game_drawn_cards
+            where game_id = 'game-1' order by draw_position
+            """
+        ).fetchall()
+        summary = check.execute(
+            "select display_name, drawn_count from game_card_summary where game_id = 'game-1'"
+        ).fetchall()
+        stats = check.execute(
+            "select cards_drawn from game_participant_stats where game_id = 'game-1'"
+        ).fetchone()
+
+    # The explored land lands between the two real draws, in event order.
+    assert rows == [
+        (1, "Swamp", 3),
+        (2, "Soulstone Sanctuary", 5),
+        (3, "Corpses of the Lost", 7),
+    ]
+    assert ("Soulstone Sanctuary", 1) in summary
+    assert stats == (3,)
+
+
 def test_persist_submitted_deck_groups_main_deck_and_sideboard(tmp_path):
     db_path = tmp_path / "analytics.sqlite3"
     store = AnalyticsStore(db_path)
