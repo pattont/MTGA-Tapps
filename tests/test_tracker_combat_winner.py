@@ -3796,6 +3796,64 @@ def test_short_hand_snapshot_finalize_records_bottomed_card():
     assert entry["bottomed"] == [6]
 
 
+def test_library_to_hand_put_counts_as_draw(capsys):
+    """Explore-style effects that move a card library -> hand are draws."""
+    tracker = make_tracker()
+    g = tracker.game_state
+    g.player_seat_id = 1
+    g.opponent_seat_id = 2
+    g.last_player_turn_number = 8
+    card_obj = {
+        "instanceId": 500,
+        "grpId": 90001,
+        "ownerSeatId": 1,
+        "controllerSeatId": 1,
+        "cardTypes": ["CardType_Land"],
+    }
+    zones = {
+        31: {"zoneId": 31, "type": "ZoneType_Hand", "ownerSeatId": 1},
+        35: {"zoneId": 35, "type": "ZoneType_Library", "ownerSeatId": 1},
+    }
+
+    tracker._handle_return_or_put_zone_transfer(
+        "Put", 500, card_obj, {}, {500: card_obj}, zones, 35, 31, None, None
+    )
+
+    out = capsys.readouterr().out
+    assert "into your hand" in out
+    drawn = g.drawn_card_events.get(1, [])
+    assert len(drawn) == 1
+    assert drawn[0].turn_number == 8
+    assert tracker._seat_stats(1)["cards_drawn"] == 1
+
+
+def test_graveyard_to_hand_put_is_not_a_draw(capsys):
+    tracker = make_tracker()
+    g = tracker.game_state
+    g.player_seat_id = 1
+    g.opponent_seat_id = 2
+    g.last_player_turn_number = 8
+    card_obj = {
+        "instanceId": 501,
+        "grpId": 90002,
+        "ownerSeatId": 1,
+        "controllerSeatId": 1,
+        "cardTypes": ["CardType_Creature"],
+    }
+    zones = {
+        31: {"zoneId": 31, "type": "ZoneType_Hand", "ownerSeatId": 1},
+        37: {"zoneId": 37, "type": "ZoneType_Graveyard", "ownerSeatId": 1},
+    }
+
+    tracker._handle_return_or_put_zone_transfer(
+        "Put", 501, card_obj, {}, {501: card_obj}, zones, 37, 31, None, None
+    )
+
+    capsys.readouterr()
+    assert g.drawn_card_events.get(1, []) == []
+    assert tracker._seat_stats(1)["cards_drawn"] == 0
+
+
 def test_all_midweek_magic_matches_are_untracked(capsys):
     tracker = make_tracker()
     tracker.game_state.game_start_time = datetime(2026, 7, 15, 22, 51, 32)
