@@ -441,6 +441,7 @@ class TrackerLifecycleMixin:
         self.game_state.game_start_time = self._now()
         self.game_state.in_match = True
         self.game_state.match_complete = False
+        self.game_state.mid_game_attach = False
         self.game_state.starting_hand = []
         self.game_state.starting_hand_events = []
         self.game_state.initial_hand_size = 7
@@ -561,7 +562,17 @@ class TrackerLifecycleMixin:
                         self.waiting_for_next_game = False
                         self._print_new_game_detected()
                     self._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+                    if turn_num > 1:
+                        # The game's start was never observed (truncated log or
+                        # tracker launched mid-game): partial data would poison
+                        # draw, opener, and timing stats, so show it live only.
+                        self.game_state.mid_game_attach = True
                     self._print_game_started_banner(verbose=False)
+                    if self.game_state.mid_game_attach:
+                        self._print_line(
+                            f"⏱️  Joined mid-game at turn {turn_num} — this game is shown live "
+                            "but won't be saved. Tracking resumes with the next game."
+                        )
                     return
 
             if explicit_start_required:

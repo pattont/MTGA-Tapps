@@ -81,6 +81,9 @@ class GameState:
         self.opponent_seat_id: Optional[int] = None
         self.my_user_id: Optional[str] = None
 
+        # True when the tracker first saw this game already past turn 1 (its
+        # start was never observed). Such games are shown live but not saved.
+        self.mid_game_attach = False
         self.starting_hand: List[str] = []
         self.starting_hand_events: List[CardEvent] = []
         # Every full hand that was mulliganed away (or bottomed from), in order.
