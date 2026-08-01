@@ -9,6 +9,7 @@ import {
   type FatigueRow,
   type MatchupRow,
   type OpenerLandRow,
+  type OpponentColorRow,
   type OpponentThreatRow,
   type OutcomeReasonRow,
   type ScheduleRow,
@@ -22,6 +23,7 @@ import {
 import { Badge } from './components/Badge';
 import { CardDetailPage } from './components/CardDetailPage';
 import { CardLink } from './components/CardLink';
+import { ColorPips } from './components/ColorPips';
 import { DeckDetailPage } from './components/DeckDetailPage';
 import { DeckLink } from './components/DeckLink';
 import { DeckVisual } from './components/DeckVisual';
@@ -361,6 +363,30 @@ const openerLandColumns: Column<OpenerLandRow>[] = [
     key: 'win_rate',
     header: 'Win Rate',
     render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
+    sortValue: (row) => row.win_rate,
+    numeric: true,
+  },
+];
+
+const opponentColorColumns: Column<OpponentColorRow>[] = [
+  {
+    key: 'color_label',
+    header: 'Opponent Colors',
+    render: (row) => (
+      <span className="color-combo">
+        <ColorPips colors={row.colors} />
+        {row.color_label}
+      </span>
+    ),
+    sortValue: (row) => row.color_label,
+  },
+  { key: 'games', header: 'Games', numeric: true },
+  { key: 'wins', header: 'Wins', numeric: true },
+  { key: 'losses', header: 'Losses', numeric: true },
+  {
+    key: 'win_rate',
+    header: 'Win Rate',
+    render: (row) => formatPercent(row.win_rate),
     sortValue: (row) => row.win_rate,
     numeric: true,
   },
@@ -1138,6 +1164,23 @@ function Dashboard({
         title="Opponent Meta"
         description="What the ladder is beating you with, and matchup records when opponent archetypes are identified."
       >
+        <div className="section-heading">
+          <div>
+            <h3>Opponent Colors</h3>
+            <p className="section-description">
+              Color combinations inferred from every card each opponent revealed. Games with no
+              identified colored cards show as Unknown.
+            </p>
+          </div>
+        </div>
+        <SortableTable
+          caption="Record by opponent color combination"
+          columns={opponentColorColumns}
+          getRowKey={(row) => row.color_label}
+          initialSort={{ key: 'games', direction: 'desc' }}
+          pageSize={15}
+          rows={snapshot.opponent_colors ?? []}
+        />
         <div className="section-heading">
           <div>
             <h3>Cards That Beat You</h3>

@@ -235,6 +235,56 @@ class CardDatabase:
         self._ability_text_cache[grp_id] = resolved
         return resolved
 
+    def color_identity_index_by_name(self) -> Dict[str, str]:
+        """Build a card-name -> WUBRG color-identity index from Arena's card DB.
+
+        Probes the Cards table for a color column (schema varies by client
+        version) and joins titles through Localizations_enUS. Returns an empty
+        dict when the Arena database or a usable color column is unavailable.
+        """
+        if getattr(self, "_color_index_by_name", None) is not None:
+            return self._color_index_by_name
+        from .colors import arena_color_codes_to_letters
+
+        index: Dict[str, str] = {}
+        import sqlite3
+
+        db_path = self._resolve_mtga_db_path()
+        if db_path:
+            try:
+                conn = sqlite3.connect(str(db_path))
+                cur = conn.cursor()
+                cur.execute('PRAGMA table_info("Cards")')
+                columns = {str(row[1]) for row in cur.fetchall()}
+                color_column = next(
+                    (
+                        name
+                        for name in ("ColorIdentity", "colorIdentity", "Colors", "colors")
+                        if name in columns
+                    ),
+                    None,
+                )
+                if color_column:
+                    cur.execute(
+                        f'SELECT l."loc", c."{color_column}" FROM "Cards" c '
+                        'JOIN "Localizations_enUS" l ON c."TitleId" = l."LocId" '
+                        f'WHERE c."{color_column}" IS NOT NULL'
+                    )
+                    for name, raw_colors in cur.fetchall():
+                        clean_name = str(name or "").strip()
+                        if not clean_name:
+                            continue
+                        letters = arena_color_codes_to_letters(raw_colors)
+                        existing = index.get(clean_name)
+                        # Keep the widest identity seen across printings.
+                        if existing is None or len(letters) > len(existing):
+                            index[clean_name] = letters
+                conn.close()
+            except Exception:
+                index = {}
+        self._color_index_by_name = index
+        return index
+
     def get_card_ability_text(self, grp_id: int, ability_grp_id: int) -> Optional[str]:
         """Return localized ability text for one card's abilityGrpId when available."""
         if grp_id is None or ability_grp_id is None:

@@ -414,6 +414,55 @@ def test_migration_v8_merges_explored_cards_into_draw_order(tmp_path):
     assert stats == (3,)
 
 
+def test_migration_v9_deletes_post_concede_ghost_games(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            "insert into tracker_sessions (id, started_at) values ('session-1', '2026-07-31T21:00:00')"
+        )
+        conn.executemany(
+            "insert into matches (id, session_id) values (?, 'session-1')",
+            (("match-6",), ("match-7",)),
+        )
+        # A real game and a ghost born the second it ended.
+        conn.execute(
+            """
+            insert into games (id, session_id, match_id, started_at, ended_at, total_turns, duration_seconds, outcome)
+            values ('game-real', 'session-1', 'match-6', '2026-07-31T23:17:31', '2026-07-31T23:24:28', 17, 417, 'loss')
+            """
+        )
+        conn.execute(
+            "insert into game_turns (game_id, turn_number, duration_seconds) values ('game-real', 1, 30)"
+        )
+        conn.execute(
+            """
+            insert into games (id, session_id, match_id, started_at, ended_at, total_turns, duration_seconds, outcome)
+            values ('game-ghost', 'session-1', 'match-7', '2026-07-31T23:24:28', '2026-07-31T23:24:28', 0, 0, 'loss')
+            """
+        )
+        conn.execute(
+            "insert into participants (id, game_id, role) values ('ghost-player', 'game-ghost', 'player')"
+        )
+        conn.execute(
+            """
+            insert into game_events (session_id, game_id, event_time, actor_role, event_type, text)
+            values ('session-1', 'game-ghost', '2026-07-31T23:24:28', null, 'zone', 'cast [Firebending Lesson]')
+            """
+        )
+        conn.execute("delete from schema_migrations where version = 9")
+        AnalyticsStore.apply_pending_migrations(conn)
+
+    with sqlite3.connect(db_path) as check:
+        games = [r[0] for r in check.execute("select id from games order by id")]
+        matches = [r[0] for r in check.execute("select id from matches order by id")]
+        events = check.execute("select count(*) from game_events where game_id='game-ghost'").fetchone()[0]
+
+    assert games == ["game-real"]
+    assert matches == ["match-6"]
+    assert events == 0
+
+
 def test_persist_submitted_deck_groups_main_deck_and_sideboard(tmp_path):
     db_path = tmp_path / "analytics.sqlite3"
     store = AnalyticsStore(db_path)
