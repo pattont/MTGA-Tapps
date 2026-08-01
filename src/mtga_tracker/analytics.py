@@ -439,6 +439,7 @@ class AnalyticsStore:
         AnalyticsStore.ensure_table_column(
             conn, "game_turns", "timing_source", "TEXT NOT NULL DEFAULT 'live'"
         )
+        AnalyticsStore.ensure_table_column(conn, "cards", "color_identity", "TEXT")
         AnalyticsStore.backfill_game_turn_counts(conn)
         AnalyticsStore.apply_pending_migrations(conn)
 
@@ -461,6 +462,7 @@ class AnalyticsStore:
             (6, AnalyticsStore._migrate_v6_merge_split_card_summary_rows),
             (7, AnalyticsStore._migrate_v7_backfill_bottomed_hands_from_console),
             (8, AnalyticsStore._migrate_v8_backfill_library_to_hand_draws),
+            (9, AnalyticsStore._migrate_v9_delete_ghost_games),
         )
         for version, migrate in migrations:
             if version in applied:
@@ -562,6 +564,121 @@ class AnalyticsStore:
             )
             """
         )
+
+    @staticmethod
+    def backfill_card_colors(conn: sqlite3.Connection, colors_by_name) -> int:
+        """Fill cards.color_identity for rows without one, matching by base name.
+
+        colors_by_name maps clean card names to WUBRG letter strings (from the
+        Arena card database). Only NULL rows are touched, so this is cheap to
+        re-run at startup and after each game.
+        """
+        if not colors_by_name:
+            return 0
+        from .analytics_persistence import analytics_card_base_name
+
+        updated = 0
+        for card_id, name in conn.execute(
+            "SELECT id, name FROM cards WHERE color_identity IS NULL"
+        ).fetchall():
+            base = analytics_card_base_name(str(name or ""))
+            letters = colors_by_name.get(base)
+            if letters is None and " // " in base:
+                halves = [half.strip() for half in base.split(" // ")]
+                merged = "".join(colors_by_name.get(half, "") for half in halves)
+                if merged or all(half in colors_by_name for half in halves):
+                    from .colors import normalize_colors
+
+                    letters = normalize_colors(merged)
+            if letters is None:
+                continue
+            conn.execute(
+                "UPDATE cards SET color_identity = ? WHERE id = ?", (letters, card_id)
+            )
+            updated += 1
+        if updated:
+            conn.commit()
+        return updated
+
+    @staticmethod
+    def _migrate_v9_delete_ghost_games(conn: sqlite3.Connection) -> None:
+        """Delete ghost games spawned by post-concede message tails.
+
+        A trailing game-state after a concede could be misread as a new game,
+        creating a record with zero turns, zero duration, no opening hand, and
+        no draws. Remove them and their dependents; drop the parent match when
+        it holds no other games.
+        """
+        ghosts = [
+            str(row[0])
+            for row in conn.execute(
+                """
+                SELECT g.id FROM games g
+                WHERE COALESCE(g.total_turns, 0) = 0
+                  AND COALESCE(
+                g.duration_seconds,
+                CAST((julianday(g.ended_at) - julianday(g.started_at)) * 86400 AS INTEGER),
+                0
+              ) <= 1
+                  AND NOT EXISTS (SELECT 1 FROM game_turns t WHERE t.game_id = g.id)
+                  AND NOT EXISTS (SELECT 1 FROM game_opening_hand_cards h WHERE h.game_id = g.id)
+                  AND NOT EXISTS (SELECT 1 FROM game_drawn_cards d WHERE d.game_id = g.id)
+                """
+            )
+        ]
+        for game_id in ghosts:
+            context = conn.execute(
+                "SELECT session_id, match_id FROM games WHERE id = ?", (game_id,)
+            ).fetchone()
+            if context is None:
+                continue
+            session_id, match_id = context
+            conn.execute(
+                """
+                DELETE FROM participant_commanders
+                WHERE participant_id IN (SELECT id FROM participants WHERE game_id = ?)
+                """,
+                (game_id,),
+            )
+            for table_name in (
+                "game_opening_hand_cards",
+                "game_mulligan_hands",
+                "game_drawn_cards",
+                "game_card_summary",
+                "game_participant_stats",
+                "game_turns",
+                "game_events",
+                "game_deck_cards",
+                "game_annotations",
+                "raw_game_payloads",
+            ):
+                conn.execute(f"DELETE FROM {table_name} WHERE game_id = ?", (game_id,))
+            conn.execute("DELETE FROM participants WHERE game_id = ?", (game_id,))
+            conn.execute("DELETE FROM games WHERE id = ?", (game_id,))
+            conn.execute(
+                "UPDATE matches SET games_played = (SELECT COUNT(*) FROM games WHERE match_id = ?) WHERE id = ?",
+                (match_id, match_id),
+            )
+            conn.execute(
+                "DELETE FROM matches WHERE id = ? AND NOT EXISTS (SELECT 1 FROM games WHERE match_id = ?)",
+                (match_id, match_id),
+            )
+            conn.execute(
+                """
+                UPDATE tracker_sessions SET
+                    games_played = (SELECT COUNT(*) FROM games WHERE session_id = tracker_sessions.id),
+                    wins = (SELECT COUNT(*) FROM games WHERE session_id = tracker_sessions.id AND outcome = 'win'),
+                    losses = (SELECT COUNT(*) FROM games WHERE session_id = tracker_sessions.id AND outcome = 'loss'),
+                    draws = (SELECT COUNT(*) FROM games WHERE session_id = tracker_sessions.id AND outcome = 'draw'),
+                    unknown_results = (
+                        SELECT COUNT(*) FROM games
+                        WHERE session_id = tracker_sessions.id
+                          AND COALESCE(outcome, 'unknown') NOT IN ('win', 'loss', 'draw')
+                    )
+                WHERE id = ?
+                """,
+                (session_id,),
+            )
 
     @staticmethod
     def _migrate_v8_backfill_library_to_hand_draws(conn: sqlite3.Connection) -> None:

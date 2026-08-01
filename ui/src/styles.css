@@ -2413,3 +2413,34 @@ tbody tr:hover {
 .life-axis-tick:first-child {
   transform: none;
 }
+
+/* ---- Color pips & combos ---- */
+
+.color-pips {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.color-pip {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  filter: var(--pip-shadow);
+}
+
+.color-combo {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+}
+
+.color-combo-inline {
+  margin-left: 10px;
+}
+
+/* Mulligan chips: card links take the chip's type color, not accent yellow. */
+.mulligan-card a {
+  color: inherit;
+}

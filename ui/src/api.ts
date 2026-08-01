@@ -142,6 +142,15 @@ export interface OpenerLandRow {
   win_rate: number | null;
 }
 
+export interface OpponentColorRow {
+  color_label: string;
+  colors: string;
+  games: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+}
+
 export interface OpponentThreatRow {
   display_name: string;
   type_category: string;
@@ -308,6 +317,7 @@ export interface DashboardSnapshot {
   outcome_reasons: OutcomeReasonRow[];
   opener_lands: OpenerLandRow[];
   opponent_threats: OpponentThreatRow[];
+  opponent_colors?: OpponentColorRow[];
   matchups: MatchupRow[];
   recent: RecentGameRow[];
   matches: MatchRow[];
@@ -475,6 +485,8 @@ export interface GameParticipant {
   opening_hand_size?: number | null;
   starting_life?: number | null;
   ending_life?: number | null;
+  colors?: string | null;
+  color_label?: string | null;
 }
 
 export interface GameCardRow {

@@ -15,6 +15,7 @@ import { gameRouteHash } from '../routes';
 import { DeckLink } from './DeckLink';
 import { Badge } from './Badge';
 import { CardLink } from './CardLink';
+import { ColorPips } from './ColorPips';
 import { Section } from './Section';
 import { LifeChart } from './LifeChart';
 import { MetricCard } from './MetricCard';
@@ -442,6 +443,12 @@ export function GameDetailPage({
             {detail.opponent.display_name ? (
               <p>
                 vs. <OpponentLink opponentName={detail.opponent.display_name} />
+                {detail.opponent.colors ? (
+                  <span className="color-combo color-combo-inline">
+                    <ColorPips colors={detail.opponent.colors} />
+                    {detail.opponent.color_label}
+                  </span>
+                ) : null}
               </p>
             ) : null}
           </div>
