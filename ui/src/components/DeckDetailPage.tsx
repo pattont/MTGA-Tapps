@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 import {
   fetchDeckDetail,
@@ -21,8 +21,8 @@ import {
   outcomeTone,
   shortFormatLabel,
 } from '../format';
-import { gameRouteHash } from '../routes';
-import { opponentColorColumns } from '../opponentColorColumns';
+import { gameRouteHash, gamesRouteHash } from '../routes';
+import { makeOpponentColorColumns } from '../opponentColorColumns';
 import { Badge } from './Badge';
 import { ColorPips } from './ColorPips';
 import { CardLink } from './CardLink';
@@ -501,6 +501,11 @@ export function DeckDetailPage({
     };
   }, [deckName, filters]);
 
+  const deckOpponentColorColumns = useMemo(
+    () => makeOpponentColorColumns((row) => gamesRouteHash({ deck: deckName, colors: row.colors })),
+    [deckName],
+  );
+
   if (loadState.status === 'loading') {
     return (
       <p className="state-panel" role="status" aria-busy="true">
@@ -788,10 +793,10 @@ export function DeckDetailPage({
       >
         <SortableTable
           caption="Record by opponent color combination"
-          columns={opponentColorColumns}
+          columns={deckOpponentColorColumns}
           getRowKey={(row) => row.color_label}
           initialSort={{ key: 'games', direction: 'desc' }}
-          rows={detail.opponent_colors ?? []}
+          rows={(detail.opponent_colors ?? []).slice(0, 15)}
         />
       </Section>
 

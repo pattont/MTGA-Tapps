@@ -30,6 +30,35 @@ export function AppShell({
 }: AppShellProps) {
   const nextTheme = theme === 'dark' ? 'light' : 'dark';
   const [activeSection, setActiveSection] = useState<string | null>(null);
+  const [showBackToTop, setShowBackToTop] = useState(false);
+  const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/version')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: { version?: string } | null) => {
+        if (!cancelled && payload?.version) {
+          setVersion(payload.version);
+        }
+      })
+      .catch(() => {
+        // Version display is cosmetic.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    function onScroll() {
+      setShowBackToTop(window.scrollY > 600);
+    }
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
       return window.localStorage.getItem('mtga-sidebar-collapsed') === '1';
@@ -177,6 +206,11 @@ export function AppShell({
           )}
         </nav>
         )}
+        {!collapsed && version ? (
+          <span aria-label={`Tracker version ${version}`} className="sidebar-version">
+            v{version}
+          </span>
+        ) : null}
       </aside>
       <main className="dashboard-main" id="main-content">
         <header className="topbar">
@@ -195,6 +229,15 @@ export function AppShell({
         </header>
         {children}
       </main>
+      {showBackToTop ? (
+        <button
+          className="back-to-top"
+          type="button"
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+        >
+          ↑ Back to top
+        </button>
+      ) : null}
     </div>
   );
 }

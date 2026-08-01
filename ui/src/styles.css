@@ -2488,3 +2488,69 @@ tbody tr:hover {
 .app-layout-collapsed .sidebar-toggle {
   align-self: center;
 }
+
+/* ---- Timeline chip colors for remaining event types ---- */
+
+.timeline-chip-stack { color: #7db4d8; }
+.timeline-chip-stack_resolve { color: #7bd88f; }
+.timeline-chip-stack_fail { color: #e8a04a; }
+.timeline-chip-combat_damage { color: #e06c5c; }
+.timeline-chip-block { color: #d98ac9; }
+.timeline-chip-counter { color: #d9c06a; }
+.timeline-chip-zone { color: #c58fd9; }
+.timeline-chip-life_gain { color: var(--success); }
+.timeline-chip-life_loss { color: var(--danger); }
+
+:root[data-theme="light"] .timeline-chip-stack { color: #0f6fbd; }
+:root[data-theme="light"] .timeline-chip-stack_resolve { color: #0d8040; }
+:root[data-theme="light"] .timeline-chip-stack_fail { color: #b26a00; }
+:root[data-theme="light"] .timeline-chip-combat_damage { color: #c23a28; }
+:root[data-theme="light"] .timeline-chip-block { color: #a8329b; }
+:root[data-theme="light"] .timeline-chip-counter { color: #9c7a00; }
+:root[data-theme="light"] .timeline-chip-zone { color: #8140c9; }
+
+/* ---- Back to top ---- */
+
+.back-to-top {
+  position: fixed;
+  z-index: 30;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.back-to-top:hover,
+.back-to-top:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+/* ---- Sidebar version ---- */
+
+.sidebar-version {
+  margin-top: auto;
+  color: var(--subtle);
+  font-size: 0.72rem;
+  opacity: 0.75;
+}
+
+/* ---- Active opponent-color filter note (All Games) ---- */
+
+.active-color-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 16px 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}

@@ -9,6 +9,7 @@ import { formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone
 import { FORMAT_QUICK_FILTERS } from '../quickFilters';
 import { gameRouteHash } from '../routes';
 import { Badge } from './Badge';
+import { ColorPips } from './ColorPips';
 import { DeckLink } from './DeckLink';
 import { FilterBar } from './FilterBar';
 import { Section } from './Section';
@@ -52,6 +53,12 @@ const columns: Column<AllGamesRow>[] = [
     header: 'Outcome',
     render: (row) => <Badge tone={outcomeTone(row.outcome)}>{outcomeLabel(row.outcome)}</Badge>,
     sortValue: (row) => row.outcome,
+  },
+  {
+    key: 'opp_colors',
+    header: 'Opp',
+    render: (row) => <ColorPips colors={row.opp_colors} />,
+    sortValue: (row) => row.opp_colors ?? '',
   },
   {
     key: 'match_wins',
@@ -186,9 +193,12 @@ export function GamesPage({
       if (query && !row.deck_name.toLocaleLowerCase().includes(query)) {
         return false;
       }
+      if (filters.colors && (row.opp_colors ?? '') !== filters.colors) {
+        return false;
+      }
       return true;
     });
-  }, [deckSearch, quickFilter, rows]);
+  }, [deckSearch, filters.colors, quickFilter, rows]);
 
   if (loadState.status === 'loading') {
     return (
@@ -222,6 +232,24 @@ export function GamesPage({
       >
         {onFiltersChange ? (
           <FilterBar filters={filters} onChange={onFiltersChange} options={filterOptions} />
+        ) : null}
+        {filters.colors ? (
+          <p className="active-color-filter">
+            Showing games vs <ColorPips colors={filters.colors} />
+            {onFiltersChange ? (
+              <button
+                className="quick-filter"
+                type="button"
+                onClick={() => {
+                  const next = { ...filters };
+                  delete next.colors;
+                  onFiltersChange(next);
+                }}
+              >
+                Clear
+              </button>
+            ) : null}
+          </p>
         ) : null}
         <div className="quick-filters" role="group" aria-label="Quick format filters">
           {FORMAT_QUICK_FILTERS.map((filter) => (
