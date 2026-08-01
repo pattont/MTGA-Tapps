@@ -264,7 +264,7 @@ export function GameDetailPage({
   }
 
   const { detail, refreshError } = loadState;
-  const playDraw = detail.player.went_first === 1 ? 'On the play' : detail.player.went_first === 0 ? 'On the draw' : 'Unknown';
+  const playDraw = detail.player.went_first === 1 ? 'Play' : detail.player.went_first === 0 ? 'Draw' : 'Unknown';
   const landByPosition = new Map(detail.drawn.map((card) => [card.draw_position, isLandCard(card)]));
   const drawLandFlags = Array.from(
     { length: detail.draw_quality.total_draws },
@@ -407,8 +407,17 @@ export function GameDetailPage({
     .sort(([a], [b]) => a - b)
     .map(([turn, counts]) => ({ turn, ...counts }));
   const timelineReturnHash = gameRouteHash(gameId, backHref, 'game-timeline');
+  const opponentDeckType = detail.opponent.colors ? (
+    <span className="color-combo">
+      <ColorPips colors={detail.opponent.colors} />
+      {detail.opponent.color_label}
+    </span>
+  ) : (
+    'Unknown'
+  );
   const metricCards = [
     { label: 'Play / Draw', value: playDraw },
+    { label: 'Opponent Deck Type', value: opponentDeckType },
     { label: 'Mulligans', value: formatNumber(detail.player.mulligans) },
     { label: 'Turns', value: formatNumber(detail.game.total_turns) },
     { label: 'Duration', value: formatDuration(detail.game.duration_seconds) },
@@ -443,12 +452,6 @@ export function GameDetailPage({
             {detail.opponent.display_name ? (
               <p>
                 vs. <OpponentLink opponentName={detail.opponent.display_name} />
-                {detail.opponent.colors ? (
-                  <span className="color-combo color-combo-inline">
-                    <ColorPips colors={detail.opponent.colors} />
-                    {detail.opponent.color_label}
-                  </span>
-                ) : null}
               </p>
             ) : null}
           </div>

@@ -164,7 +164,11 @@ class TrackerRenderingMixin:
         return bool(
             re.search(r"(^|:)\s*add\s+(\{|\w+ mana)", normalized)
             or re.search(r"\badd\s+\{", normalized)
-            or re.search(r"(^|:)\s*add\s+[wubrgcx0-9]+(?:\.|,|$)", normalized)
+            or re.search(
+                r"(^|:)\s*add\s+[wubrgcx0-9]+(\s+or\s+[wubrgcx0-9]+)*(?:\.|,|$)",
+                normalized,
+            )
+            or re.search(r"\badd\s+one mana of any", normalized)
         )
 
     def _emit_ability_event(

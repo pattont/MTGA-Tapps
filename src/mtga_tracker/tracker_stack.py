@@ -81,8 +81,14 @@ class TrackerStackMixin:
         if not isinstance(item, dict) or item.get("status") != "pending":
             return False
 
-        if status == "fizzled" and self._is_mana_ability_stack_item(item):
+        if status == "fizzled" and item.get("kind") == "ability":
+            # An activated ability leaving the stack almost always resolved —
+            # the "fizzled" inference is noise (dual-land mana taps, Soulstone
+            # Sanctuary-style animations). Count it as resolved, silently.
             item["status"] = "resolved"
+            stats = self._seat_stack_stats(item.get("seat"))
+            if stats is not None:
+                stats["resolved"] += 1
             return True
 
         seat_id = item.get("seat")

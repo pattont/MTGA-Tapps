@@ -23,7 +23,7 @@ import { Badge } from './components/Badge';
 import { CardDetailPage } from './components/CardDetailPage';
 import { CardLink } from './components/CardLink';
 import { ColorPips } from './components/ColorPips';
-import { opponentColorColumns } from './opponentColorColumns';
+import { makeOpponentColorColumns } from './opponentColorColumns';
 import { DeckDetailPage } from './components/DeckDetailPage';
 import { DeckLink } from './components/DeckLink';
 import { DeckVisual } from './components/DeckVisual';
@@ -367,6 +367,10 @@ const openerLandColumns: Column<OpenerLandRow>[] = [
     numeric: true,
   },
 ];
+
+const homeOpponentColorColumns = makeOpponentColorColumns((row) =>
+  gamesRouteHash({ colors: row.colors }),
+);
 
 const opponentThreatColumns: Column<OpponentThreatRow>[] = [
   {
@@ -1157,11 +1161,10 @@ function Dashboard({
         </div>
         <SortableTable
           caption="Record by opponent color combination"
-          columns={opponentColorColumns}
+          columns={homeOpponentColorColumns}
           getRowKey={(row) => row.color_label}
           initialSort={{ key: 'games', direction: 'desc' }}
-          pageSize={15}
-          rows={snapshot.opponent_colors ?? []}
+          rows={(snapshot.opponent_colors ?? []).slice(0, 15)}
         />
         <div className="section-heading">
           <div>

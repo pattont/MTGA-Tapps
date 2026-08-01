@@ -4,6 +4,53 @@ import { formatCardName, formatTurnDuration } from '../format';
 import { CardLink } from './CardLink';
 import { TypeChip } from './TypeChip';
 
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  turn: 'Turn',
+  cast: 'Cast',
+  land: 'Land',
+  attack: 'Attack',
+  block: 'Block',
+  combat_damage: 'Combat Damage',
+  damage: 'Damage',
+  ability: 'Ability',
+  stack: 'Stack',
+  stack_resolve: 'Stack Resolve',
+  stack_fail: 'Stack Fail',
+  zone: 'Zone',
+  counter: 'Counter',
+  draw: 'Draw',
+  life_gain: 'Life Gain',
+  life_loss: 'Life Loss',
+};
+
+const INFERRED_MARKER = '[left stack without resolving - inferred]';
+
+/** Inferred stack departures almost always mean the item resolved. */
+function effectiveEventType(row: GameTimelineRow): string {
+  const type = row.event_type ?? 'other';
+  if (type === 'stack_fail' && (row.text ?? '').includes('inferred')) {
+    return 'stack_resolve';
+  }
+  return type;
+}
+
+function eventTypeLabel(type: string): string {
+  return (
+    EVENT_TYPE_LABELS[type] ??
+    type
+      .split('_')
+      .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
+      .join(' ')
+  );
+}
+
+function cleanEventText(text: string | null): string {
+  return String(text ?? '')
+    .replace(' [resolved]', '')
+    .replace(` ${INFERRED_MARKER}`, '')
+    .replace(INFERRED_MARKER, '');
+}
+
 interface TurnGroup {
   turnNumber: number | null;
   turnLabel: string;
@@ -163,9 +210,13 @@ function decorateCardSegments(segments: TimelineTextSegment[]): {
 }
 
 function TimelineText({ event, returnHash }: { event: GameTimelineRow; returnHash?: string }) {
-  const sourceSegments = event.text_segments?.length
-    ? event.text_segments
-    : [{ kind: 'text' as const, text: event.text }];
+  const sourceSegments = (
+    event.text_segments?.length
+      ? event.text_segments
+      : [{ kind: 'text' as const, text: event.text }]
+  ).map((segment) =>
+    segment.kind === 'text' ? { ...segment, text: cleanEventText(segment.text) } : segment,
+  );
   const { decorations, segments } = decorateCardSegments(sourceSegments);
   return (
     <>
@@ -260,7 +311,7 @@ export function TimelineList({
             <option value="">All events</option>
             {eventTypes.map((type) => (
               <option key={type} value={type}>
-                {type}
+                {eventTypeLabel(type)}
               </option>
             ))}
           </select>
@@ -313,8 +364,8 @@ export function TimelineList({
                       {actorLabel(event.actor_role) ? (
                         <span className="timeline-actor">{actorLabel(event.actor_role)}</span>
                       ) : null}
-                      <span className={`timeline-chip timeline-chip-${event.event_type ?? 'other'}`}>
-                        {event.event_type ?? 'event'}
+                      <span className={`timeline-chip timeline-chip-${effectiveEventType(event)}`}>
+                        {eventTypeLabel(effectiveEventType(event))}
                       </span>
                       <span className="timeline-text">
                         <TimelineText event={event} returnHash={cardReturnHash} />

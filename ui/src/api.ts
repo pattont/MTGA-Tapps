@@ -149,6 +149,7 @@ export interface OpponentColorRow {
   wins: number;
   losses: number;
   win_rate: number | null;
+  pct_of_games?: number | null;
 }
 
 export interface OpponentThreatRow {
@@ -298,6 +299,8 @@ export interface SnapshotFilters {
   since?: string;
   /** ISO date (YYYY-MM-DD) upper bound, inclusive. */
   until?: string;
+  /** Opponent WUBRG color-combo filter (client-side, All Games page only). */
+  colors?: string;
 }
 
 export interface DashboardSnapshot {

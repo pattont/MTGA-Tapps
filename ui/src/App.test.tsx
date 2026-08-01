@@ -1123,7 +1123,7 @@ describe('App', () => {
     const gameMetrics = screen.getByRole('region', { name: 'Game metrics' });
     expect(within(gameMetrics).queryByText('Outcome')).not.toBeInTheDocument();
     expect(within(gameMetrics).queryByText('Format')).not.toBeInTheDocument();
-    expect(within(gameMetrics).getAllByRole('article')).toHaveLength(5);
+    expect(within(gameMetrics).getAllByRole('article')).toHaveLength(6);
     expect(screen.getByText('8 (73%)')).toBeInTheDocument();
     expect(screen.getByText('7 (70%)')).toBeInTheDocument();
     expect(screen.getAllByText('Flood').length).toBeGreaterThan(0);
@@ -1439,10 +1439,16 @@ describe('App', () => {
       summary: { ...snapshot.summary, games: 3 },
       decks: [{ ...snapshot.decks[0], games: 3 }],
     };
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify(snapshot), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(updatedSnapshot), { status: 200 }));
+    const responses = [
+      new Response(JSON.stringify(snapshot), { status: 200 }),
+      new Response(JSON.stringify(updatedSnapshot), { status: 200 }),
+    ];
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url).includes('/api/version')) {
+        return new Response(JSON.stringify({ version: '0.0.0-test' }), { status: 200 });
+      }
+      return responses.shift() ?? new Response('exhausted', { status: 500 });
+    });
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
@@ -1455,16 +1461,22 @@ describe('App', () => {
       await vi.advanceTimersByTimeAsync(20_000);
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(responses).toHaveLength(0);
     expect(within(overview).getByText('Games').closest('article')).toHaveTextContent('3');
   });
 
   it('keeps the loaded dashboard visible when a refresh fails', async () => {
     vi.useFakeTimers();
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify(snapshot), { status: 200 }))
-      .mockResolvedValueOnce(new Response('locked', { status: 500 }));
+    const responses = [
+      new Response(JSON.stringify(snapshot), { status: 200 }),
+      new Response('locked', { status: 500 }),
+    ];
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url).includes('/api/version')) {
+        return new Response(JSON.stringify({ version: '0.0.0-test' }), { status: 200 });
+      }
+      return responses.shift() ?? new Response('exhausted', { status: 500 });
+    });
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
@@ -1477,7 +1489,7 @@ describe('App', () => {
       await vi.advanceTimersByTimeAsync(20_000);
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(responses).toHaveLength(0);
     expect(within(overview).getByText('Games').closest('article')).toHaveTextContent('2');
     expect(screen.getByRole('status')).toHaveTextContent('Latest refresh failed: Dashboard API returned 500');
   });
@@ -1492,6 +1504,9 @@ describe('App', () => {
     let callCount = 0;
     let staleSignal: AbortSignal | undefined;
     const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      if (String(_url).includes('/api/version')) {
+        return Promise.resolve(new Response(JSON.stringify({ version: '0.0.0-test' }), { status: 200 }));
+      }
       callCount += 1;
       if (callCount === 1) {
         return Promise.resolve(new Response(JSON.stringify(snapshot), { status: 200 }));
@@ -1514,14 +1529,14 @@ describe('App', () => {
       await vi.advanceTimersByTimeAsync(20_000);
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(callCount).toBe(2);
     expect(staleSignal?.aborted).toBe(false);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(20_000);
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(callCount).toBe(3);
     expect(staleSignal?.aborted).toBe(true);
     expect(within(overview).getByText('Games').closest('article')).toHaveTextContent('4');
   });
