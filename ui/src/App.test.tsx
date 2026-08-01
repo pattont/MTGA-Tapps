@@ -967,6 +967,7 @@ describe('App', () => {
       'Deck',
       'Format',
       'Outcome',
+      'Opp',
       'Match Record',
       'Draw Status',
       'Mulligan(s)',

@@ -463,6 +463,54 @@ def test_migration_v9_deletes_post_concede_ghost_games(tmp_path):
     assert events == 0
 
 
+def test_migration_v10_deletes_unknown_deck_games(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            "insert into tracker_sessions (id, started_at) values ('session-1', '2026-04-26T21:00:00')"
+        )
+        conn.executemany(
+            "insert into matches (id, session_id) values (?, 'session-1')",
+            (("match-1",), ("match-2",)),
+        )
+        conn.execute(
+            """
+            insert into games (id, session_id, match_id, started_at, outcome, total_turns)
+            values ('game-known', 'session-1', 'match-1', '2026-04-26T21:05:00', 'win', 9)
+            """
+        )
+        conn.execute(
+            "insert into participants (id, game_id, role, deck_name) values ('p-known', 'game-known', 'player', 'Mono Black Skellies')"
+        )
+        conn.execute(
+            """
+            insert into games (id, session_id, match_id, started_at, outcome, total_turns)
+            values ('game-unknown', 'session-1', 'match-2', '2026-04-26T21:30:00', 'loss', 12)
+            """
+        )
+        conn.execute(
+            "insert into participants (id, game_id, role) values ('p-unknown', 'game-unknown', 'player')"
+        )
+        conn.execute(
+            """
+            insert into game_events (session_id, game_id, event_time, actor_role, event_type, text)
+            values ('session-1', 'game-unknown', '2026-04-26T21:31:00', 'player', 'zone', 'cast [Something]')
+            """
+        )
+        conn.execute("delete from schema_migrations where version = 10")
+        AnalyticsStore.apply_pending_migrations(conn)
+
+    with sqlite3.connect(db_path) as check:
+        games = [r[0] for r in check.execute("select id from games order by id")]
+        matches = [r[0] for r in check.execute("select id from matches order by id")]
+        session = check.execute("select games_played, wins, losses from tracker_sessions").fetchone()
+
+    assert games == ["game-known"]
+    assert matches == ["match-1"]
+    assert session == (1, 1, 0)
+
+
 def test_persist_submitted_deck_groups_main_deck_and_sideboard(tmp_path):
     db_path = tmp_path / "analytics.sqlite3"
     store = AnalyticsStore(db_path)

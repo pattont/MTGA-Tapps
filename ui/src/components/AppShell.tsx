@@ -30,6 +30,25 @@ export function AppShell({
 }: AppShellProps) {
   const nextTheme = theme === 'dark' ? 'light' : 'dark';
   const [activeSection, setActiveSection] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('mtga-sidebar-collapsed') === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleSidebar = () => {
+    setCollapsed((previous) => {
+      const next = !previous;
+      try {
+        window.localStorage.setItem('mtga-sidebar-collapsed', next ? '1' : '0');
+      } catch {
+        // Preference just won't persist.
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     const sectionIds = navItems.filter((item) => !item.route).map((item) => item.id);
@@ -71,11 +90,21 @@ export function AppShell({
   }, [navItems, children]);
 
   return (
-    <div className="app-layout">
+    <div className={collapsed ? 'app-layout app-layout-collapsed' : 'app-layout'}>
       <a className="skip-link" href="#main-content">
         Skip to content
       </a>
       <aside className="sidebar">
+        <button
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? 'Show navigation' : 'Hide navigation'}
+          className="sidebar-toggle"
+          type="button"
+          onClick={toggleSidebar}
+        >
+          {collapsed ? '\u00bb' : '\u00ab'}
+        </button>
+        {collapsed ? null : (
         <div className="brand-row">
           <a
             aria-label={`${TRACKER_NAME} – Go to overview`}
@@ -115,6 +144,8 @@ export function AppShell({
             </div>
           </a>
         </div>
+        )}
+        {collapsed ? null : (
         <nav aria-label="Dashboard sections">
           {navItems.map((item) =>
             item.route ? (
@@ -145,6 +176,7 @@ export function AppShell({
             ),
           )}
         </nav>
+        )}
       </aside>
       <main className="dashboard-main" id="main-content">
         <header className="topbar">
