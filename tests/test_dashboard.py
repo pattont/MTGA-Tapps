@@ -1134,6 +1134,47 @@ def test_card_detail_combines_split_card_name_variants(tmp_path):
     )
 
 
+def test_game_detail_reports_opponent_color_combo(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            insert into cards (name, primary_type, color_identity, first_seen_at)
+            values (?, ?, ?, '2026-06-04T00:00:00')
+            """,
+            [
+                ("Steam Vents", "Land", "UR"),
+                ("Lightning Strike", "Instant", "R"),
+                ("Sleight of Hand", "Sorcery", "U"),
+            ],
+        )
+        card_ids = {
+            name: conn.execute("select id from cards where name = ?", (name,)).fetchone()[0]
+            for name in ("Steam Vents", "Lightning Strike", "Sleight of Hand")
+        }
+        conn.executemany(
+            """
+            insert into game_card_summary (game_id, participant_id, card_id, display_name, type_category, played_count)
+            values ('game-1', 'opponent-1', ?, ?, ?, 1)
+            """,
+            [
+                (card_ids["Steam Vents"], "Steam Vents", "Land"),
+                (card_ids["Lightning Strike"], "Lightning Strike (Instant)", "Instant"),
+                (card_ids["Sleight of Hand"], "Sleight of Hand (Sorcery)", "Sorcery"),
+            ],
+        )
+
+    detail = game_detail(db_path, "game-1")
+
+    assert detail["opponent"]["colors"] == "UR"
+    assert detail["opponent"]["color_label"] == "Izzet"
+
+    snapshot = dashboard_snapshot(db_path)
+    colors = {row["color_label"]: row for row in snapshot["opponent_colors"]}
+    assert "Izzet" in colors
+    assert colors["Izzet"]["games"] == 1
+
+
 def test_game_detail_groups_mulligan_hands_in_order(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
     with sqlite3.connect(db_path) as conn:

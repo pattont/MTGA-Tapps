@@ -214,6 +214,18 @@ class TrackerAnalyticsMixin:
                     raise
                 time.sleep(0.1 * (attempt + 1))
 
+    def _backfill_card_colors(self) -> None:
+        """Fill missing card color identities from the Arena card database."""
+        conn = self._analytics_connect()
+        if conn is None:
+            return
+        try:
+            index = self.card_db.color_identity_index_by_name()
+            if index:
+                AnalyticsStore.backfill_card_colors(conn, index)
+        except (AttributeError, sqlite3.Error, OSError, TypeError, ValueError):
+            return
+
     def _recover_missing_turn_timings(self) -> None:
         """Recover persisted turn durations from durable console headers at startup."""
         conn = self._analytics_connect()
@@ -846,6 +858,12 @@ class TrackerAnalyticsMixin:
             self.game_state.opponent_commanders,
             refresh_display_name=self._refresh_fallback_name_text,
         )
+        try:
+            color_index = self.card_db.color_identity_index_by_name()
+            if color_index:
+                AnalyticsStore.backfill_card_colors(conn, color_index)
+        except (AttributeError, sqlite3.Error, OSError, TypeError, ValueError):
+            pass
         self._refresh_session_participant_stats(conn)
 
     def _persist_turn_timings(self, conn: sqlite3.Connection, game_id: str) -> None:
@@ -926,6 +944,16 @@ class TrackerAnalyticsMixin:
     def _persist_game_analytics(self, outcome: str, reason: str) -> None:
         """Persist dashboard-ready summary data for a completed game."""
         if self._is_untracked_match():
+            return
+        # A "game" with no turns, no opening hand, and no draws is a ghost:
+        # typically a post-concede message tail misread as a new game.
+        took_any_turn = any(self.game_state.turns_taken_by_seat.get(seat) for seat in (1, 2))
+        if (
+            not took_any_turn
+            and not self.game_state.starting_hand
+            and not self.game_state.drawn_card_events.get(self.game_state.player_seat_id)
+        ):
+            self._print_line("👻 Skipping ghost game record (no turns or cards observed).")
             return
         conn = self._analytics_connect()
         if conn is None:

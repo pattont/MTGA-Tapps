@@ -26,6 +26,7 @@ from .draw_quality import (
     hypergeom_tail_at_most,
     is_land_row,
 )
+from .colors import color_combo_label, normalize_colors
 from .format_normalizer import format_label, normalize_match_format
 from .paths import DATA_DIR
 
@@ -194,6 +195,24 @@ def _game_draw_quality(
         int(deck_size or 60),
         deck_lands,
     )
+
+
+def _opponent_color_letters(conn: sqlite3.Connection, game_id: str, participant_id: str) -> str:
+    """WUBRG letters seen across the opponent's revealed cards in one game."""
+    try:
+        rows = conn.execute(
+            """
+            SELECT c.color_identity
+            FROM game_card_summary s
+            JOIN cards c ON c.id = s.card_id
+            WHERE s.game_id = ? AND s.participant_id = ?
+              AND COALESCE(c.color_identity, '') != ''
+            """,
+            (game_id, participant_id),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return ""
+    return normalize_colors("".join(str(row[0] or "") for row in rows))
 
 
 def _split_name_variants(conn: sqlite3.Connection, clean_name: str) -> List[str]:
@@ -588,6 +607,50 @@ def _matchup_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> Li
             params,
         )
     )
+
+
+def _opponent_color_rows(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> List[Dict[str, Any]]:
+    """Win/loss record grouped by the opponent's revealed color combination."""
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT
+              g.id,
+              g.outcome,
+              (
+                SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                FROM game_card_summary s
+                JOIN cards c ON c.id = s.card_id
+                WHERE s.game_id = g.id AND s.participant_id = po.id
+              ) AS letters
+            FROM games g
+            JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
+            WHERE {where}
+            """,
+            params,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    buckets: Dict[str, Dict[str, Any]] = {}
+    for _game_id, outcome, letters in rows:
+        colors = normalize_colors(str(letters or ""))
+        label = color_combo_label(colors) or "Unknown"
+        entry = buckets.setdefault(
+            label, {"color_label": label, "colors": colors, "games": 0, "wins": 0, "losses": 0}
+        )
+        entry["games"] += 1
+        if outcome == "win":
+            entry["wins"] += 1
+        elif outcome == "loss":
+            entry["losses"] += 1
+    result = []
+    for entry in buckets.values():
+        entry["win_rate"] = _win_rate(entry["wins"], entry["losses"])
+        result.append(entry)
+    result.sort(key=lambda item: (item["color_label"] == "Unknown", -item["games"], item["color_label"]))
+    return result
 
 
 def _schedule_rows(
@@ -1675,6 +1738,7 @@ def dashboard_snapshot(
         opener_land_rows = _opener_land_rows(conn, where, params)
         opponent_threat_rows = _opponent_threat_rows(conn, where, params)
         matchup_rows = _matchup_rows(conn, where, params)
+        opponent_color_rows = _opponent_color_rows(conn, where, params)
         deck_visuals = _deck_visuals(conn)
         for row in deck_rows:
             deck_name = row["deck_name"]
@@ -1748,6 +1812,7 @@ def dashboard_snapshot(
         "outcome_reasons": outcome_reason_rows,
         "opener_lands": opener_land_rows,
         "opponent_threats": opponent_threat_rows,
+        "opponent_colors": opponent_color_rows,
         "matchups": matchup_rows,
         "recent": recent_rows,
         "trend": trend_rows,
@@ -2416,12 +2481,16 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                 (game_id,),
             )
         )
+        opponent_colors = _opponent_color_letters(conn, game_id, opponent_participant_id)
 
     annotation = game_annotation(db_path, game_id)
+    opponent_payload = dict(opponent or {})
+    opponent_payload["colors"] = opponent_colors
+    opponent_payload["color_label"] = color_combo_label(opponent_colors)
     return {
         "game": game,
         "player": player or {},
-        "opponent": opponent or {},
+        "opponent": opponent_payload,
         "annotation": annotation,
         "participant_stats": participant_stats,
         "opening_hand": opening_hand,

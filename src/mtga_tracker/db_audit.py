@@ -576,6 +576,37 @@ def _missing_completed_game_findings(conn: sqlite3.Connection) -> Iterable[Audit
         )
 
 
+def _ghost_game_findings(conn: sqlite3.Connection) -> Iterable[AuditFinding]:
+    """Flag post-concede ghost games: zero turns, zero duration, no cards seen."""
+    for row in conn.execute(
+        """
+        SELECT g.id FROM games g
+        WHERE COALESCE(g.total_turns, 0) = 0
+          AND COALESCE(
+                g.duration_seconds,
+                CAST((julianday(g.ended_at) - julianday(g.started_at)) * 86400 AS INTEGER),
+                0
+              ) <= 1
+          AND NOT EXISTS (SELECT 1 FROM game_turns t WHERE t.game_id = g.id)
+          AND NOT EXISTS (SELECT 1 FROM game_opening_hand_cards h WHERE h.game_id = g.id)
+          AND NOT EXISTS (SELECT 1 FROM game_drawn_cards d WHERE d.game_id = g.id)
+        """
+    ):
+        yield AuditFinding(
+            code="EMPTY_GAME_RECORD",
+            severity="error",
+            table_name="games",
+            row_id=str(row[0]),
+            message=(
+                "Ghost game: zero turns and duration with no opening hand or draws "
+                "(post-concede message tail misread as a new game)."
+            ),
+            current_value="ghost",
+            suggested_value="delete",
+            repairable=True,
+        )
+
+
 def _empty_game_findings(conn: sqlite3.Connection) -> Iterable[AuditFinding]:
     for row in conn.execute(
         """
@@ -645,6 +676,7 @@ def audit_database(
         findings.extend(_turn_count_findings(conn))
         findings.extend(_missing_turn_timing_findings(conn))
         findings.extend(_missing_deck_name_findings(conn))
+        findings.extend(_ghost_game_findings(conn))
         findings.extend(_unknown_card_label_findings(conn))
         findings.extend(_missing_completed_game_findings(conn))
         findings.extend(_game_event_assignment_findings(conn))

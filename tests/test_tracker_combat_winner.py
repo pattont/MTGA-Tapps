@@ -5062,6 +5062,7 @@ def test_game_core_persists_when_optional_detail_write_fails(capsys, tmp_path):
     tracker.game_state.opponent_seat_id = 2
     tracker.game_state.game_start_time = datetime(2026, 7, 22, 12, 0, 0)
     tracker.game_state.game_end_time = datetime(2026, 7, 22, 12, 3, 0)
+    tracker.game_state.turns_taken_by_seat[1].add(1)
 
     def fail_detail(*_args):
         raise sqlite3.IntegrityError("invalid optional detail")
@@ -5123,6 +5124,7 @@ def test_game_summary_persists_brawl_starting_life(capsys, tmp_path):
     tracker.game_state.player_seat_id = 2
     tracker.game_state.opponent_seat_id = 1
     tracker.game_state.format_str = "Brawl"
+    tracker.game_state.turns_taken_by_seat[1].add(1)
     tracker.game_state.player_life = 15
     tracker.game_state.opponent_life = 20
     tracker.game_state.game_start_time = datetime(2026, 6, 23, 20, 40, 0)
