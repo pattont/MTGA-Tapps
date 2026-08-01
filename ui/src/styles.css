@@ -2444,3 +2444,47 @@ tbody tr:hover {
 .mulligan-card a {
   color: inherit;
 }
+
+/* ---- Sidebar sizing & collapse ---- */
+
+.app-layout {
+  grid-template-columns: 208px minmax(0, 1fr);
+}
+
+.app-layout-collapsed {
+  grid-template-columns: 46px minmax(0, 1fr);
+}
+
+.sidebar {
+  gap: 18px;
+  padding: 16px 12px;
+}
+
+.app-layout-collapsed .sidebar {
+  align-items: center;
+  gap: 0;
+  padding: 12px 6px;
+}
+
+.sidebar-toggle {
+  align-self: flex-end;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sidebar-toggle:hover,
+.sidebar-toggle:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.app-layout-collapsed .sidebar-toggle {
+  align-self: center;
+}

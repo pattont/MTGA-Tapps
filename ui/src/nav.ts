@@ -40,6 +40,7 @@ export const deckNavItems: AppNavItem[] = [
   { id: 'deck-mulligans', label: 'Mulligans' },
   { id: 'deck-versions', label: 'Decklist Changes' },
   { id: 'deck-lands', label: 'Land Availability' },
+  { id: 'deck-opponent-colors', label: 'Vs Colors' },
   { id: 'deck-formats', label: 'Formats' },
   { id: 'deck-games', label: 'Recent Games' },
 ];
