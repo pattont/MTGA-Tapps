@@ -22,7 +22,9 @@ import {
   shortFormatLabel,
 } from '../format';
 import { gameRouteHash } from '../routes';
+import { opponentColorColumns } from '../opponentColorColumns';
 import { Badge } from './Badge';
+import { ColorPips } from './ColorPips';
 import { CardLink } from './CardLink';
 import { DeckVisual } from './DeckVisual';
 import { FilterBar } from './FilterBar';
@@ -296,6 +298,12 @@ const gameColumns: Column<DeckGameRow>[] = [
     header: 'Play / Draw',
     render: (row) => row.play_draw ?? 'Unknown',
     sortValue: (row) => row.play_draw,
+  },
+  {
+    key: 'opp_colors',
+    header: 'Opp',
+    render: (row) => <ColorPips colors={row.opp_colors} />,
+    sortValue: (row) => row.opp_colors ?? '',
   },
   {
     key: 'is_flood',
@@ -771,6 +779,20 @@ export function DeckDetailPage({
         description="How often this deck had N lands by turn N, and the cost of falling behind."
       >
         <ManaReadinessTable caption="Deck land availability" rows={detail.mana_readiness ?? []} />
+      </Section>
+
+      <Section
+        id="deck-opponent-colors"
+        title="Vs Opponent Colors"
+        description="This deck's record against each opponent color combination, inferred from every card they revealed."
+      >
+        <SortableTable
+          caption="Record by opponent color combination"
+          columns={opponentColorColumns}
+          getRowKey={(row) => row.color_label}
+          initialSort={{ key: 'games', direction: 'desc' }}
+          rows={detail.opponent_colors ?? []}
+        />
       </Section>
 
       <Section id="deck-formats" title="Formats">

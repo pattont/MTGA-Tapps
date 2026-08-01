@@ -463,6 +463,7 @@ class AnalyticsStore:
             (7, AnalyticsStore._migrate_v7_backfill_bottomed_hands_from_console),
             (8, AnalyticsStore._migrate_v8_backfill_library_to_hand_draws),
             (9, AnalyticsStore._migrate_v9_delete_ghost_games),
+            (10, AnalyticsStore._migrate_v10_delete_unknown_deck_games),
         )
         for version, migrate in migrations:
             if version in applied:
@@ -599,6 +600,87 @@ class AnalyticsStore:
         if updated:
             conn.commit()
         return updated
+
+    @staticmethod
+    def _migrate_v10_delete_unknown_deck_games(conn: sqlite3.Connection) -> None:
+        """Delete half-tracked games recorded without a player deck name.
+
+        These are early-tracker and mid-game-attach games whose deck was never
+        identified — they surface as an "(unknown)" deck with partial data
+        (missing openers, unidentified draws) that pollutes every aggregate.
+        Mid-game joins are no longer persisted at all, so this population
+        cannot grow back.
+        """
+        doomed = [
+            str(row[0])
+            for row in conn.execute(
+                """
+                SELECT g.id
+                FROM games g
+                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                WHERE COALESCE(p.deck_name, '') = ''
+                """
+            )
+        ]
+        for game_id in doomed:
+            context = conn.execute(
+                "SELECT session_id, match_id, started_at FROM games WHERE id = ?", (game_id,)
+            ).fetchone()
+            if context is None:
+                continue
+            session_id, match_id, started_at = context
+            conn.execute(
+                """
+                DELETE FROM participant_commanders
+                WHERE participant_id IN (SELECT id FROM participants WHERE game_id = ?)
+                """,
+                (game_id,),
+            )
+            for table_name in (
+                "game_opening_hand_cards",
+                "game_mulligan_hands",
+                "game_drawn_cards",
+                "game_card_summary",
+                "game_participant_stats",
+                "game_turns",
+                "game_events",
+                "game_deck_cards",
+                "game_annotations",
+                "raw_game_payloads",
+            ):
+                conn.execute(f"DELETE FROM {table_name} WHERE game_id = ?", (game_id,))
+            conn.execute("DELETE FROM participants WHERE game_id = ?", (game_id,))
+            if session_id and started_at:
+                conn.execute(
+                    """
+                    DELETE FROM console_logs
+                    WHERE session_id = ? AND substr(match_started_at, 1, 19) = substr(?, 1, 19)
+                    """,
+                    (session_id, started_at),
+                )
+            conn.execute("DELETE FROM games WHERE id = ?", (game_id,))
+            conn.execute(
+                "UPDATE matches SET games_played = (SELECT COUNT(*) FROM games WHERE match_id = ?) WHERE id = ?",
+                (match_id, match_id),
+            )
+            conn.execute(
+                "DELETE FROM matches WHERE id = ? AND NOT EXISTS (SELECT 1 FROM games WHERE match_id = ?)",
+                (match_id, match_id),
+            )
+        conn.execute(
+            """
+            UPDATE tracker_sessions SET
+                games_played = (SELECT COUNT(*) FROM games WHERE session_id = tracker_sessions.id),
+                wins = (SELECT COUNT(*) FROM games WHERE session_id = tracker_sessions.id AND outcome = 'win'),
+                losses = (SELECT COUNT(*) FROM games WHERE session_id = tracker_sessions.id AND outcome = 'loss'),
+                draws = (SELECT COUNT(*) FROM games WHERE session_id = tracker_sessions.id AND outcome = 'draw'),
+                unknown_results = (
+                    SELECT COUNT(*) FROM games
+                    WHERE session_id = tracker_sessions.id
+                      AND COALESCE(outcome, 'unknown') NOT IN ('win', 'loss', 'draw')
+                )
+            """
+        )
 
     @staticmethod
     def _migrate_v9_delete_ghost_games(conn: sqlite3.Connection) -> None:

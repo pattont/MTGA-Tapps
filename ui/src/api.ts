@@ -207,6 +207,8 @@ export interface RecentGameRow {
   is_flood: boolean;
   screw_reasons?: string[];
   is_screw?: boolean;
+  /** Opponent's revealed WUBRG colors (e.g. "UR"); empty when nothing colored was seen. */
+  opp_colors?: string;
 }
 
 export interface AllGamesRow extends RecentGameRow {
@@ -376,6 +378,7 @@ export interface DeckGameRow {
   format_label: string;
   mulligans: number | null;
   play_draw: string | null;
+  opp_colors?: string;
 }
 
 export interface DeckExportCard {
@@ -446,6 +449,7 @@ export interface DeckDetail {
   combat_profile: CombatDeckRow | null;
   composition: DeckCompositionRow[];
   versions: DeckVersionRow[];
+  opponent_colors?: OpponentColorRow[];
   sideboard: DeckSideboardSummary | null;
   mana_readiness: ManaReadinessRow[];
   formats: FormatRow[];

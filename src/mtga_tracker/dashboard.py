@@ -1570,7 +1570,14 @@ def dashboard_snapshot(
                   (
                     SELECT SUM(g2.outcome = 'loss') FROM games g2
                     WHERE g2.match_id = g.match_id
-                  ) AS match_losses
+                  ) AS match_losses,
+                  (
+                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    FROM game_card_summary s
+                    JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
+                    JOIN cards c ON c.id = s.card_id
+                    WHERE s.game_id = g.id AND po.game_id = g.id
+                  ) AS opp_color_letters
                 FROM games g
                 JOIN matches m ON m.id = g.match_id
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
@@ -1770,6 +1777,7 @@ def dashboard_snapshot(
         row["format_label"] = format_label(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )
+        row["opp_colors"] = normalize_colors(str(row.pop("opp_color_letters", "") or ""))
     for row in match_rows:
         row["format_label"] = format_label(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
@@ -2099,7 +2107,14 @@ def deck_detail(
                   p.mulligans,
                   p.id AS player_participant_id,
                   p.deck_size,
-                  CASE p.went_first WHEN 1 THEN 'On the play' WHEN 0 THEN 'On the draw' ELSE NULL END AS play_draw
+                  CASE p.went_first WHEN 1 THEN 'On the play' WHEN 0 THEN 'On the draw' ELSE NULL END AS play_draw,
+                  (
+                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    FROM game_card_summary s
+                    JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
+                    JOIN cards c ON c.id = s.card_id
+                    WHERE s.game_id = g.id AND po.game_id = g.id
+                  ) AS opp_color_letters
                 FROM games g
                 JOIN matches m ON m.id = g.match_id
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
@@ -2128,6 +2143,7 @@ def deck_detail(
         trend_rows.reverse()
         deck_visuals = _deck_visuals(conn)
         deck_export = _deck_export_snapshot(conn, where, params, deck_name)
+        opponent_color_rows = _opponent_color_rows(conn, where, params)
         for row in recent_rows:
             quality = _game_draw_quality(
                 conn,
@@ -2142,6 +2158,7 @@ def deck_detail(
         row["format_label"] = format_label(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )
+        row["opp_colors"] = normalize_colors(str(row.pop("opp_color_letters", "") or ""))
     for row in opener_rows:
         row["display_name"] = _clean_card_name(row.get("display_name"))
     return {
@@ -2164,6 +2181,7 @@ def deck_detail(
         "combat_profile": combat_profile,
         "composition": composition_rows,
         "versions": version_rows,
+        "opponent_colors": opponent_color_rows,
         "sideboard": sideboard_summary,
         "mana_readiness": mana_readiness_rows,
         "formats": format_rows,
@@ -2307,7 +2325,17 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                 conn.execute(
                     """
                     SELECT m.hand_number, m.hand_position, m.display_name,
-                           COALESCE(m.type_category, c.primary_type, 'Other') AS type_category,
+                           COALESCE(
+                             m.type_category,
+                             c.primary_type,
+                             (
+                               SELECT c2.primary_type FROM cards c2
+                               WHERE (c2.name = m.display_name OR c2.name LIKE m.display_name || ' (%')
+                                 AND COALESCE(c2.primary_type, 'Other') != 'Other'
+                               LIMIT 1
+                             ),
+                             'Other'
+                           ) AS type_category,
                            m.bottomed
                     FROM game_mulligan_hands m
                     LEFT JOIN cards c ON c.id = m.card_id

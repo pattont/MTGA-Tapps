@@ -9,7 +9,6 @@ import {
   type FatigueRow,
   type MatchupRow,
   type OpenerLandRow,
-  type OpponentColorRow,
   type OpponentThreatRow,
   type OutcomeReasonRow,
   type ScheduleRow,
@@ -24,6 +23,7 @@ import { Badge } from './components/Badge';
 import { CardDetailPage } from './components/CardDetailPage';
 import { CardLink } from './components/CardLink';
 import { ColorPips } from './components/ColorPips';
+import { opponentColorColumns } from './opponentColorColumns';
 import { DeckDetailPage } from './components/DeckDetailPage';
 import { DeckLink } from './components/DeckLink';
 import { DeckVisual } from './components/DeckVisual';
@@ -368,30 +368,6 @@ const openerLandColumns: Column<OpenerLandRow>[] = [
   },
 ];
 
-const opponentColorColumns: Column<OpponentColorRow>[] = [
-  {
-    key: 'color_label',
-    header: 'Opponent Colors',
-    render: (row) => (
-      <span className="color-combo">
-        <ColorPips colors={row.colors} />
-        {row.color_label}
-      </span>
-    ),
-    sortValue: (row) => row.color_label,
-  },
-  { key: 'games', header: 'Games', numeric: true },
-  { key: 'wins', header: 'Wins', numeric: true },
-  { key: 'losses', header: 'Losses', numeric: true },
-  {
-    key: 'win_rate',
-    header: 'Win Rate',
-    render: (row) => formatPercent(row.win_rate),
-    sortValue: (row) => row.win_rate,
-    numeric: true,
-  },
-];
-
 const opponentThreatColumns: Column<OpponentThreatRow>[] = [
   {
     key: 'display_name',
@@ -463,6 +439,12 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
     header: 'Outcome',
     render: (row) => <Badge tone={outcomeTone(row.outcome)}>{outcomeLabel(row.outcome)}</Badge>,
     sortValue: (row) => row.outcome,
+  },
+  {
+    key: 'opp_colors',
+    header: 'Opp',
+    render: (row) => <ColorPips colors={row.opp_colors} />,
+    sortValue: (row) => row.opp_colors ?? '',
   },
   {
     key: 'match_wins',
