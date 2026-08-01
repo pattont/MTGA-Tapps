@@ -645,9 +645,13 @@ def _opponent_color_rows(
             entry["wins"] += 1
         elif outcome == "loss":
             entry["losses"] += 1
+    total_games = sum(entry["games"] for entry in buckets.values())
     result = []
     for entry in buckets.values():
         entry["win_rate"] = _win_rate(entry["wins"], entry["losses"])
+        entry["pct_of_games"] = (
+            round(100.0 * entry["games"] / total_games, 1) if total_games else None
+        )
         result.append(entry)
     result.sort(key=lambda item: (item["color_label"] == "Unknown", -item["games"], item["color_label"]))
     return result
@@ -2981,7 +2985,14 @@ def all_games(
                   (
                     SELECT SUM(g2.outcome = 'loss') FROM games g2
                     WHERE g2.match_id = g.match_id
-                  ) AS match_losses
+                  ) AS match_losses,
+                  (
+                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    FROM game_card_summary s
+                    JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
+                    JOIN cards c ON c.id = s.card_id
+                    WHERE s.game_id = g.id AND po.game_id = g.id
+                  ) AS opp_color_letters
                 FROM games g
                 JOIN matches m ON m.id = g.match_id
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
@@ -3065,6 +3076,7 @@ def all_games(
         row["format_label"] = format_label(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )
+        row["opp_colors"] = normalize_colors(str(row.pop("opp_color_letters", "") or ""))
     return {"games": rows, "total": len(rows)}
 
 
@@ -3674,6 +3686,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - http.server API
         parsed = urlparse(self.path)
         request_path = parsed.path
+        if request_path == "/api/version":
+            from . import __version__ as tracker_version
+
+            _send_bytes(
+                self,
+                200,
+                render_snapshot_json({"version": tracker_version}),
+                "application/json; charset=utf-8",
+                {"Cache-Control": "no-store"},
+            )
+            return
         if request_path == "/api/snapshot":
             query = parse_qs(parsed.query)
             common = _parse_common_filters(query)

@@ -42,6 +42,9 @@ function routeQuery(filters: SnapshotFilters, includeDeck = false): string {
   if (filters.until) {
     params.set('until', filters.until);
   }
+  if (filters.colors) {
+    params.set('colors', filters.colors);
+  }
   return params.toString();
 }
 
@@ -118,6 +121,10 @@ function parseFilters(query: string, includeDeck = false): SnapshotFilters {
   }
   if (until && ISO_DATE.test(until)) {
     filters.until = until;
+  }
+  const colors = params.get('colors');
+  if (colors && /^[WUBRG]{1,5}$/.test(colors)) {
+    filters.colors = colors;
   }
   return filters;
 }

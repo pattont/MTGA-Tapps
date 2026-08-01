@@ -24,6 +24,9 @@ class TrackerRuntimeMixin:
             card_db_path = resolve_db_path()
         self._print_line(f" Local Card DB: {self._display_path_without_username(card_db_path)}")
         self._print_line(f" Log DB: {self._display_path_without_username(self._console_db_path)}")
+        from . import __version__ as tracker_version
+
+        self._print_line(f" Tracker Version: {tracker_version}")
         self._print_line("\n")
 
         self._print_startup_legend()

@@ -101,8 +101,11 @@ describe('TimelineList card references', () => {
     const islandLink = within(timeline as HTMLElement).getByRole('link', { name: '[Island]' });
     const islandEvent = islandLink.closest('.timeline-event');
     expect(islandEvent).not.toBeNull();
-    expect(within(islandEvent as HTMLElement).getByText('land')).toHaveClass('timeline-chip-land');
-    expect(within(islandEvent as HTMLElement).queryByText('Land')).not.toBeInTheDocument();
+    const islandChip = (islandEvent as HTMLElement).querySelector('.timeline-chip');
+    expect(islandChip).toHaveTextContent('Land');
+    expect(islandChip).toHaveClass('timeline-chip-land');
+    // The compact TypeChip stays suppressed for land cards on land events.
+    expect((islandEvent as HTMLElement).querySelector('.type-chip')).toBeNull();
     expect(within(timeline as HTMLElement).queryByText('(Enchantment)')).not.toBeInTheDocument();
     expect(within(timeline as HTMLElement).queryByText('(Creature 2/2)')).not.toBeInTheDocument();
     expect(within(timeline as HTMLElement).getByText('[0:25] You: cast')).toBeInTheDocument();
