@@ -589,7 +589,9 @@ a.best-deck-name:focus-visible {
   box-shadow: var(--shadow);
 }
 
-.metric-card span {
+/* Direct child only: the card's label. Value ReactNodes (color pips etc.)
+   must keep their own layout. */
+.metric-card > span {
   display: block;
   color: var(--muted);
   font-size: 0.8rem;
