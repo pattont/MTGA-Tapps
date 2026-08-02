@@ -636,7 +636,11 @@ def _opponent_color_rows(
     buckets: Dict[str, Dict[str, Any]] = {}
     for _game_id, outcome, letters in rows:
         colors = normalize_colors(str(letters or ""))
-        label = color_combo_label(colors) or "Unknown"
+        label = color_combo_label(colors)
+        if not label:
+            # No opponent cards captured (quick concede or a legacy
+            # half-tracked game) — nothing actionable to bucket.
+            continue
         entry = buckets.setdefault(
             label, {"color_label": label, "colors": colors, "games": 0, "wins": 0, "losses": 0}
         )
@@ -653,7 +657,7 @@ def _opponent_color_rows(
             round(100.0 * entry["games"] / total_games, 1) if total_games else None
         )
         result.append(entry)
-    result.sort(key=lambda item: (item["color_label"] == "Unknown", -item["games"], item["color_label"]))
+    result.sort(key=lambda item: (-item["games"], item["color_label"]))
     return result
 
 
