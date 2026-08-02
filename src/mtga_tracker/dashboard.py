@@ -215,6 +215,32 @@ def _opponent_color_letters(conn: sqlite3.Connection, game_id: str, participant_
     return normalize_colors("".join(str(row[0] or "") for row in rows))
 
 
+def _dominant_player_name(conn: sqlite3.Connection) -> Optional[str]:
+    """The player name seen in the most games (newest wins ties).
+
+    Multiple Arena accounts can share one computer; the dashboard greets
+    whichever name owns the bulk of the tracked history.
+    """
+    try:
+        row = conn.execute(
+            """
+            SELECT p.display_name
+            FROM participants p
+            JOIN games g ON g.id = p.game_id
+            WHERE p.role = 'player' AND COALESCE(p.display_name, '') != ''
+            GROUP BY p.display_name
+            ORDER BY COUNT(*) DESC, MAX(g.started_at) DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if not row or not row[0]:
+        return None
+    # Arena names can carry a "#12345" discriminator; the greeting doesn't need it.
+    return str(row[0]).split("#", 1)[0].strip() or None
+
+
 def _split_name_variants(conn: sqlite3.Connection, clean_name: str) -> List[str]:
     """All base names that refer to the same physical card as clean_name.
 
@@ -1776,6 +1802,7 @@ def dashboard_snapshot(
         "losses": int(summary[2] or 0),
         "draws": int(summary[3] or 0),
         "win_rate": summary[4],
+        "player_name": _dominant_player_name(conn),
     }
     total_games = summary_dict["games"]
     for row in drawn_card_rows:

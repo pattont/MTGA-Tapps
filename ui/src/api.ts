@@ -12,6 +12,8 @@ export interface Summary {
   losses: number;
   draws: number;
   win_rate: number | null;
+  /** Player name owning most of the tracked history (multi-account safe). */
+  player_name?: string | null;
 }
 
 export interface DeckRow {
