@@ -726,6 +726,12 @@ export default function App() {
     };
   }, [filters, deckName, gameId, cardName, opponentRoute, auditRoute, gamesRoute]);
 
+  const playerName =
+    loadState.status === 'loaded' ? loadState.snapshot.summary.player_name : undefined;
+  const dashboardTitle = playerName
+    ? `${playerName}${playerName.endsWith('s') ? "'" : "'s"} Performance Overview`
+    : DASHBOARD_TITLE;
+
   function toggleTheme() {
     themeChosenRef.current = true;
     setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
@@ -765,7 +771,7 @@ export default function App() {
                   ? opponentNavItems
                   : undefined
         }
-        heading={gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : cardName ? formatCardName(cardName) : (gameRoute ? 'Game Detail' : deckName ?? opponentRoute?.name ?? DASHBOARD_TITLE)}
+        heading={gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : cardName ? formatCardName(cardName) : (gameRoute ? 'Game Detail' : deckName ?? opponentRoute?.name ?? dashboardTitle)}
       >
         {gamesRoute ? (
           <GamesPage
