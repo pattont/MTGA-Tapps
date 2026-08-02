@@ -64,25 +64,33 @@ function bestDeckFrom(decks: DeckRow[]): DeckRow | undefined {
     })[0];
 }
 
-export function metricCards(snapshot: DashboardSnapshot, filters: SnapshotFilters = {}): MetricDefinition[] {
-  const bestDeck = bestDeckFrom(snapshot.decks);
+export function metricCards(snapshot: DashboardSnapshot): MetricDefinition[] {
   return [
     { label: 'Games', value: String(snapshot.summary.games) },
     { label: 'Wins', value: String(snapshot.summary.wins) },
     { label: 'Losses', value: String(snapshot.summary.losses) },
     { label: 'Win Rate', value: formatPercent(snapshot.summary.win_rate) },
-    bestDeck
-      ? {
-          label:
-            bestDeck.wins + bestDeck.losses >= BEST_DECK_MIN_DECIDED_GAMES
-              ? 'Best Deck'
-              : 'Best Deck (small sample)',
-          value: bestDeck.deck_name,
-          detail: `${formatPercent(bestDeck.win_rate)} WR · ${bestDeck.wins}–${bestDeck.losses} · ${bestDeck.games} ${
-            bestDeck.games === 1 ? 'game' : 'games'
-          }`,
-          href: deckRouteHashWithFilters(bestDeck.deck_name, filters),
-        }
-      : { label: 'Best Deck', value: '—' },
   ];
+}
+
+/** Best Deck rendered on its own slim full-width bar below the metric cards. */
+export function bestDeckMetric(
+  snapshot: DashboardSnapshot,
+  filters: SnapshotFilters = {},
+): MetricDefinition {
+  const bestDeck = bestDeckFrom(snapshot.decks);
+  if (!bestDeck) {
+    return { label: 'Best Deck', value: '—' };
+  }
+  return {
+    label:
+      bestDeck.wins + bestDeck.losses >= BEST_DECK_MIN_DECIDED_GAMES
+        ? 'Best Deck'
+        : 'Best Deck (small sample)',
+    value: bestDeck.deck_name,
+    detail: `${formatPercent(bestDeck.win_rate)} WR · ${bestDeck.wins}–${bestDeck.losses} · ${bestDeck.games} ${
+      bestDeck.games === 1 ? 'game' : 'games'
+    }`,
+    href: deckRouteHashWithFilters(bestDeck.deck_name, filters),
+  };
 }
