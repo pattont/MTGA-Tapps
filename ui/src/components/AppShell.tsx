@@ -165,9 +165,9 @@ export function AppShell({
                   key={color}
                   alt=""
                   className="mana-pip"
-                  height={22}
+                  height={24}
                   src={`/icons/${color}.svg`}
-                  width={22}
+                  width={24}
                 />
               ))}
             </div>
