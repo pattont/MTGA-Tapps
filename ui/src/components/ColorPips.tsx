@@ -21,6 +21,7 @@ export function ColorPips({
           className="color-pip"
           height={size}
           src={`/icons/${letter}.svg`}
+          style={{ width: size, height: size }}
           width={size}
         />
       ))}
