@@ -409,7 +409,7 @@ export function GameDetailPage({
   const timelineReturnHash = gameRouteHash(gameId, backHref, 'game-timeline');
   const opponentDeckType = detail.opponent.colors ? (
     <span className="color-combo">
-      <ColorPips colors={detail.opponent.colors} />
+      <ColorPips colors={detail.opponent.colors} size={20} />
       {detail.opponent.color_label}
     </span>
   ) : (
