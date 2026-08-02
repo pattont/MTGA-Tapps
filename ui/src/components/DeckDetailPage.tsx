@@ -167,12 +167,6 @@ const cardColumns: Column<DeckListPerformanceRow>[] = [
     sortValue: (row) => row.display_name,
   },
   {
-    key: 'deck_section',
-    header: 'Section',
-    render: (row) => row.deck_section ?? 'Unknown',
-    sortValue: (row) => row.deck_section,
-  },
-  {
     key: 'type_category',
     header: 'Type',
     render: (row) => <TypeChip type={row.type_category} />,
@@ -630,12 +624,6 @@ export function DeckDetailPage({
         ))}
       </section>
 
-      <Section id="deck-trend" title="Win Rate Trend" description="Rolling win rate across this deck's finished games.">
-        <div className="trend-wrap">
-          <TrendChart rows={detail.trend} />
-        </div>
-      </Section>
-
       <Section
         id="deck-combat"
         title="Combat Profile"
@@ -673,6 +661,12 @@ export function DeckDetailPage({
         )}
       </Section>
 
+      <Section id="deck-trend" title="Win Rate Trend" description="Rolling win rate across this deck's finished games.">
+        <div className="trend-wrap">
+          <TrendChart rows={detail.trend} />
+        </div>
+      </Section>
+
       <Section
         id="deck-cards"
         title="Deck List & Card Performance"
@@ -685,10 +679,26 @@ export function DeckDetailPage({
         <SortableTable
           caption="Deck list and card performance"
           columns={cardColumns}
-          initialSort={{ key: 'deck_section', direction: 'asc' }}
+          initialSort={{ key: 'type_category', direction: 'asc' }}
           getRowKey={(row) => `${row.display_name}-${row.type_category}`}
-          rows={cardRows}
+          rows={cardRows.filter((row) => row.deck_section !== 'Sideboard')}
         />
+        {cardRows.some((row) => row.deck_section === 'Sideboard') ? (
+          <>
+            <div className="section-heading">
+              <div>
+                <h3>Sideboard</h3>
+              </div>
+            </div>
+            <SortableTable
+              caption="Sideboard cards"
+              columns={cardColumns}
+              initialSort={{ key: 'type_category', direction: 'asc' }}
+              getRowKey={(row) => `${row.display_name}-${row.type_category}`}
+              rows={cardRows.filter((row) => row.deck_section === 'Sideboard')}
+            />
+          </>
+        ) : null}
       </Section>
 
       <Section id="deck-mulligans" title="Mulligans" description="Results grouped by how many times you mulliganed.">
@@ -783,6 +793,42 @@ export function DeckDetailPage({
         title="Land Availability"
         description="How often this deck had N lands by turn N, and the cost of falling behind."
       >
+        {detail.land_profile && detail.land_profile.classified_games > 0 ? (
+          <div className="land-profile-strip" role="group" aria-label="Land draw profile">
+            {detail.land_profile.lands !== null && detail.land_profile.deck_size ? (
+              <span className="land-profile-pill">
+                <strong>{detail.land_profile.lands}</strong> lands /{' '}
+                {detail.land_profile.deck_size} cards (
+                {Math.round((100 * detail.land_profile.lands) / detail.land_profile.deck_size)}
+                %)
+              </span>
+            ) : null}
+            <span className="land-profile-pill land-profile-flood">
+              Flood <strong>{detail.land_profile.flood_games}</strong> (
+              {Math.round(
+                (100 * detail.land_profile.flood_games) / detail.land_profile.classified_games,
+              )}
+              %)
+            </span>
+            <span className="land-profile-pill land-profile-screw">
+              Screw <strong>{detail.land_profile.screw_games}</strong> (
+              {Math.round(
+                (100 * detail.land_profile.screw_games) / detail.land_profile.classified_games,
+              )}
+              %)
+            </span>
+            <span className="land-profile-pill land-profile-normal">
+              Normal <strong>{detail.land_profile.normal_games}</strong> (
+              {Math.round(
+                (100 * detail.land_profile.normal_games) / detail.land_profile.classified_games,
+              )}
+              %)
+            </span>
+            <span className="land-profile-note">
+              across {detail.land_profile.classified_games} classified games
+            </span>
+          </div>
+        ) : null}
         <ManaReadinessTable caption="Deck land availability" rows={detail.mana_readiness ?? []} />
       </Section>
 

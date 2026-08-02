@@ -755,19 +755,20 @@ describe('App', () => {
     expect(screen.getAllByText('Mouse Mentor').length).toBeGreaterThan(0);
     expect(screen.getByText('Signature card: Mouse Mentor')).toBeInTheDocument();
     const deckListTable = screen.getByRole('table', { name: 'Deck list and card performance' });
+    const sideboardTable = screen.getByRole('table', { name: 'Sideboard cards' });
     const mountainRow = within(deckListTable).getByRole('link', { name: 'Mountain' }).closest('tr');
     const mentorRow = within(deckListTable).getByRole('link', { name: 'Mouse Mentor' }).closest('tr');
-    const duressRow = within(deckListTable).getByRole('link', { name: 'Duress' }).closest('tr');
+    const duressRow = within(sideboardTable).getByRole('link', { name: 'Duress' }).closest('tr');
     expect(mountainRow).not.toBeNull();
     expect(mentorRow).not.toBeNull();
     expect(duressRow).not.toBeNull();
+    // Sideboard cards live in their own table, not the main deck list.
+    expect(within(deckListTable).queryByRole('link', { name: 'Duress' })).toBeNull();
     expect(within(mountainRow as HTMLElement).getAllByRole('cell')[0]).toHaveTextContent('20');
-    expect(within(mountainRow as HTMLElement).getAllByRole('cell')[2]).toHaveTextContent('Main Deck');
     expect(within(mentorRow as HTMLElement).getAllByRole('cell')[0]).toHaveTextContent('4');
-    expect(within(mentorRow as HTMLElement).getAllByRole('cell')[4]).toHaveTextContent('2');
+    expect(within(mentorRow as HTMLElement).getAllByRole('cell')[3]).toHaveTextContent('2');
     expect(within(duressRow as HTMLElement).getAllByRole('cell')[0]).toHaveTextContent('1');
-    expect(within(duressRow as HTMLElement).getAllByRole('cell')[2]).toHaveTextContent('Sideboard');
-    expect(within(duressRow as HTMLElement).getAllByRole('cell')[4]).toHaveTextContent('0');
+    expect(within(duressRow as HTMLElement).getAllByRole('cell')[3]).toHaveTextContent('0');
 
     const nav = screen.getByRole('navigation', { name: 'Dashboard sections' });
     expect(within(nav).getByRole('link', { name: '← Back to dashboard' })).toHaveAttribute('href', '#overview');

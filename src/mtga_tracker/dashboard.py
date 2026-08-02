@@ -2179,6 +2179,7 @@ def deck_detail(
         deck_visuals = _deck_visuals(conn)
         deck_export = _deck_export_snapshot(conn, where, params, deck_name)
         opponent_color_rows = _opponent_color_rows(conn, where, params)
+        land_profile = _deck_land_profile(conn, where, params)
         for row in recent_rows:
             quality = _game_draw_quality(
                 conn,
@@ -2218,6 +2219,7 @@ def deck_detail(
         "versions": version_rows,
         "opponent_colors": opponent_color_rows,
         "sideboard": sideboard_summary,
+        "land_profile": land_profile,
         "mana_readiness": mana_readiness_rows,
         "formats": format_rows,
         "midweek_formats": midweek_rows,
@@ -2226,6 +2228,56 @@ def deck_detail(
         "mulligans": mulligan_rows,
         "recent": recent_rows,
         "trend": trend_rows,
+    }
+
+
+def _deck_land_profile(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> Dict[str, Any]:
+    """Flood / screw / normal split across a deck's games, plus land count.
+
+    Lands and deck size come from the newest submitted decklist; the per-game
+    classification reuses the shared draw-quality rules. Games with no visible
+    cards (nothing to classify) are excluded from the split.
+    """
+    game_rows = conn.execute(
+        f"""
+        SELECT g.id, p.id AS participant_id, p.deck_size
+        FROM games g
+        JOIN matches m ON m.id = g.match_id
+        JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+        WHERE {where}
+        ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
+        """,
+        params,
+    ).fetchall()
+    deck_size: Optional[int] = None
+    lands: Optional[int] = None
+    flood = screw = normal = 0
+    for game_id, participant_id, row_deck_size in game_rows:
+        if deck_size is None:
+            decklist = deck_land_stats(conn, str(game_id), participant_id)
+            if decklist is not None:
+                deck_size, lands = decklist
+        quality = _game_draw_quality(
+            conn, str(game_id), participant_id, row_deck_size
+        )
+        if not quality.get("total_cards_seen"):
+            continue
+        if quality.get("is_flood"):
+            flood += 1
+        elif quality.get("is_screw"):
+            screw += 1
+        else:
+            normal += 1
+    classified = flood + screw + normal
+    return {
+        "deck_size": deck_size,
+        "lands": lands,
+        "flood_games": flood,
+        "screw_games": screw,
+        "normal_games": normal,
+        "classified_games": classified,
     }
 
 

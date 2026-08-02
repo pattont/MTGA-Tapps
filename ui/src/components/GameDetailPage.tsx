@@ -731,6 +731,23 @@ export function GameDetailPage({
           rows={detail.timeline}
           timings={detail.turns}
         />
+        <div className={`timeline-end timeline-end-${detail.game.outcome ?? 'unknown'}`}>
+          <strong>
+            Game ended —{' '}
+            {detail.game.outcome === 'win'
+              ? 'You won'
+              : detail.game.outcome === 'loss'
+                ? 'You lost'
+                : detail.game.outcome === 'draw'
+                  ? 'Draw'
+                  : 'Result unknown'}
+          </strong>
+          {detail.game.outcome_reason ? <span>{detail.game.outcome_reason}</span> : null}
+          <span>
+            {formatDuration(detail.game.duration_seconds)} · {formatNumber(detail.game.total_turns)}{' '}
+            turns
+          </span>
+        </div>
       </Section>
     </>
   );
