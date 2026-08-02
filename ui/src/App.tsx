@@ -42,7 +42,8 @@ import { WinRateBar } from './components/WinRateBar';
 import { AppShell } from './components/AppShell';
 import { Section } from './components/Section';
 import { ManaReadinessTable } from './components/ManaReadinessTable';
-import { formatPercent, metricCards } from './dashboardData';
+import { bestDeckMetric, formatPercent, metricCards } from './dashboardData';
+import type { MetricDefinition } from './dashboardData';
 import { formatCardName, formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone, shortFormatLabel } from './format';
 import { auditNavItems, cardNavItems, deckNavItems, gameNavItems, gamesNavItems, opponentNavItems } from './nav';
 import { FORMAT_QUICK_FILTERS } from './quickFilters';
@@ -123,6 +124,22 @@ function SetupCard() {
         <code>venv/bin/python -m mtga_tracker.main</code>
         <code>venv/bin/python -m mtga_tracker.dashboard</code>
       </div>
+    </section>
+  );
+}
+
+function BestDeckBar({ metric }: { metric: MetricDefinition }) {
+  return (
+    <section className="best-deck-bar" aria-label={metric.label}>
+      <span className="best-deck-label">{metric.label}</span>
+      {metric.href ? (
+        <a className="best-deck-name" href={metric.href}>
+          {metric.value}
+        </a>
+      ) : (
+        <span className="best-deck-name">{metric.value}</span>
+      )}
+      {metric.detail ? <span className="best-deck-detail">{metric.detail}</span> : null}
     </section>
   );
 }
@@ -878,7 +895,7 @@ function Dashboard({
 
       <section className="overview-section" id="overview" aria-label="Overview">
         <section className="metric-grid" aria-label="Overview metrics">
-          {metricCards(snapshot, filters).map((metric) => (
+          {metricCards(snapshot).map((metric) => (
             <MetricCard
               key={metric.label}
               detail={metric.detail}
@@ -888,6 +905,7 @@ function Dashboard({
             />
           ))}
         </section>
+        <BestDeckBar metric={bestDeckMetric(snapshot, filters)} />
         <div className="overview-analytics">
           <section className="overview-panel" aria-labelledby="overview-play-draw-title">
             <div className="section-heading">

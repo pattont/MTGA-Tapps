@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatPercent, metricCards } from './dashboardData';
+import { bestDeckMetric, formatPercent, metricCards } from './dashboardData';
 import type { DashboardSnapshot } from './api';
 
 const deckVisual = {
@@ -95,13 +95,13 @@ describe('metricCards', () => {
       { label: 'Wins', value: '2' },
       { label: 'Losses', value: '1' },
       { label: 'Win Rate', value: '66.7%' },
-      {
-        label: 'Best Deck (small sample)',
-        value: 'Boros Mouse',
-        detail: '66.7% WR · 2–1 · 3 games',
-        href: '#/deck/Boros%20Mouse',
-      },
     ]);
+    expect(bestDeckMetric(snapshot)).toEqual({
+      label: 'Best Deck (small sample)',
+      value: 'Boros Mouse',
+      detail: '66.7% WR · 2–1 · 3 games',
+      href: '#/deck/Boros%20Mouse',
+    });
   });
 
   it('favors a proven winning record over a one-game perfect record', () => {
@@ -124,7 +124,8 @@ describe('metricCards', () => {
       },
     ]);
 
-    expect(metricCards(snapshot).find((metric) => metric.label === 'Best Deck')).toMatchObject({
+    expect(bestDeckMetric(snapshot)).toMatchObject({
+      label: 'Best Deck',
       value: 'Proven Deck',
       detail: '60% WR · 60–40 · 100 games',
     });
@@ -150,7 +151,8 @@ describe('metricCards', () => {
       },
     ]);
 
-    expect(metricCards(snapshot).find((metric) => metric.label === 'Best Deck')).toMatchObject({
+    expect(bestDeckMetric(snapshot)).toMatchObject({
+      label: 'Best Deck',
       value: 'Strong Challenger',
       detail: '80% WR · 8–2 · 10 games',
     });
@@ -173,7 +175,7 @@ describe('best deck minimum sample', () => {
       { deck_name: 'Workhorse', games: 40, wins: 24, losses: 16, win_rate: 60, deck_visual: deckVisual },
     ]);
 
-    expect(metricCards(snapshot).find((metric) => metric.label.startsWith('Best Deck'))).toMatchObject({
+    expect(bestDeckMetric(snapshot)).toMatchObject({
       label: 'Best Deck',
       value: 'Workhorse',
     });
@@ -184,7 +186,7 @@ describe('best deck minimum sample', () => {
       { deck_name: 'Only Deck', games: 3, wins: 2, losses: 1, win_rate: 66.7, deck_visual: deckVisual },
     ]);
 
-    expect(metricCards(snapshot).find((metric) => metric.label.startsWith('Best Deck'))).toMatchObject({
+    expect(bestDeckMetric(snapshot)).toMatchObject({
       label: 'Best Deck (small sample)',
       value: 'Only Deck',
     });
