@@ -796,7 +796,9 @@ export function DeckDetailPage({
           columns={deckOpponentColorColumns}
           getRowKey={(row) => row.color_label}
           initialSort={{ key: 'games', direction: 'desc' }}
-          rows={(detail.opponent_colors ?? []).slice(0, 15)}
+          pageSize={10}
+          paginationKey={deckName}
+          rows={detail.opponent_colors ?? []}
         />
       </Section>
 
