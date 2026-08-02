@@ -2551,23 +2551,26 @@ tbody tr:hover {
 
 /* ---- Timeline chip colors for remaining event types ---- */
 
-.timeline-chip-stack { color: #7db4d8; }
-.timeline-chip-stack_resolve { color: #7bd88f; }
+/* Every event type gets its own color — no chip shares a color with another
+   event (or with --success/--danger, which life_gain/damage already use). */
+.timeline-chip-stack { color: #5d8fc9; }
+.timeline-chip-stack_resolve { color: #2dd4a7; }
 .timeline-chip-stack_fail { color: #e8a04a; }
 .timeline-chip-combat_damage { color: #e06c5c; }
 .timeline-chip-block { color: #d98ac9; }
-.timeline-chip-counter { color: #d9c06a; }
-.timeline-chip-zone { color: #c58fd9; }
+.timeline-chip-counter { color: #6fd3dd; }
+.timeline-chip-zone { color: #9d6fe8; }
 .timeline-chip-life_gain { color: var(--success); }
-.timeline-chip-life_loss { color: var(--danger); }
+.timeline-chip-life_loss { color: #ef6c8d; }
 
-:root[data-theme="light"] .timeline-chip-stack { color: #0f6fbd; }
-:root[data-theme="light"] .timeline-chip-stack_resolve { color: #0d8040; }
+:root[data-theme="light"] .timeline-chip-stack { color: #0a4f8f; }
+:root[data-theme="light"] .timeline-chip-stack_resolve { color: #0d9488; }
 :root[data-theme="light"] .timeline-chip-stack_fail { color: #b26a00; }
 :root[data-theme="light"] .timeline-chip-combat_damage { color: #c23a28; }
 :root[data-theme="light"] .timeline-chip-block { color: #a8329b; }
-:root[data-theme="light"] .timeline-chip-counter { color: #9c7a00; }
-:root[data-theme="light"] .timeline-chip-zone { color: #8140c9; }
+:root[data-theme="light"] .timeline-chip-counter { color: #0e7f8c; }
+:root[data-theme="light"] .timeline-chip-zone { color: #5b21b6; }
+:root[data-theme="light"] .timeline-chip-life_loss { color: #b3264e; }
 
 /* ---- Back to top ---- */
 
@@ -2603,6 +2606,75 @@ tbody tr:hover {
   font-size: 0.72rem;
   opacity: 0.75;
   text-align: center;
+}
+
+/* ---- Timeline end-of-game banner ---- */
+
+.timeline-end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.timeline-end strong {
+  color: var(--text);
+}
+
+.timeline-end-win strong {
+  color: var(--success);
+}
+
+.timeline-end-loss strong {
+  color: var(--danger);
+}
+
+/* ---- Deck land-draw profile strip (Land Availability) ---- */
+
+.land-profile-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.land-profile-pill {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.land-profile-pill strong {
+  color: var(--text);
+}
+
+.land-profile-flood strong {
+  color: #5d8fc9;
+}
+
+.land-profile-screw strong {
+  color: var(--danger);
+}
+
+.land-profile-normal strong {
+  color: var(--success);
+}
+
+.land-profile-note {
+  color: var(--subtle);
+  font-size: 0.78rem;
 }
 
 /* ---- Active opponent-color filter note (All Games) ---- */
