@@ -46,7 +46,7 @@ export function FilterBar({ filters, options, onChange, hideDeck = false }: Filt
           <option value="">All formats</option>
           {options.formats.filter(showInFormatAnalytics).map((format) => (
             <option key={format.raw_format} value={format.raw_format}>
-              {format.format_label} ({format.raw_format})
+              {format.format_label}
             </option>
           ))}
         </select>
