@@ -5,6 +5,7 @@ import {
   type AllGamesRow,
   type SnapshotFilters,
 } from '../api';
+import { colorComboLabel } from '../colorCombos';
 import { formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone, shortFormatLabel } from '../format';
 import { FORMAT_QUICK_FILTERS } from '../quickFilters';
 import { gameRouteHash } from '../routes';
@@ -235,7 +236,11 @@ export function GamesPage({
         ) : null}
         {filters.colors ? (
           <p className="active-color-filter">
-            Showing games vs <ColorPips colors={filters.colors} />
+            <span>Showing games vs</span>
+            <ColorPips colors={filters.colors} size={24} />
+            <strong className="active-color-name">
+              {colorComboLabel(filters.colors) ?? filters.colors}
+            </strong>
             {onFiltersChange ? (
               <button
                 className="quick-filter"
