@@ -2636,47 +2636,6 @@ tbody tr:hover {
   color: var(--danger);
 }
 
-/* ---- Deck land-draw profile strip (Land Availability) ---- */
-
-.land-profile-strip {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.land-profile-pill {
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--muted);
-  font-size: 0.82rem;
-  white-space: nowrap;
-}
-
-.land-profile-pill strong {
-  color: var(--text);
-}
-
-.land-profile-flood strong {
-  color: #5d8fc9;
-}
-
-.land-profile-screw strong {
-  color: var(--danger);
-}
-
-.land-profile-normal strong {
-  color: var(--success);
-}
-
-.land-profile-note {
-  color: var(--subtle);
-  font-size: 0.78rem;
-}
-
 /* ---- Active opponent-color filter note (All Games) ---- */
 
 .active-color-filter {
