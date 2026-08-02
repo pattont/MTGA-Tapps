@@ -434,9 +434,58 @@ a {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
   margin-bottom: 18px;
+}
+
+/* Best Deck: slim full-width strip between the metric cards and the analytics panels. */
+.best-deck-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-top: -6px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.best-deck-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.best-deck-name {
+  overflow-wrap: anywhere;
+  color: var(--accent-strong);
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+a.best-deck-name {
+  text-decoration: none;
+}
+
+a.best-deck-name:hover,
+a.best-deck-name:focus-visible {
+  text-decoration: underline;
+}
+
+a.best-deck-name:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.best-deck-detail {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .overview-section {
@@ -2538,9 +2587,11 @@ tbody tr:hover {
 
 .sidebar-version {
   margin-top: auto;
+  align-self: center;
   color: var(--subtle);
   font-size: 0.72rem;
   opacity: 0.75;
+  text-align: center;
 }
 
 /* ---- Active opponent-color filter note (All Games) ---- */

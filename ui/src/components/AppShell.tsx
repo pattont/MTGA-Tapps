@@ -233,7 +233,7 @@ export function AppShell({
         <button
           className="back-to-top"
           type="button"
-          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          onClick={() => window.scrollTo({ top: 0, left: 0, behavior: 'auto' })}
         >
           ↑ Back to top
         </button>
