@@ -165,8 +165,8 @@ a {
 }
 
 .mana-pip {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   filter: var(--pip-shadow);
 }
@@ -1557,7 +1557,8 @@ tbody tr:hover {
   }
 
   .sidebar {
-    position: static;
+    /* relative (not static) so the absolute collapse toggle stays anchored here */
+    position: relative;
     height: auto;
     border-right: 0;
     border-bottom: 1px solid var(--border);
@@ -2516,26 +2517,34 @@ tbody tr:hover {
 }
 
 .sidebar-toggle {
-  align-self: flex-end;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--border);
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border: 0;
   border-radius: 6px;
-  background: var(--surface);
-  color: var(--muted);
-  font-size: 0.95rem;
+  background: transparent;
+  color: var(--subtle);
+  font-size: 0.85rem;
   line-height: 1;
   cursor: pointer;
+  opacity: 0.7;
 }
 
 .sidebar-toggle:hover,
 .sidebar-toggle:focus-visible {
-  border-color: var(--accent);
+  background: var(--surface);
   color: var(--accent-strong);
+  opacity: 1;
 }
 
 .app-layout-collapsed .sidebar-toggle {
+  position: static;
   align-self: center;
+  opacity: 1;
+  color: var(--muted);
 }
 
 /* ---- Timeline chip colors for remaining event types ---- */

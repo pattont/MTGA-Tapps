@@ -237,7 +237,7 @@ export function GamesPage({
         {filters.colors ? (
           <p className="active-color-filter">
             <span>Showing games vs</span>
-            <ColorPips colors={filters.colors} size={24} />
+            <ColorPips colors={filters.colors} size={22} />
             <strong className="active-color-name">
               {colorComboLabel(filters.colors) ?? filters.colors}
             </strong>
