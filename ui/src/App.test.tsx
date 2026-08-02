@@ -955,7 +955,7 @@ describe('App', () => {
 
     expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
 
-    expect(screen.getByRole('link', { name: /Jun 4.*12:10 AM/i })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /6\/4\/26, 12:10AM/i })).toHaveAttribute(
       'href',
       '#/game/game-2?return=%23recent-games',
     );
@@ -1081,9 +1081,9 @@ describe('App', () => {
     try {
       render(<App />);
       const recentTable = await screen.findByRole('table', { name: 'Recent games' });
-      await user.click(within(recentTable).getByRole('link', { name: /Jun 4.*12:10 AM/i }));
+      await user.click(within(recentTable).getByRole('link', { name: /6\/4\/26, 12:10AM/i }));
 
-      expect(await screen.findByRole('heading', { name: /Game Jun 4/i })).toBeInTheDocument();
+      expect(await screen.findByRole('heading', { name: /Game 6\/4\/26/i })).toBeInTheDocument();
       const backLinks = screen.getAllByRole('link', { name: '← Back to dashboard' });
       backLinks.forEach((link) => expect(link).toHaveAttribute('href', '#recent-games'));
       await user.click(backLinks[0]);
@@ -1112,9 +1112,9 @@ describe('App', () => {
 
     render(<App />);
 
-    expect(await screen.findByRole('heading', { name: /Game Jun 4/i })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Game 6\/4\/26/i })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/game?id=game-1', expect.anything());
-    expect(document.title).toContain('Game Jun 4');
+    expect(document.title).toContain('Game 6/4/26');
     ['Turn Timing', 'Draw Quality', 'Life Totals', 'Opening Hand', 'Drawn Cards', 'Cards Played', 'Opponent Revealed Cards', 'Timeline'].forEach((sectionName) => {
       expect(screen.getByRole('heading', { name: sectionName })).toBeInTheDocument();
     });
@@ -1211,7 +1211,7 @@ describe('App', () => {
 
     render(<App />);
 
-    expect(await screen.findByRole('heading', { name: /Game Jun 4/i })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Game 6\/4\/26/i })).toBeInTheDocument();
     expect(screen.getAllByText('Mana Screw').length).toBeGreaterThan(0);
     const drawStatus = screen.getByText('Draw Status').closest('.metric-card');
     expect(drawStatus).toHaveClass('metric-card-warning');
@@ -1359,7 +1359,7 @@ describe('App', () => {
     await user.click(backLinks[0]);
 
     await waitFor(() => expect(window.location.hash).toBe(gameHash));
-    expect(await screen.findByRole('heading', { name: /Game Jun 4/i })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Game 6\/4\/26/i })).toBeInTheDocument();
   });
 
   it('derives your opponent-card record from the legacy API perspective', async () => {
