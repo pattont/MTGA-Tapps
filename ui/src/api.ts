@@ -445,6 +445,15 @@ export interface DeckSideboardSummary {
   boarded_in: { display_name: string; copies: number }[];
 }
 
+export interface DeckLandProfile {
+  deck_size: number | null;
+  lands: number | null;
+  flood_games: number;
+  screw_games: number;
+  normal_games: number;
+  classified_games: number;
+}
+
 export interface DeckDetail {
   deck_name: string;
   deck_visual: DeckVisual;
@@ -456,6 +465,7 @@ export interface DeckDetail {
   versions: DeckVersionRow[];
   opponent_colors?: OpponentColorRow[];
   sideboard: DeckSideboardSummary | null;
+  land_profile?: DeckLandProfile | null;
   mana_readiness: ManaReadinessRow[];
   formats: FormatRow[];
   midweek_formats: FormatRow[];
