@@ -55,6 +55,8 @@ data/*.json
 data/*.csv
 data/*.sqlite3
 data/*.sqlite3.backup*
+data/backups/*.sqlite3
+data/backups/*.sqlite3.backup*
 data/*.sql
 !data/.gitkeep
 
