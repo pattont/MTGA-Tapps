@@ -499,6 +499,12 @@ export function DeckDetailPage({
     () => makeOpponentColorColumns((row) => gamesRouteHash({ deck: deckName, colors: row.colors })),
     [deckName],
   );
+  const landProfile =
+    loadState.status === 'loaded' &&
+    loadState.detail.land_profile &&
+    loadState.detail.land_profile.classified_games > 0
+      ? loadState.detail.land_profile
+      : null;
 
   if (loadState.status === 'loading') {
     return (
@@ -790,49 +796,65 @@ export function DeckDetailPage({
 
       <Section
         id="deck-lands"
-        title="Land Availability"
-        description="How often this deck had N lands by turn N, and the cost of falling behind."
+        title={landProfile ? 'Land Statistics' : 'Land Availability'}
+        description={
+          landProfile
+            ? `Across ${landProfile.classified_games} classified games`
+            : 'How often this deck had N lands by turn N, and the cost of falling behind.'
+        }
       >
-        {detail.land_profile && detail.land_profile.classified_games > 0 ? (
+        {landProfile ? (
           <>
-            <div className="section-heading">
-              <div>
-                <h3>Land Statistics</h3>
-                <p className="section-description">
-                  Across {detail.land_profile.classified_games} classified games
-                </p>
-              </div>
-            </div>
             <section className="metric-grid metric-grid-deck" aria-label="Land draw profile">
               <MetricCard
                 label="Lands"
                 value={
-                  detail.land_profile.lands !== null && detail.land_profile.deck_size
-                    ? `${detail.land_profile.lands} / ${detail.land_profile.deck_size}`
+                  landProfile.lands !== null && landProfile.deck_size
+                    ? `${landProfile.lands} / ${landProfile.deck_size}`
                     : '—'
                 }
                 detail={
-                  detail.land_profile.lands !== null && detail.land_profile.deck_size
-                    ? `${Math.round((100 * detail.land_profile.lands) / detail.land_profile.deck_size)}% of deck`
+                  landProfile.lands !== null && landProfile.deck_size
+                    ? `${Math.round((100 * landProfile.lands) / landProfile.deck_size)}% of deck`
                     : undefined
                 }
               />
               <MetricCard
                 label="Normal"
-                value={`${Math.round((100 * detail.land_profile.normal_games) / detail.land_profile.classified_games)}%`}
-                detail={`${detail.land_profile.normal_games} ${detail.land_profile.normal_games === 1 ? 'game' : 'games'}`}
+                value={
+                  <span className="land-stat-normal">
+                    {Math.round((100 * landProfile.normal_games) / landProfile.classified_games)}%
+                  </span>
+                }
+                detail={`${landProfile.normal_games}/${landProfile.classified_games} games`}
               />
               <MetricCard
                 label="Flood"
-                value={`${Math.round((100 * detail.land_profile.flood_games) / detail.land_profile.classified_games)}%`}
-                detail={`${detail.land_profile.flood_games} ${detail.land_profile.flood_games === 1 ? 'game' : 'games'}`}
+                value={
+                  <span className="land-stat-flood">
+                    {Math.round((100 * landProfile.flood_games) / landProfile.classified_games)}%
+                  </span>
+                }
+                detail={`${landProfile.flood_games}/${landProfile.classified_games} games`}
               />
               <MetricCard
                 label="Screw"
-                value={`${Math.round((100 * detail.land_profile.screw_games) / detail.land_profile.classified_games)}%`}
-                detail={`${detail.land_profile.screw_games} ${detail.land_profile.screw_games === 1 ? 'game' : 'games'}`}
+                value={
+                  <span className="land-stat-screw">
+                    {Math.round((100 * landProfile.screw_games) / landProfile.classified_games)}%
+                  </span>
+                }
+                detail={`${landProfile.screw_games}/${landProfile.classified_games} games`}
               />
             </section>
+            <div className="section-heading">
+              <div>
+                <h3>Land Availability</h3>
+                <p className="section-description">
+                  How often this deck had N lands by turn N, and the cost of falling behind.
+                </p>
+              </div>
+            </div>
           </>
         ) : null}
         <ManaReadinessTable caption="Deck land availability" rows={detail.mana_readiness ?? []} />

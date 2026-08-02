@@ -2636,6 +2636,14 @@ tbody tr:hover {
   color: var(--danger);
 }
 
+/* ---- Deck Land Statistics value colors ---- */
+
+.land-stat-normal { color: var(--success); }
+.land-stat-flood { color: #5d8fc9; }
+.land-stat-screw { color: var(--danger); }
+
+:root[data-theme="light"] .land-stat-flood { color: #0a4f8f; }
+
 /* ---- Active opponent-color filter note (All Games) ---- */
 
 .active-color-filter {
