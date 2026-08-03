@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from .log_sanitize import scrub_raw_log
+from .payload_codec import compress_payload
 
 
 _PREVIOUS_TURN_DURATION_RE = re.compile(
@@ -464,7 +465,9 @@ class AnalyticsStore:
             (8, AnalyticsStore._migrate_v8_backfill_library_to_hand_draws),
             (9, AnalyticsStore._migrate_v9_delete_ghost_games),
             (10, AnalyticsStore._migrate_v10_delete_unknown_deck_games),
+            (11, AnalyticsStore._migrate_v11_compress_raw_payloads),
         )
+        ran: list = []
         for version, migrate in migrations:
             if version in applied:
                 continue
@@ -474,7 +477,14 @@ class AnalyticsStore:
                 "VALUES (?, datetime('now'))",
                 (version,),
             )
+            ran.append(version)
         conn.commit()
+        if 11 in ran:
+            # Compaction only frees pages; VACUUM returns them to the OS.
+            # Must run outside any transaction, hence after the commit above.
+            print("🗜️  Reclaiming disk space from the payload archive (VACUUM)…")
+            conn.execute("VACUUM")
+            print("🗜️  Done — database file compacted.")
 
     @staticmethod
     def _migrate_v2_backfill_card_arena_ids(conn: sqlite3.Connection) -> None:
@@ -681,6 +691,42 @@ class AnalyticsStore:
                 )
             """
         )
+
+    @staticmethod
+    def _migrate_v11_compress_raw_payloads(conn: sqlite3.Connection) -> None:
+        """Compress legacy plain-text rows in the raw payload archive.
+
+        raw_game_payloads held ~78% of the database as uncompressed Arena
+        JSON. New rows are written zlib-compressed; this one-time pass brings
+        the existing archive into the same format (lossless — decode_payload
+        returns byte-identical JSON). The follow-up VACUUM in
+        apply_pending_migrations reclaims the freed pages.
+        """
+        total = conn.execute("SELECT COUNT(*) FROM raw_game_payloads").fetchone()[0]
+        if not total:
+            return
+        print(f"🗜️  Compressing raw payload archive ({total} rows)…")
+        compressed = 0
+        cursor = conn.execute(
+            "SELECT id, payload_json FROM raw_game_payloads"
+        )
+        write = conn.cursor()
+        while True:
+            batch = cursor.fetchmany(500)
+            if not batch:
+                break
+            for row_id, payload in batch:
+                # Bytes rows are already compressed (or at least binary) —
+                # only legacy TEXT rows need converting.
+                if not isinstance(payload, str):
+                    continue
+                write.execute(
+                    "UPDATE raw_game_payloads SET payload_json = ? WHERE id = ?",
+                    (compress_payload(payload), row_id),
+                )
+                compressed += 1
+        if compressed:
+            print(f"🗜️  Compressed {compressed} payload rows.")
 
     @staticmethod
     def _migrate_v9_delete_ghost_games(conn: sqlite3.Connection) -> None:
@@ -1653,7 +1699,7 @@ class AnalyticsStore:
                     game_id,
                     now.isoformat(),
                     payload_type,
-                    scrub_raw_log(payload_json),
+                    compress_payload(scrub_raw_log(payload_json)),
                 ),
             )
 
