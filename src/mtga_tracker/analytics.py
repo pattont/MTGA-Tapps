@@ -443,6 +443,85 @@ class AnalyticsStore:
         AnalyticsStore.ensure_table_column(conn, "cards", "color_identity", "TEXT")
         AnalyticsStore.backfill_game_turn_counts(conn)
         AnalyticsStore.apply_pending_migrations(conn)
+        AnalyticsStore.canonicalize_imported_deck_names(conn)
+
+    @staticmethod
+    def canonicalize_imported_deck_names(conn: sqlite3.Connection) -> int:
+        """Rename Arena's "Imported Deck" placeholders to the deck's real name.
+
+        Importing a list and playing before renaming makes Arena submit the
+        deck as "Imported Deck" / "Imported Deck (3)"; the tracker records
+        what Arena said. Once the same exact maindeck shows up under a real
+        name, this pass (run at every startup) retitles the placeholder games.
+        Only an exact card-for-card maindeck match may rename — near-misses
+        stay untouched. Returns the number of participants renamed.
+        """
+        placeholder = re.compile(r"^Imported Deck( \(\d+\))?$")
+        candidates = [
+            (row[0], str(row[1]))
+            for row in conn.execute(
+                """
+                SELECT p.id, p.deck_name
+                FROM participants p
+                WHERE p.role = 'player' AND p.deck_name LIKE 'Imported Deck%'
+                """
+            )
+            if placeholder.match(str(row[1] or ""))
+        ]
+        if not candidates:
+            return 0
+
+        def maindeck_signature(participant_id: object) -> tuple:
+            return tuple(
+                sorted(
+                    (str(name), int(qty or 0))
+                    for name, qty in conn.execute(
+                        """
+                        SELECT display_name, quantity FROM game_deck_cards
+                        WHERE participant_id = ? AND deck_zone = 'deck'
+                        """,
+                        (participant_id,),
+                    )
+                )
+            )
+
+        # Newest real-named game per signature wins, matching what the deck
+        # is called in Arena today.
+        names_by_signature: dict = {}
+        named_rows = conn.execute(
+            """
+            SELECT p.id, p.deck_name
+            FROM participants p
+            JOIN games g ON g.id = p.game_id
+            WHERE p.role = 'player'
+              AND COALESCE(p.deck_name, '') != ''
+              AND p.deck_name NOT LIKE 'Imported Deck%'
+              AND EXISTS (
+                SELECT 1 FROM game_deck_cards d
+                WHERE d.participant_id = p.id AND d.deck_zone = 'deck'
+              )
+            ORDER BY COALESCE(g.started_at, g.ended_at) ASC
+            """
+        ).fetchall()
+        for participant_id, deck_name in named_rows:
+            signature = maindeck_signature(participant_id)
+            if signature:
+                names_by_signature[signature] = str(deck_name)
+
+        renamed = 0
+        with conn:
+            for participant_id, old_name in candidates:
+                signature = maindeck_signature(participant_id)
+                real_name = names_by_signature.get(signature) if signature else None
+                if not real_name:
+                    continue
+                conn.execute(
+                    "UPDATE participants SET deck_name = ? WHERE id = ?",
+                    (real_name, participant_id),
+                )
+                print(f'📝 Renamed "{old_name}" game to its real deck: {real_name}')
+                renamed += 1
+        return renamed
 
     @staticmethod
     def apply_pending_migrations(conn: sqlite3.Connection) -> None:
