@@ -68,3 +68,6 @@ data/backups/
 # Session scratch
 fable_src.tar.gz
 _to_delete/
+
+# FUSE artifacts from the Claude device bridge
+.fuse_hidden*
