@@ -252,4 +252,10 @@ black src/ tests/
 
 ## License
 
-MIT
+Copyright (C) 2026 Travis Patton
+
+Licensed under the GNU Affero General Public License v3.0 or later
+(AGPL-3.0-or-later) — see [LICENSE](LICENSE). You may use, modify, and
+redistribute this software, but any distributed or network-hosted derivative
+must also publish its source under the same license. For commercial licensing
+outside these terms, contact the author.

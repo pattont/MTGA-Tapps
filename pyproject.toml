@@ -4,9 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mtga-tracker"
-version = "0.1.0"
+version = "0.2.0"
 description = "Track cards played in Magic: The Gathering Arena"
 readme = "README.md"
+license = {text = "AGPL-3.0-or-later"}
 requires-python = ">=3.9"
 authors = [
     {name = "Travis Patton"}
