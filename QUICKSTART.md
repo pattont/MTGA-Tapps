@@ -1,151 +1,89 @@
 # Quick Start Guide
 
-Get started with MTGA Tracker in 5 minutes!
+Get MTGA Tracker running in a few minutes.
 
 ## Prerequisites
 
-- Python 3.9 or higher installed
-- MTGA installed and has been run at least once
-- Basic command line knowledge
+- MTGA installed and run at least once (the tracker reads Arena's `Player.log`)
+- macOS or Windows
 
-## Installation
+## Option 1 — Install the app (recommended)
 
-### 1. Set up virtual environment
+**From a GitHub Release** (once published — see `docs/RELEASE_PLAN.md`): download the
+installer for your OS from the Releases page, install, and launch **MTGA Tracker**.
 
-**macOS/Linux:**
+**Build it yourself on macOS:**
+
+```bash
+scripts/build_macos_app.sh          # builds dist/MTGA Tracker.app
+open "dist/MTGA Tracker.app"
+# or a drag-to-Applications DMG:
+scripts/build_macos_installer.sh
+```
+
+The app lives in the menu bar: it starts tracking, opens the Live Tracker Log window,
+serves the dashboard locally, and opens it in your browser. Menu items: **Open
+Dashboard**, **Show Live Tracker Log**, **Start/Stop Tracking**, **Open Data Folder**,
+**Quit**. Installed builds keep their database under
+`~/Library/Application Support/MTGA Tracker` (macOS) or
+`%LOCALAPPDATA%\MTGA Tracker` (Windows).
+
+Unsigned alpha builds: macOS Gatekeeper will balk the first time — right-click the app
+→ **Open** → **Open**. On Windows, use SmartScreen's **More info → Run anyway**.
+
+## Option 2 — Run from source (development)
+
 ```bash
 python3 -m venv venv
-source venv/bin/activate
+source venv/bin/activate            # Windows: venv\Scripts\activate
+pip install -e '.[dev,gui]'
+
+mtga-tracker-app                    # menu-bar app + tracker + dashboard together
+mtga-tracker-app --no-gui           # same, one terminal, no menu bar
+mtga-tracker                        # console tracker only
 ```
 
-**Windows:**
-```cmd
-python -m venv venv
-venv\Scripts\activate
-```
-
-### 2. Install dependencies
+Dashboard only (needs the frontend built once):
 
 ```bash
-pip install -r requirements.txt
+cd ui && npm install && npm run build && cd ..
+venv/bin/python -m mtga_tracker.dashboard      # http://127.0.0.1:8765
 ```
 
-### 3. Install the package (development mode)
+## What to expect
 
-```bash
-pip install -e .
-```
+Start the tracker, then play Arena. The console / Live Tracker Log shows real card
+names as the game unfolds — casts, draws, lands, combat, stack resolution, life
+totals — and each finished game is saved to the local SQLite database. The dashboard
+(auto-refreshing) has the overview, per-deck pages, per-game detail with timeline and
+draw-quality analysis, and per-card pages. Everything is local; no account, no cloud.
 
-## Running the Tracker
+Tips:
 
-### Method 1: Using the installed command
-
-```bash
-mtga-tracker
-```
-
-### Method 2: Using Python module
-
-```bash
-python -m mtga_tracker.main
-```
-
-### Method 3: Direct execution
-
-```bash
-python src/mtga_tracker/main.py
-```
-
-## Running the Dashboard
-
-Start the local analytics dashboard:
-
-```bash
-python -m mtga_tracker.dashboard
-```
-
-Open `http://127.0.0.1:8765/` in your browser.
-
-Stop the dashboard from the terminal where it is running:
-
-```text
-Ctrl+C
-```
-
-If port `8765` is already in use, choose another port:
-
-```bash
-python -m mtga_tracker.dashboard --port 8766
-```
-
-If you lost the terminal running the dashboard on macOS, stop the process using the port:
-
-```bash
-lsof -ti tcp:8765 | xargs kill
-```
-
-## What to Expect
-
-When you run the tracker, you'll see:
-
-```
-======================================================================
-MTGA Card Tracker
-======================================================================
-Monitoring log file: /path/to/Player.log
-Starting from current position (new events only)...
-Press Ctrl+C to stop
-======================================================================
-
-```
-
-Then as you play MTGA, you'll see card events logged to the console:
-
-```
-[14:23:45] Player played card ID: 74567
-[14:24:12] Opponent played card ID: 68234
-[14:24:30] Player played card ID: 72341
-```
-
-## Tips
-
-1. **Start the tracker before starting a match** for best results
-2. **Press Ctrl+C** to stop the tracker and see a summary
-3. The tracker only monitors new events, not historical data
-4. Card IDs will be shown until we implement the card database (coming soon!)
+- Start the tracker before queueing. If it joins mid-game, that game is shown live
+  but intentionally not saved.
+- The tracker's terminal shows its version and database path at startup.
+- Stop the console tracker with Ctrl+C to get a session summary.
 
 ## Troubleshooting
 
-### "Log file not found" error
+**"Log file not found"** — make sure Arena has been run at least once, or point at the
+log directly:
 
-Make sure:
-- MTGA is installed
-- You've run MTGA at least once
-- You're running on macOS or Windows (Linux not supported yet)
-
-You can specify a custom log path:
 ```bash
 mtga-tracker --log-path /path/to/Player.log
 ```
 
-### Nothing is showing up
+**Port 8765 already in use** —
 
-- Make sure you start the tracker BEFORE playing cards in MTGA
-- The tracker only shows NEW events from when it starts
-- Try playing a card in MTGA to test
+```bash
+python -m mtga_tracker.dashboard --port 8766
+# find a lost dashboard process on macOS:
+lsof -ti tcp:8765 | xargs kill
+```
 
-### Permission errors
+**Nothing showing up** — the tracker only reads new log events from when it starts;
+play a card in Arena to test.
 
-Make sure the tracker has permission to read the MTGA log file.
-
-## Next Steps
-
-- Check out `docs/FUTURE_DEVELOPMENT.md` for upcoming features
-- Read `docs/MTGA_LOG_FORMAT.md` to understand the log format
-- Contribute! See issues or create your own
-
-## Getting Help
-
-- Check the main README.md
-- Review the documentation in `docs/`
-- Open an issue on GitHub
+More: `README.md` for the full feature tour, `docs/TROUBLESHOOTING.md` for seat/log
+issues, `docs/MTGA_LOG_FORMAT.md` for how Arena's log works.
