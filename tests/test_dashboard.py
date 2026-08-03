@@ -767,6 +767,11 @@ def test_deck_detail_reports_cards_openers_and_mulligans(tmp_path):
     assert detail["recent"][0]["play_draw"] == "On the draw"
     assert [row["game_id"] for row in detail["trend"]] == ["game-1", "game-2"]
 
+    # Per-deck streaks (win then loss in the fixture -> longest 1 each).
+    assert detail["streaks"]["longest_win"] == 1
+    assert detail["streaks"]["longest_loss"] == 1
+    assert detail["streaks"]["current"] == {"kind": "loss", "length": 1}
+
 
 def test_deck_detail_uses_submitted_deck_for_card_performance_and_arena_export(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
@@ -1964,7 +1969,7 @@ def test_dashboard_snapshot_reports_schedule_fatigue_and_streaks(tmp_path):
     assert sum(row["games"] for row in time_buckets) == 2
 
     fatigue = snapshot["fatigue"]
-    assert fatigue[0]["label"] == "Games 1–2"
+    assert fatigue[0]["label"] == "Games 1–4"
     assert fatigue[0]["games"] == 2
 
     streaks = snapshot["streaks"]
