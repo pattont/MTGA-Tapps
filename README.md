@@ -1,20 +1,33 @@
 # MTGA Tracker
 
-Track cards played in Magic: The Gathering Arena for analysis and learning.
+Track your Magic: The Gathering Arena games locally — a real-time tracker that
+tails Arena's log, a SQLite analytics store, and a full dashboard UI. No
+account, no cloud: everything stays on your machine.
 
-## Features (MVP)
+## Features
 
-- Real-time tracking of cards played by you
-- Real-time tracking of cards played by opponents
-- Console output of card events as they happen
+- Real-time game tracking from Arena's log: casts, draws, lands, combat,
+  life totals, stack resolution, and a full per-game timeline
+- Menu-bar app (macOS) with live tracker log, dashboard launcher, and
+  start/stop control
+- Local analytics dashboard: win rate trends, ranked progress, per-deck
+  drill-downs (card performance, mulligans, decklist versions, land
+  statistics with flood/screw classification, win/loss streaks, Bo3
+  sideboarding), game detail pages with draw-quality analysis and life
+  charts, and per-card pages
+- Opponent analysis: revealed-card tracking, deck color identification with
+  community combo names (Dimir, Jeskai, …), and win rates vs each color combo
+- Mulligan history including bottomed cards, session habits & fatigue splits,
+  session logs, and a database health audit with self-repair
+- Deck recognition from Arena's submitted decklists, split/room card
+  unification, and startup data-hygiene migrations
+- Compressed raw-payload archive that enables retroactive backfills as the
+  tracker improves
 
-## Planned Features
+## Releasing & alpha testing
 
-- GUI interface for better visualization
-- Match statistics and analytics
-- Deck recognition and tracking
-- Win/loss statistics per deck
-- Card play frequency analysis
+See `docs/RELEASE_PLAN.md` for the macOS/Windows packaging plan, the
+GitHub-Releases update flow, and the alpha readiness checklist.
 
 ## Installation
 
