@@ -2,7 +2,43 @@ import sqlite3
 from datetime import datetime, timedelta
 
 from mtga_tracker.analytics import AnalyticsStore, SessionSnapshot
+from mtga_tracker.payload_codec import compress_payload, decode_payload
 from mtga_tracker.tracker_analytics import TrackerAnalyticsMixin
+
+
+def test_payload_codec_round_trip_and_legacy_values():
+    text = '{"payload": "data", "unicode": "Æther Vial ✨"}'
+    stored = compress_payload(text)
+    assert isinstance(stored, bytes)
+    assert len(stored) < len(text.encode("utf-8")) or len(text) < 60
+    assert decode_payload(stored) == text
+    # Legacy plain-text rows and edge cases pass through unharmed.
+    assert decode_payload(text) == text
+    assert decode_payload(text.encode("utf-8")) == text
+    assert decode_payload(None) == ""
+    assert decode_payload(memoryview(stored)) == text
+
+
+def test_migration_v11_compresses_legacy_payload_rows(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    store = AnalyticsStore(db_path)
+    legacy = '{"legacy": "plain text row", "n": 1}'
+    conn = store.connect()
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO raw_game_payloads (session_id, created_at, payload_type, payload_json)
+            VALUES ('session-1', '2026-06-01T00:00:00', 'unknown', ?)
+            """,
+            (legacy,),
+        )
+        conn.execute("DELETE FROM schema_migrations WHERE version = 11")
+    AnalyticsStore.apply_pending_migrations(conn)
+    row = conn.execute("SELECT payload_json FROM raw_game_payloads").fetchone()
+    store.close()
+
+    assert isinstance(row[0], bytes)
+    assert decode_payload(row[0]) == legacy
 
 
 def test_analytics_store_uses_persistent_connection(tmp_path):
@@ -91,10 +127,13 @@ def test_record_raw_payload_sanitizes_before_persisting(tmp_path):
         row = conn.execute("SELECT payload_type, payload_json FROM raw_game_payloads").fetchone()
 
     assert row[0] == "unknown"
-    assert "secret" not in row[1]
-    assert "/Users/travispatton/" not in row[1]
-    assert "Player#123" not in row[1]
-    assert "<redacted>" in row[1]
+    # Stored compressed; decode before inspecting.
+    assert isinstance(row[1], bytes)
+    payload_text = decode_payload(row[1])
+    assert "secret" not in payload_text
+    assert "/Users/travispatton/" not in payload_text
+    assert "Player#123" not in payload_text
+    assert "<redacted>" in payload_text
 
 
 def test_tracker_raw_payload_snapshot_uses_current_match_context(tmp_path):
@@ -119,8 +158,9 @@ def test_tracker_raw_payload_snapshot_uses_current_match_context(tmp_path):
     assert row[0] == tracker._current_match_id()
     assert row[1] == tracker._current_game_id()
     assert row[2] == "connection_error"
-    assert "Player#123" not in row[3]
-    assert "/Users/travispatton/" not in row[3]
+    payload_text = decode_payload(row[3])
+    assert "Player#123" not in payload_text
+    assert "/Users/travispatton/" not in payload_text
 
 
 def test_current_game_id_is_stable_before_and_after_outcome_is_counted():
