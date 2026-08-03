@@ -16,52 +16,38 @@ export function formatPercent(value: number | null | undefined): string {
   return `${rounded}%`;
 }
 
-function confidenceAdjustedWinRate(deck: DeckRow): number {
-  const decidedGames = deck.wins + deck.losses;
-  if (decidedGames === 0) {
-    return -1;
-  }
-  const winRate = deck.wins / decidedGames;
-  const z = 1.96;
-  const zSquared = z * z;
-  return (
-    (winRate +
-      zSquared / (2 * decidedGames) -
-      z *
-        Math.sqrt(
-          (winRate * (1 - winRate) + zSquared / (4 * decidedGames)) / decidedGames,
-        )) /
-    (1 + zSquared / decidedGames)
-  );
-}
-
 /**
  * A deck must have this many decided games before it can be "Best Deck";
  * a 4-0 weekend shouldn't outrank a 60%-over-80-games workhorse.
  */
 export const BEST_DECK_MIN_DECIDED_GAMES = 8;
 
+/**
+ * Best Deck = the winning deck (>=50% WR) with the most wins.
+ *
+ * A great win rate over hundreds of games is a bigger achievement than the
+ * same rate over 20 — a small-sample deck only surfaces when nothing else
+ * has more wins. Win rate breaks ties between equal win counts, and when no
+ * deck has a winning record we fall back to the least-losing record.
+ */
 function bestDeckFrom(decks: DeckRow[]): DeckRow | undefined {
-  const eligible = decks.filter(
-    (deck) =>
-      deck.deck_name !== '(unknown)' &&
-      deck.wins + deck.losses >= BEST_DECK_MIN_DECIDED_GAMES,
+  const named = decks.filter(
+    (deck) => deck.deck_name !== '(unknown)' && deck.wins + deck.losses > 0,
   );
-  const pool = eligible.length
-    ? eligible
-    : decks.filter((deck) => deck.deck_name !== '(unknown)' && deck.wins + deck.losses > 0);
+  const credible = named.filter(
+    (deck) => deck.wins + deck.losses >= BEST_DECK_MIN_DECIDED_GAMES,
+  );
+  const winning = credible.filter((deck) => deck.wins >= deck.losses);
+  const pool = winning.length ? winning : credible.length ? credible : named;
+  const winRateOf = (deck: DeckRow) => deck.wins / Math.max(1, deck.wins + deck.losses);
   return [...pool]
-    .sort((a, b) => {
-      const scoreDelta = confidenceAdjustedWinRate(b) - confidenceAdjustedWinRate(a);
-      const decidedGamesDelta = b.wins + b.losses - (a.wins + a.losses);
-      return (
-        scoreDelta ||
-        decidedGamesDelta ||
-        b.games - a.games ||
+    .sort(
+      (a, b) =>
         b.wins - a.wins ||
-        a.deck_name.localeCompare(b.deck_name)
-      );
-    })[0];
+        winRateOf(b) - winRateOf(a) ||
+        b.games - a.games ||
+        a.deck_name.localeCompare(b.deck_name),
+    )[0];
 }
 
 export function metricCards(snapshot: DashboardSnapshot): MetricDefinition[] {

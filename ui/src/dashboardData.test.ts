@@ -131,7 +131,7 @@ describe('metricCards', () => {
     });
   });
 
-  it('still rewards a meaningfully stronger win rate with a credible sample', () => {
+  it('favors the deck with the most wins over a hotter small sample', () => {
     const snapshot = snapshotWithDecks([
       {
         deck_name: 'High Volume Average',
@@ -153,8 +153,60 @@ describe('metricCards', () => {
 
     expect(bestDeckMetric(snapshot)).toMatchObject({
       label: 'Best Deck',
-      value: 'Strong Challenger',
-      detail: '80% WR · 8–2 · 10 games',
+      value: 'High Volume Average',
+      detail: '50% WR · 50–50 · 100 games',
+    });
+  });
+
+  it('a workhorse with hundreds of games beats a 20-game hot streak', () => {
+    const snapshot = snapshotWithDecks([
+      {
+        deck_name: 'Hot Twenty',
+        games: 20,
+        wins: 16,
+        losses: 4,
+        win_rate: 80,
+        deck_visual: deckVisual,
+      },
+      {
+        deck_name: 'Workhorse',
+        games: 200,
+        wins: 130,
+        losses: 70,
+        win_rate: 65,
+        deck_visual: deckVisual,
+      },
+    ]);
+
+    expect(bestDeckMetric(snapshot)).toMatchObject({
+      label: 'Best Deck',
+      value: 'Workhorse',
+    });
+  });
+
+  it('a losing deck with many wins does not beat a winning deck', () => {
+    const snapshot = snapshotWithDecks([
+      {
+        deck_name: 'Grinder Below 50',
+        games: 300,
+        wins: 140,
+        losses: 160,
+        win_rate: 46.7,
+        deck_visual: deckVisual,
+      },
+      {
+        deck_name: 'Winning Deck',
+        games: 100,
+        wins: 60,
+        losses: 40,
+        win_rate: 60,
+        deck_visual: deckVisual,
+      },
+    ]);
+
+    expect(bestDeckMetric(snapshot)).toMatchObject({
+      label: 'Best Deck',
+      value: 'Winning Deck',
     });
   });
 });
