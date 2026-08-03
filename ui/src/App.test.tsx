@@ -84,7 +84,7 @@ const snapshot = {
       { label: 'Late Night (10pm–5am)', bucket: 3, games: 2, wins: 1, losses: 1, win_rate: 50 },
     ],
   },
-  fatigue: [{ bucket: 0, label: 'Games 1–2', games: 2, wins: 1, losses: 1, win_rate: 50 }],
+  fatigue: [{ bucket: 0, label: 'Games 1–4', games: 2, wins: 1, losses: 1, win_rate: 50 }],
   streaks: {
     games: 2,
     current: { kind: 'loss', length: 1 },

@@ -1109,7 +1109,10 @@ function Dashboard({
         <div className="section-heading">
           <div>
             <h3>Session Fatigue</h3>
-            <p className="section-description">Win rate by how many games deep into a tracker session you were.</p>
+            <p className="section-description">
+              Win rate by how many games deep into a tracker session you were. Games 1–4 are the
+              fresh baseline; fatigue only plausibly shows from game 5 on.
+            </p>
           </div>
         </div>
         <SortableTable
