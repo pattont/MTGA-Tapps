@@ -635,8 +635,32 @@ export function DeckDetailPage({
         title="Combat Profile"
         description="Per-game combat and resource telemetry for this deck."
       >
-        {detail.combat_profile ? (
+        {detail.combat_profile || (detail.streaks?.games ?? 0) > 0 ? (
           <section className="metric-grid metric-grid-deck" aria-label="Deck combat metrics">
+            {detail.streaks ? (
+              <>
+                <MetricCard
+                  label="Win Streak"
+                  value={formatNumber(detail.streaks.longest_win)}
+                  detail={
+                    detail.streaks.current?.kind === 'win'
+                      ? `current: ${detail.streaks.current.length} in a row`
+                      : 'longest'
+                  }
+                />
+                <MetricCard
+                  label="Losing Streak"
+                  value={formatNumber(detail.streaks.longest_loss)}
+                  detail={
+                    detail.streaks.current?.kind === 'loss'
+                      ? `current: ${detail.streaks.current.length} in a row`
+                      : 'longest'
+                  }
+                />
+              </>
+            ) : null}
+            {detail.combat_profile ? (
+              <>
             <MetricCard
               label="Profile"
               value={detail.combat_profile.aggression_profile ?? '—'}
@@ -661,6 +685,8 @@ export function DeckDetailPage({
               label="Life Gained / Game"
               value={formatNumber(detail.combat_profile.avg_life_gained)}
             />
+              </>
+            ) : null}
           </section>
         ) : (
           <p className="empty-state">No combat telemetry recorded for this deck yet.</p>
