@@ -1,254 +1,155 @@
 # MTGA Tracker
 
-Track your Magic: The Gathering Arena games locally — a real-time tracker that
-tails Arena's log, a SQLite analytics store, and a full dashboard UI. No
-account, no cloud: everything stays on your machine.
+**Track your Magic: The Gathering Arena games — entirely on your machine.**
 
-## Features
+A real-time tracker that tails Arena's `Player.log`, a SQLite analytics store,
+and a full React dashboard. No account, no cloud, no uploads: your games, your
+data, your disk.
 
-- Real-time game tracking from Arena's log: casts, draws, lands, combat,
-  life totals, stack resolution, and a full per-game timeline
-- Menu-bar app (macOS) with live tracker log, dashboard launcher, and
-  start/stop control
-- Local analytics dashboard: win rate trends, ranked progress, per-deck
-  drill-downs (card performance, mulligans, decklist versions, land
-  statistics with flood/screw classification, win/loss streaks, Bo3
-  sideboarding), game detail pages with draw-quality analysis and life
-  charts, and per-card pages
-- Opponent analysis: revealed-card tracking, deck color identification with
-  community combo names (Dimir, Jeskai, …), and win rates vs each color combo
-- Mulligan history including bottomed cards, session habits & fatigue splits,
-  session logs, and a database health audit with self-repair
-- Deck recognition from Arena's submitted decklists, split/room card
-  unification, and startup data-hygiene migrations
-- Compressed raw-payload archive that enables retroactive backfills as the
-  tracker improves
+![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)
+![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)
+![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows-lightgrey)
 
-## Releasing & alpha testing
+## What it does
 
-See `docs/RELEASE_PLAN.md` for the macOS/Windows packaging plan, the
-GitHub-Releases update flow, and the alpha readiness checklist.
+**Live tracking.** A menu-bar app (macOS) or console tracker follows your game
+in real time: casts, draws, lands, combat, life totals, stack resolution — with
+a readable play-by-play log and a full per-game timeline saved for later.
 
-## Installation
+**Deck analytics.** Every deck gets a drill-down page: card performance,
+mulligan results, decklist version history with diffs, land statistics with
+flood/screw classification, win & loss streaks, Bo3 sideboarding records, and
+your record against every opponent color combination.
 
-### Prerequisites
+**Game forensics.** Each game page reconstructs the match: opening hand and
+every mulligan (including the card you bottomed), drawn cards, draw-quality
+analysis with statistically-grounded flood/screw detection, a life-total chart,
+combat summaries, and the complete event timeline.
 
-- Python 3.9 or higher
-- MTGA installed (macOS or Windows)
+**Opponent intelligence.** Revealed cards identify the opponent's colors, named
+with community archetype names (Dimir, Jeskai, Mono-Red…), tracked across your
+history so you can see which matchups actually beat you.
 
-### Setup
+**The long game.** Win-rate trends, ranked ladder progress by season, session
+habits and fatigue splits, format breakdowns, and a database health audit that
+can repair its own inconsistencies. A compressed raw-payload archive means new
+tracker features can retroactively backfill your old games.
 
-1. Clone the repository:
+## Quick start
+
+**Install the app** (recommended): grab the installer for your OS from the
+[Releases page](../../releases), or build it yourself —
+
 ```bash
-git clone <repository-url>
-cd MTGA-Tapps
+# macOS app / DMG
+scripts/build_macos_app.sh          # dist/MTGA Tracker.app
+scripts/build_macos_installer.sh    # dist/MTGA-Tracker.dmg
 ```
 
-2. Create a virtual environment:
-```bash
-python -m venv venv
-
-# macOS/Linux
-source venv/bin/activate
-
-# Windows
-venv\Scripts\activate
+```powershell
+# Windows exe / zip
+powershell -ExecutionPolicy Bypass -File scripts\build_windows_app.ps1
 ```
 
-3. Install dependencies:
+**Or run from source:**
+
 ```bash
+python3 -m venv venv && source venv/bin/activate
 pip install -e '.[dev,gui]'
+mtga-tracker-app        # tracker + live log window + dashboard, one command
 ```
 
-## Usage
+See [QUICKSTART.md](QUICKSTART.md) for the full walkthrough, including the
+Gatekeeper/SmartScreen note for unsigned alpha builds.
 
-On macOS, build and launch the native application for normal daily use:
+## The dashboard
+
+`mtga-tracker-app` serves and opens it automatically; standalone:
 
 ```bash
-scripts/build_macos_app.sh
-open "dist/MTGA Tracker.app"
+cd ui && npm install && npm run build && cd ..
+venv/bin/python -m mtga_tracker.dashboard        # http://127.0.0.1:8765
 ```
 
-The native `.app` supplies the `MTGA Tracker` bundle and Dock identity plus the adaptive menu-bar icon. Direct source launches execute through the Python interpreter and may expose Python runtime metadata in macOS.
+| Route | What you get |
+| --- | --- |
+| `#/` | Overview: metrics, best deck, trends, ranked progress, recent games, decks, opponent meta |
+| `#/deck/<name>` | Deck drill-down: cards, mulligans, versions, land stats, streaks, vs-colors |
+| `#/game/<id>` | Game detail: draw quality, life chart, hands, timeline, notes |
+| `#/card/<name>` | Card drill-down: by-deck performance, repeat draws, opener impact |
+| `#/games` | Every tracked game, filterable (deck, format, opponent colors) |
+| `#/audit` | Database health findings |
 
-For source development or other platforms, run the tracker and dashboard together with:
+JSON API: `GET /api/snapshot`, `/api/deck`, `/api/game`, `/api/card`,
+`/api/cards?q=`, `/api/games`, `/api/version` — the dashboard is read-only
+except `POST /api/game/annotation` (your per-game notes and tags).
 
-```bash
-pip install -e '.[gui]'
-mtga-tracker-app
-```
+Port busy? `--port 8766`. Lost the terminal? `lsof -ti tcp:8765 | xargs kill`.
 
-The application starts tracking, opens the Live Tracker Log window, serves the dashboard locally, and opens it in your default browser. Its menu includes **Open Dashboard**, **Show Live Tracker Log**, **Start/Stop Tracking**, **Open Data Folder**, and **Quit**. The live-log window shows the same running event output as the console tracker.
+## Command-line tools
 
-For a one-terminal launcher without the native menu bar:
-```bash
-mtga-tracker-app --no-gui
-```
+| Command | Purpose |
+| --- | --- |
+| `mtga-tracker` | Console tracker only |
+| `mtga-tracker-app --no-gui` | Tracker + dashboard without the menu bar |
+| `python -m mtga_tracker.db_audit [--repair]` | Database consistency audit / safe self-repair |
+| `python -m mtga_tracker.draw_quality --card "Llanowar Elves"` | Draw-quality & flood/screw report |
+| `python -m mtga_tracker.payload_dump <game_id>` | Print a game's archived raw payloads as JSON |
 
-The original tracker-only console command remains available:
-```bash
-mtga-tracker
-```
+Ready-made SQL reports live in [`data/_queries/`](data/_queries/README.md):
 
-Audit the analytics database for suspicious rows:
-```bash
-python -m mtga_tracker.db_audit
-python -m mtga_tracker.db_audit --repair
-```
-
-Audit recent draw quality from opening hands and known visible draws:
-```bash
-python -m mtga_tracker.draw_quality --card "Llanowar Elves" --land-rate 0.37
-```
-
-### Local dashboard UI
-
-The tracker includes a separate frontend app in `ui/`. Build it once, then run the Python dashboard server:
-
-```bash
-cd ui && npm install && npm run build
-cd ..
-venv/bin/python -m mtga_tracker.dashboard
-```
-
-Open `http://127.0.0.1:8765`. During UI development, run the Python dashboard API and the Vite dev server separately:
-
-```bash
-venv/bin/python -m mtga_tracker.dashboard
-cd ui && npm run dev
-```
-
-The dashboard reads only the local SQLite tracker database. The browser may request Scryfall art URLs for deck and card visuals when a card name is available; the tracker itself does not depend on network card resolution.
-
-Dashboard routes and endpoints:
-
-- `#/deck/<deck name>`: deck drill-down with card performance, opening hands, mulligans, formats, recent games, and filtered trends.
-- `#/game/<game id>`: game detail with draw quality/flood detection, life chart, opening hand, drawn cards, played cards, and timeline filter.
-- `#/card/<card name>`: card drill-down with by-deck performance and opening-hand impact.
-- `GET /api/snapshot?deck=&format=&days=`: dashboard aggregates, matches, sessions, trend, and filter options.
-- `GET /api/cards?q=&limit=`: partial-name search across cards used by either side in tracked games.
-- `GET /api/deck?name=&format=&days=`, `GET /api/game?id=`, and `GET /api/card?name=`: detail payloads for the hash routes.
-
-Stop the dashboard from the terminal where it is running:
-```text
-Ctrl+C
-```
-
-If port `8765` is already in use, choose another port:
-```bash
-python -m mtga_tracker.dashboard --port 8766
-```
-
-### macOS application and installer
-
-Build the menu-bar `.app` bundle:
-
-```bash
-scripts/build_macos_app.sh
-open "dist/MTGA Tracker.app"
-```
-
-Build a drag-to-Applications DMG:
-
-```bash
-scripts/build_macos_installer.sh
-open dist/MTGA-Tracker.dmg
-```
-
-Release builds compile `ui/dist`, install the GUI/build dependencies, and package the Python tracker and dashboard together. Installed builds store the database and logs under `~/Library/Application Support/MTGA Tracker`. Do not run the source and packaged launchers simultaneously.
-
-The installed app has an independent database and does not modify the repository database. Migrating existing history requires a deliberate cutover while both tracker versions are stopped: preserve the existing installed database, copy the repository database with SQLite's backup API, validate it, then launch the installed app. Never copy or replace the live database while either tracker owns it.
-
-The generated application is currently unsigned. macOS distribution outside the development machine will require an Apple Developer ID signature and notarization.
-
-If you lost the terminal running the dashboard on macOS, stop the process using the port:
-```bash
-lsof -ti tcp:8765 | xargs kill
-```
-
-Common SQL reports live in `data/_queries`, for example:
 ```bash
 sqlite3 data/mtga_tracker.sqlite3 < data/_queries/WinRateByDeck.sql
 ```
 
-## Project Structure
+## Data & privacy
 
-```
-MTGA-Tapps/
-├── src/
-│   └── mtga_tracker/
-│       ├── __init__.py
-│       ├── main.py           # Entry point
-│       ├── log_parser.py     # MTGA log file parser
-│       ├── tracker.py        # Thin CardTracker composition class
-│       ├── db_audit.py       # SQLite consistency audit/repair command
-│       ├── dashboard.py      # Dependency-free local analytics dashboard
-│       └── format_normalizer.py # Queue/format label normalization
-├── tests/                    # Unit tests
-├── data/                     # Data files and cache
-├── logs/                     # Application logs
-├── requirements.txt          # Python dependencies
-└── README.md
-```
+Everything is local SQLite. Stored logs are scrubbed of tokens and personal
+paths before persistence. The only network traffic is your browser fetching
+Scryfall card art; card *identification* uses Arena's own local card database
+(`Raw_CardDatabase_*.mtga`, discovered automatically under the Steam/Epic
+install, override with `MTGA_DATA_DIR`).
 
-## How It Works
+Where things live:
 
-MTGA writes detailed game logs to:
-- **Windows**: `%APPDATA%\LocalLow\Wizards Of The Coast\MTGA\Player.log`
-- **macOS**: `~/Library/Logs/Wizards Of The Coast/MTGA/Player.log`
+- Arena log — `~/Library/Logs/Wizards Of The Coast/MTGA/Player.log` (macOS),
+  `%APPDATA%\LocalLow\Wizards Of The Coast\MTGA\Player.log` (Windows)
+- Source runs — `data/mtga_tracker.sqlite3` and `data/settings.json`
+- Installed builds — `~/Library/Application Support/MTGA Tracker` (macOS),
+  `%LOCALAPPDATA%\MTGA Tracker` (Windows), fully independent of the repo
 
-This tracker monitors the log file in real-time and parses card play events.
-
-### Local card database (optional)
-
-The tracker loads card names from MTGA’s local SQLite file so it can resolve card IDs without the network. It looks for any file named **`Raw_CardDatabase_*.mtga`** (no hardcoded filenames) in these folders, in order:
-
-- **macOS (Steam):** `~/Library/Application Support/Steam/steamapps/common/MTGA/MTGA_Data/Downloads/Raw`
-- **macOS (Epic):** `~/Library/Application Support/com.wizards.mtga/Downloads/RAW`
-- **Override:** set `MTGA_DATA_DIR` in `config.py` or the `MTGA_DATA_DIR` env var to the folder that contains the file
-
-The Steam path is checked first (most up to date); the newest matching file is used.
-
-### Desktop settings
-
-The menu-bar app creates `settings.json` in its writable data folder. Use **Open Data Folder**
-from the menu-bar menu to find it. The live tracker window size can be changed and takes effect
-the next time the app starts:
-
-```json
-{
-  "live_log_window": {
-    "width": 1400,
-    "height": 1020
-  }
-}
-```
-
-When running from source, the file is `data/settings.json`. Installed macOS builds use
-`~/Library/Application Support/MTGA Tracker/settings.json`.
-
-## Future UI Considerations
-
-The project is designed to support a GUI in the future. Recommended options:
-- **PyQt6/PySide6**: Native Python, cross-platform, professional look
-- **Web-based**: FastAPI/Flask backend + modern web frontend
+Don't run the source and installed trackers at the same time, and never copy a
+live database while a tracker owns it — use SQLite's backup API for migrations.
 
 ## Development
 
-Install development dependencies:
 ```bash
-pip install -e ".[dev]"
+pip install -e '.[dev,gui]'
+
+# Python suite (menu app tests need a display)
+venv/bin/python -m pytest tests -q --ignore=tests/test_menu_app.py \
+  --deselect "tests/test_log_parser.py::test_find_log_path_error_handling"
+
+# Frontend: tests, types, lint, build (dashboard serves ui/dist — rebuild after UI changes)
+cd ui && npx vitest run && npx tsc -b && npm run lint && npm run build
+
+# UI development with hot reload (API + Vite side by side)
+venv/bin/python -m mtga_tracker.dashboard
+cd ui && npm run dev
 ```
 
-Run tests:
-```bash
-pytest
-```
+Layout: `src/mtga_tracker/` (tracker mixins, analytics store, dashboard
+server), `ui/` (React/TypeScript dashboard), `tests/`, `packaging/` + `scripts/`
+(PyInstaller builds), `docs/`. Working on it with an AI agent? Start with
+[AGENTS.md](AGENTS.md) — it's kept current on purpose.
 
-Format code:
-```bash
-black src/ tests/
-```
+## Documentation
+
+- [QUICKSTART.md](QUICKSTART.md) — install and first run
+- [docs/RELEASE_PLAN.md](docs/RELEASE_PLAN.md) — packaging, GitHub Releases, alpha checklist
+- [docs/OVERLAY_TRACKER_PLAN.md](docs/OVERLAY_TRACKER_PLAN.md) — planned in-game overlay
+- [docs/MTGA_LOG_FORMAT.md](docs/MTGA_LOG_FORMAT.md) — how Arena's log actually works
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — seat detection and log issues
 
 ## License
 
@@ -259,3 +160,7 @@ Licensed under the GNU Affero General Public License v3.0 or later
 redistribute this software, but any distributed or network-hosted derivative
 must also publish its source under the same license. For commercial licensing
 outside these terms, contact the author.
+
+*MTGA Tracker is unofficial Fan Content. Not approved/endorsed by Wizards of
+the Coast. Magic: The Gathering and its logos are trademarks of Wizards of the
+Coast LLC.*
