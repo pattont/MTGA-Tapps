@@ -28,7 +28,14 @@ Primary code paths:
 - `src/mtga_tracker/tracker_rendering.py`: console formatting, actor labels, mana/text cleanup, runtime strings.
 - `src/mtga_tracker/tracker_state_lookup.py`: object snapshots, identity/copy-state, card type, zone/seat lookup helpers.
 - `src/mtga_tracker/tracker_diagnostics.py`: unhandled annotation and parser diagnostics text logging.
-- `src/mtga_tracker/card_database.py`: MTGA/Scryfall card ID to card name/type resolution.
+- `src/mtga_tracker/card_database.py`: MTGA/Scryfall card ID to card name/type resolution, plus
+  color-identity lookup from Arena's local card DB.
+- `src/mtga_tracker/analytics.py`: `AnalyticsStore` — schema, numbered migrations, and startup
+  maintenance (card-color backfill, imported-deck-name canonicalization).
+- `src/mtga_tracker/colors.py`: WUBRG normalization and community color-combo naming
+  (Mono-X, guilds, shards/wedges, 4c names, 5c). The UI mirrors this in `ui/src/colorCombos.ts`.
+- `src/mtga_tracker/payload_codec.py` / `payload_dump.py`: zlib codec for the raw payload
+  archive and the CLI to print archived payloads as readable JSON.
 - `tests/test_tracker_combat_winner.py`: broad regression coverage for tracker behavior.
 
 ## Commands
@@ -36,19 +43,25 @@ Primary code paths:
 Use the repo virtualenv unless there is a clear reason not to.
 
 ```bash
-venv/bin/python -m pytest -q
+# Full Python suite as CI/agents run it (menu app needs a display; one env-specific deselect):
+venv/bin/python -m pytest tests -q --ignore=tests/test_menu_app.py \
+  --deselect "tests/test_log_parser.py::test_find_log_path_error_handling"
 venv/bin/python -m pytest tests/test_tracker_combat_winner.py -q
 venv/bin/python -m mtga_tracker.main
 venv/bin/python -m mtga_tracker.db_audit
 venv/bin/python -m mtga_tracker.db_audit --repair
 venv/bin/python -m mtga_tracker.dashboard
 venv/bin/python -m mtga_tracker.draw_quality --card "Llanowar Elves"
+venv/bin/python -m mtga_tracker.payload_dump "<game_id>"
 cd ui && npm install
-cd ui && npm test
+cd ui && npx vitest run
+cd ui && npx tsc -b && npm run lint
 cd ui && npm run build
 ```
 
-The full suite is fast; run it after tracker changes.
+The full suite is fast; run it after tracker changes. UI changes require vitest, tsc, lint,
+and a fresh `npm run build` (the dashboard serves `ui/dist`, which is gitignored — rebuild
+and redeploy `dist` alongside source changes).
 
 ## Local Paths
 
@@ -88,8 +101,17 @@ Preserve these behaviors unless the user explicitly changes requirements:
   player/opponent average-turn columns.
 - The Formats table defaults to case-insensitive Format A–Z order. Midweek Magic and Momir are
   excluded in both backend responses and the UI as a safeguard against stale dashboard processes.
-- Best Deck uses the 95% Wilson lower confidence bound so both win rate and decided-game sample
-  size affect the ranking; the metric shows raw win rate, record, and total games.
+- Best Deck = most total wins among decks with a winning record (>=50% WR, min 8 decided
+  games); win rate breaks ties. A small hot sample only surfaces when nothing has more wins.
+  Rendered as a full-width bar below the overview metric cards, not a metric card.
+- Games where the tracker attached mid-game (turn > 1 at first sight) are shown live but never
+  persisted (`mid_game_attach` gates `_is_untracked_match`). Midweek Magic and bot matches are
+  likewise never persisted.
+- Opponent deck colors come from `cards.color_identity` (backfilled from Arena's local card DB
+  at startup and after each game) aggregated over `game_card_summary`; combo names come from
+  `colors.py`. Color tables drop the bucket for games with no revealed opponent cards.
+- Arena "Imported Deck" placeholder names are canonicalized at startup to the real deck name
+  when another game shares the exact maindeck (`canonicalize_imported_deck_names`).
 - Card Drill-Down persistently uses the same Scryfall full-card image loader as card hover
   previews; deck thumbnails continue using cropped artwork.
 - The sidebar `MTGA Tracker` brand uses the dashboard heading typography, links to the very
@@ -132,7 +154,10 @@ Important tables:
   durable console headers, and `estimated_header_events` historical backfills.
 - `game_events`: structured event history where available.
 - `console_logs`: rendered console log lines for later dashboard/query work.
-- `raw_game_payloads`: raw payload persistence when enabled/available.
+- `raw_game_payloads`: sanitized raw payload archive. `payload_json` is stored
+  **zlib-compressed** (migration v11 converted legacy rows) — always read it through
+  `payload_codec.decode_payload`, or use `python -m mtga_tracker.payload_dump <game_id>`;
+  raw SQL shows blobs. Lossless, so historical backfills stay possible.
 - `rank_snapshots`: constructed and limited rank changes by season, with optional ranked match/game linkage.
 - `game_annotations`: user notes and comma-joined tags per game, written by the dashboard's
   `POST /api/game/annotation` endpoint (the only write path in the dashboard server).
