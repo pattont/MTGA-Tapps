@@ -19,6 +19,50 @@ def test_payload_codec_round_trip_and_legacy_values():
     assert decode_payload(memoryview(stored)) == text
 
 
+def _insert_deck_game(conn, game_id, deck_name, started_at, cards):
+    conn.execute(
+        "INSERT INTO games (id, session_id, match_id, started_at, outcome) "
+        "VALUES (?, 'session-1', ?, ?, 'win')",
+        (game_id, f"match-{game_id}", started_at),
+    )
+    participant_id = f"{game_id}-player"
+    conn.execute(
+        "INSERT INTO participants (id, game_id, role, deck_name) VALUES (?, ?, 'player', ?)",
+        (participant_id, game_id, deck_name),
+    )
+    for arena_id, (name, qty) in enumerate(cards, start=1):
+        conn.execute(
+            "INSERT INTO game_deck_cards (game_id, participant_id, arena_id, display_name, deck_zone, quantity) "
+            "VALUES (?, ?, ?, ?, 'deck', ?)",
+            (game_id, participant_id, arena_id, name, qty),
+        )
+    return participant_id
+
+
+def test_canonicalize_imported_deck_names_uses_exact_decklist_match(tmp_path):
+    store = AnalyticsStore(tmp_path / "analytics.sqlite3")
+    conn = store.connect()
+    deck = [("Amalia", 4), ("Plains", 20), ("Swamp", 16), ("Deep-Cavern Bat", 4)]
+    with conn:
+        _insert_deck_game(conn, "game-import", "Imported Deck", "2026-08-02T23:31:43", deck)
+        _insert_deck_game(conn, "game-named", "Orzhov Lifegain", "2026-08-02T23:50:00", deck)
+        # Near-miss (different quantities) must NOT rename.
+        _insert_deck_game(
+            conn, "game-import-2", "Imported Deck (3)", "2026-07-26T00:56:53",
+            [("Amalia", 4), ("Plains", 21), ("Swamp", 15), ("Deep-Cavern Bat", 4)],
+        )
+
+    renamed = AnalyticsStore.canonicalize_imported_deck_names(conn)
+
+    names = dict(
+        conn.execute("SELECT game_id, deck_name FROM participants WHERE role='player'")
+    )
+    store.close()
+    assert renamed == 1
+    assert names["game-import"] == "Orzhov Lifegain"
+    assert names["game-import-2"] == "Imported Deck (3)"
+
+
 def test_migration_v11_compresses_legacy_payload_rows(tmp_path):
     db_path = tmp_path / "analytics.sqlite3"
     store = AnalyticsStore(db_path)
