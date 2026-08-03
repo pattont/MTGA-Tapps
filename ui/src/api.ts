@@ -461,6 +461,7 @@ export interface DeckDetail {
   summary: Summary;
   profile: DeckProfile;
   combat_profile: CombatDeckRow | null;
+  streaks?: StreakSummary | null;
   composition: DeckCompositionRow[];
   versions: DeckVersionRow[];
   opponent_colors?: OpponentColorRow[];

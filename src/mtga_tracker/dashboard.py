@@ -763,10 +763,11 @@ def _fatigue_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> Li
             )
             SELECT
               CASE
-                WHEN nth <= 2 THEN 0
-                WHEN nth <= 4 THEN 1
-                WHEN nth <= 6 THEN 2
-                ELSE 3
+                WHEN nth <= 4 THEN 0
+                WHEN nth <= 9 THEN 1
+                WHEN nth <= 14 THEN 2
+                WHEN nth <= 19 THEN 3
+                ELSE 4
               END AS bucket,
               COUNT(*) AS games,
               SUM(outcome = 'win') AS wins,
@@ -779,7 +780,15 @@ def _fatigue_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> Li
             params,
         )
     )
-    labels = {0: "Games 1–2", 1: "Games 3–4", 2: "Games 5–6", 3: "Games 7+"}
+    # Fresh baseline is games 1–4; fatigue only plausibly sets in from game 5,
+    # and marathon 20+ game sessions are common enough to earn their own tier.
+    labels = {
+        0: "Games 1–4",
+        1: "Games 5–9",
+        2: "Games 10–14",
+        3: "Games 15–19",
+        4: "Games 20+",
+    }
     for row in rows:
         row["label"] = labels.get(int(row.get("bucket") or 0), "Unknown")
     return rows
@@ -1927,6 +1936,7 @@ def deck_detail(
         ).fetchone()
         combat_rows = _combat_deck_rows(conn, where, params)
         combat_profile = combat_rows[0] if combat_rows else None
+        streaks = _streak_summary(conn, where, params)
         composition_rows, version_rows, sideboard_summary = _deck_decklist_analysis(
             conn, where, params
         )
@@ -2215,6 +2225,7 @@ def deck_detail(
             "on_play_pct": profile[3],
         },
         "combat_profile": combat_profile,
+        "streaks": streaks,
         "composition": composition_rows,
         "versions": version_rows,
         "opponent_colors": opponent_color_rows,
