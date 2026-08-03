@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# DEPRECATED (2026-08): early-development debug relic, kept for reference only.
+# Not maintained and likely broken — see tests/deprecated/README.md.
 """Simulate a MTGA game to preview tracker output.
 
 This script simulates what the tracker output would look like during a game,
