@@ -34,10 +34,11 @@ Release cadence: bump `src/mtga_tracker/__init__.py` `__version__`, commit,
 
 ## Step 1 — Windows build (1–2 sessions of work)
 
-1. Add `scripts/build_windows_app.ps1` mirroring the macOS script:
-   `npm ci && npm run build` in `ui/`, then
-   `python -m PyInstaller --noconfirm --clean packaging/mtga_tracker.spec`.
-   The spec may need small platform conditionals (icon `.ico`, console flag).
+1. ~~Add `scripts/build_windows_app.ps1`~~ **Done** — builds `ui/dist`, runs
+   PyInstaller, and zips `dist/MTGA-Tracker-windows.zip`. The spec is
+   platform-conditional (`.icns`/BUNDLE on macOS, `.ico` on Windows —
+   `packaging/assets/MTGATracker.ico` is committed) and reads the app version
+   from `__version__`. Validated on Linux (same non-mac code path).
 2. Verify on a real Windows machine (or VM) with Arena installed:
    log tailing, card database discovery, dashboard, data dir. This is the one
    step that genuinely needs Windows hardware — the code paths exist but have
