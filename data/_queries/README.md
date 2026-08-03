@@ -26,6 +26,8 @@ Useful starting points:
 - `MulliganStatsByDeck.sql`: win rate grouped by deck and mulligan count.
 - `MulliganWinRate.sql`: overall win rate by mulligan count.
 - `DeckCombatDamageStats.sql`: aggregate combat, damage, draw, discard, and mill stats by deck.
+- `DeckWinRateByWeek.sql`: weekly win-rate trend per deck.
+- `OpponentDecksFaced.sql`: opponent deck archetypes/names faced, with your record against each.
 - `GameTimeline.sql`: event timeline for one game after replacing `PASTE_GAME_ID_HERE`.
 - `UnknownDeckGames.sql`: games still missing a deck name, useful for backfill/debugging.
 - `DbConsistencyFindings.sql`: quick SQL-only view of suspicious DB rows.
