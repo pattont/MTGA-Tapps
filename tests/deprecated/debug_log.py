@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# DEPRECATED (2026-08): early-development debug relic, kept for reference only.
+# Not maintained and likely broken — see tests/deprecated/README.md.
 """Debug script to see what's in the MTGA log file."""
 
 import sys

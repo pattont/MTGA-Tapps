@@ -12,7 +12,7 @@
 
 **How it works:** The tracker defines seats only by hand visibility in the log. **Hand we can see (cards have grpId) = you. Hand we cannot see = opponent.** There is no pre-assignment or config swap.
 
-**If You/Opponent appear backwards:** The log on your client may expose card identities differently (e.g. revealed opponent cards have grpIds). Run `python debug_seats.py` during a match to inspect hand visibility and seat IDs. If detection consistently fails, see "Advanced: Manual Seat Configuration" below.
+**If You/Opponent appear backwards:** The log on your client may expose card identities differently (e.g. revealed opponent cards have grpIds). Run the deprecated `tests/deprecated/debug_seats.py` relic during a match to inspect hand visibility and seat IDs. If detection consistently fails, see "Advanced: Manual Seat Configuration" below.
 
 ## Life Totals Not Tracking
 
@@ -30,7 +30,7 @@
 
 Run the debug script while in an active game:
 ```bash
-python debug_seats.py
+python tests/deprecated/debug_seats.py  # deprecated debug relic
 ```
 
 Look for:
@@ -54,7 +54,7 @@ Look for:
 
 Check if events are being logged:
 ```bash
-python debug_log.py
+python tests/deprecated/debug_log.py  # deprecated debug relic
 ```
 
 This will show:
@@ -129,7 +129,7 @@ rm data/card_cache.json
 
 4. **Try the debug script:**
    ```bash
-   python debug_log.py
+   python tests/deprecated/debug_log.py  # deprecated debug relic
    ```
    This will wait 10 seconds for new log entries.
    Play a card in MTGA during this time to test.
