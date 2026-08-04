@@ -377,6 +377,60 @@ class TrackerLifecycleMixin:
                 return True
         return False
 
+    def _capture_arena_game_info(self, data: Dict[str, Any]) -> None:
+        """Harvest Arena's own match identity from a gameStateMessage's gameInfo.
+
+        Arena stamps game-state packets with the match UUID, the game number
+        within the match, and the win condition. That is the authoritative
+        signal for grouping Bo3 games — far more reliable than the event-name
+        heuristics, which stay as a fallback for logs without gameInfo.
+        """
+        if self.game_state.match_complete:
+            # A completed game's state is frozen; the game-start boundary in
+            # _check_game_start owns the transition to the next game/match.
+            return
+        game_info = data.get("gameInfo")
+        if not isinstance(game_info, dict):
+            return
+        match_id = game_info.get("matchID")
+        if isinstance(match_id, str) and match_id and self.game_state.arena_match_id is None:
+            self.game_state.arena_match_id = match_id
+        win_condition = str(game_info.get("matchWinCondition") or "")
+        if "Best2of3" in win_condition:
+            self.game_state.match_type = "best_of_3"
+        try:
+            game_number = int(game_info.get("gameNumber"))
+        except (TypeError, ValueError):
+            game_number = 0
+        if game_number >= 1:
+            self.game_state.game_number = game_number
+            if game_number > 1:
+                self.game_state.match_type = "best_of_3"
+
+    def _line_arena_game_info(self, line: str) -> Dict[str, Any]:
+        """Return Arena gameInfo identity fields present on a log line."""
+        info: Dict[str, Any] = {}
+        if "matchid" not in line.lower():
+            return info
+        for event in self._extract_game_state_events(line):
+            if event.get("type") != "game_state":
+                continue
+            game_info = (event.get("data") or {}).get("gameInfo")
+            if not isinstance(game_info, dict):
+                continue
+            match_id = game_info.get("matchID")
+            if isinstance(match_id, str) and match_id:
+                info["match_id"] = match_id
+            try:
+                game_number = int(game_info.get("gameNumber"))
+            except (TypeError, ValueError):
+                game_number = 0
+            if game_number >= 1:
+                info["game_number"] = game_number
+            if info:
+                break
+        return info
+
     def _release_waiting_for_next_game_if_detected(self, line: str) -> None:
         """Clear waiting mode when a new game's first marker appears."""
         if not self.waiting_for_next_game:
@@ -388,6 +442,27 @@ class TrackerLifecycleMixin:
         elif self._line_has_state_game_start(line):
             self.waiting_for_next_game = False
             self._print_new_game_detected()
+
+    def _bo3_match_continues(self) -> bool:
+        """Return True when the just-completed game leaves its Bo3 match undecided.
+
+        Requires Arena's match UUID: without it we cannot safely match the next
+        game start to this match, so legacy logs keep the old reset behavior.
+        """
+        if self.game_state.match_type != "best_of_3":
+            return False
+        if not self.game_state.arena_match_id:
+            return False
+        if self.game_state.arena_match_over:
+            return False
+        wins = {1: 0, 2: 0}
+        for game in self.match_games:
+            winner = game.get("winner")
+            if winner in (1, 2):
+                wins[winner] += 1
+        if self.game_state.winner_seat in (1, 2):
+            wins[self.game_state.winner_seat] += 1
+        return wins[1] < 2 and wins[2] < 2
 
     def _prepare_next_match_game(self) -> None:
         """Reset state when another game starts in the same match."""
@@ -401,6 +476,20 @@ class TrackerLifecycleMixin:
             "player_life": self.game_state.player_life,
             "opponent_life": self.game_state.opponent_life,
         }
+        # Carry match-scoped identity across the per-game reset: the next game
+        # belongs to the same Arena match, and game 2+ log lines rarely restate
+        # the format, opponent, or deck. Built BEFORE the summary flush below,
+        # which may reset game_state. Applied in _reset_new_game_tracking after
+        # its metadata backfill, so freshly detected data still wins.
+        continuation = {
+            "game_number": next_game_number,
+            "format_str": self.game_state.format_str,
+            "opponent_display_name": self.game_state.opponent_display_name,
+            "arena_match_id": self.game_state.arena_match_id,
+            "player_deck_event_name": self.game_state.player_deck_event_name,
+            "player_deck_name": self.game_state.player_deck_name,
+            "player_deck_id": self.game_state.player_deck_id,
+        }
         if self._pending_game_summary:
             self._print_game_summary()
             self._pending_game_summary = False
@@ -408,6 +497,7 @@ class TrackerLifecycleMixin:
             return
 
         self.match_games.append(completed_game)
+        self._pending_bo3_continuation = continuation
 
         self._print_line("\n" + "=" * 75)
         self._print_line(f"🔄 GAME {next_game_number} STARTING (Best-of-3 Match)")
@@ -415,6 +505,7 @@ class TrackerLifecycleMixin:
         self.game_state.reset()
         self.game_state.match_type = "best_of_3"
         self.game_state.game_number = next_game_number
+        self.game_state.arena_match_id = continuation["arena_match_id"]
         self.player_cards = []
         self.opponent_cards = []
         self._session_stats_recorded_this_game = False
@@ -485,6 +576,37 @@ class TrackerLifecycleMixin:
         self._pending_event_format = None
         self._require_explicit_game_start = False
 
+        continuation = getattr(self, "_pending_bo3_continuation", None)
+        self._pending_bo3_continuation = None
+        if not continuation:
+            # A brand-new match: completed games of the previous match must not
+            # leak into this match's Bo3 status or win counting.
+            self.match_games = []
+        if continuation:
+            # This start is game 2+ of the same Arena match: restore the
+            # match-scoped identity the per-game reset and metadata backfill
+            # could not re-derive. Freshly detected values keep priority.
+            self.game_state.match_type = "best_of_3"
+            self.game_state.game_number = int(continuation.get("game_number") or 1)
+            carried_format = continuation.get("format_str")
+            if carried_format and carried_format != "Unknown" and (
+                self.game_state.format_str in (None, "", "Unknown")
+            ):
+                self.game_state.format_str = carried_format
+            if self.game_state.arena_match_id is None:
+                self.game_state.arena_match_id = continuation.get("arena_match_id")
+            if not self.game_state.opponent_display_name:
+                self.game_state.opponent_display_name = continuation.get(
+                    "opponent_display_name"
+                )
+            if not self.game_state.player_deck_event_name:
+                self.game_state.player_deck_event_name = continuation.get(
+                    "player_deck_event_name"
+                )
+            if not self.game_state.player_deck_name:
+                self.game_state.player_deck_name = continuation.get("player_deck_name")
+                self.game_state.player_deck_id = continuation.get("player_deck_id")
+
     def _hydrate_start_line_state(self, line: str) -> None:
         """Apply state metadata bundled on the same line as a start marker."""
         for state_event in self._extract_game_state_events(line):
@@ -530,7 +652,19 @@ class TrackerLifecycleMixin:
                 or self._line_has_state_game_start(line)
             ):
                 return
-            if self.game_state.match_type == "best_of_3":
+            incoming_match_id = self._line_arena_game_info(line).get("match_id")
+            previous_match_id = self.game_state.arena_match_id
+            if incoming_match_id and previous_match_id:
+                # Arena's own match UUID is authoritative: the same UUID means
+                # this start is the next game of the same Bo3 match; a
+                # different UUID means a brand-new match — regardless of what
+                # the event-name heuristics concluded about the match type.
+                if incoming_match_id == previous_match_id:
+                    self.game_state.match_type = "best_of_3"
+                    self._prepare_next_match_game()
+                else:
+                    self._finish_completed_best_of_one_before_new_start()
+            elif self.game_state.match_type == "best_of_3":
                 self._prepare_next_match_game()
             else:
                 self._finish_completed_best_of_one_before_new_start()
@@ -611,6 +745,10 @@ class TrackerLifecycleMixin:
                 match_state = str(game_info.get("matchState", ""))
                 if "GameStage_GameOver" in stage and "MatchState_GameComplete" in match_state:
                     structured_match_complete = True
+                if "MatchState_MatchComplete" in match_state:
+                    self.game_state.arena_match_over = True
+            if isinstance(self._find_nested(json_data, "finalMatchResult"), dict):
+                self.game_state.arena_match_over = True
             winner = self._try_parse_winner_from_json(json_data)
             if winner is not None:
                 winner_priority = 4 if structured_match_complete else 2
