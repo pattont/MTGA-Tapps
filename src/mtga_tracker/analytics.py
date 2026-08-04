@@ -545,6 +545,7 @@ class AnalyticsStore:
             (9, AnalyticsStore._migrate_v9_delete_ghost_games),
             (10, AnalyticsStore._migrate_v10_delete_unknown_deck_games),
             (11, AnalyticsStore._migrate_v11_compress_raw_payloads),
+            (12, AnalyticsStore._migrate_v12_delete_orphan_ghost_events),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -770,6 +771,38 @@ class AnalyticsStore:
                 )
             """
         )
+
+    @staticmethod
+    def _migrate_v12_delete_orphan_ghost_events(conn: sqlite3.Connection) -> None:
+        """Delete stray events left behind by skipped ghost games.
+
+        The ghost guard refuses to persist post-concede tails, but events
+        stream to SQLite live, so a stray row could survive under a game id
+        that has no games row. Only ghost-thin evidence is removed: at most
+        three events, no turn events, and no recorded turn timings — a real
+        lost game (which db_audit can reconstruct) has far more than that.
+        """
+        doomed = [
+            str(row[0])
+            for row in conn.execute(
+                """
+                SELECT e.game_id
+                FROM game_events e
+                WHERE e.game_id IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM games g WHERE g.id = e.game_id)
+                GROUP BY e.game_id
+                HAVING COUNT(*) <= 3
+                   AND SUM(e.event_type = 'turn') = 0
+                   AND NOT EXISTS (
+                     SELECT 1 FROM game_turns t WHERE t.game_id = e.game_id
+                   )
+                """
+            ).fetchall()
+        ]
+        for game_id in doomed:
+            conn.execute("DELETE FROM game_events WHERE game_id = ?", (game_id,))
+        if doomed:
+            print(f"👻 Removed stray events from {len(doomed)} skipped ghost game(s).")
 
     @staticmethod
     def _migrate_v11_compress_raw_payloads(conn: sqlite3.Connection) -> None:

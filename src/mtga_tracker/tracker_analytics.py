@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import sys
 import time
@@ -226,6 +227,66 @@ class TrackerAnalyticsMixin:
         except (AttributeError, sqlite3.Error, OSError, TypeError, ValueError):
             return
 
+    def _backfill_unresolved_card_labels(self) -> None:
+        """Resolve leftover "Card #N" labels once the Arena card DB knows them.
+
+        Cards can persist under their numeric fallback when a set is newer
+        than the local card database (or an object id slipped through). Each
+        startup retries the lookup and rewrites the cards row plus every
+        display_name that carried the placeholder.
+        """
+        conn = self._analytics_connect()
+        if conn is None:
+            return
+        get_name = getattr(self.card_db, "get_card_name", None)
+        if get_name is None:
+            return
+        try:
+            rows = conn.execute(
+                "SELECT id, name FROM cards WHERE name LIKE 'Card #%'"
+            ).fetchall()
+        except sqlite3.Error:
+            return
+        resolved = 0
+        try:
+            with conn:
+                for card_id, old_name in rows:
+                    match = re.match(r"^Card #(\d+)$", str(old_name or ""))
+                    if not match:
+                        continue
+                    grp_id = int(match.group(1))
+                    try:
+                        new_name = str(get_name(grp_id) or "")
+                    except Exception:
+                        continue
+                    if not new_name or new_name.startswith("Card #"):
+                        continue
+                    before = conn.total_changes
+                    conn.execute(
+                        "UPDATE OR IGNORE cards SET name = ?, arena_id = COALESCE(arena_id, ?) "
+                        "WHERE id = ?",
+                        (new_name, grp_id, card_id),
+                    )
+                    if conn.total_changes == before:
+                        continue  # a card with that name already exists; leave the label
+                    for table_name in (
+                        "game_card_summary",
+                        "game_drawn_cards",
+                        "game_opening_hand_cards",
+                        "game_deck_cards",
+                    ):
+                        conn.execute(
+                            f"UPDATE {table_name} SET display_name = ? WHERE display_name = ?",
+                            (new_name, old_name),
+                        )
+                    resolved += 1
+        except sqlite3.Error:
+            return
+        if resolved:
+            self._print_line(
+                f"🃏 Resolved {resolved} previously unknown card label(s) from the Arena card DB."
+            )
+
     def _recover_missing_turn_timings(self) -> None:
         """Recover persisted turn durations from durable console headers at startup."""
         conn = self._analytics_connect()
@@ -302,6 +363,28 @@ class TrackerAnalyticsMixin:
         """Return deterministic game id scoped to this tracker session."""
         game_number = int(self.game_state.game_number or self._current_game_ordinal())
         return f"{self._current_match_id()}:game:{game_number}"
+
+    def _purge_ghost_game_breadcrumbs(self) -> None:
+        """Delete live-written rows for a game the ghost guard refused to save.
+
+        Events and turn timings stream to SQLite during play, before the guard
+        can know the "game" is a post-concede tail. Leaving them orphaned makes
+        db_audit report a missing completed game and offer to reconstruct the
+        very ghost we skipped — so remove the breadcrumbs with the skip.
+        """
+        conn = self._analytics_connect()
+        if conn is None:
+            return
+        game_id = self._current_game_id()
+        try:
+            with conn:
+                for table_name in ("game_events", "game_turns"):
+                    conn.execute(
+                        f"DELETE FROM {table_name} WHERE game_id = ?", (game_id,)
+                    )
+        except sqlite3.Error:
+            # Cleanup is best-effort; the audit's orphan sweep also covers it.
+            pass
 
     def _participant_id_for_role(self, game_id: str, role: str) -> str:
         """Return deterministic participant id for player/opponent roles."""
@@ -954,6 +1037,7 @@ class TrackerAnalyticsMixin:
             and not self.game_state.drawn_card_events.get(self.game_state.player_seat_id)
         ):
             self._print_line("👻 Skipping ghost game record (no turns or cards observed).")
+            self._purge_ghost_game_breadcrumbs()
             return
         conn = self._analytics_connect()
         if conn is None:

@@ -63,6 +63,37 @@ def test_canonicalize_imported_deck_names_uses_exact_decklist_match(tmp_path):
     assert names["game-import-2"] == "Imported Deck (3)"
 
 
+def test_migration_v12_deletes_orphan_ghost_events_only(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    store = AnalyticsStore(db_path)
+    conn = store.connect()
+    with conn:
+        # Ghost: one stray cast event, no games row, no turns.
+        conn.execute(
+            "INSERT INTO game_events (session_id, match_id, game_id, event_time, event_type, text) "
+            "VALUES ('s1', 's1:match:7', 's1:match:7:game:1', '2026-08-01T22:43:40', 'cast', 'ghost tail')"
+        )
+        # Real lost game: many events including turns — must be preserved so
+        # db_audit can reconstruct it.
+        for n in range(6):
+            conn.execute(
+                "INSERT INTO game_events (session_id, match_id, game_id, event_time, event_type, text) "
+                "VALUES ('s1', 's1:match:8', 's1:match:8:game:1', '2026-08-01T23:00:00', ?, ?)",
+                ("turn" if n == 0 else "cast", f"event {n}"),
+            )
+        conn.execute("DELETE FROM schema_migrations WHERE version = 12")
+    AnalyticsStore.apply_pending_migrations(conn)
+    ghost = conn.execute(
+        "SELECT COUNT(*) FROM game_events WHERE game_id = 's1:match:7:game:1'"
+    ).fetchone()[0]
+    real = conn.execute(
+        "SELECT COUNT(*) FROM game_events WHERE game_id = 's1:match:8:game:1'"
+    ).fetchone()[0]
+    store.close()
+    assert ghost == 0
+    assert real == 6
+
+
 def test_migration_v11_compresses_legacy_payload_rows(tmp_path):
     db_path = tmp_path / "analytics.sqlite3"
     store = AnalyticsStore(db_path)
