@@ -37,6 +37,22 @@ def test_format_normalizer_labels_nonstandard_constructed_queues():
     assert normalize_match_format("Historic_Brawl").is_brawl
 
 
+def test_format_normalizer_labels_other_modes_and_events():
+    assert format_label("DirectGame") == "Direct Challenge"
+    assert normalize_match_format("Traditional_DirectGame").best_of == 3
+    assert format_label("JumpIn_20260801") == "Jump In!"
+    assert format_label("ColorChallenge_W") == "Color Challenge"
+    assert format_label("Festival_TimelessBonanza_20260820") == "Festival Timeless Bonanza"
+    assert normalize_match_format("Festival_TimelessBonanza_20260820").family == "event"
+    assert normalize_match_format("QualifierWeekend_20260809").best_of == 3
+    assert normalize_match_format("ArenaOpen_Day2_Traditional_Standard_20260815").best_of == 3
+    # Unknown future modes: prettified label, Bo3 markers still honored.
+    future = normalize_match_format("SomeFutureMode_Traditional_20270101")
+    assert future.label == "Some Future Mode Traditional"
+    assert future.best_of == 3
+    assert future.family == "unknown"
+
+
 def test_momir_format_detection_handles_midweek_and_plain_labels():
     assert is_momir_format("MWM_Momir")
     assert is_momir_format("Midweek Magic - Momir")

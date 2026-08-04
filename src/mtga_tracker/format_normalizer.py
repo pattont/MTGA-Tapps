@@ -75,6 +75,14 @@ def _standard_label(best_of: int, *, ranked: bool) -> str:
     return f"Standard Best-of-{best_of} ({tier})"
 
 
+def _prettify_event(raw: str) -> str:
+    """Humanize an event identifier: strip date suffixes, split words."""
+    text = re.sub(r"[_-]?\d{8}$", "", raw.strip())
+    text = re.sub(r"[_-]+", " ", text)
+    text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", text)
+    return re.sub(r"\s+", " ", text).strip() or raw
+
+
 def normalize_match_format(
     raw_format: Optional[str], *, default_best_of: int = 1
 ) -> NormalizedFormat:
@@ -117,6 +125,27 @@ def normalize_match_format(
         )
     if "brawl" in normalized:
         return NormalizedFormat(raw=raw, label="Brawl", family="brawl", best_of=1, is_brawl=True)
+    if "directgame" in normalized or "directchallenge" in normalized:
+        best_of = 3 if "traditional" in normalized or "bestof3" in normalized else 1
+        return NormalizedFormat(
+            raw=raw, label="Direct Challenge", family="direct_challenge", best_of=best_of
+        )
+    if "jumpin" in normalized or "jumpstart" in normalized:
+        return NormalizedFormat(raw=raw, label="Jump In!", family="jump_in", best_of=1)
+    if "colorchallenge" in normalized or normalized.startswith("npe"):
+        return NormalizedFormat(
+            raw=raw, label="Color Challenge", family="color_challenge", best_of=1
+        )
+    # Scheduled events keep their (prettified) own name: Arena Opens,
+    # Qualifiers, Metagame Challenges, Festivals, championship qualifiers.
+    if any(
+        token in normalized
+        for token in ("arenaopen", "qualifier", "metagamechallenge", "festival", "arenachampionship")
+    ):
+        best_of = 3 if any(
+            token in normalized for token in ("traditional", "bestof3", "bo3", "weekend", "day2")
+        ) else 1
+        return NormalizedFormat(raw=raw, label=_prettify_event(raw), family="event", best_of=best_of)
     if normalized in {"traditionalstandard", "constructedbestof3", "bestof3", "traditionalladder"}:
         # "Ladder" queues are ranked; Constructed_BestOf3/Play are unranked.
         ranked = "ladder" in normalized
@@ -159,7 +188,10 @@ def normalize_match_format(
         return NormalizedFormat(
             raw=raw, label=_standard_label(best_of, ranked=ranked), family="standard", best_of=best_of
         )
-    return NormalizedFormat(raw=raw, label=raw, family="unknown", best_of=1)
+    # Unknown queue: prettify rather than leaking the raw identifier, and
+    # still honor Bo3 markers so future modes get sane match grouping.
+    best_of = 3 if "traditional" in normalized or "bestof3" in normalized else 1
+    return NormalizedFormat(raw=raw, label=_prettify_event(raw), family="unknown", best_of=best_of)
 
 
 def format_label(raw_format: Optional[str], *, default_best_of: int = 1) -> str:
