@@ -30,6 +30,7 @@ export const auditNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
   { id: 'audit-summary', label: 'Summary' },
   { id: 'audit-findings', label: 'Findings' },
+  { id: 'audit-danger', label: 'Danger Zone' },
 ];
 
 export const deckNavItems: AppNavItem[] = [

@@ -2636,6 +2636,69 @@ tbody tr:hover {
   color: var(--danger);
 }
 
+/* ---- DB Health danger zone (Reset Database) ---- */
+
+.danger-zone {
+  display: grid;
+  gap: 12px;
+  max-width: 640px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--danger) 55%, var(--border));
+  border-radius: 8px;
+  background: var(--card-danger-bg);
+}
+
+.danger-zone-warning {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.danger-zone-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.danger-zone-controls input {
+  flex: 1 1 220px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.danger-zone-button {
+  padding: 8px 16px;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.danger-zone-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.danger-zone-result {
+  margin: 0;
+  color: var(--success);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.danger-zone-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
 /* ---- Deck Land Statistics value colors ---- */
 
 .land-stat-normal { color: var(--success); }

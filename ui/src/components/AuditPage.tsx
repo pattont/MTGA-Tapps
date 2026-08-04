@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchAuditReport, type AuditFindingRow, type AuditReport } from '../api';
+import { fetchAuditReport, resetDatabase, type AuditFindingRow, type AuditReport } from '../api';
 import { Badge } from './Badge';
 import { MetricCard } from './MetricCard';
 import { Section } from './Section';
@@ -95,6 +95,79 @@ export function AuditPage() {
           <p className="empty-state">No consistency issues found. The database looks healthy.</p>
         )}
       </Section>
+
+      <Section
+        id="audit-danger"
+        title="Danger Zone"
+        description="Reset wipes every tracked game, match, and session from the database. A timestamped backup is written first, and the schema stays intact so tracking resumes cleanly. Close the tracker before resetting."
+      >
+        <DangerZone onReset={() => setRetryToken((token) => token + 1)} />
+      </Section>
     </>
+  );
+}
+
+function DangerZone({ onReset }: { onReset: () => void }) {
+  const [confirmText, setConfirmText] = useState('');
+  const [state, setState] = useState<
+    { status: 'idle' } | { status: 'working' } | { status: 'done'; backup: string } | { status: 'error'; message: string }
+  >({ status: 'idle' });
+  const armed = confirmText === 'RESET';
+
+  async function handleReset() {
+    setState({ status: 'working' });
+    try {
+      const result = await resetDatabase(confirmText);
+      setConfirmText('');
+      setState({ status: 'done', backup: result.backup });
+      onReset();
+    } catch (error: unknown) {
+      setState({
+        status: 'error',
+        message: error instanceof Error ? error.message : 'Reset failed',
+      });
+    }
+  }
+
+  return (
+    <div className="danger-zone">
+      <p className="danger-zone-warning">
+        This cannot be undone from the dashboard. Type <strong>RESET</strong> (all caps) to enable
+        the button.
+      </p>
+      <div className="danger-zone-controls">
+        <input
+          aria-label="Type RESET to confirm"
+          placeholder="Type RESET to confirm"
+          value={confirmText}
+          onChange={(event) => {
+            setConfirmText(event.target.value);
+            if (state.status === 'done' || state.status === 'error') {
+              setState({ status: 'idle' });
+            }
+          }}
+        />
+        <button
+          className="danger-zone-button"
+          disabled={!armed || state.status === 'working'}
+          type="button"
+          onClick={() => void handleReset()}
+        >
+          {state.status === 'working' ? 'Resetting…' : 'Reset Database'}
+        </button>
+      </div>
+      {state.status === 'done' ? (
+        <p className="danger-zone-result" role="status">
+          Database reset. A backup of your old data was saved to:
+          <br />
+          <code>{state.backup}</code>
+        </p>
+      ) : null}
+      {state.status === 'error' ? (
+        <p className="danger-zone-error" role="alert">
+          {state.message}
+        </p>
+      ) : null}
+    </div>
   );
 }
