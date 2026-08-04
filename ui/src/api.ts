@@ -438,11 +438,29 @@ export interface DeckSideboardRecord {
   win_rate: number | null;
 }
 
+export interface SideboardSwapRow {
+  display_name: string;
+  boarded_in: number;
+  boarded_out: number;
+  games_in: number;
+  wins_in: number;
+  losses_in: number;
+  win_rate_in: number | null;
+  vs_in: string;
+  vs_out: string;
+}
+
 export interface DeckSideboardSummary {
   matches: number;
   game_one: DeckSideboardRecord;
   post_board: DeckSideboardRecord;
   boarded_in: { display_name: string; copies: number }[];
+  swaps?: SideboardSwapRow[];
+}
+
+export interface DeckAccountRow {
+  name: string;
+  games: number;
 }
 
 export interface DeckLandProfile {
@@ -466,6 +484,7 @@ export interface DeckDetail {
   versions: DeckVersionRow[];
   opponent_colors?: OpponentColorRow[];
   sideboard: DeckSideboardSummary | null;
+  accounts?: DeckAccountRow[];
   land_profile?: DeckLandProfile | null;
   mana_readiness: ManaReadinessRow[];
   formats: FormatRow[];
@@ -652,6 +671,7 @@ export interface AuditReport {
 
 export interface GameDetail {
   game: GameHeader;
+  multi_account?: boolean;
   player: GameParticipant;
   opponent: GameParticipant;
   annotation?: GameAnnotation;

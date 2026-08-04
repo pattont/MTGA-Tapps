@@ -8,6 +8,7 @@ import {
   type DeckGameRow,
   type DeckVersionRow,
   type MulliganRow,
+  type SideboardSwapRow,
   type SnapshotFilters,
 } from '../api';
 import { formatPercent } from '../dashboardData';
@@ -157,6 +158,49 @@ function deckListPerformanceRows(detail: DeckDetail): DeckListPerformanceRow[] {
     };
   });
 }
+
+const sideboardSwapColumns: Column<SideboardSwapRow>[] = [
+  {
+    key: 'display_name',
+    header: 'Card',
+    render: (row) => <CardLink cardName={row.display_name} />,
+    sortValue: (row) => row.display_name,
+  },
+  { key: 'boarded_in', header: 'In', numeric: true },
+  { key: 'boarded_out', header: 'Out', numeric: true },
+  {
+    key: 'wins_in',
+    header: 'Record When In',
+    render: (row) =>
+      row.games_in > 0 ? `${row.wins_in}–${row.losses_in}` : '—',
+    sortValue: (row) => row.wins_in,
+    numeric: true,
+  },
+  {
+    key: 'win_rate_in',
+    header: 'Win Rate When In',
+    render: (row) =>
+      row.games_in > 0 ? (
+        <WinRateBar losses={row.losses_in} winRate={row.win_rate_in} wins={row.wins_in} />
+      ) : (
+        '—'
+      ),
+    sortValue: (row) => row.win_rate_in,
+    numeric: true,
+  },
+  {
+    key: 'vs_in',
+    header: 'In Vs',
+    render: (row) => row.vs_in || '—',
+    sortValue: (row) => row.vs_in,
+  },
+  {
+    key: 'vs_out',
+    header: 'Out Vs',
+    render: (row) => row.vs_out || '—',
+    sortValue: (row) => row.vs_out,
+  },
+];
 
 const cardColumns: Column<DeckListPerformanceRow>[] = [
   { key: 'quantity', header: 'Count', numeric: true },
@@ -630,6 +674,13 @@ export function DeckDetailPage({
         ))}
       </section>
 
+      {(detail.accounts ?? []).length > 1 ? (
+        <p className="account-flag" title="This deck has tracked games from more than one Arena account">
+          Played on {detail.accounts?.length} accounts:{' '}
+          {detail.accounts?.map((account) => `${account.name} (${account.games})`).join(' · ')}
+        </p>
+      ) : null}
+
       <Section
         id="deck-combat"
         title="Combat Profile"
@@ -808,7 +859,16 @@ export function DeckDetailPage({
                 value={formatPercent(detail.sideboard.post_board.win_rate)}
               />
             </section>
-            {detail.sideboard.boarded_in.length > 0 ? (
+            {(detail.sideboard.swaps ?? []).length > 0 ? (
+              <SortableTable
+                caption="Sideboard swaps"
+                columns={sideboardSwapColumns}
+                getRowKey={(row) => row.display_name}
+                initialSort={{ key: 'boarded_in', direction: 'desc' }}
+                pageSize={10}
+                rows={detail.sideboard.swaps ?? []}
+              />
+            ) : detail.sideboard.boarded_in.length > 0 ? (
               <p className="section-description">
                 Most boarded in:{' '}
                 {detail.sideboard.boarded_in

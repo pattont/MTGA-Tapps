@@ -523,7 +523,28 @@ def _deck_decklist_analysis(
     game_one = {"wins": 0, "losses": 0}
     post_board = {"wins": 0, "losses": 0}
     boarded_in: Dict[str, int] = {}
+    # Per-card swap aggregation: each post-board game is diffed against the
+    # PREVIOUS game's submitted maindeck, so game-3 re-boarding counts too.
+    swap_stats: Dict[str, Dict[str, Any]] = {}
+    swap_game_ids: set = set()
     multi_game_matches = 0
+
+    def _swap_bucket(name: str) -> Dict[str, Any]:
+        return swap_stats.setdefault(
+            name,
+            {
+                "display_name": name,
+                "boarded_in": 0,
+                "boarded_out": 0,
+                "games_in": 0,
+                "wins_in": 0,
+                "losses_in": 0,
+                "vs_in": {},
+                "vs_out": {},
+            },
+        )
+
+    swap_events: List[Dict[str, Any]] = []
     for match_games in matches.values():
         if len(match_games) < 2:
             continue
@@ -536,15 +557,91 @@ def _deck_decklist_analysis(
                 bucket["wins"] += 1
             elif game.get("outcome") == "loss":
                 bucket["losses"] += 1
-            if index > 0 and base_signature is not None:
+            if index > 0:
+                previous_signature = signature_by_game.get(ordered[index - 1]["game_id"])
                 signature = signature_by_game.get(game["game_id"])
-                if signature is not None:
-                    before = dict(base_signature)
-                    after = dict(signature)
-                    for name, quantity in after.items():
-                        delta = quantity - before.get(name, 0)
-                        if delta > 0:
-                            boarded_in[name] = boarded_in.get(name, 0) + delta
+                if previous_signature is None or signature is None:
+                    continue
+                before = dict(previous_signature)
+                after = dict(signature)
+                for name in set(before) | set(after):
+                    delta = after.get(name, 0) - before.get(name, 0)
+                    if delta == 0:
+                        continue
+                    if delta > 0:
+                        boarded_in[name] = boarded_in.get(name, 0) + delta
+                    swap_events.append(
+                        {
+                            "name": name,
+                            "delta": delta,
+                            "game_id": game["game_id"],
+                            "outcome": game.get("outcome"),
+                        }
+                    )
+                    swap_game_ids.add(game["game_id"])
+
+    # Opponent color combo per post-board game with at least one swap.
+    combo_by_game: Dict[str, Optional[str]] = {}
+    for game_id in swap_game_ids:
+        participant_row = conn.execute(
+            "SELECT id FROM participants WHERE game_id = ? AND role = 'opponent'",
+            (game_id,),
+        ).fetchone()
+        letters = (
+            _opponent_color_letters(conn, game_id, str(participant_row[0]))
+            if participant_row
+            else ""
+        )
+        combo_by_game[game_id] = color_combo_label(letters)
+
+    for event in swap_events:
+        stats = _swap_bucket(event["name"])
+        combo = combo_by_game.get(event["game_id"])
+        if event["delta"] > 0:
+            stats["boarded_in"] += event["delta"]
+            stats["games_in"] += 1
+            if event["outcome"] == "win":
+                stats["wins_in"] += 1
+            elif event["outcome"] == "loss":
+                stats["losses_in"] += 1
+            if combo:
+                stats["vs_in"][combo] = stats["vs_in"].get(combo, 0) + 1
+        else:
+            stats["boarded_out"] += -event["delta"]
+            if combo:
+                stats["vs_out"][combo] = stats["vs_out"].get(combo, 0) + 1
+
+    def _top_combos(counter: Dict[str, int]) -> str:
+        ranked = sorted(counter.items(), key=lambda item: (-item[1], item[0]))[:2]
+        return " · ".join(
+            f"{label} ×{count}" if count > 1 else label for label, count in ranked
+        )
+
+    swap_rows = []
+    for stats in swap_stats.values():
+        decided = stats["wins_in"] + stats["losses_in"]
+        swap_rows.append(
+            {
+                "display_name": stats["display_name"],
+                "boarded_in": stats["boarded_in"],
+                "boarded_out": stats["boarded_out"],
+                "games_in": stats["games_in"],
+                "wins_in": stats["wins_in"],
+                "losses_in": stats["losses_in"],
+                "win_rate_in": round(100.0 * stats["wins_in"] / decided, 1)
+                if decided
+                else None,
+                "vs_in": _top_combos(stats["vs_in"]),
+                "vs_out": _top_combos(stats["vs_out"]),
+            }
+        )
+    swap_rows.sort(
+        key=lambda row: (
+            -(row["boarded_in"] + row["boarded_out"]),
+            row["display_name"].casefold(),
+        )
+    )
+
     sideboard_summary = None
     if multi_game_matches:
         decided_one = game_one["wins"] + game_one["losses"]
@@ -569,6 +666,7 @@ def _deck_decklist_analysis(
                     boarded_in.items(), key=lambda item: (-item[1], item[0].casefold())
                 )[:15]
             ],
+            "swaps": swap_rows[:20],
         }
 
     return composition_rows, version_rows, sideboard_summary
@@ -2190,6 +2288,20 @@ def deck_detail(
         deck_export = _deck_export_snapshot(conn, where, params, deck_name)
         opponent_color_rows = _opponent_color_rows(conn, where, params)
         land_profile = _deck_land_profile(conn, where, params)
+        account_rows = _dict_rows(
+            conn.execute(
+                f"""
+                SELECT p.display_name AS name, COUNT(*) AS games
+                FROM games g
+                JOIN matches m ON m.id = g.match_id
+                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                WHERE {where} AND COALESCE(p.display_name, '') != ''
+                GROUP BY p.display_name
+                ORDER BY games DESC
+                """,
+                params,
+            )
+        )
         for row in recent_rows:
             quality = _game_draw_quality(
                 conn,
@@ -2230,6 +2342,7 @@ def deck_detail(
         "versions": version_rows,
         "opponent_colors": opponent_color_rows,
         "sideboard": sideboard_summary,
+        "accounts": account_rows,
         "land_profile": land_profile,
         "mana_readiness": mana_readiness_rows,
         "formats": format_rows,
@@ -2671,6 +2784,12 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
             )
         )
         opponent_colors = _opponent_color_letters(conn, game_id, opponent_participant_id)
+        # Multi-account machines: flag which account played this game (shown
+        # in the UI only when more than one account exists in the database).
+        distinct_accounts = conn.execute(
+            "SELECT COUNT(DISTINCT display_name) FROM participants "
+            "WHERE role = 'player' AND COALESCE(display_name, '') != ''"
+        ).fetchone()[0]
 
     annotation = game_annotation(db_path, game_id)
     opponent_payload = dict(opponent or {})
@@ -2678,6 +2797,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
     opponent_payload["color_label"] = color_combo_label(opponent_colors)
     return {
         "game": game,
+        "multi_account": int(distinct_accounts or 0) > 1,
         "player": player or {},
         "opponent": opponent_payload,
         "annotation": annotation,
