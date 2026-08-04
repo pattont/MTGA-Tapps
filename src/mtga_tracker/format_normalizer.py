@@ -129,25 +129,30 @@ def normalize_match_format(
         return NormalizedFormat(
             raw=raw, label=_standard_label(best_of, ranked=ranked), family="standard", best_of=best_of
         )
-    if normalized in {"historicplay", "historic"}:
-        return NormalizedFormat(raw=raw, label="Historic", family="historic", best_of=1)
-    if normalized in {"explorerplay", "explorer", "pioneerplay", "pioneer"}:
-        return NormalizedFormat(raw=raw, label="Explorer", family="explorer", best_of=1)
-    if normalized in {"timelessplay", "timeless"}:
-        return NormalizedFormat(raw=raw, label="Timeless", family="timeless", best_of=1)
-    if normalized == "alchemy":
-        return NormalizedFormat(raw=raw, label="Alchemy", family="alchemy", best_of=1)
     if "traditionalstandard" in normalized:
         ranked = "ladder" in normalized
         return NormalizedFormat(
             raw=raw, label=_standard_label(3, ranked=ranked), family="standard", best_of=3
         )
-    if "historic" in normalized and "brawl" not in normalized:
-        return NormalizedFormat(raw=raw, label="Historic", family="historic", best_of=1)
-    if "explorer" in normalized or "pioneer" in normalized:
-        return NormalizedFormat(raw=raw, label="Explorer", family="explorer", best_of=1)
-    if "timeless" in normalized:
-        return NormalizedFormat(raw=raw, label="Timeless", family="timeless", best_of=1)
+    # Non-Standard constructed families. "Traditional" queues are Best-of-3
+    # (e.g. Traditional_Historic_Play) and Ranked/Ladder queues are ranked —
+    # mirror the Standard labels so Bo1/Bo3 records don't get lumped together.
+    for token, name, family in (
+        ("historic", "Historic", "historic"),
+        ("explorer", "Explorer", "explorer"),
+        ("pioneer", "Explorer", "explorer"),
+        ("timeless", "Timeless", "timeless"),
+        ("alchemy", "Alchemy", "alchemy"),
+    ):
+        if token in normalized and not (token == "historic" and "brawl" in normalized):
+            best_of = 3 if "traditional" in normalized or "bestof3" in normalized else 1
+            ranked = "ranked" in normalized or "ladder" in normalized
+            return NormalizedFormat(
+                raw=raw,
+                label=f"{name} Best-of-{best_of} ({'Ranked' if ranked else 'Unranked'})",
+                family=family,
+                best_of=best_of,
+            )
     if "standard" in normalized:
         best_of = 3 if "traditional" in normalized or "bestof3" in normalized else 1
         ranked = "ladder" in normalized or "ranked" in normalized
