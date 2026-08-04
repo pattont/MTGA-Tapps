@@ -987,6 +987,31 @@ class TrackerOpeningDeckMixin:
             return self.game_state.format_str != "Unknown"
         return False
 
+    def _room_event_is_for_other_match(self, data: Dict[str, Any]) -> bool:
+        """Return True when a room event belongs to a different Arena match.
+
+        The next match's room setup can arrive in the same read batch as the
+        previous match's ending; applying it would stomp the completed game's
+        opponent and format before they persist. The next game's start-time
+        backfill re-reads the event, so skipping it here loses nothing.
+        """
+        if not (self.game_state.in_match and self.game_state.match_complete):
+            return False
+        current_match_id = self.game_state.arena_match_id
+        if not current_match_id:
+            return False
+        event = data.get("matchGameRoomStateChangedEvent")
+        if not isinstance(event, dict):
+            return False
+        room = event.get("gameRoomInfo")
+        config = room.get("gameRoomConfig") if isinstance(room, dict) else None
+        room_match_id = config.get("matchId") if isinstance(config, dict) else None
+        return (
+            isinstance(room_match_id, str)
+            and bool(room_match_id)
+            and room_match_id != current_match_id
+        )
+
     def _parse_match_metadata(
         self,
         line: str,
@@ -1028,7 +1053,9 @@ class TrackerOpeningDeckMixin:
                 if name:
                     self.game_state.player_display_name = name
         # Format and reserved players from match room event (when a match is set up)
-        if "matchGameRoomStateChangedEvent" in data:
+        if "matchGameRoomStateChangedEvent" in data and not self._room_event_is_for_other_match(
+            data
+        ):
             event = data.get("matchGameRoomStateChangedEvent") or {}
             room = event.get("gameRoomInfo") or {}
             config = room.get("gameRoomConfig") or {}

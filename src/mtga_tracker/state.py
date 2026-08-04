@@ -148,6 +148,13 @@ class GameState:
         self.match_type = "best_of_1"
         self.game_number = 1
         self.format_str = "Unknown"
+        #: Arena's own match UUID from GRE gameInfo — the authoritative way to
+        #: group Bo3 games into one match (heuristics are only a fallback).
+        self.arena_match_id: Optional[str] = None
+        #: True once Arena declared the whole MATCH over (MatchState_MatchComplete
+        #: or a finalMatchResult) — distinguishes "game over, match continues"
+        #: from "match over" for Bo3.
+        self.arena_match_over = False
         self.player_display_name: Optional[str] = None
         self.opponent_display_name: Optional[str] = None
         self.player_deck_name: Optional[str] = None

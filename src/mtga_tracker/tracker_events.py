@@ -95,6 +95,7 @@ class TrackerEventsMixin(
 
     def _process_game_events(self, data: Dict[str, Any]):
         """Process and display important game events."""
+        self._capture_arena_game_info(data)
         game_objects = data.get("gameObjects", [])
         game_objects_by_id = {
             obj.get("instanceId"): obj

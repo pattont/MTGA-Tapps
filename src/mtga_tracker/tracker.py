@@ -104,6 +104,12 @@ class CardTracker(
         self._console_db_path = DATA_DIR / "mtga_tracker.sqlite3"
         self._diagnostic_text_path = DATA_DIR / "mtga_tracker_unhandled_annotations.log"
         self.analytics = AnalyticsStore(self._console_db_path)
+        # Session-stable match ordinals pinned to Arena's match UUIDs, so every
+        # game of a Bo3 match persists under the same tracker match id.
+        self._arena_match_ordinal_by_id: Dict[str, int] = {}
+        # Metadata stashed by _prepare_next_match_game for the next game of the
+        # same Bo3 match; consumed by _reset_new_game_tracking.
+        self._pending_bo3_continuation: Optional[Dict[str, Any]] = None
 
     def _now(self) -> datetime:
         """Return the current source event time when available."""

@@ -393,6 +393,16 @@ class TrackerSummaryMixin:
 
         self._persist_game_analytics(outcome, reason)
 
+        if self._bo3_match_continues():
+            # The Bo3 match is undecided, so the next game belongs to THIS
+            # match. Freeze the completed game's state (in_match=True,
+            # match_complete=True) instead of resetting: the next game's start
+            # may arrive minutes later in a different read batch, and the
+            # completed-match branch of _check_game_start needs the format,
+            # opponent, and Arena match UUID intact to carry them over.
+            self._require_explicit_game_start = True
+            return
+
         # Reset game state for next game
         self.game_state.reset()
         self._active_deck_candidate_key = None

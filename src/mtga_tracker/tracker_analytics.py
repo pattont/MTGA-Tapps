@@ -349,11 +349,25 @@ class TrackerAnalyticsMixin:
         return max(1, completed_games)
 
     def _current_match_ordinal(self) -> int:
-        """Return stable 1-based match ordinal for DB ids."""
+        """Return stable 1-based match ordinal for DB ids.
+
+        When Arena's match UUID is known, the ordinal computed on first sight
+        of that UUID is pinned for the session, so every game of a Bo3 match
+        persists under the same tracker match id even if the heuristic inputs
+        (session game count, game number) shift between games.
+        """
         game_ordinal = self._current_game_ordinal()
         if self.game_state.match_type == "best_of_3":
-            return max(1, game_ordinal - int(self.game_state.game_number or 1) + 1)
-        return game_ordinal
+            heuristic = max(1, game_ordinal - int(self.game_state.game_number or 1) + 1)
+        else:
+            heuristic = game_ordinal
+        arena_match_id = getattr(self.game_state, "arena_match_id", None)
+        if arena_match_id:
+            ordinals = getattr(self, "_arena_match_ordinal_by_id", None)
+            if ordinals is None:
+                ordinals = self._arena_match_ordinal_by_id = {}
+            return ordinals.setdefault(arena_match_id, heuristic)
+        return heuristic
 
     def _current_match_id(self) -> str:
         """Return deterministic match id scoped to this tracker session."""
@@ -665,6 +679,7 @@ class TrackerAnalyticsMixin:
             INSERT INTO matches (
                 id,
                 session_id,
+                raw_match_id,
                 started_at,
                 ended_at,
                 match_type,
@@ -675,8 +690,9 @@ class TrackerAnalyticsMixin:
                 games_played,
                 winner_participant_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
+                raw_match_id = COALESCE(excluded.raw_match_id, matches.raw_match_id),
                 ended_at = excluded.ended_at,
                 match_type = excluded.match_type,
                 format = excluded.format,
@@ -689,6 +705,7 @@ class TrackerAnalyticsMixin:
             (
                 match_id,
                 self.session_id,
+                getattr(self.game_state, "arena_match_id", None),
                 started_at,
                 ended_at,
                 self.game_state.match_type,

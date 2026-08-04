@@ -127,6 +127,8 @@ def make_tracker() -> CardTracker:
     tracker._ansi_reset = ""
     tracker._console_db_path = None
     tracker._diagnostic_text_path = None
+    tracker._arena_match_ordinal_by_id = {}
+    tracker._pending_bo3_continuation = None
     return tracker
 
 
@@ -5956,3 +5958,271 @@ def test_capture_opening_hand_ignores_post_action_hand_six_without_mulligan_prom
     assert tracker.game_state.starting_hand == []
     assert tracker.game_state.mulligan_count == 0
     assert tracker.game_state.opening_hand_capture_closed is True
+
+def _bo3_game_state_line(match_id: str, game_number: int, turn_number: int = 1) -> str:
+    """Build a GRE line whose gameStateMessage carries Arena gameInfo + turn 1."""
+    return json.dumps(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "gameInfo": {
+                                "matchID": match_id,
+                                "gameNumber": game_number,
+                                "matchWinCondition": "MatchWinCondition_Best2of3",
+                            },
+                            "turnInfo": {"turnNumber": turn_number},
+                        },
+                    }
+                ]
+            }
+        }
+    )
+
+
+def test_capture_arena_game_info_sets_match_identity():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+
+    tracker._capture_arena_game_info(
+        {
+            "gameInfo": {
+                "matchID": "arena-uuid-1",
+                "gameNumber": 2,
+                "matchWinCondition": "MatchWinCondition_Best2of3",
+            }
+        }
+    )
+
+    assert tracker.game_state.arena_match_id == "arena-uuid-1"
+    assert tracker.game_state.match_type == "best_of_3"
+    assert tracker.game_state.game_number == 2
+
+
+def test_capture_arena_game_info_frozen_after_match_complete():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.match_complete = True
+    tracker.game_state.arena_match_id = "arena-uuid-1"
+    tracker.game_state.game_number = 1
+
+    tracker._capture_arena_game_info(
+        {"gameInfo": {"matchID": "arena-uuid-2", "gameNumber": 2}}
+    )
+
+    assert tracker.game_state.arena_match_id == "arena-uuid-1"
+    assert tracker.game_state.game_number == 1
+
+
+def test_same_arena_match_id_continues_bo3_despite_heuristic(tmp_path, capsys):
+    """Same Arena match UUID at a new game start means Bo3 game 2 — even when
+    the event-name heuristic wrongly concluded the match was best-of-1."""
+    tracker = make_tracker()
+    log_path = tmp_path / "Player.log"
+    log_path.write_text("", encoding="utf-8")
+    tracker.parser.log_path = str(log_path)
+    tracker.game_state.in_match = True
+    tracker.game_state.match_complete = True
+    tracker.game_state.match_type = "best_of_1"  # flaky heuristic got it wrong
+    tracker.game_state.game_number = 1
+    tracker.game_state.format_str = "Traditional_Historic_Play"
+    tracker.game_state.opponent_display_name = "BgameNWO21"
+    tracker.game_state.arena_match_id = "arena-uuid-1"
+
+    tracker._check_game_start(_bo3_game_state_line("arena-uuid-1", game_number=2))
+
+    assert tracker.game_state.in_match
+    assert tracker.game_state.match_type == "best_of_3"
+    assert tracker.game_state.game_number == 2
+    assert tracker.game_state.arena_match_id == "arena-uuid-1"
+    # Match-scoped identity survives the per-game reset.
+    assert tracker.game_state.format_str == "Traditional_Historic_Play"
+    assert tracker.game_state.opponent_display_name == "BgameNWO21"
+    assert len(tracker.match_games) == 1
+    assert "GAME 2 STARTING" in capsys.readouterr().out
+
+
+def test_different_arena_match_id_starts_new_match_despite_bo3_heuristic(tmp_path):
+    """A different Arena match UUID is a brand-new match, never Bo3 game 2 —
+    even when the heuristic still thinks the old Bo3 match is continuing."""
+    tracker = make_tracker()
+    log_path = tmp_path / "Player.log"
+    log_path.write_text("", encoding="utf-8")
+    tracker.parser.log_path = str(log_path)
+    tracker.game_state.in_match = True
+    tracker.game_state.match_complete = True
+    tracker.game_state.match_type = "best_of_3"
+    tracker.game_state.game_number = 2
+    tracker.game_state.opponent_display_name = "BgameNWO21"
+    tracker.game_state.arena_match_id = "arena-uuid-1"
+
+    tracker._check_game_start(_bo3_game_state_line("arena-uuid-2", game_number=1))
+
+    assert tracker.game_state.in_match
+    assert tracker.game_state.game_number == 1
+    assert tracker.match_games == []
+    assert tracker.game_state.opponent_display_name is None
+
+
+def test_room_event_for_next_match_does_not_stomp_completed_game():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.match_complete = True
+    tracker.game_state.arena_match_id = "arena-uuid-1"
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.player_display_name = "MaxKirgan"
+    tracker.game_state.opponent_display_name = "BgameNWO21"
+
+    tracker._parse_match_metadata(
+        json.dumps(
+            {
+                "matchGameRoomStateChangedEvent": {
+                    "gameRoomInfo": {
+                        "gameRoomConfig": {
+                            "matchId": "arena-uuid-2",
+                            "reservedPlayers": [
+                                {"systemSeatId": 1, "playerName": "MaxKirgan"},
+                                {"systemSeatId": 2, "playerName": "Yamato10"},
+                            ],
+                        }
+                    }
+                }
+            }
+        )
+    )
+
+    assert tracker.game_state.opponent_display_name == "BgameNWO21"
+
+
+def test_room_event_for_same_match_still_applies_when_complete():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.match_complete = True
+    tracker.game_state.arena_match_id = "arena-uuid-1"
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.player_display_name = "MaxKirgan"
+
+    tracker._parse_match_metadata(
+        json.dumps(
+            {
+                "matchGameRoomStateChangedEvent": {
+                    "gameRoomInfo": {
+                        "gameRoomConfig": {
+                            "matchId": "arena-uuid-1",
+                            "reservedPlayers": [
+                                {"systemSeatId": 1, "playerName": "MaxKirgan"},
+                                {"systemSeatId": 2, "playerName": "BgameNWO21"},
+                            ],
+                        }
+                    }
+                }
+            }
+        )
+    )
+
+    assert tracker.game_state.opponent_display_name == "BgameNWO21"
+
+
+def test_current_match_ordinal_pinned_by_arena_match_id():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.match_type = "best_of_3"
+    tracker.game_state.arena_match_id = "arena-uuid-1"
+    tracker.game_state.game_number = 1
+    tracker.session_games_played = 0
+
+    assert tracker._current_match_ordinal() == 1
+
+    # Later game of the same match: even if the heuristic inputs drift (game
+    # number lost in a reset), the pinned ordinal keeps the match id stable.
+    tracker.session_games_played = 1
+    tracker.game_state.game_number = 1
+    assert tracker._current_match_ordinal() == 1
+
+    # A different Arena match gets its own ordinal.
+    tracker.game_state.arena_match_id = "arena-uuid-2"
+    tracker.game_state.match_type = "best_of_1"
+    tracker.session_games_played = 2
+    assert tracker._current_match_ordinal() == 3
+
+
+def test_bo3_match_continues_only_while_undecided():
+    tracker = make_tracker()
+    tracker.game_state.match_type = "best_of_3"
+    tracker.game_state.arena_match_id = "arena-uuid-1"
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.winner_seat = 1
+
+    # 1-0: undecided.
+    assert tracker._bo3_match_continues() is True
+
+    # 2-0: decided.
+    tracker.match_games = [{"game_number": 1, "winner": 1}]
+    assert tracker._bo3_match_continues() is False
+
+    # 1-1: undecided.
+    tracker.match_games = [{"game_number": 1, "winner": 2}]
+    assert tracker._bo3_match_continues() is True
+
+    # Arena declared the match over (e.g. opponent conceded the match).
+    tracker.game_state.arena_match_over = True
+    assert tracker._bo3_match_continues() is False
+    tracker.game_state.arena_match_over = False
+
+    # Without Arena's match UUID legacy behavior applies (no freeze).
+    tracker.game_state.arena_match_id = None
+    assert tracker._bo3_match_continues() is False
+
+    # Bo1 never freezes.
+    tracker.game_state.arena_match_id = "arena-uuid-1"
+    tracker.game_state.match_type = "best_of_1"
+    assert tracker._bo3_match_continues() is False
+
+
+def test_game_summary_freezes_state_while_bo3_match_undecided(tmp_path):
+    """A mid-Bo3 game summary must NOT reset state: the next game may arrive
+    in a later read batch and needs the match identity intact."""
+    tracker = make_tracker()
+    tracker._console_db_path = None
+    tracker.game_state.in_match = True
+    tracker.game_state.match_complete = True
+    tracker.game_state.match_type = "best_of_3"
+    tracker.game_state.game_number = 1
+    tracker.game_state.arena_match_id = "arena-uuid-1"
+    tracker.game_state.format_str = "Traditional_Historic_Play"
+    tracker.game_state.opponent_display_name = "BgameNWO21"
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.winner_seat = 1
+    log_path = tmp_path / "Player.log"
+    log_path.write_text("", encoding="utf-8")
+    tracker.parser.log_path = str(log_path)
+
+    tracker._print_game_summary()
+
+    assert tracker.game_state.in_match
+    assert tracker.game_state.match_complete
+    assert tracker.game_state.arena_match_id == "arena-uuid-1"
+    assert tracker.game_state.opponent_display_name == "BgameNWO21"
+
+    # Deciding game of the match: normal reset happens.
+    tracker.match_games = [{"game_number": 1, "winner": 1}]
+    tracker.game_state.game_number = 2
+    tracker._print_game_summary()
+    assert not tracker.game_state.in_match
+    assert tracker.game_state.arena_match_id is None
+
+
+def test_new_match_clears_previous_match_games(tmp_path):
+    tracker = make_tracker()
+    log_path = tmp_path / "Player.log"
+    log_path.write_text("", encoding="utf-8")
+    tracker.parser.log_path = str(log_path)
+    tracker.match_games = [{"game_number": 1, "winner": 1}, {"game_number": 2, "winner": 1}]
+
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+
+    assert tracker.match_games == []
