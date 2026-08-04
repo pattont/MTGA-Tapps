@@ -2791,6 +2791,46 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
             "WHERE role = 'player' AND COALESCE(display_name, '') != ''"
         ).fetchone()[0]
 
+        # Bo3 games 2+: what was sideboarded relative to the previous game.
+        sideboard_changes = None
+        game_number = int(game.get("game_number") or 1)
+        if game_number > 1 and game.get("match_id"):
+            previous_game = conn.execute(
+                "SELECT id FROM games WHERE match_id = ? AND game_number = ?",
+                (game["match_id"], game_number - 1),
+            ).fetchone()
+            if previous_game:
+
+                def _player_maindeck(target_game_id: str) -> Dict[str, int]:
+                    return {
+                        str(name): int(qty or 0)
+                        for name, qty in conn.execute(
+                            """
+                            SELECT d.display_name, d.quantity
+                            FROM game_deck_cards d
+                            JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
+                            WHERE d.game_id = ? AND d.deck_zone = 'deck'
+                            """,
+                            (target_game_id,),
+                        )
+                    }
+
+                before = _player_maindeck(str(previous_game[0]))
+                after = _player_maindeck(game_id)
+                if before and after:
+                    added = [
+                        f"{after[name] - before.get(name, 0)}x {name}"
+                        for name in sorted(after)
+                        if after[name] > before.get(name, 0)
+                    ]
+                    removed = [
+                        f"{before[name] - after.get(name, 0)}x {name}"
+                        for name in sorted(before)
+                        if before[name] > after.get(name, 0)
+                    ]
+                    if added or removed:
+                        sideboard_changes = {"added": added, "removed": removed}
+
     annotation = game_annotation(db_path, game_id)
     opponent_payload = dict(opponent or {})
     opponent_payload["colors"] = opponent_colors
@@ -2798,6 +2838,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
     return {
         "game": game,
         "multi_account": int(distinct_accounts or 0) > 1,
+        "sideboard_changes": sideboard_changes,
         "player": player or {},
         "opponent": opponent_payload,
         "annotation": annotation,

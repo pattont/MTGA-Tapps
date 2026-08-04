@@ -63,6 +63,53 @@ def test_canonicalize_imported_deck_names_uses_exact_decklist_match(tmp_path):
     assert names["game-import-2"] == "Imported Deck (3)"
 
 
+def _insert_bo3_game(conn, session, match_n, started, ended, opponent, fmt="Constructed_BestOf3"):
+    match_id = f"{session}:match:{match_n}"
+    game_id = f"{match_id}:game:1"
+    conn.execute(
+        "INSERT OR IGNORE INTO matches (id, session_id, format, started_at) VALUES (?, ?, ?, ?)",
+        (match_id, session, fmt, started),
+    )
+    conn.execute(
+        "INSERT INTO games (id, session_id, match_id, game_number, started_at, ended_at, outcome) "
+        "VALUES (?, ?, ?, 1, ?, ?, 'win')",
+        (game_id, session, match_id, started, ended),
+    )
+    conn.execute(
+        "INSERT INTO participants (id, game_id, role, display_name) VALUES (?, ?, 'opponent', ?)",
+        (f"{game_id}:opp", game_id, opponent),
+    )
+    return game_id
+
+
+def test_migration_v13_merges_split_bo3_matches(tmp_path):
+    store = AnalyticsStore(tmp_path / "analytics.sqlite3")
+    conn = store.connect()
+    with conn:
+        # Same opponent, 4 minutes apart, Bo3 queue -> one match.
+        g1 = _insert_bo3_game(conn, "s1", 1, "2026-08-04T20:00:00", "2026-08-04T20:10:00", "NubianPrince")
+        g2 = _insert_bo3_game(conn, "s1", 2, "2026-08-04T20:14:00", "2026-08-04T20:25:00", "NubianPrince")
+        # Different opponent right after -> stays its own match.
+        g3 = _insert_bo3_game(conn, "s1", 3, "2026-08-04T20:30:00", "2026-08-04T20:40:00", "Nico")
+        conn.execute("DELETE FROM schema_migrations WHERE version = 13")
+    AnalyticsStore.apply_pending_migrations(conn)
+
+    rows = dict(conn.execute("SELECT id, match_id FROM games"))
+    numbers = dict(conn.execute("SELECT id, game_number FROM games"))
+    match_count = conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
+    merged_games_played = conn.execute(
+        "SELECT games_played FROM matches WHERE id = 's1:match:1'"
+    ).fetchone()[0]
+    store.close()
+
+    assert rows[g1] == "s1:match:1"
+    assert rows[g2] == "s1:match:1"
+    assert numbers[g2] == 2
+    assert rows[g3] == "s1:match:3"
+    assert match_count == 2
+    assert merged_games_played == 2
+
+
 def test_migration_v12_deletes_orphan_ghost_events_only(tmp_path):
     db_path = tmp_path / "analytics.sqlite3"
     store = AnalyticsStore(db_path)
