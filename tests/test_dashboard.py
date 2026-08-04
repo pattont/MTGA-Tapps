@@ -20,9 +20,32 @@ from mtga_tracker.dashboard import (
     game_annotation,
     global_search,
     render_dashboard_html,
+    reset_database,
     save_game_annotation,
     search_cards,
 )
+
+
+def test_reset_database_wipes_history_but_keeps_schema_and_backup(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+
+    result = reset_database(db_path)
+
+    from pathlib import Path
+
+    assert result["ok"] is True
+    backup = Path(result["backup"])
+    assert backup.is_file() and ".pre-reset" in backup.name
+    # The backup still holds the old games; the live DB is empty.
+    with sqlite3.connect(backup) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM games").fetchone()[0] > 0
+    with sqlite3.connect(db_path) as conn:
+        for table in ("games", "matches", "participants", "tracker_sessions", "console_logs"):
+            assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
+        # Schema, migrations, and the cards cache survive the reset.
+        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] > 0
+    snapshot = dashboard_snapshot(db_path)
+    assert snapshot["summary"]["games"] == 0
 from mtga_tracker.format_normalizer import normalize_match_format
 
 

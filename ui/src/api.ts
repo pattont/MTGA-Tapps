@@ -946,6 +946,24 @@ export async function saveGameAnnotation(
   return response.json() as Promise<GameAnnotation>;
 }
 
+export async function resetDatabase(confirm: string): Promise<{ ok: boolean; backup: string }> {
+  const response = await fetch('/api/db/reset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm }),
+  });
+  if (!response.ok) {
+    let detail = '';
+    try {
+      detail = (await response.text()).trim();
+    } catch {
+      // Body unavailable; fall back to the status code alone.
+    }
+    throw new Error(detail ? `HTTP ${response.status} — ${detail}` : `Reset failed (HTTP ${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; backup: string }>;
+}
+
 export async function fetchAuditReport(signal?: AbortSignal): Promise<AuditReport> {
   const response = await fetch('/api/audit', { signal });
   if (!response.ok) {

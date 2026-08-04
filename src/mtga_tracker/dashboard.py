@@ -2242,6 +2242,69 @@ def deck_detail(
     }
 
 
+#: Tables emptied by a dashboard-initiated reset, in FK-safe order. The cards
+#: reference cache and schema_migrations survive — a reset starts tracking
+#: history fresh, it does not un-migrate the schema.
+RESET_TABLES = (
+    "game_mulligan_hands",
+    "game_opening_hand_cards",
+    "game_drawn_cards",
+    "game_card_summary",
+    "game_participant_stats",
+    "game_turns",
+    "game_events",
+    "game_deck_cards",
+    "game_annotations",
+    "participant_commanders",
+    "participants",
+    "games",
+    "matches",
+    "session_participant_stats",
+    "console_logs",
+    "raw_game_payloads",
+    "rank_snapshots",
+    "tracker_sessions",
+)
+
+
+def reset_database(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
+    """Wipe all tracked history after writing a timestamped backup.
+
+    Uses SQLite's online backup API, then empties every stats table (keeping
+    the cards cache and applied schema_migrations) and VACUUMs. Returns the
+    backup path so the UI can tell the user where their old data went.
+    """
+    db_path = Path(db_path).expanduser()
+    if not db_path.is_file():
+        raise FileNotFoundError(f"Dashboard database not found: {db_path}")
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    backup_path = db_path.with_name(f"{db_path.name}.backup.{timestamp}.pre-reset")
+    conn = sqlite3.connect(str(db_path), timeout=10)
+    try:
+        backup_conn = sqlite3.connect(str(backup_path))
+        try:
+            conn.backup(backup_conn)
+        finally:
+            backup_conn.close()
+        existing = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        with conn:
+            for table_name in RESET_TABLES:
+                if table_name in existing:
+                    conn.execute(f"DELETE FROM {table_name}")
+            if "sqlite_sequence" in existing:
+                conn.execute("DELETE FROM sqlite_sequence")
+        conn.execute("VACUUM")
+        # Fold the (large) post-VACUUM WAL back into the main file so the
+        # on-disk size visibly shrinks right away.
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        conn.close()
+    return {"ok": True, "backup": str(backup_path)}
+
+
 def _deck_land_profile(
     conn: sqlite3.Connection, where: str, params: List[Any]
 ) -> Dict[str, Any]:
@@ -3707,8 +3770,48 @@ class DashboardHandler(BaseHTTPRequestHandler):
             super().log_message(message_format, *args)
 
     def do_POST(self):  # noqa: N802 - http.server API
-        """Handle the dashboard's only write: saving a per-game note/tags."""
+        """Handle the dashboard's writes: game notes/tags and the DB reset."""
         parsed = urlparse(self.path)
+        if parsed.path == "/api/db/reset":
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else None
+            except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                payload = None
+            confirm = payload.get("confirm") if isinstance(payload, dict) else None
+            if confirm != "RESET":
+                _send_bytes(
+                    self,
+                    400,
+                    b'Body must be JSON {"confirm": "RESET"}',
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            try:
+                result = reset_database(self.db_path)
+            except FileNotFoundError as exc:
+                _send_bytes(
+                    self, 404, str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8", {"Cache-Control": "no-store"},
+                )
+                return
+            except Exception as exc:
+                traceback.print_exc()
+                _send_bytes(
+                    self, 500, f"{type(exc).__name__}: {exc}".encode("utf-8"),
+                    "text/plain; charset=utf-8", {"Cache-Control": "no-store"},
+                )
+                return
+            print(f"⚠️  Database reset by dashboard request — backup: {result['backup']}")
+            _send_bytes(
+                self,
+                200,
+                render_snapshot_json(result),
+                "application/json; charset=utf-8",
+                {"Cache-Control": "no-store"},
+            )
+            return
         if parsed.path != "/api/game/annotation":
             self.send_error(404)
             return
