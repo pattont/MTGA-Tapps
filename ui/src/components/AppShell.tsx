@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { TRACKER_NAME } from '../branding';
 import { dashboardNavItems, type AppNavItem } from '../nav';
 import type { ThemeName } from '../theme';
@@ -32,6 +32,16 @@ export function AppShell({
   const nextTheme = theme === 'dark' ? 'light' : 'dark';
   const [activeSection, setActiveSection] = useState<string | null>(null);
   const [showBackToTop, setShowBackToTop] = useState(false);
+  // After a nav click, the clicked section stays active briefly even though
+  // scroll events fire — otherwise the scroll-spy can immediately override
+  // the choice (e.g. for sections near the page bottom).
+  const spySuppressedUntilRef = useRef(0);
+
+  function navigateToSection(id: string) {
+    spySuppressedUntilRef.current = Date.now() + 700;
+    setActiveSection(id);
+    scrollToSection(id);
+  }
   const [version, setVersion] = useState<string | null>(null);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
 
@@ -99,16 +109,31 @@ export function AppShell({
     }
 
     function updateActiveSection() {
+      if (Date.now() < spySuppressedUntilRef.current) {
+        return;
+      }
       if (window.scrollY <= 1) {
         setActiveSection(sections[0].id);
         return;
       }
+      const marker = 120;
       if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) {
-        setActiveSection(sections[sections.length - 1].id);
+        // At the page bottom several sections may be unreachable at the top;
+        // highlight whichever section's top sits closest to the marker
+        // rather than blindly forcing the last one.
+        let closest = sections[sections.length - 1].id;
+        let closestDistance = Number.POSITIVE_INFINITY;
+        for (const section of sections) {
+          const distance = Math.abs(section.getBoundingClientRect().top - marker);
+          if (distance < closestDistance) {
+            closestDistance = distance;
+            closest = section.id;
+          }
+        }
+        setActiveSection(closest);
         return;
       }
 
-      const marker = 120;
       let nextSection = sections[0].id;
       for (const section of sections) {
         if (section.getBoundingClientRect().top > marker) {
@@ -163,8 +188,7 @@ export function AppShell({
               if (window.location.hash !== '#overview') {
                 window.location.hash = '#overview';
               }
-              setActiveSection('overview');
-              scrollToSection('overview');
+              navigateToSection('overview');
             }}
           >
             <h1 className="brand-wordmark">{TRACKER_NAME}</h1>
@@ -199,8 +223,7 @@ export function AppShell({
                 href={`#${item.id}`}
                 onClick={(event) => {
                   event.preventDefault();
-                  setActiveSection(item.id);
-                  scrollToSection(item.id);
+                  navigateToSection(item.id);
                   // Reflect the section in the URL without re-triggering routing
                   // (raw hash assignment would clobber scroll behavior).
                   try {
