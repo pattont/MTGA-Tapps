@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { TRACKER_NAME } from '../branding';
 import { dashboardNavItems, type AppNavItem } from '../nav';
 import type { ThemeName } from '../theme';
+import { checkForUpdate, type UpdateInfo } from '../updateCheck';
 import { CardSearch } from './CardSearch';
 
 interface AppShellProps {
@@ -32,6 +33,7 @@ export function AppShell({
   const [activeSection, setActiveSection] = useState<string | null>(null);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [version, setVersion] = useState<string | null>(null);
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -40,6 +42,14 @@ export function AppShell({
       .then((payload: { version?: string } | null) => {
         if (!cancelled && payload?.version) {
           setVersion(payload.version);
+          // Production builds only: one GitHub API call per day, cached.
+          if (import.meta.env.PROD) {
+            void checkForUpdate(payload.version).then((info) => {
+              if (!cancelled) {
+                setUpdate(info);
+              }
+            });
+          }
         }
       })
       .catch(() => {
@@ -206,6 +216,17 @@ export function AppShell({
           )}
         </nav>
         )}
+        {!collapsed && update ? (
+          <a
+            className="sidebar-update"
+            href={update.url}
+            rel="noreferrer"
+            target="_blank"
+            title="A newer version is available on GitHub"
+          >
+            Update {update.tag} available →
+          </a>
+        ) : null}
         {!collapsed && version ? (
           <span aria-label={`Tracker version ${version}`} className="sidebar-version">
             v{version}

@@ -541,11 +541,30 @@ a.best-deck-name:focus-visible {
   display: grid;
   gap: 10px;
   max-width: 720px;
-  padding: 22px;
+  margin: 48px auto 0;
+  padding: 32px 28px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--panel);
   box-shadow: var(--shadow);
+  text-align: center;
+  justify-items: center;
+}
+
+.setup-card-pips {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.setup-card-pips img {
+  border-radius: 50%;
+  filter: var(--pip-shadow);
+}
+
+.setup-card-hint {
+  color: var(--subtle);
+  font-size: 0.85rem;
 }
 
 .setup-card h3,
@@ -2608,6 +2627,30 @@ tbody tr:hover {
   text-align: center;
 }
 
+.sidebar-update {
+  margin-top: auto;
+  align-self: center;
+  padding: 5px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-strong);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+
+.sidebar-update:hover,
+.sidebar-update:focus-visible {
+  border-color: var(--accent-strong);
+}
+
+/* When the update pill is present it takes the bottom-pinning role. */
+.sidebar-update + .sidebar-version {
+  margin-top: 8px;
+}
+
 /* ---- Timeline end-of-game banner ---- */
 
 .timeline-end {
@@ -2637,6 +2680,26 @@ tbody tr:hover {
 }
 
 /* ---- DB Health danger zone (Reset Database) ---- */
+
+.danger-zone-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  margin-top: 6px;
+  padding: 16px 18px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+  border-radius: 8px;
+  background: var(--card-danger-bg);
+}
+
+.danger-zone-panel p {
+  flex: 1 1 320px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
 
 .danger-zone-button {
   padding: 10px 20px;
