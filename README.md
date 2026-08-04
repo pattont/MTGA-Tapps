@@ -10,6 +10,8 @@ data, your disk.
 ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)
 ![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows-lightgrey)
 
+![Performance Overview dashboard](docs/images/overview.png)
+
 ## What it does
 
 **Live tracking.** A menu-bar app (macOS) or console tracker follows your game
@@ -34,6 +36,16 @@ history so you can see which matchups actually beat you.
 habits and fatigue splits, format breakdowns, and a database health audit that
 can repair its own inconsistencies. A compressed raw-payload archive means new
 tracker features can retroactively backfill your old games.
+
+## Screenshots
+
+**Deck drill-down** — combat profile, streaks, decklist performance, land statistics:
+
+![Deck detail page](docs/images/deck-detail.png)
+
+**Game forensics** — turn timing, draw quality, combat & resources, life chart, full timeline:
+
+![Game detail page](docs/images/game-detail.png)
 
 ## Quick start
 
