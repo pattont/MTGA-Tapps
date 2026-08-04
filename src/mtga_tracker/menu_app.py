@@ -334,7 +334,16 @@ def run_menu_app(args: Any) -> int:
     app = QApplication.instance() or QApplication([])
     instance_lock = _acquire_instance_lock()
     if instance_lock is None:
-        sys.stderr.write("MTGA Tracker is already running.\n")
+        # Windowed builds have no console — tell the user visibly. This is
+        # the path hit when relaunching before the old process finishes
+        # shutting down.
+        QMessageBox.information(
+            None,
+            "MTGA Tracker",
+            "MTGA Tracker is already running — look for its icon in the "
+            "menu bar (macOS) or system tray (Windows).\n\n"
+            "If you just quit it, wait a few seconds and try again.",
+        )
         return 0
     # QApplication owns the lifetime of the lock for the complete event loop.
     app._mtga_instance_lock = instance_lock
