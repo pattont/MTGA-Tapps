@@ -45,6 +45,9 @@ function routeQuery(filters: SnapshotFilters, includeDeck = false): string {
   if (filters.colors) {
     params.set('colors', filters.colors);
   }
+  if (filters.quick && filters.quick !== 'all') {
+    params.set('q', filters.quick);
+  }
   return params.toString();
 }
 
@@ -125,6 +128,10 @@ function parseFilters(query: string, includeDeck = false): SnapshotFilters {
   const colors = params.get('colors');
   if (colors && /^[WUBRG]{1,5}$/.test(colors)) {
     filters.colors = colors;
+  }
+  const quick = params.get('q');
+  if (quick && /^[a-z0-9_-]{1,32}$/.test(quick)) {
+    filters.quick = quick;
   }
   return filters;
 }

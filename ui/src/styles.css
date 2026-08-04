@@ -383,6 +383,11 @@ a {
   background: var(--panel);
 }
 
+/* Inside a section box (All Games), inset the filter panel from the edges. */
+.dashboard-section .filter-bar {
+  margin: 8px 16px 14px;
+}
+
 .filter-bar label {
   display: grid;
   gap: 5px;
@@ -2677,6 +2682,14 @@ tbody tr:hover {
 
 .timeline-end-loss strong {
   color: var(--danger);
+}
+
+/* ---- Bo3 sideboard changes line (game header) ---- */
+
+.sideboard-changes {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 /* ---- Multi-account flag (deck + game pages) ---- */

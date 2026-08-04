@@ -8,7 +8,7 @@ import {
 import { colorComboLabel } from '../colorCombos';
 import { formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone, shortFormatLabel } from '../format';
 import { FORMAT_QUICK_FILTERS } from '../quickFilters';
-import { gameRouteHash } from '../routes';
+import { gameRouteHash, gamesRouteHash } from '../routes';
 import { Badge } from './Badge';
 import { ColorPips } from './ColorPips';
 import { DeckLink } from './DeckLink';
@@ -117,9 +117,30 @@ export function GamesPage({
   onFiltersChange?: (filters: SnapshotFilters) => void;
 }) {
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
-  const [quickFilter, setQuickFilter] = useState('all');
+  const [quickFilter, setQuickFilter] = useState(() =>
+    FORMAT_QUICK_FILTERS.some((filter) => filter.id === filters.quick)
+      ? (filters.quick as string)
+      : 'all',
+  );
   const [deckSearch, setDeckSearch] = useState('');
   const [retryToken, setRetryToken] = useState(0);
+
+  // Bookmarkable quick filter: the chip is read from the URL on mount and
+  // written back on click, so a bookmarked ?q=bo3 view survives refresh.
+  function selectQuickFilter(id: string) {
+    setQuickFilter(id);
+    try {
+      const next = { ...filters };
+      if (id === 'all') {
+        delete next.quick;
+      } else {
+        next.quick = id;
+      }
+      window.history.replaceState(null, '', gamesRouteHash(next));
+    } catch {
+      // history API unavailable; the chip still works for this visit.
+    }
+  }
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -228,7 +249,6 @@ export function GamesPage({
       ) : null}
       <Section
         id="all-games-list"
-        title="All Games"
         description={`Every tracked game (${loadState.response.total} total), newest first.`}
       >
         {onFiltersChange ? (
@@ -263,7 +283,7 @@ export function GamesPage({
               type="button"
               className={quickFilter === filter.id ? 'quick-filter quick-filter-active' : 'quick-filter'}
               aria-pressed={quickFilter === filter.id}
-              onClick={() => setQuickFilter(filter.id)}
+              onClick={() => selectQuickFilter(filter.id)}
             >
               {filter.label}
             </button>
