@@ -2696,7 +2696,9 @@ tbody tr:hover {
   align-items: center;
   justify-content: space-between;
   gap: 12px 20px;
-  margin-top: 6px;
+  /* Section content is full-bleed (for tables); inset the panel to match
+     the section's 16px heading padding on all sides. */
+  margin: 8px 16px 16px;
   padding: 16px 18px;
   border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
   border-radius: 8px;
@@ -2732,7 +2734,7 @@ tbody tr:hover {
 }
 
 .danger-zone-result {
-  margin: 12px 0 0;
+  margin: 0 16px 16px;
   color: var(--success);
   font-size: 0.85rem;
   overflow-wrap: anywhere;
