@@ -108,18 +108,35 @@ export function AuditPage() {
 }
 
 function DangerZone({ onReset }: { onReset: () => void }) {
+  const [modalOpen, setModalOpen] = useState(false);
   const [confirmText, setConfirmText] = useState('');
   const [state, setState] = useState<
     { status: 'idle' } | { status: 'working' } | { status: 'done'; backup: string } | { status: 'error'; message: string }
   >({ status: 'idle' });
   const armed = confirmText === 'RESET';
 
+  function openModal() {
+    setConfirmText('');
+    if (state.status === 'error') {
+      setState({ status: 'idle' });
+    }
+    setModalOpen(true);
+  }
+
+  function closeModal() {
+    if (state.status !== 'working') {
+      setModalOpen(false);
+      setConfirmText('');
+    }
+  }
+
   async function handleReset() {
     setState({ status: 'working' });
     try {
       const result = await resetDatabase(confirmText);
-      setConfirmText('');
       setState({ status: 'done', backup: result.backup });
+      setModalOpen(false);
+      setConfirmText('');
       onReset();
     } catch (error: unknown) {
       setState({
@@ -130,32 +147,10 @@ function DangerZone({ onReset }: { onReset: () => void }) {
   }
 
   return (
-    <div className="danger-zone">
-      <p className="danger-zone-warning">
-        This cannot be undone from the dashboard. Type <strong>RESET</strong> (all caps) to enable
-        the button.
-      </p>
-      <div className="danger-zone-controls">
-        <input
-          aria-label="Type RESET to confirm"
-          placeholder="Type RESET to confirm"
-          value={confirmText}
-          onChange={(event) => {
-            setConfirmText(event.target.value);
-            if (state.status === 'done' || state.status === 'error') {
-              setState({ status: 'idle' });
-            }
-          }}
-        />
-        <button
-          className="danger-zone-button"
-          disabled={!armed || state.status === 'working'}
-          type="button"
-          onClick={() => void handleReset()}
-        >
-          {state.status === 'working' ? 'Resetting…' : 'Reset Database'}
-        </button>
-      </div>
+    <>
+      <button className="danger-zone-button" type="button" onClick={openModal}>
+        Reset Database…
+      </button>
       {state.status === 'done' ? (
         <p className="danger-zone-result" role="status">
           Database reset. A backup of your old data was saved to:
@@ -163,11 +158,69 @@ function DangerZone({ onReset }: { onReset: () => void }) {
           <code>{state.backup}</code>
         </p>
       ) : null}
-      {state.status === 'error' ? (
-        <p className="danger-zone-error" role="alert">
-          {state.message}
-        </p>
+      {modalOpen ? (
+        <div
+          className="modal-overlay"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeModal();
+            }
+          }}
+        >
+          <div
+            aria-labelledby="reset-modal-title"
+            aria-modal="true"
+            className="modal danger-modal"
+            role="dialog"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                closeModal();
+              }
+            }}
+          >
+            <h3 id="reset-modal-title">Reset the database?</h3>
+            <p>
+              This wipes <strong>every tracked game, match, and session</strong>. A timestamped
+              backup is written next to the database first, but the dashboard cannot undo this.
+              Close the tracker before resetting.
+            </p>
+            <label className="danger-modal-label" htmlFor="reset-confirm-input">
+              Type <strong>RESET</strong> (all caps) to confirm:
+            </label>
+            <input
+              autoFocus
+              id="reset-confirm-input"
+              placeholder="RESET"
+              value={confirmText}
+              onChange={(event) => setConfirmText(event.target.value)}
+            />
+            {state.status === 'error' ? (
+              <p className="danger-zone-error" role="alert">
+                {state.message}
+              </p>
+            ) : null}
+            <div className="modal-actions">
+              <button
+                className="modal-cancel"
+                disabled={state.status === 'working'}
+                type="button"
+                onClick={closeModal}
+              >
+                Cancel
+              </button>
+              <button
+                className="danger-zone-button"
+                disabled={!armed || state.status === 'working'}
+                type="button"
+                onClick={() => void handleReset()}
+              >
+                {state.status === 'working' ? 'Resetting…' : 'Reset Database'}
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
-    </div>
+    </>
   );
 }

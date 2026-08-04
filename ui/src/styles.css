@@ -2638,47 +2638,20 @@ tbody tr:hover {
 
 /* ---- DB Health danger zone (Reset Database) ---- */
 
-.danger-zone {
-  display: grid;
-  gap: 12px;
-  max-width: 640px;
-  padding: 14px 16px;
-  border: 1px solid color-mix(in srgb, var(--danger) 55%, var(--border));
-  border-radius: 8px;
-  background: var(--card-danger-bg);
-}
-
-.danger-zone-warning {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-
-.danger-zone-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.danger-zone-controls input {
-  flex: 1 1 220px;
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: 0.9rem;
-}
-
 .danger-zone-button {
-  padding: 8px 16px;
+  padding: 10px 20px;
   border: 1px solid var(--danger);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--danger);
   color: #fff;
-  font-size: 0.9rem;
+  font-size: 0.92rem;
   font-weight: 600;
   cursor: pointer;
+}
+
+.danger-zone-button:hover:not(:disabled),
+.danger-zone-button:focus-visible {
+  filter: brightness(1.08);
 }
 
 .danger-zone-button:disabled {
@@ -2687,7 +2660,7 @@ tbody tr:hover {
 }
 
 .danger-zone-result {
-  margin: 0;
+  margin: 12px 0 0;
   color: var(--success);
   font-size: 0.85rem;
   overflow-wrap: anywhere;
@@ -2697,6 +2670,89 @@ tbody tr:hover {
   margin: 0;
   color: var(--danger);
   font-size: 0.85rem;
+}
+
+/* ---- Confirmation modal ---- */
+
+.modal-overlay {
+  position: fixed;
+  z-index: 60;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgb(0 0 0 / 55%);
+}
+
+.modal {
+  display: grid;
+  gap: 14px;
+  width: min(460px, 100%);
+  padding: 20px 22px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.modal h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.1rem;
+}
+
+.modal p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.danger-modal {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+}
+
+.danger-modal-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.danger-modal input {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+}
+
+.danger-modal input:focus-visible {
+  outline: 2px solid var(--danger);
+  outline-offset: 1px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.modal-cancel {
+  padding: 10px 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.modal-cancel:hover:not(:disabled),
+.modal-cancel:focus-visible {
+  border-color: var(--accent);
 }
 
 /* ---- Deck Land Statistics value colors ---- */
