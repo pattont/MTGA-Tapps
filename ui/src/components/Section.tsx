@@ -15,7 +15,8 @@ export function Section({
   collapsible = true,
 }: {
   id: string;
-  title: string;
+  /** Omit when the page heading already names this content (e.g. All Games). */
+  title?: string;
   description?: string;
   children: ReactNode;
   collapsible?: boolean;
@@ -28,7 +29,7 @@ export function Section({
       <section className="dashboard-section" id={id}>
         <div className="section-heading">
           <div>
-            <h3>{title}</h3>
+            {title ? <h3>{title}</h3> : null}
             {description ? <p className="section-description">{description}</p> : null}
           </div>
         </div>
@@ -43,14 +44,14 @@ export function Section({
       id={id}
     >
       <div className="section-heading">
-        <h3>{title}</h3>
+        {title ? <h3>{title}</h3> : <span aria-hidden="true" />}
         <button
           type="button"
           className="section-collapse-button"
           aria-controls={contentId}
           aria-expanded={!collapsed}
-          aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${title}`}
-          title={`${collapsed ? 'Expand' : 'Collapse'} ${title}`}
+          aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${title ?? 'section'}`}
+          title={`${collapsed ? 'Expand' : 'Collapse'} ${title ?? 'section'}`}
           onClick={() => setCollapsed((current) => !current)}
         >
           {collapsed ? <ChevronDown aria-hidden="true" /> : <ChevronUp aria-hidden="true" />}
