@@ -117,13 +117,19 @@ function isAbortError(error: unknown): boolean {
 function SetupCard() {
   return (
     <section className="setup-card" id="overview">
-      <span className="eyebrow">Getting started</span>
-      <h3>No tracked games yet</h3>
-      <p>Run the tracker while playing Arena. Finished games will appear here automatically.</p>
-      <div className="setup-commands">
-        <code>venv/bin/python -m mtga_tracker.main</code>
-        <code>venv/bin/python -m mtga_tracker.dashboard</code>
+      <div className="setup-card-pips" aria-hidden="true">
+        {['W', 'U', 'B', 'R', 'G'].map((color) => (
+          <img key={color} alt="" height={28} src={`/icons/${color}.svg`} width={28} />
+        ))}
       </div>
+      <h3>No tracked games yet</h3>
+      <p>
+        You're all set — the tracker is running. Play a game of MTG Arena and it will show up
+        here automatically when it finishes.
+      </p>
+      <p className="setup-card-hint">
+        Keep the tracker running while you play. This page refreshes on its own.
+      </p>
     </section>
   );
 }

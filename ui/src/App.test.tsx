@@ -945,8 +945,9 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByRole('heading', { name: 'No tracked games yet' })).toBeInTheDocument();
-    expect(screen.getByText('venv/bin/python -m mtga_tracker.main')).toBeInTheDocument();
-    expect(screen.getByText('venv/bin/python -m mtga_tracker.dashboard')).toBeInTheDocument();
+    expect(screen.getByText(/the tracker is running/i)).toBeInTheDocument();
+    // No developer commands on the fresh-install screen.
+    expect(screen.queryByText(/venv\/bin\/python/)).toBeNull();
   });
 
   it('links game rows to the game detail page', async () => {

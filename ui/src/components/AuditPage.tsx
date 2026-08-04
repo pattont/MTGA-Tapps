@@ -148,9 +148,15 @@ function DangerZone({ onReset }: { onReset: () => void }) {
 
   return (
     <>
-      <button className="danger-zone-button" type="button" onClick={openModal}>
-        Reset Database…
-      </button>
+      <div className="danger-zone-panel">
+        <p>
+          Wipe all tracked history and start fresh. A timestamped backup is saved next to the
+          database first.
+        </p>
+        <button className="danger-zone-button" type="button" onClick={openModal}>
+          Reset Database…
+        </button>
+      </div>
       {state.status === 'done' ? (
         <p className="danger-zone-result" role="status">
           Database reset. A backup of your old data was saved to:
