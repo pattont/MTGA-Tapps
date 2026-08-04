@@ -23,6 +23,20 @@ def test_format_normalizer_labels_constructed_queues():
     assert normalize_match_format("TraditionalStandard").best_of == 3
 
 
+def test_format_normalizer_labels_nonstandard_constructed_queues():
+    # Traditional_* queues are Best-of-3 even outside Standard (alpha-tester
+    # regression: Traditional_Historic_Play was labeled bare "Historic" Bo1).
+    assert format_label("Traditional_Historic_Play") == "Historic Best-of-3 (Unranked)"
+    assert normalize_match_format("Traditional_Historic_Play").best_of == 3
+    assert format_label("Traditional_Historic_Ranked") == "Historic Best-of-3 (Ranked)"
+    assert format_label("Historic_Ranked") == "Historic Best-of-1 (Ranked)"
+    assert format_label("Timeless_Play") == "Timeless Best-of-1 (Unranked)"
+    assert format_label("Explorer_Ranked") == "Explorer Best-of-1 (Ranked)"
+    assert format_label("Traditional_Alchemy_Ranked") == "Alchemy Best-of-3 (Ranked)"
+    assert format_label("Historic_Brawl") == "Historic Brawl"
+    assert normalize_match_format("Historic_Brawl").is_brawl
+
+
 def test_momir_format_detection_handles_midweek_and_plain_labels():
     assert is_momir_format("MWM_Momir")
     assert is_momir_format("Midweek Magic - Momir")
