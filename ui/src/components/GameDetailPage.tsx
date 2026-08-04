@@ -448,7 +448,17 @@ export function GameDetailPage({
               {detail.player.deck_name ? <DeckLink deckName={detail.player.deck_name} /> : 'Unknown deck'} ·{' '}
               {detail.game.format_label}
               {detail.game.best_of ? ` · Best-of-${detail.game.best_of}` : ''}
+              {(detail.game.game_number ?? 1) > 1 ? ` · Game ${detail.game.game_number}` : ''}
             </p>
+            {detail.sideboard_changes ? (
+              <p className="sideboard-changes">
+                Sideboarded:{' '}
+                {[
+                  ...detail.sideboard_changes.added.map((entry) => `+${entry}`),
+                  ...detail.sideboard_changes.removed.map((entry) => `−${entry}`),
+                ].join(' · ')}
+              </p>
+            ) : null}
             {detail.opponent.display_name ? (
               <p>
                 vs. <OpponentLink opponentName={detail.opponent.display_name} />

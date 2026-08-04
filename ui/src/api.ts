@@ -303,6 +303,8 @@ export interface SnapshotFilters {
   until?: string;
   /** Opponent WUBRG color-combo filter (client-side, All Games page only). */
   colors?: string;
+  /** Format quick-filter chip id (client-side, All Games page only). */
+  quick?: string;
 }
 
 export interface DashboardSnapshot {
@@ -672,6 +674,8 @@ export interface AuditReport {
 export interface GameDetail {
   game: GameHeader;
   multi_account?: boolean;
+  /** Bo3 games 2+: maindeck changes vs the previous game of the match. */
+  sideboard_changes?: { added: string[]; removed: string[] } | null;
   player: GameParticipant;
   opponent: GameParticipant;
   annotation?: GameAnnotation;

@@ -546,6 +546,7 @@ class AnalyticsStore:
             (10, AnalyticsStore._migrate_v10_delete_unknown_deck_games),
             (11, AnalyticsStore._migrate_v11_compress_raw_payloads),
             (12, AnalyticsStore._migrate_v12_delete_orphan_ghost_events),
+            (13, AnalyticsStore._migrate_v13_merge_split_bo3_matches),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -771,6 +772,96 @@ class AnalyticsStore:
                 )
             """
         )
+
+    @staticmethod
+    def _migrate_v13_merge_split_bo3_matches(conn: sqlite3.Connection) -> None:
+        """Merge Bo3 games that were split into separate one-game matches.
+
+        Before the format normalizer learned that Traditional_* queues are
+        Best-of-3, game 2/3 of such a match was recorded as a brand-new match
+        (two "1-0 matches" instead of one 2-0). Merge criteria are strict:
+        same session, a Bo3 queue, the SAME opponent name, consecutive games,
+        and at most 20 minutes between one game's end and the next's start.
+        """
+        from datetime import datetime as _dt
+
+        from .format_normalizer import normalize_match_format
+
+        def _parse(ts: object) -> Optional[_dt]:
+            try:
+                return _dt.fromisoformat(str(ts))
+            except (TypeError, ValueError):
+                return None
+
+        rows = conn.execute(
+            """
+            SELECT g.id, g.session_id, g.match_id, g.started_at, g.ended_at,
+                   m.format,
+                   (SELECT display_name FROM participants p
+                     WHERE p.game_id = g.id AND p.role = 'opponent') AS opponent
+            FROM games g
+            JOIN matches m ON m.id = g.match_id
+            ORDER BY g.session_id, COALESCE(g.started_at, g.ended_at), g.id
+            """
+        ).fetchall()
+
+        chains: list = []
+        current: list = []
+        previous = None
+        for row in rows:
+            game_id, session_id, match_id, started_at, ended_at, fmt, opponent = row
+            is_bo3 = normalize_match_format(str(fmt or "")).best_of == 3
+            linkable = False
+            if previous is not None and is_bo3 and opponent:
+                prev_end = _parse(previous[4] or previous[3])
+                this_start = _parse(started_at)
+                linkable = (
+                    previous[1] == session_id
+                    and previous[6] == opponent
+                    and previous[2] != match_id
+                    and normalize_match_format(str(previous[5] or "")).best_of == 3
+                    and prev_end is not None
+                    and this_start is not None
+                    and 0 <= (this_start - prev_end).total_seconds() <= 1200
+                )
+            if linkable:
+                current.append(row)
+            else:
+                if len(current) > 1:
+                    chains.append(current)
+                current = [row]
+            previous = row
+        if len(current) > 1:
+            chains.append(current)
+
+        merged_games = 0
+        for chain in chains:
+            target_match = chain[0][2]
+            for position, row in enumerate(chain, start=1):
+                game_id, _session, match_id, *_rest = row
+                conn.execute(
+                    "UPDATE games SET match_id = ?, game_number = ? WHERE id = ?",
+                    (target_match, position, game_id),
+                )
+                if match_id != target_match:
+                    merged_games += 1
+                    conn.execute(
+                        "DELETE FROM matches WHERE id = ? AND NOT EXISTS "
+                        "(SELECT 1 FROM games WHERE match_id = ?)",
+                        (match_id, match_id),
+                    )
+            conn.execute(
+                "UPDATE matches SET games_played = "
+                "(SELECT COUNT(*) FROM games WHERE match_id = ?), "
+                "ended_at = (SELECT MAX(COALESCE(ended_at, started_at)) FROM games WHERE match_id = ?) "
+                "WHERE id = ?",
+                (target_match, target_match, target_match),
+            )
+        if merged_games:
+            print(
+                f"🔗 Merged {merged_games} Bo3 game(s) back into their matches "
+                f"({len(chains)} match(es) repaired)."
+            )
 
     @staticmethod
     def _migrate_v12_delete_orphan_ghost_events(conn: sqlite3.Connection) -> None:
