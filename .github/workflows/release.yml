@@ -1,0 +1,64 @@
+name: Release
+
+# Builds the macOS DMG and Windows zip and attaches them to a DRAFT GitHub
+# Release. Trigger by pushing a version tag (v0.2.0, v0.3.0-alpha.1, ...) or
+# manually from the Actions tab. Publishing the draft on github.com is the
+# human "go" button. Ordinary pushes never run this.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            build: bash scripts/build_macos_installer.sh
+            artifact: dist/MTGA-Tracker.dmg
+          - os: windows-latest
+            build: pwsh scripts/build_windows_app.ps1
+            artifact: dist/MTGA-Tracker-windows.zip
+    runs-on: ${{ matrix.os }}
+    env:
+      # The build scripts prefer a repo venv; on CI use the runner's python.
+      PYTHON: python3
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python build dependencies
+        run: python3 -m pip install -e ".[gui,build]"
+
+      - name: Build installer
+        run: ${{ matrix.build }}
+
+      - name: Upload artifact to draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: ${{ matrix.artifact }}
+
+      - name: Upload artifact (manual runs)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-build
+          path: ${{ matrix.artifact }}
