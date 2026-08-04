@@ -1917,6 +1917,15 @@ def test_deck_detail_reports_composition_and_versions(tmp_path):
     assert sideboard["post_board"]["losses"] == 1
     assert sideboard["boarded_in"][0]["display_name"] == "Sheltered by Ghosts"
 
+    swaps = {row["display_name"]: row for row in sideboard["swaps"]}
+    assert swaps["Sheltered by Ghosts"]["boarded_in"] == 2
+    assert swaps["Sheltered by Ghosts"]["boarded_out"] == 0
+    assert swaps["Sheltered by Ghosts"]["games_in"] == 1
+    assert swaps["Sheltered by Ghosts"]["losses_in"] == 1
+    assert swaps["Sheltered by Ghosts"]["win_rate_in"] == 0.0
+    assert swaps["Mouse Mentor"]["boarded_out"] == 2
+    assert swaps["Mouse Mentor"]["boarded_in"] == 0
+
 
 def test_dashboard_snapshot_reports_mana_readiness(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)

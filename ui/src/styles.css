@@ -2679,6 +2679,15 @@ tbody tr:hover {
   color: var(--danger);
 }
 
+/* ---- Multi-account flag (deck + game pages) ---- */
+
+.account-flag {
+  margin: 8px 0 0;
+  color: var(--subtle);
+  font-size: 0.82rem;
+  font-style: italic;
+}
+
 /* ---- DB Health danger zone (Reset Database) ---- */
 
 .danger-zone-panel {

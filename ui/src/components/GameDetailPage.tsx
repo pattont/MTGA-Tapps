@@ -452,6 +452,12 @@ export function GameDetailPage({
             {detail.opponent.display_name ? (
               <p>
                 vs. <OpponentLink opponentName={detail.opponent.display_name} />
+                {detail.multi_account && detail.player.display_name ? (
+                  <span className="account-flag" title="This machine has games from more than one Arena account">
+                    {' '}
+                    · playing as {detail.player.display_name}
+                  </span>
+                ) : null}
               </p>
             ) : null}
           </div>
