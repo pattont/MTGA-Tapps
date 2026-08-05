@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
+
+#: Families whose Bo1/Bo3 split comes from the queue name alone — and can
+#: therefore be upgraded when the caller has authoritative knowledge (Arena's
+#: matchWinCondition) that the match is actually best-of-three.
+_BEST_OF_UPGRADABLE_FAMILIES = frozenset(
+    {"standard", "historic", "explorer", "timeless", "alchemy", "direct_challenge", "unknown", "event"}
+)
 
 
 @dataclass(frozen=True)
@@ -86,7 +93,30 @@ def _prettify_event(raw: str) -> str:
 def normalize_match_format(
     raw_format: Optional[str], *, default_best_of: int = 1
 ) -> NormalizedFormat:
-    """Return canonical display metadata for a raw Arena queue/format identifier."""
+    """Return canonical display metadata for a raw Arena queue/format identifier.
+
+    default_best_of expresses the caller's own knowledge of the match length
+    (Arena's matchWinCondition via the tracker's match_type, or the stored
+    matches.best_of). When it says 3 but the queue string alone reads as Bo1
+    — e.g. a Bo3 match whose format resolved to plain "Historic_Play" — the
+    caller's knowledge wins and the result is upgraded to Best-of-3.
+    """
+    result = _normalize_match_format_inner(raw_format, default_best_of=default_best_of)
+    if (
+        default_best_of == 3
+        and result.best_of == 1
+        and result.family in _BEST_OF_UPGRADABLE_FAMILIES
+    ):
+        result = replace(
+            result, best_of=3, label=result.label.replace("Best-of-1", "Best-of-3")
+        )
+    return result
+
+
+def _normalize_match_format_inner(
+    raw_format: Optional[str], *, default_best_of: int = 1
+) -> NormalizedFormat:
+    """normalize_match_format without the caller-knowledge best-of upgrade."""
     raw = raw_format if isinstance(raw_format, str) and raw_format.strip() else "Unknown"
     normalized = normalize_match_text(raw)
     if not normalized or normalized == "unknown":

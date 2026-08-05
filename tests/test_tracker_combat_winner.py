@@ -6226,3 +6226,114 @@ def test_new_match_clears_previous_match_games(tmp_path):
     tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
 
     assert tracker.match_games == []
+
+
+def test_completed_game_tail_packet_does_not_start_next_bo3_game(tmp_path):
+    """A completed game's final full snapshot carries hand zones (reads as an
+    opening hand) and its own gameInfo. It must NOT be treated as the next
+    game starting — that builds a ghost game 2 from game 1's dying state."""
+    tracker = make_tracker()
+    log_path = tmp_path / "Player.log"
+    log_path.write_text("", encoding="utf-8")
+    tracker.parser.log_path = str(log_path)
+    tracker.game_state.in_match = True
+    tracker.game_state.match_complete = True
+    tracker.game_state.match_type = "best_of_3"
+    tracker.game_state.game_number = 1
+    tracker.game_state.arena_match_id = "arena-uuid-1"
+    tracker.game_state.opponent_display_name = "MrTTE1"
+
+    tail_line = json.dumps(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "gameInfo": {
+                                "matchID": "arena-uuid-1",
+                                "gameNumber": 1,
+                                "stage": "GameStage_GameOver",
+                                "matchState": "MatchState_GameComplete",
+                            },
+                            "turnInfo": {"turnNumber": 9},
+                            "zones": [
+                                {"type": "ZoneType_Hand", "objectInstanceIds": [1, 2, 3]}
+                            ],
+                        },
+                    }
+                ]
+            }
+        }
+    )
+    tracker._check_game_start(tail_line)
+
+    # Still the completed game 1, frozen and waiting for the real game 2.
+    assert tracker.game_state.match_complete
+    assert tracker.game_state.game_number == 1
+    assert tracker.match_games == []
+    assert tracker.game_state.opponent_display_name == "MrTTE1"
+
+    # The real game 2 (gameNumber 2, turn 1) still starts normally.
+    tracker._check_game_start(_bo3_game_state_line("arena-uuid-1", game_number=2))
+    assert tracker.game_state.game_number == 2
+    assert not tracker.game_state.match_complete
+    assert len(tracker.match_games) == 1
+
+
+def test_game_start_banner_reflects_arena_win_condition(tmp_path, capsys):
+    """A Bo3 game whose format resolved to a Bo1-flavored queue string must
+    still print (and store) Best-of-3 once Arena's win condition is seen."""
+    tracker = make_tracker()
+    log_path = tmp_path / "Player.log"
+    log_path.write_text("", encoding="utf-8")
+    tracker.parser.log_path = str(log_path)
+    tracker._pending_event_format = "Historic_Play"
+
+    tracker._check_game_start(_bo3_game_state_line("arena-uuid-9", game_number=1))
+
+    assert tracker.game_state.match_type == "best_of_3"
+    assert tracker.game_state.arena_match_id == "arena-uuid-9"
+    label = tracker._friendly_format_label("Historic_Play")
+    assert label == "Historic Best-of-3 (Unranked)"
+
+
+def test_sideboard_submit_line_is_not_a_mulligan_start():
+    """The Bo3 sideboard SubmitDeckReq batch carries players[].mulliganCount
+    and the PREVIOUS game's turnInfo. It must not read as a game start."""
+    tracker = make_tracker()
+    line = json.dumps(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "type": "GameStateType_Diff",
+                            "players": [{"mulliganCount": 2, "systemSeatNumber": 1}],
+                            "turnInfo": {"turnNumber": 19},
+                        },
+                    },
+                    {"type": "GREMessageType_SubmitDeckReq", "submitDeckReq": {"deck": {}}},
+                ]
+            }
+        }
+    )
+    assert tracker._line_indicates_live_mulligan_start(line) is False
+
+    real_prompt = json.dumps(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "players": [{"pendingMessageType": "ClientMessageType_MulliganResp"}],
+                            "mulliganType": "MulliganType_London",
+                        },
+                    }
+                ]
+            }
+        }
+    )
+    assert tracker._line_indicates_live_mulligan_start(real_prompt) is True
