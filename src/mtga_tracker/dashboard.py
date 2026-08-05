@@ -2725,7 +2725,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                 FROM game_events
                 WHERE game_id = ?
                 ORDER BY event_time, id
-                LIMIT 500
+                LIMIT 10000
                 """,
                 (game_id,),
             )
