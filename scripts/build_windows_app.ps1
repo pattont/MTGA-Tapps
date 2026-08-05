@@ -5,7 +5,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\build_windows_app.ps1
 #
 # Requirements: Python 3.9+ and Node 18+ on PATH.
-# Output: dist\MTGA Tracker\MTGA Tracker.exe and dist\MTGA-Tracker-windows.zip
+# Output: dist\MTGA Tracker\MTGA Tracker.exe and dist\MTGA-Tracker-<version>-windows.zip
 
 $ErrorActionPreference = "Stop"
 
@@ -39,7 +39,9 @@ $ExePath = Join-Path $AppDir "MTGA Tracker.exe"
 if (-not (Test-Path $ExePath)) { throw "Build finished but $ExePath is missing" }
 
 Write-Host "==> Zipping release archive"
-$ZipPath = Join-Path $RootDir "dist\MTGA-Tracker-windows.zip"
+$VersionMatch = Select-String -Path (Join-Path $RootDir "src\mtga_tracker\__init__.py") -Pattern '__version__ = "(.+)"'
+$Version = if ($VersionMatch) { $VersionMatch.Matches[0].Groups[1].Value } else { "dev" }
+$ZipPath = Join-Path $RootDir "dist\MTGA-Tracker-$Version-windows.zip"
 if (Test-Path $ZipPath) { Remove-Item $ZipPath }
 Compress-Archive -Path $AppDir -DestinationPath $ZipPath
 
