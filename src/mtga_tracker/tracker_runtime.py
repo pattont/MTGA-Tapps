@@ -33,7 +33,7 @@ class TrackerRuntimeMixin:
         # self._print_event(f"Session: {self._session_stats_line()}", "turn")
 
         # self._print_line("\n   Waiting for game events...")
-        self._print_line("\n Now reaady to track games in MTGA!")
+        self._print_line("\n Now ready to track games in MTGA!")
         self._print_line("\n Press Ctrl+C to stop")
         self._print_line("=" * 75 + "\n")
 

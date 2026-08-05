@@ -35,7 +35,7 @@ Release cadence: bump `src/mtga_tracker/__init__.py` `__version__`, commit,
 ## Step 1 — Windows build (1–2 sessions of work)
 
 1. ~~Add `scripts/build_windows_app.ps1`~~ **Done** — builds `ui/dist`, runs
-   PyInstaller, and zips `dist/MTGA-Tracker-windows.zip`. The spec is
+   PyInstaller, and zips `dist/MTGA-Tracker-<version>-windows.zip`. The spec is
    platform-conditional (`.icns`/BUNDLE on macOS, `.ico` on Windows —
    `packaging/assets/MTGATracker.ico` is committed) and reads the app version
    from `__version__`. Validated on Linux (same non-mac code path).
@@ -67,10 +67,10 @@ jobs:
         include:
           - os: macos-latest
             build: scripts/build_macos_installer.sh
-            artifact: dist/MTGA-Tracker.dmg
+            artifact: dist/MTGA-Tracker-*.dmg
           - os: windows-latest
             build: pwsh scripts/build_windows_app.ps1
-            artifact: dist/MTGA-Tracker-windows.zip
+            artifact: dist/MTGA-Tracker-*-windows.zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

@@ -20,12 +20,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The build scripts embed the app version in the artifact names
+          # (e.g. MTGA-Tracker-0.3.1.dmg), so match them with globs.
           - os: macos-latest
             build: bash scripts/build_macos_installer.sh
-            artifact: dist/MTGA-Tracker.dmg
+            artifact: dist/MTGA-Tracker-*.dmg
           - os: windows-latest
             build: pwsh scripts/build_windows_app.ps1
-            artifact: dist/MTGA-Tracker-windows.zip
+            artifact: dist/MTGA-Tracker-*-windows.zip
     runs-on: ${{ matrix.os }}
     env:
       # The build scripts prefer a repo venv; on CI use the runner's python.
