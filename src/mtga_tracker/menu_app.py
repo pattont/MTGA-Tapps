@@ -123,7 +123,9 @@ class LiveLogWindow(QMainWindow):
     ) -> None:
         super().__init__()
         settings = settings or AppSettings()
-        self.setWindowTitle("MTGA Tracker - Live Log")
+        # Windows appends the application display name ("MTGA Tracker") to
+        # every window title, so the base title must not repeat it there.
+        self.setWindowTitle("Live Log" if sys.platform == "win32" else "MTGA Tracker - Live Log")
         if window_icon is not None:
             self.setWindowIcon(window_icon)
         self.resize(settings.live_log_width, settings.live_log_height)
@@ -133,6 +135,14 @@ class LiveLogWindow(QMainWindow):
         self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.log_view.document().setMaximumBlockCount(5000)
         log_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        if sys.platform == "win32":
+            # Windows' default fixed font is Courier New, which looks rough.
+            # Prefer the modern terminal fonts that ship with Windows 10/11.
+            families = set(QFontDatabase.families())
+            for family in ("Cascadia Mono", "Cascadia Code", "Consolas"):
+                if family in families:
+                    log_font = QFont(family)
+                    break
         log_font.setPointSize(max(12, log_font.pointSize()))
         self.log_view.setFont(log_font)
         self.setCentralWidget(self.log_view)
@@ -250,6 +260,12 @@ class MenuBarController(QObject):
         self.app.aboutToQuit.connect(self.shutdown)
 
     def _tray_icon(self) -> QIcon:
+        if sys.platform == "win32":
+            # The monochrome template glyph vanishes on Windows' dark
+            # taskbar; the colored app icon reads on any background.
+            colored = QIcon(str(_ASSET_DIR / "app-icon.png"))
+            if not colored.isNull():
+                return colored
         icon = QIcon(str(_ASSET_DIR / "tray-iconTemplate.svg"))
         if not icon.isNull():
             if sys.platform == "darwin":

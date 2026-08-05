@@ -69,7 +69,9 @@ def display_path_without_username(path_value: Any) -> str:
         if path == home:
             return "~"
         if path.is_relative_to(home):
-            return "~/" + str(path.relative_to(home))
+            # Use the platform separator after ~ so Windows shows
+            # ~\AppData\... instead of the mixed ~/AppData\... form.
+            return "~" + os.sep + str(path.relative_to(home))
         return str(path).replace(str(home), "~")
     except Exception:
         return str(path_value).replace(str(Path.home()), "~")
