@@ -333,13 +333,18 @@ class TrackerLifecycleMixin:
     def _line_indicates_live_mulligan_start(self, line: str) -> bool:
         """Return True when a mulligan marker line represents a live game start, not a game-over payload."""
         line_lower = line.lower()
+        # "mulliganCount" appears in ordinary player state diffs (including
+        # the Bo3 sideboard SubmitDeckReq batch, which still carries the
+        # PREVIOUS game's turnInfo) — it is bookkeeping, not a mulligan
+        # prompt, so it must never read as a game-start marker.
+        mulligan_markers = line_lower.replace("mulligancount", "")
         if not (
-            "mulligantype" in line_lower
+            "mulligantype" in mulligan_markers
             or (
-                "mulligan" in line_lower
-                and ("gretolient" in line_lower or "gretoclient" in line_lower)
+                "mulligan" in mulligan_markers
+                and ("gretolient" in mulligan_markers or "gretoclient" in mulligan_markers)
             )
-            or "mulliganreq" in line_lower
+            or "mulliganreq" in mulligan_markers
         ):
             return False
 
@@ -430,6 +435,22 @@ class TrackerLifecycleMixin:
             if info:
                 break
         return info
+
+    def _line_has_game_over_payload(self, line: str) -> bool:
+        """Return True when a line's gameInfo marks a game or match as over."""
+        json_data = self.parser.parse_json_from_line(line)
+        if not isinstance(json_data, dict):
+            return False
+        game_info = self._find_nested(json_data, "gameInfo")
+        if not isinstance(game_info, dict):
+            return False
+        stage = str(game_info.get("stage", ""))
+        match_state = str(game_info.get("matchState", ""))
+        return (
+            "GameStage_GameOver" in stage
+            or "MatchState_GameComplete" in match_state
+            or "MatchState_MatchComplete" in match_state
+        )
 
     def _release_waiting_for_next_game_if_detected(self, line: str) -> None:
         """Clear waiting mode when a new game's first marker appears."""
@@ -612,6 +633,7 @@ class TrackerLifecycleMixin:
         for state_event in self._extract_game_state_events(line):
             event_data = state_event.get("data", {})
             if isinstance(event_data, dict):
+                self._capture_arena_game_info(event_data)
                 self._update_format_from_game_state(event_data)
                 self._remove_deleted_instances(event_data.get("diffDeletedInstanceIds"))
                 self._snapshot_game_objects(event_data.get("gameObjects", []))
@@ -652,8 +674,26 @@ class TrackerLifecycleMixin:
                 or self._line_has_state_game_start(line)
             ):
                 return
-            incoming_match_id = self._line_arena_game_info(line).get("match_id")
+            if self._line_has_game_over_payload(line):
+                # The completed game's own tail: its final full snapshot
+                # carries hand zones that read as an "opening hand" and its
+                # old turnInfo. Treating it as the next game's start builds a
+                # ghost game 2 from game 1's dying state.
+                return
+            incoming = self._line_arena_game_info(line)
+            incoming_match_id = incoming.get("match_id")
+            incoming_game_number = int(incoming.get("game_number") or 0)
             previous_match_id = self.game_state.arena_match_id
+            if (
+                incoming_match_id
+                and previous_match_id
+                and incoming_match_id == previous_match_id
+                and incoming_game_number
+                and incoming_game_number <= int(self.game_state.game_number or 1)
+            ):
+                # Same match, same (or older) game number: more tail packets
+                # of the game that just ended — not a new game starting.
+                return
             if incoming_match_id and previous_match_id:
                 # Arena's own match UUID is authoritative: the same UUID means
                 # this start is the next game of the same Bo3 match; a
@@ -696,6 +736,9 @@ class TrackerLifecycleMixin:
                         self.waiting_for_next_game = False
                         self._print_new_game_detected()
                     self._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+                    # Arena's gameInfo rides the same packet; capture it now so
+                    # the start banner already knows Bo3 / the game number.
+                    self._capture_arena_game_info(data)
                     if turn_num > 1:
                         # The game's start was never observed (truncated log or
                         # tracker launched mid-game): partial data would poison
@@ -719,6 +762,7 @@ class TrackerLifecycleMixin:
                 self._reset_new_game_tracking(
                     opening_mulligan_prompt_seen=self._has_mulligan_prompt_in_state(data)
                 )
+                self._capture_arena_game_info(data)
                 self._capture_opening_hand(data)
                 self._print_game_started_banner(verbose=False)
                 return
