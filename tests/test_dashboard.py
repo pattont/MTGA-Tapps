@@ -2266,3 +2266,47 @@ def test_all_games_returns_full_history_with_flags(tmp_path):
 
     filtered = all_games(db_path, since="2026-06-05")
     assert filtered["total"] == 0
+
+
+def test_game_detail_timeline_not_truncated_for_long_games(tmp_path):
+    """A 35-turn grind produced 667 events; the old LIMIT 500 silently cut the
+    timeline (and life curve) after mid-game. Long games must return complete."""
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM game_events WHERE game_id = 'game-1'")
+        rows = []
+        for index in range(700):
+            turn = index // 20 + 1
+            rows.append(
+                (
+                    "session-1",
+                    "match-1",
+                    "game-1",
+                    f"2026-06-04T00:{index // 60:02d}:{index % 60:02d}",
+                    index,
+                    turn,
+                    "main",
+                    "main",
+                    "player",
+                    "cast" if index % 3 else "turn",
+                    f"Event {index}",
+                    20,
+                    20,
+                )
+            )
+        conn.executemany(
+            """
+            insert into game_events (
+                session_id, match_id, game_id, event_time, elapsed_seconds, turn_number,
+                phase, step, actor_role, event_type, text, player_life, opponent_life
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+
+    detail = game_detail(db_path, "game-1")
+
+    assert len(detail["timeline"]) == 700
+    assert detail["timeline"][-1]["turn_number"] == 35
+    assert detail["timeline"][-1]["text"] == "Event 699"
