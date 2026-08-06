@@ -375,6 +375,12 @@ class TrackerSummaryMixin:
         outcome, reason = self._resolve_game_outcome()
         self._record_session_outcome(outcome)
         self._print_result_summary(outcome, reason, duration_display)
+        untracked_reason = self._untracked_mode_reason()
+        if untracked_reason:
+            self._print_line(
+                f"🚫 Not tracked: {untracked_reason}. Jump In, Midweek Magic, Momir, and "
+                "games vs Sparky are excluded from your saved stats."
+            )
         self._print_best_of_three_status()
         self._print_starting_hand_summary()
         self._print_cards_played_summary()

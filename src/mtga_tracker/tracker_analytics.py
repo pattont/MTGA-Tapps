@@ -19,7 +19,12 @@ from .analytics_persistence import (
     persist_opening_hand,
     persist_submitted_deck,
 )
-from .format_normalizer import is_midweek_format, is_momir_format, normalize_match_format
+from .format_normalizer import (
+    is_jump_in_format,
+    is_midweek_format,
+    is_momir_format,
+    normalize_match_format,
+)
 from .deck_llm import identify_deck, is_deck_llm_enabled
 from .rank_progress import (
     iter_constructed_rank_snapshots,
@@ -42,12 +47,25 @@ class TrackerAnalyticsMixin:
 
     def _is_untracked_match(self) -> bool:
         """Return True for matches intentionally excluded from saved analytics."""
-        return (
-            self._is_bot_match()
-            or self.game_state.mid_game_attach
-            or is_momir_format(self.game_state.format_str)
-            or is_midweek_format(self.game_state.format_str)
-        )
+        return self._untracked_mode_reason() is not None or self.game_state.mid_game_attach
+
+    def _untracked_mode_reason(self) -> Optional[str]:
+        """Name the excluded game mode, or None for a tracked match.
+
+        Both the resolved format and the raw queue/event name are checked:
+        a Jump In game can persist with format "Unknown" while the event
+        name still says Jump_In_MSH.
+        """
+        if self._is_bot_match():
+            return "practice game vs Sparky"
+        for value in (self.game_state.format_str, self.game_state.player_deck_event_name):
+            if is_jump_in_format(value):
+                return "Jump In"
+            if is_midweek_format(value):
+                return "Midweek Magic"
+            if is_momir_format(value):
+                return "Momir"
+        return None
 
     def _session_snapshot(self) -> SessionSnapshot:
         """Return the current session counters for analytics persistence."""

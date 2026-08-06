@@ -114,6 +114,21 @@ Ready-made SQL reports live in [`data/_queries/`](data/_queries/README.md):
 sqlite3 data/mtga_tracker.sqlite3 < data/_queries/WinRateByDeck.sql
 ```
 
+## What isn't tracked
+
+Some game modes are intentionally excluded from your saved stats, because
+mixing them into constructed analytics would skew win rates and draw math:
+
+- **Jump In!** (`Jump_In_*` events)
+- **Midweek Magic** (`MWM_*` events)
+- **Momir** and similar novelty modes
+- **Practice games against Sparky** (the Arena bot) — this includes bot
+  Color Challenges; Starter Deck Duels against human opponents ARE tracked
+- Games the tracker joined mid-way (no reliable opener/draw data)
+
+These games still display live in the tracker window, with a note that
+they won't be saved.
+
 ## Data & privacy
 
 Everything is local SQLite. Stored logs are scrubbed of tokens and personal

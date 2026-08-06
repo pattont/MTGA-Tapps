@@ -6360,3 +6360,27 @@ def test_submit_deck_req_updates_pending_submitted_deck():
 
     assert len(tracker._pending_submitted_deck_cards) == 61
     assert len(tracker._pending_submitted_sideboard_cards) == 14
+
+
+def test_untracked_mode_reason_covers_event_name_and_sparky():
+    tracker = make_tracker()
+
+    # Jump In with an unresolved format but a telltale event name.
+    tracker.game_state.format_str = "Unknown"
+    tracker.game_state.player_deck_event_name = "Jump_In_MSH"
+    assert tracker._untracked_mode_reason() == "Jump In"
+    assert tracker._is_untracked_match()
+
+    tracker.game_state.player_deck_event_name = "MWM_Pauper"
+    assert tracker._untracked_mode_reason() == "Midweek Magic"
+
+    tracker.game_state.player_deck_event_name = None
+    tracker.game_state.format_str = "Play"
+    assert tracker._untracked_mode_reason() is None
+    assert not tracker._is_untracked_match()
+
+    # Starter deck duels count — unless the opponent is Sparky.
+    tracker.game_state.format_str = "Starter_Deck_Duels"
+    assert tracker._untracked_mode_reason() is None
+    tracker.game_state.opponent_display_name = "Sparky"
+    assert tracker._untracked_mode_reason() == "practice game vs Sparky"

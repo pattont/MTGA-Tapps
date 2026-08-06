@@ -634,3 +634,72 @@ def test_migration_backfills_drawn_card_names_in_events(tmp_path):
     ]
     assert all("drew a card" in text for text in ambiguous)
     store.close()
+
+
+def test_migration_v14_purges_untracked_modes(tmp_path):
+    store = AnalyticsStore(tmp_path / "analytics.sqlite3")
+    conn = store.connect()
+    with conn:
+        # A Jump In match that slipped in with format Unknown but a telltale
+        # queue name, a Midweek Magic match, a Sparky practice game, and a
+        # normal ranked game that must survive.
+        conn.execute(
+            "INSERT INTO matches (id, session_id, format, queue, event_name) "
+            "VALUES ('s1:match:1', 's1', 'Unknown', 'Jump_In_MSH', 'Jump_In_MSH')"
+        )
+        conn.execute(
+            "INSERT INTO matches (id, session_id, format) VALUES ('s1:match:2', 's1', 'MWM_Pauper')"
+        )
+        conn.execute(
+            "INSERT INTO matches (id, session_id, format) VALUES ('s1:match:3', 's1', 'Ladder')"
+        )
+        conn.execute(
+            "INSERT INTO matches (id, session_id, format) VALUES ('s1:match:4', 's1', 'Play')"
+        )
+        for match_n, outcome in ((1, "win"), (2, "win"), (3, "loss"), (4, "win")):
+            game_id = f"s1:match:{match_n}:game:1"
+            conn.execute(
+                "INSERT INTO games (id, session_id, match_id, game_number, started_at, outcome) "
+                "VALUES (?, 's1', ?, 1, '2026-06-23T23:43:23', ?)",
+                (game_id, f"s1:match:{match_n}", outcome),
+            )
+            conn.execute(
+                "INSERT INTO participants (id, game_id, role, display_name) "
+                "VALUES (?, ?, 'opponent', ?)",
+                (f"{game_id}:opp", game_id, "Sparky" if match_n == 4 else "Human"),
+            )
+            conn.execute(
+                "INSERT INTO game_events (session_id, match_id, game_id, event_time, "
+                "turn_number, event_type, text) VALUES ('s1', ?, ?, '2026-06-23T23:44:00', 1, 'turn', 'Turn 1')",
+                (f"s1:match:{match_n}", game_id),
+            )
+        # Stale unresolvable card label in the surviving game (old enough to purge).
+        conn.execute(
+            "INSERT INTO game_card_summary (game_id, participant_id, card_id, display_name, "
+            "type_category, played_count) VALUES ('s1:match:3:game:1', 'p', 1, 'Card #99999', 'Other', 1)"
+        )
+        conn.execute(
+            "INSERT INTO tracker_sessions (id, started_at, games_played, wins, losses, draws, unknown_results) "
+            "VALUES ('s1', '2026-06-23T20:00:00', 4, 3, 1, 0, 0)"
+        )
+        conn.execute("DELETE FROM schema_migrations WHERE version = 14")
+    AnalyticsStore.apply_pending_migrations(conn)
+
+    games = [row[0] for row in conn.execute("SELECT id FROM games ORDER BY id")]
+    matches = [row[0] for row in conn.execute("SELECT id FROM matches ORDER BY id")]
+    events = conn.execute(
+        "SELECT COUNT(*) FROM game_events WHERE game_id != 's1:match:3:game:1'"
+    ).fetchone()[0]
+    labels = conn.execute(
+        "SELECT COUNT(*) FROM game_card_summary WHERE display_name LIKE 'Card #%'"
+    ).fetchone()[0]
+    session = conn.execute(
+        "SELECT games_played, wins, losses FROM tracker_sessions WHERE id = 's1'"
+    ).fetchone()
+    store.close()
+
+    assert games == ["s1:match:3:game:1"]
+    assert matches == ["s1:match:3"]
+    assert events == 0
+    assert labels == 0
+    assert session == (1, 0, 1)
