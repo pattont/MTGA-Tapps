@@ -44,6 +44,15 @@ def is_midweek_format(value: Optional[str]) -> bool:
     return normalized.startswith("mwm") or "midweekmagic" in normalized
 
 
+def is_jump_in_format(value: Optional[str]) -> bool:
+    """Return True when Arena metadata identifies a Jump In! event.
+
+    Covers queue/event identifiers like Jump_In_MSH and Jumpstart variants.
+    """
+    normalized = normalize_match_text(value)
+    return normalized.startswith(("jumpin", "jumpstart"))
+
+
 def friendly_midweek_label(raw_format: str) -> str:
     """Convert MWM event identifiers into readable Midweek Magic labels."""
     text = re.sub(r"^MWM[_-]?", "", raw_format.strip(), flags=re.IGNORECASE)

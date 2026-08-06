@@ -547,6 +547,7 @@ class AnalyticsStore:
             (11, AnalyticsStore._migrate_v11_compress_raw_payloads),
             (12, AnalyticsStore._migrate_v12_delete_orphan_ghost_events),
             (13, AnalyticsStore._migrate_v13_merge_split_bo3_matches),
+            (14, AnalyticsStore._migrate_v14_purge_untracked_modes),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -861,6 +862,117 @@ class AnalyticsStore:
             print(
                 f"🔗 Merged {merged_games} Bo3 game(s) back into their matches "
                 f"({len(chains)} match(es) repaired)."
+            )
+
+    @staticmethod
+    def _migrate_v14_purge_untracked_modes(conn: sqlite3.Connection) -> None:
+        """Delete games from modes the tracker intentionally does not track.
+
+        Jump In, Midweek Magic, Momir, and practice games vs Sparky slipped
+        into some databases before the exclusion checked the raw queue/event
+        name (a Jump In game could persist with format "Unknown" while the
+        event still said Jump_In_MSH). Also removes permanently unresolvable
+        "Card #N" summary/opening-hand labels that the startup backfill can
+        never fix, so db_audit stops warning about them.
+        """
+        from .format_normalizer import is_jump_in_format, is_midweek_format, is_momir_format
+
+        doomed_matches = [
+            str(row[0])
+            for row in conn.execute("SELECT id, format, queue, event_name FROM matches")
+            if any(
+                is_jump_in_format(value) or is_midweek_format(value) or is_momir_format(value)
+                for value in row[1:]
+            )
+        ]
+        doomed_games = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT game_id FROM participants "
+                "WHERE role = 'opponent' AND LOWER(COALESCE(display_name, '')) = 'sparky'"
+            )
+        }
+        for match_id in doomed_matches:
+            for row in conn.execute("SELECT id FROM games WHERE match_id = ?", (match_id,)):
+                doomed_games.add(str(row[0]))
+
+        affected_sessions = {
+            str(row[0])
+            for game_id in doomed_games
+            for row in conn.execute("SELECT session_id FROM games WHERE id = ?", (game_id,))
+        }
+        for game_id in doomed_games:
+            conn.execute(
+                "DELETE FROM participant_commanders WHERE participant_id IN "
+                "(SELECT id FROM participants WHERE game_id = ?)",
+                (game_id,),
+            )
+            for table_name in (
+                "game_card_summary",
+                "game_deck_cards",
+                "game_opening_hand_cards",
+                "game_mulligan_hands",
+                "game_drawn_cards",
+                "game_events",
+                "game_turns",
+                "game_participant_stats",
+                "game_annotations",
+                "participants",
+            ):
+                conn.execute(f"DELETE FROM {table_name} WHERE game_id = ?", (game_id,))
+            conn.execute("DELETE FROM games WHERE id = ?", (game_id,))
+        conn.execute("DELETE FROM matches WHERE NOT EXISTS (SELECT 1 FROM games g WHERE g.match_id = matches.id)")
+
+        # Recompute the aggregates of sessions that lost games.
+        for session_id in affected_sessions:
+            counts = conn.execute(
+                """
+                SELECT COUNT(*),
+                       SUM(outcome = 'win'),
+                       SUM(outcome = 'loss'),
+                       SUM(outcome = 'draw'),
+                       SUM(outcome NOT IN ('win', 'loss', 'draw'))
+                FROM games WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+            if not counts or not counts[0]:
+                conn.execute("DELETE FROM tracker_sessions WHERE id = ?", (session_id,))
+                continue
+            conn.execute(
+                "UPDATE tracker_sessions SET games_played = ?, wins = ?, losses = ?, "
+                "draws = ?, unknown_results = ? WHERE id = ?",
+                (
+                    int(counts[0]),
+                    int(counts[1] or 0),
+                    int(counts[2] or 0),
+                    int(counts[3] or 0),
+                    int(counts[4] or 0),
+                    session_id,
+                ),
+            )
+
+        # Only labels in games older than a week are truly dead: a brand-new
+        # set's card can resolve once Arena updates its local card database,
+        # and the startup backfill retries recent ones every launch.
+        label_rows = 0
+        for table_name in ("game_card_summary", "game_opening_hand_cards"):
+            cursor = conn.execute(
+                f"""
+                DELETE FROM {table_name}
+                WHERE display_name LIKE 'Card #%'
+                  AND game_id IN (
+                    SELECT id FROM games
+                    WHERE COALESCE(started_at, '') < datetime('now', '-7 days')
+                  )
+                """
+            )
+            label_rows += cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+        if doomed_games or label_rows:
+            print(
+                f"🚫 Removed {len(doomed_games)} untracked-mode game(s) "
+                f"(Jump In / Midweek Magic / Momir / vs Sparky) and "
+                f"{label_rows} unresolvable card label row(s)."
             )
 
     @staticmethod
