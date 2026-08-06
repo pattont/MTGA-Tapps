@@ -2872,18 +2872,19 @@ tbody tr:hover {
 .row-expander-cell {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  white-space: nowrap;
 }
 
 .row-expander {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
+  margin-left: -4px;
   padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: none;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -2891,13 +2892,12 @@ tbody tr:hover {
 }
 
 .row-expander svg {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 .row-expander:hover {
   color: var(--accent-strong);
-  border-color: var(--accent);
 }
 
 tr.table-row-expanded > td {
