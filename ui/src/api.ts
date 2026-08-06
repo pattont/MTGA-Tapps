@@ -196,6 +196,8 @@ export interface MomentumRow {
 
 export interface RecentGameRow {
   game_id: string;
+  match_id?: string | null;
+  game_number?: number | null;
   started_at: string;
   deck_name: string;
   format_label: string;
@@ -671,8 +673,19 @@ export interface AuditReport {
   by_code: { code: string; count: number }[];
 }
 
+export interface MatchGameRow {
+  game_id: string;
+  game_number: number | null;
+  outcome: string | null;
+  started_at: string | null;
+  duration_seconds: number | null;
+  total_turns: number | null;
+}
+
 export interface GameDetail {
   game: GameHeader;
+  /** Every game of this Bo3 match in order; empty for Bo1 games. */
+  match_games?: MatchGameRow[];
   multi_account?: boolean;
   /** Bo3 games 2+: maindeck changes vs the previous game of the match. */
   sideboard_changes?: { added: string[]; removed: string[] } | null;

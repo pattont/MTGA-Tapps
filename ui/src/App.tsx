@@ -70,7 +70,87 @@ type LoadState =
   | { status: 'error'; message: string };
 
 type RecentGameWithDrawQuality = RecentGameRow &
-  Pick<DrawQualityRow, 'cards_seen' | 'lands_seen' | 'land_seen_pct'>;
+  Pick<DrawQualityRow, 'cards_seen' | 'lands_seen' | 'land_seen_pct'> & {
+    /** True for a synthetic Bo3 match rollup row. */
+    match_row?: boolean;
+    /** "Game N" label on the per-game sub-rows of a match rollup. */
+    game_label?: string;
+    /** The games of a Bo3 match, nested under its rollup row. */
+    sub_games?: RecentGameWithDrawQuality[];
+  };
+
+/** Time of day only — the match rollup row already shows the date. */
+function formatTimeOnly(value: string): string {
+  const stamp = new Date(value);
+  if (Number.isNaN(stamp.getTime())) {
+    return formatDateTime(value);
+  }
+  return stamp.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+/** WUBRG-ordered union of opponent color strings. */
+function unionColors(values: Array<string | undefined>): string {
+  const seen = new Set(values.flatMap((value) => (value ? value.split('') : [])));
+  return ['W', 'U', 'B', 'R', 'G']
+    .filter((color) => seen.has(color))
+    .join('');
+}
+
+function sumOrNull(values: Array<number | null | undefined>): number | null {
+  const present = values.filter((value): value is number => value !== null && value !== undefined);
+  return present.length ? present.reduce((total, value) => total + value, 0) : null;
+}
+
+/**
+ * Collapse the games of each Bo3 match into one rollup row with the
+ * individual games nested beneath it. Bo1 games pass through untouched.
+ */
+function groupRecentGames(rows: RecentGameWithDrawQuality[]): RecentGameWithDrawQuality[] {
+  const grouped: RecentGameWithDrawQuality[] = [];
+  const matchRowByMatchId = new Map<string, RecentGameWithDrawQuality>();
+  for (const row of rows) {
+    const matchId = row.match_id;
+    if (!matchId || (row.best_of ?? 1) <= 1) {
+      grouped.push(row);
+      continue;
+    }
+    const subRow = { ...row, game_label: `Game ${row.game_number ?? '?'}` };
+    const existing = matchRowByMatchId.get(matchId);
+    if (existing?.sub_games) {
+      existing.sub_games.push(subRow);
+      continue;
+    }
+    const matchRow: RecentGameWithDrawQuality = { ...row, match_row: true, sub_games: [subRow] };
+    matchRowByMatchId.set(matchId, matchRow);
+    grouped.push(matchRow);
+  }
+  for (const matchRow of matchRowByMatchId.values()) {
+    const games = (matchRow.sub_games ?? []).sort(
+      (a, b) => (a.game_number ?? 0) - (b.game_number ?? 0),
+    );
+    matchRow.sub_games = games;
+    const first = games[0];
+    const wins = matchRow.match_wins ?? 0;
+    const losses = matchRow.match_losses ?? 0;
+    Object.assign(matchRow, {
+      game_id: first?.game_id ?? matchRow.game_id,
+      started_at: first?.started_at ?? matchRow.started_at,
+      outcome: wins === losses ? matchRow.outcome : wins > losses ? 'win' : 'loss',
+      opp_colors: unionColors(games.map((game) => game.opp_colors)),
+      mulligans: sumOrNull(games.map((game) => game.mulligans)),
+      total_turns: sumOrNull(games.map((game) => game.total_turns)),
+      duration_seconds: sumOrNull(games.map((game) => game.duration_seconds)),
+      cards_seen: sumOrNull(games.map((game) => game.cards_seen)),
+      lands_seen: sumOrNull(games.map((game) => game.lands_seen)),
+      is_flood: games.some((game) => game.is_flood),
+      is_screw: games.some((game) => game.is_screw),
+    });
+    const cards = matchRow.cards_seen;
+    const lands = matchRow.lands_seen;
+    matchRow.land_seen_pct = cards && lands !== null ? (100 * lands) / cards : null;
+  }
+  return grouped;
+}
 
 const SNAPSHOT_REFRESH_MS = 20_000;
 const DASHBOARD_TITLE = 'Performance Overview';
@@ -446,19 +526,34 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
   {
     key: 'started_at',
     header: 'Started',
-    render: (row) => <a href={gameRouteHash(row.game_id, '#recent-games')}>{formatDateTime(row.started_at)}</a>,
+    render: (row) =>
+      row.game_label ? (
+        <a className="subrow-link" href={gameRouteHash(row.game_id, '#recent-games')}>
+          <span className="subrow-game-label">{row.game_label}</span>
+          <span className="subrow-time">{formatTimeOnly(row.started_at)}</span>
+        </a>
+      ) : (
+        <a href={gameRouteHash(row.game_id, '#recent-games')}>{formatDateTime(row.started_at)}</a>
+      ),
     sortValue: (row) => row.started_at,
   },
   {
     key: 'deck_name',
     header: 'Deck',
-    render: (row) => <DeckLink deckName={row.deck_name} />,
+    render: (row) => (row.game_label ? null : <DeckLink deckName={row.deck_name} />),
     sortValue: (row) => row.deck_name,
   },
   {
     key: 'format_label',
     header: 'Format',
-    render: (row) => shortFormatLabel(row.format_label),
+    render: (row) =>
+      row.game_label
+        ? null
+        : row.match_row
+          ? `${shortFormatLabel(row.format_label)} · ${row.sub_games?.length ?? 0} game${
+              (row.sub_games?.length ?? 0) === 1 ? '' : 's'
+            }`
+          : shortFormatLabel(row.format_label),
     sortValue: (row) => row.format_label,
   },
   {
@@ -470,14 +565,14 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
   {
     key: 'opp_colors',
     header: 'Opp',
-    render: (row) => <ColorPips colors={row.opp_colors} />,
+    render: (row) => (row.game_label ? null : <ColorPips colors={row.opp_colors} />),
     sortValue: (row) => row.opp_colors ?? '',
   },
   {
     key: 'match_wins',
     header: 'Match Record',
     render: (row) =>
-      (row.best_of ?? 1) > 1 && row.match_wins !== null && row.match_wins !== undefined
+      !row.game_label && (row.best_of ?? 1) > 1 && row.match_wins !== null && row.match_wins !== undefined
         ? `${row.match_wins}–${row.match_losses ?? 0}`
         : '—',
     sortValue: (row) => ((row.best_of ?? 1) > 1 ? (row.match_wins ?? 0) - (row.match_losses ?? 0) : null),
@@ -885,10 +980,11 @@ function Dashboard({
 
   const filteredRecentGames = useMemo(() => {
     const active = FORMAT_QUICK_FILTERS.find((filter) => filter.id === recentQuickFilter);
-    if (!active || active.id === 'all') {
-      return recentGames;
-    }
-    return recentGames.filter((row) => active.matches(row.format_label.toLocaleLowerCase()));
+    const base =
+      !active || active.id === 'all'
+        ? recentGames
+        : recentGames.filter((row) => active.matches(row.format_label.toLocaleLowerCase()));
+    return groupRecentGames(base);
   }, [recentGames, recentQuickFilter]);
 
   return (
@@ -1017,7 +1113,8 @@ function Dashboard({
           columns={recentColumns}
           pageSize={15}
           paginationKey={recentQuickFilter}
-          getRowKey={(row) => row.game_id}
+          getRowKey={(row) => (row.match_row ? `match:${row.match_id}` : row.game_id)}
+          getSubRows={(row) => row.sub_games}
           initialSort={{ key: 'started_at', direction: 'desc' }}
           rows={filteredRecentGames}
         />

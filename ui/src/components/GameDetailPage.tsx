@@ -415,6 +415,14 @@ export function GameDetailPage({
   ) : (
     'Unknown'
   );
+  const matchGames = detail.match_games ?? [];
+  const matchWins = matchGames.filter((game) => game.outcome === 'win').length;
+  const matchLosses = matchGames.filter((game) => game.outcome === 'loss').length;
+  const matchOutcome = matchWins > matchLosses ? 'win' : matchLosses > matchWins ? 'loss' : 'split';
+  const matchDurationSeconds = matchGames.reduce(
+    (total, game) => total + (game.duration_seconds ?? 0),
+    0,
+  );
   const metricCards = [
     { label: 'Play / Draw', value: playDraw },
     { label: 'Opponent Deck Type', value: opponentDeckType },
@@ -447,7 +455,9 @@ export function GameDetailPage({
             <p>
               {detail.player.deck_name ? <DeckLink deckName={detail.player.deck_name} /> : 'Unknown deck'} ·{' '}
               {detail.game.format_label}
-              {detail.game.best_of ? ` · Best-of-${detail.game.best_of}` : ''}
+              {detail.game.best_of && !detail.game.format_label.includes('Best-of')
+                ? ` · Best-of-${detail.game.best_of}`
+                : ''}
               {(detail.game.game_number ?? 1) > 1 ? ` · Game ${detail.game.game_number}` : ''}
             </p>
             {detail.sideboard_changes ? (
@@ -473,6 +483,55 @@ export function GameDetailPage({
           </div>
         </div>
       </div>
+
+      {matchGames.length > 0 ? (
+        <div className="match-strip" aria-label="Best-of-3 match overview">
+          <div className="match-strip-head">
+            <Badge tone={matchOutcome === 'win' ? 'win' : matchOutcome === 'loss' ? 'loss' : 'draw'}>
+              Match {matchOutcome === 'win' ? 'Win' : matchOutcome === 'loss' ? 'Loss' : 'Split'}
+            </Badge>
+            <span className="match-strip-record">
+              {matchWins}–{matchLosses}
+            </span>
+            <span className="match-strip-desc">
+              Best-of-{detail.game.best_of ?? 3}
+              {detail.opponent.display_name ? (
+                <>
+                  {' '}
+                  vs <OpponentLink opponentName={detail.opponent.display_name} />
+                </>
+              ) : null}
+              {' · '}
+              {formatDuration(matchDurationSeconds)} total
+            </span>
+          </div>
+          <div className="match-strip-games">
+            {matchGames.map((game) => {
+              const isCurrent = game.game_id === detail.game.game_id;
+              const body = (
+                <>
+                  <span className="match-game-num">Game {game.game_number ?? '?'}</span>
+                  <span className={`match-game-outcome match-game-outcome-${outcomeTone(game.outcome)}`}>
+                    {outcomeLabel(game.outcome)}
+                  </span>
+                  <span className="match-game-meta">
+                    {formatNumber(game.total_turns)} turns · {formatDuration(game.duration_seconds)}
+                  </span>
+                </>
+              );
+              return isCurrent ? (
+                <span key={game.game_id} className="match-game-pill match-game-pill-current" aria-current="true">
+                  {body}
+                </span>
+              ) : (
+                <a key={game.game_id} className="match-game-pill" href={gameRouteHash(game.game_id, backHref)}>
+                  {body}
+                </a>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
 
       <section className="metric-grid metric-grid-deck" aria-label="Game metrics">
         {metricCards.map((metric) => (
