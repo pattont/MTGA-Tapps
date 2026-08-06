@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   fetchGameDetail,
+  type DeckChangeCard,
   type GameDetail,
   type GameDrawnCardRow,
   type GameOpeningHandRow,
@@ -74,6 +75,43 @@ const drawnColumns: Column<GameDrawnCardRow>[] = [
     header: 'Type',
     render: (row) => <TypeChip type={row.type_category} />,
     sortValue: (row) => row.type_category,
+  },
+];
+
+const deckChangeColumns: Column<DeckChangeCard>[] = [
+  {
+    key: 'display_name',
+    header: 'Card',
+    render: (row) => <CardLink cardName={row.display_name} />,
+    sortValue: (row) => row.display_name,
+  },
+  {
+    key: 'type_category',
+    header: 'Type',
+    render: (row) => <TypeChip type={row.type_category} />,
+    sortValue: (row) => row.type_category,
+  },
+  {
+    key: 'quantity',
+    header: 'Copies',
+    render: (row) => (row.quantity > 0 ? formatNumber(row.quantity) : '—'),
+    sortValue: (row) => row.quantity,
+    numeric: true,
+  },
+  {
+    key: 'delta',
+    header: 'Sideboard Change',
+    render: (row) =>
+      row.delta > 0 ? (
+        <span className="deck-change-delta deck-change-delta-in">+{row.delta} in</span>
+      ) : row.delta < 0 ? (
+        <span className="deck-change-delta deck-change-delta-out">−{Math.abs(row.delta)} out</span>
+      ) : (
+        ''
+      ),
+    // Sort by magnitude so every changed card (in AND out) leads the table.
+    sortValue: (row) => Math.abs(row.delta),
+    numeric: true,
   },
 ];
 
@@ -636,6 +674,65 @@ export function GameDetailPage({
           <LifeChart points={detail.life_curve} />
         </div>
       </Section>
+
+      {detail.deck_changes ? (
+        <Section
+          id="game-deck-changes"
+          title="Deck w/ Changes"
+          description={`The deck you took into this game after sideboarding, compared with the deck that started the match${
+            detail.deck_changes.base_game_number > 1 ? ` (game ${detail.deck_changes.base_game_number})` : ''
+          }. Draw-quality odds for this game use these numbers.`}
+        >
+          <section className="metric-grid metric-grid-deck" aria-label="Sideboarded deck numbers">
+            <MetricCard
+              label="Deck Total"
+              value={`${detail.deck_changes.deck_total}`}
+              detail={
+                detail.deck_changes.deck_total !== detail.deck_changes.base_deck_total
+                  ? `was ${detail.deck_changes.base_deck_total}`
+                  : 'unchanged'
+              }
+            />
+            <MetricCard
+              label="Lands"
+              value={`${detail.deck_changes.lands}`}
+              detail={
+                detail.deck_changes.lands !== detail.deck_changes.base_lands
+                  ? `was ${detail.deck_changes.base_lands}`
+                  : 'unchanged'
+              }
+            />
+            <MetricCard
+              label="Land Density"
+              value={
+                detail.deck_changes.deck_total
+                  ? `${((100 * detail.deck_changes.lands) / detail.deck_changes.deck_total).toFixed(1)}%`
+                  : '—'
+              }
+              detail={
+                detail.deck_changes.base_deck_total
+                  ? `was ${((100 * detail.deck_changes.base_lands) / detail.deck_changes.base_deck_total).toFixed(1)}%`
+                  : undefined
+              }
+            />
+          </section>
+          <SortableTable
+            caption="Deck with sideboard changes"
+            columns={deckChangeColumns}
+            getRowKey={(row) => row.display_name}
+            getRowClassName={(row) =>
+              row.delta > 0
+                ? 'deck-change-row deck-change-row-in'
+                : row.delta < 0
+                  ? 'deck-change-row deck-change-row-out'
+                  : undefined
+            }
+            initialSort={{ key: 'delta', direction: 'desc' }}
+            pageSize={15}
+            rows={[...detail.deck_changes.cards, ...detail.deck_changes.removed]}
+          />
+        </Section>
+      ) : null}
 
       <Section
         id="game-opening-hand"

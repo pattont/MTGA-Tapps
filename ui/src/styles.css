@@ -3012,3 +3012,33 @@ a.match-game-pill:hover {
   color: var(--muted);
   font-size: 0.82rem;
 }
+
+/* Deck w/ Changes (Bo3 sideboarding) */
+.deck-change-delta {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.deck-change-delta-in {
+  color: var(--success);
+}
+
+.deck-change-delta-out {
+  color: var(--danger);
+}
+
+tr.deck-change-row-in > td {
+  background: color-mix(in srgb, var(--success) 7%, transparent);
+}
+
+tr.deck-change-row-out > td {
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+}
+
+tr.deck-change-row-out > td:first-child {
+  text-decoration: none;
+}
+
+tr.deck-change-row-out .card-link {
+  opacity: 0.75;
+}

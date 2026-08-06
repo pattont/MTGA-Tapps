@@ -2793,45 +2793,93 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
             "WHERE role = 'player' AND COALESCE(display_name, '') != ''"
         ).fetchone()[0]
 
-        # Bo3 games 2+: what was sideboarded relative to the previous game.
+        # Bo3 games 2+: the deck taken into THIS game compared with the deck
+        # that STARTED the match. Diffing against the original (not just the
+        # previous game) means game 3 still shows the changes made before
+        # game 2 when nothing new was boarded in between.
         sideboard_changes = None
+        deck_changes = None
         game_number = int(game.get("game_number") or 1)
         if game_number > 1 and game.get("match_id"):
-            previous_game = conn.execute(
-                "SELECT id FROM games WHERE match_id = ? AND game_number = ?",
-                (game["match_id"], game_number - 1),
+            base_game = conn.execute(
+                """
+                SELECT id, COALESCE(game_number, 1) FROM games
+                WHERE match_id = ? AND COALESCE(game_number, 1) < ?
+                ORDER BY COALESCE(game_number, 1), started_at
+                LIMIT 1
+                """,
+                (game["match_id"], game_number),
             ).fetchone()
-            if previous_game:
+            if base_game:
 
-                def _player_maindeck(target_game_id: str) -> Dict[str, int]:
-                    return {
-                        str(name): int(qty or 0)
-                        for name, qty in conn.execute(
-                            """
-                            SELECT d.display_name, d.quantity
-                            FROM game_deck_cards d
-                            JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
-                            WHERE d.game_id = ? AND d.deck_zone = 'deck'
-                            """,
-                            (target_game_id,),
-                        )
-                    }
+                def _player_maindeck(target_game_id: str) -> Dict[str, Dict[str, Any]]:
+                    rows: Dict[str, Dict[str, Any]] = {}
+                    for name, type_category, qty in conn.execute(
+                        """
+                        SELECT d.display_name, COALESCE(d.type_category, 'Other'), SUM(d.quantity)
+                        FROM game_deck_cards d
+                        JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
+                        WHERE d.game_id = ? AND d.deck_zone = 'deck'
+                        GROUP BY d.display_name
+                        """,
+                        (target_game_id,),
+                    ):
+                        rows[str(name)] = {
+                            "type_category": str(type_category or "Other"),
+                            "quantity": int(qty or 0),
+                        }
+                    return rows
 
-                before = _player_maindeck(str(previous_game[0]))
-                after = _player_maindeck(game_id)
-                if before and after:
+                base = _player_maindeck(str(base_game[0]))
+                current = _player_maindeck(game_id)
+                if base and current:
                     added = [
-                        f"{after[name] - before.get(name, 0)}x {name}"
-                        for name in sorted(after)
-                        if after[name] > before.get(name, 0)
+                        f"{current[name]['quantity'] - base.get(name, {}).get('quantity', 0)}x {name}"
+                        for name in sorted(current)
+                        if current[name]["quantity"] > base.get(name, {}).get("quantity", 0)
                     ]
                     removed = [
-                        f"{before[name] - after.get(name, 0)}x {name}"
-                        for name in sorted(before)
-                        if before[name] > after.get(name, 0)
+                        f"{base[name]['quantity'] - current.get(name, {}).get('quantity', 0)}x {name}"
+                        for name in sorted(base)
+                        if base[name]["quantity"] > current.get(name, {}).get("quantity", 0)
                     ]
                     if added or removed:
                         sideboard_changes = {"added": added, "removed": removed}
+                        deck_changes = {
+                            "base_game_number": int(base_game[1]),
+                            "deck_total": sum(row["quantity"] for row in current.values()),
+                            "base_deck_total": sum(row["quantity"] for row in base.values()),
+                            "lands": sum(
+                                row["quantity"]
+                                for row in current.values()
+                                if row["type_category"] == "Land"
+                            ),
+                            "base_lands": sum(
+                                row["quantity"]
+                                for row in base.values()
+                                if row["type_category"] == "Land"
+                            ),
+                            "cards": [
+                                {
+                                    "display_name": name,
+                                    "type_category": row["type_category"],
+                                    "quantity": row["quantity"],
+                                    "delta": row["quantity"]
+                                    - base.get(name, {}).get("quantity", 0),
+                                }
+                                for name, row in sorted(current.items())
+                            ],
+                            "removed": [
+                                {
+                                    "display_name": name,
+                                    "type_category": row["type_category"],
+                                    "quantity": 0,
+                                    "delta": -row["quantity"],
+                                }
+                                for name, row in sorted(base.items())
+                                if name not in current
+                            ],
+                        }
 
         # Sibling games of the same Bo3 match, for the match roundup strip.
         match_games: List[Dict[str, Any]] = []
@@ -2865,6 +2913,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         "match_games": match_games,
         "multi_account": int(distinct_accounts or 0) > 1,
         "sideboard_changes": sideboard_changes,
+        "deck_changes": deck_changes,
         "player": player or {},
         "opponent": opponent_payload,
         "annotation": annotation,

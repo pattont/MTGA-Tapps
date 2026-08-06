@@ -63,6 +63,8 @@ interface SortableTableProps<T extends object> {
    * beneath it, excluded from sorting and pagination counts.
    */
   getSubRows?: (row: T) => T[] | null | undefined;
+  /** Extra class for a row's <tr>, e.g. to highlight changed rows. */
+  getRowClassName?: (row: T) => string | undefined;
 }
 
 export function SortableTable<T extends object>({
@@ -75,6 +77,7 @@ export function SortableTable<T extends object>({
   pageSize,
   paginationKey = '',
   getSubRows,
+  getRowClassName,
 }: SortableTableProps<T>) {
   const [expandedKeys, setExpandedKeys] = useState<Set<string | number>>(() => new Set());
 
@@ -202,9 +205,16 @@ export function SortableTable<T extends object>({
               const subRows = getSubRows?.(row) ?? null;
               const expandable = Boolean(subRows && subRows.length > 0);
               const expanded = expandable && expandedKeys.has(rowKey);
+              const rowClasses = [
+                expandable ? 'table-row-expandable' : null,
+                expanded ? 'table-row-expanded' : null,
+                getRowClassName?.(row) ?? null,
+              ]
+                .filter(Boolean)
+                .join(' ');
               return (
                 <Fragment key={rowKey}>
-                  <tr className={expandable ? (expanded ? 'table-row-expandable table-row-expanded' : 'table-row-expandable') : undefined}>
+                  <tr className={rowClasses || undefined}>
                     {columns.map((column, columnIndex) => (
                       <td key={String(column.key)} className={column.numeric ? 'num' : undefined}>
                         {columnIndex === 0 && expandable ? (

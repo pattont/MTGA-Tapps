@@ -6337,3 +6337,26 @@ def test_sideboard_submit_line_is_not_a_mulligan_start():
         }
     )
     assert tracker._line_indicates_live_mulligan_start(real_prompt) is True
+
+
+def test_submit_deck_req_updates_pending_submitted_deck():
+    """The Bo3 intermission SubmitDeckReq carries the sideboarded deck for the
+    NEXT game; without capturing it, games 2+ persist the original 60."""
+    tracker = make_tracker()
+    tracker._pending_submitted_deck_cards = [1] * 60
+    tracker._pending_submitted_sideboard_cards = [2] * 15
+
+    tracker._capture_submitted_deck_message(
+        {
+            "type": "GREMessageType_SubmitDeckReq",
+            "submitDeckReq": {
+                "deck": {
+                    "deckCards": [10] * 61,
+                    "sideboardCards": [20] * 14,
+                }
+            },
+        }
+    )
+
+    assert len(tracker._pending_submitted_deck_cards) == 61
+    assert len(tracker._pending_submitted_sideboard_cards) == 14
