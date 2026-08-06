@@ -2363,3 +2363,31 @@ def test_snapshot_recent_rows_carry_match_identity(tmp_path):
     row = snapshot["recent"][0]
     assert row["match_id"] == "match-1"
     assert "game_number" in row
+
+
+def test_game_detail_deck_changes_compare_against_match_original(tmp_path):
+    """Post-board games show cumulative deck changes vs the ORIGINAL deck."""
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE matches SET best_of = 3 WHERE id = 'match-1'")
+
+    detail = game_detail(db_path, "game-2")
+
+    assert detail["sideboard_changes"] == {
+        "added": ["2x Sheltered by Ghosts"],
+        "removed": ["2x Mouse Mentor"],
+    }
+    changes = detail["deck_changes"]
+    assert changes["base_game_number"] == 1
+    assert changes["deck_total"] == 60
+    assert changes["base_deck_total"] == 60
+    assert changes["lands"] == 24
+    assert changes["base_lands"] == 24
+    by_name = {row["display_name"]: row for row in changes["cards"]}
+    assert by_name["Sheltered by Ghosts"]["delta"] == 2
+    assert by_name["Mouse Mentor"]["delta"] == -2
+    assert by_name["Mouse Mentor"]["quantity"] == 2
+    assert by_name["Mountain"]["delta"] == 0
+    assert changes["removed"] == []
+    # Game 1 itself has no changes section.
+    assert game_detail(db_path, "game-1")["deck_changes"] is None

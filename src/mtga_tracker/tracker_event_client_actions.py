@@ -114,8 +114,25 @@ class TrackerClientActionsMixin:
             self.game_state.submitted_sideboard_cards = parsed_sideboard.copy()
 
     def _capture_submitted_deck_message(self, message: Dict[str, Any]) -> None:
-        """Capture the deck bundled with Arena's game connection response."""
-        if message.get("type") != "GREMessageType_ConnectResp":
+        """Capture the deck bundled with Arena's game connection response.
+
+        Also reads the Bo3 intermission SubmitDeckReq: it carries the deck as
+        sideboarded for the NEXT game (validated against real logs), which is
+        the only single-line source for post-board decklists — without it,
+        games 2+ would persist the match's original 60.
+        """
+        message_type = message.get("type")
+        if message_type == "GREMessageType_SubmitDeckReq":
+            deck = (message.get("submitDeckReq") or {}).get("deck") or {}
+            deck_cards = deck.get("deckCards")
+            sideboard_cards = deck.get("sideboardCards")
+            if isinstance(deck_cards, list) and deck_cards:
+                self._store_submitted_deck(
+                    deck_cards,
+                    sideboard_cards if isinstance(sideboard_cards, list) else [],
+                )
+            return
+        if message_type != "GREMessageType_ConnectResp":
             return
         connect_response = message.get("connectResp") or {}
         deck_message = connect_response.get("deckMessage") or {}

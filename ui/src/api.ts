@@ -682,11 +682,32 @@ export interface MatchGameRow {
   total_turns: number | null;
 }
 
+export interface DeckChangeCard {
+  display_name: string;
+  type_category: string;
+  /** Copies in this game's maindeck (0 for fully sideboarded-out cards). */
+  quantity: number;
+  /** Copies gained/lost vs the deck that started the match. */
+  delta: number;
+}
+
+export interface DeckChanges {
+  base_game_number: number;
+  deck_total: number;
+  base_deck_total: number;
+  lands: number;
+  base_lands: number;
+  cards: DeckChangeCard[];
+  removed: DeckChangeCard[];
+}
+
 export interface GameDetail {
   game: GameHeader;
   /** Every game of this Bo3 match in order; empty for Bo1 games. */
   match_games?: MatchGameRow[];
   multi_account?: boolean;
+  /** Bo3 games 2+: the deck taken into this game vs the match's original deck. */
+  deck_changes?: DeckChanges | null;
   /** Bo3 games 2+: maindeck changes vs the previous game of the match. */
   sideboard_changes?: { added: string[]; removed: string[] } | null;
   player: GameParticipant;
