@@ -2310,3 +2310,56 @@ def test_game_detail_timeline_not_truncated_for_long_games(tmp_path):
     assert len(detail["timeline"]) == 700
     assert detail["timeline"][-1]["turn_number"] == 35
     assert detail["timeline"][-1]["text"] == "Event 699"
+
+
+def test_game_detail_reports_bo3_match_games(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE matches SET best_of = 3 WHERE id = 'match-1'")
+
+    detail = game_detail(db_path, "game-1")
+
+    match_games = detail["match_games"]
+    assert [row["game_id"] for row in match_games] == ["game-1", "game-2"]
+    assert [row["outcome"] for row in match_games] == ["win", "loss"]
+    assert match_games[1]["game_number"] == 2
+    assert match_games[1]["total_turns"] == 10
+
+
+def test_game_detail_bo1_single_game_has_no_match_games(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            insert into matches (id, session_id, format, best_of)
+            values ('match-9', 'session-1', 'Play', 1)
+            """
+        )
+        conn.execute(
+            """
+            insert into games (id, session_id, match_id, game_number, started_at, outcome)
+            values ('game-9', 'session-1', 'match-9', 1, '2026-06-06T00:01:00', 'win')
+            """
+        )
+        conn.execute(
+            """
+            insert into participants (id, game_id, role, deck_name)
+            values ('player-9', 'game-9', 'player', 'Boros Mouse')
+            """
+        )
+        conn.execute(
+            """
+            insert into participants (id, game_id, role)
+            values ('opponent-9', 'game-9', 'opponent')
+            """
+        )
+    detail = game_detail(db_path, "game-9")
+    assert detail["match_games"] == []
+
+
+def test_snapshot_recent_rows_carry_match_identity(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    snapshot = dashboard_snapshot(db_path)
+    row = snapshot["recent"][0]
+    assert row["match_id"] == "match-1"
+    assert "game_number" in row

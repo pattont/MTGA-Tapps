@@ -211,4 +211,34 @@ describe('SortableTable', () => {
 
     expect(screen.getByText('Page 1 of 2')).toBeInTheDocument();
   });
+
+  it('expands match rollup rows into sub-rows', async () => {
+    const user = userEvent.setup();
+    type MatchRow = { name: string; subs?: MatchRow[] };
+    const matchRows: MatchRow[] = [
+      { name: 'Match A', subs: [{ name: 'Game 1' }, { name: 'Game 2' }] },
+      { name: 'Solo game' },
+    ];
+    render(
+      <SortableTable
+        caption="Matches"
+        columns={[{ key: 'name', header: 'Name' }]}
+        getRowKey={(row) => row.name}
+        getSubRows={(row) => row.subs}
+        rows={matchRows}
+      />,
+    );
+
+    expect(screen.queryByText('Game 1')).not.toBeInTheDocument();
+    // Only the row with sub-rows gets an expander.
+    expect(screen.getAllByRole('button', { name: /show match games/i })).toHaveLength(1);
+
+    await user.click(screen.getByRole('button', { name: /show match games/i }));
+    expect(screen.getByText('Game 1')).toBeInTheDocument();
+    expect(screen.getByText('Game 2')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /hide match games/i }));
+    expect(screen.queryByText('Game 1')).not.toBeInTheDocument();
+  });
+
 });

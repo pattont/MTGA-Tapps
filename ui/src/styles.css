@@ -2867,3 +2867,148 @@ tbody tr:hover {
   font-size: 1.2rem;
   font-weight: 600;
 }
+
+/* Bo3 match rollup rows (Recent Games) */
+.row-expander-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.row-expander {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex: none;
+}
+
+.row-expander svg {
+  width: 14px;
+  height: 14px;
+}
+
+.row-expander:hover {
+  color: var(--accent-strong);
+  border-color: var(--accent);
+}
+
+tr.table-row-expanded > td {
+  border-bottom-color: transparent;
+}
+
+tr.table-subrow > td {
+  background: var(--row-alt-bg);
+  border-top: none;
+}
+
+tr.table-subrow > td:first-child {
+  padding-left: 34px;
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.subrow-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.subrow-game-label {
+  font-weight: 600;
+}
+
+.subrow-time {
+  color: var(--muted);
+  font-size: 0.86em;
+}
+
+/* Bo3 match roundup strip (Game Detail) */
+.match-strip {
+  margin: 14px 0 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.match-strip-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.match-strip-record {
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.match-strip-desc {
+  color: var(--muted);
+}
+
+.match-strip-games {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.match-game-pill {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 128px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  text-decoration: none;
+  color: var(--text);
+}
+
+a.match-game-pill:hover {
+  border-color: var(--accent);
+  background: var(--hover-tint);
+}
+
+.match-game-pill-current {
+  border-color: var(--accent);
+  background: var(--card-accent-bg);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.match-game-num {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.match-game-outcome {
+  font-weight: 700;
+}
+
+.match-game-outcome-win {
+  color: var(--success);
+}
+
+.match-game-outcome-loss {
+  color: var(--danger);
+}
+
+.match-game-meta {
+  color: var(--muted);
+  font-size: 0.82rem;
+}

@@ -1,6 +1,6 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { sortRows, type SortDirection } from '../sort';
 
 interface StoredSort {
@@ -57,6 +57,12 @@ interface SortableTableProps<T extends object> {
   initialSort?: InitialSort<T>;
   pageSize?: number;
   paginationKey?: string | number;
+  /**
+   * Rows nested under a parent row (e.g. the games of a Bo3 match). A parent
+   * with sub-rows gets an expander chevron in its first cell; sub-rows render
+   * beneath it, excluded from sorting and pagination counts.
+   */
+  getSubRows?: (row: T) => T[] | null | undefined;
 }
 
 export function SortableTable<T extends object>({
@@ -68,7 +74,21 @@ export function SortableTable<T extends object>({
   initialSort,
   pageSize,
   paginationKey = '',
+  getSubRows,
 }: SortableTableProps<T>) {
+  const [expandedKeys, setExpandedKeys] = useState<Set<string | number>>(() => new Set());
+
+  function toggleExpanded(key: string | number) {
+    setExpandedKeys((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }
   const sortableColumns = useMemo(() => columns.filter((column) => column.sortable !== false), [columns]);
   const firstSortableKey = sortableColumns[0]?.key ?? null;
   const [sortKey, setSortKey] = useState<keyof T | null>(() => {
@@ -177,15 +197,51 @@ export function SortableTable<T extends object>({
             </tr>
           </thead>
           <tbody>
-            {visibleRows.map((row) => (
-              <tr key={getRowKey(row)}>
-                {columns.map((column) => (
-                  <td key={String(column.key)} className={column.numeric ? 'num' : undefined}>
-                    {column.render ? column.render(row) : String(row[column.key] ?? '')}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {visibleRows.map((row) => {
+              const rowKey = getRowKey(row);
+              const subRows = getSubRows?.(row) ?? null;
+              const expandable = Boolean(subRows && subRows.length > 0);
+              const expanded = expandable && expandedKeys.has(rowKey);
+              return (
+                <Fragment key={rowKey}>
+                  <tr className={expandable ? (expanded ? 'table-row-expandable table-row-expanded' : 'table-row-expandable') : undefined}>
+                    {columns.map((column, columnIndex) => (
+                      <td key={String(column.key)} className={column.numeric ? 'num' : undefined}>
+                        {columnIndex === 0 && expandable ? (
+                          <span className="row-expander-cell">
+                            <button
+                              aria-expanded={expanded}
+                              aria-label={expanded ? 'Hide match games' : 'Show match games'}
+                              className="row-expander"
+                              type="button"
+                              onClick={() => toggleExpanded(rowKey)}
+                            >
+                              {expanded ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+                            </button>
+                            {column.render ? column.render(row) : String(row[column.key] ?? '')}
+                          </span>
+                        ) : column.render ? (
+                          column.render(row)
+                        ) : (
+                          String(row[column.key] ?? '')
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                  {expanded && subRows
+                    ? subRows.map((subRow) => (
+                        <tr key={getRowKey(subRow)} className="table-subrow">
+                          {columns.map((column) => (
+                            <td key={String(column.key)} className={column.numeric ? 'num' : undefined}>
+                              {column.render ? column.render(subRow) : String(subRow[column.key] ?? '')}
+                            </td>
+                          ))}
+                        </tr>
+                      ))
+                    : null}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>

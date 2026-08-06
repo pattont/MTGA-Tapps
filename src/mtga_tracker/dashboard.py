@@ -1694,6 +1694,8 @@ def dashboard_snapshot(
                 f"""
                 SELECT
                   g.id AS game_id,
+                  g.match_id,
+                  g.game_number,
                   g.started_at,
                   g.outcome,
                   g.duration_seconds,
@@ -2831,12 +2833,36 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                     if added or removed:
                         sideboard_changes = {"added": added, "removed": removed}
 
+        # Sibling games of the same Bo3 match, for the match roundup strip.
+        match_games: List[Dict[str, Any]] = []
+        if game.get("match_id"):
+            match_games = _dict_rows(
+                conn.execute(
+                    """
+                    SELECT
+                      g.id AS game_id,
+                      g.game_number,
+                      g.outcome,
+                      g.started_at,
+                      g.duration_seconds,
+                      g.total_turns
+                    FROM games g
+                    WHERE g.match_id = ?
+                    ORDER BY COALESCE(g.game_number, 1), g.started_at
+                    """,
+                    (game["match_id"],),
+                )
+            )
+        if len(match_games) < 2 and int(game.get("best_of") or 1) <= 1:
+            match_games = []
+
     annotation = game_annotation(db_path, game_id)
     opponent_payload = dict(opponent or {})
     opponent_payload["colors"] = opponent_colors
     opponent_payload["color_label"] = color_combo_label(opponent_colors)
     return {
         "game": game,
+        "match_games": match_games,
         "multi_account": int(distinct_accounts or 0) > 1,
         "sideboard_changes": sideboard_changes,
         "player": player or {},
@@ -3286,6 +3312,8 @@ def all_games(
                 f"""
                 SELECT
                   g.id AS game_id,
+                  g.match_id,
+                  g.game_number,
                   g.started_at,
                   g.outcome,
                   g.duration_seconds,
