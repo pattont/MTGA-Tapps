@@ -3,10 +3,45 @@
 from __future__ import annotations
 
 import time
+from typing import Optional
+
+#: Arena stamps this near the top of every Player.log at boot.
+DETAILED_LOGS_DISABLED_MARKER = "DETAILED LOGS: DISABLED"
+DETAILED_LOGS_ENABLED_MARKER = "DETAILED LOGS: ENABLED"
 
 
 class TrackerRuntimeMixin:
     """Console startup and live log polling loop used by CardTracker."""
+
+    def _detailed_logs_enabled(self) -> Optional[bool]:
+        """Return Arena's DETAILED LOGS state from the log head, None if unknown."""
+        try:
+            with open(self.parser.log_path, "r", encoding="utf-8", errors="ignore") as handle:
+                head = handle.read(200_000)
+        except Exception:
+            return None
+        state: Optional[bool] = None
+        for line in head.splitlines():
+            if DETAILED_LOGS_DISABLED_MARKER in line:
+                state = False
+            elif DETAILED_LOGS_ENABLED_MARKER in line:
+                state = True
+        return state
+
+    def _print_detailed_logs_warning(self) -> None:
+        """Print the can't-track warning for Arena's Detailed Logs setting."""
+        self._print_line("")
+        self._print_line("=" * 75)
+        self._print_line(
+            "⚠️  DETAILED LOGS ARE DISABLED IN ARENA — GAMES CANNOT BE TRACKED!", "attack"
+        )
+        self._print_line("=" * 75)
+        self._print_line("   To fix it, in MTG Arena:")
+        self._print_line("   1. Click the gear icon (top right) → Adjust Options")
+        self._print_line("   2. Open Account")
+        self._print_line('   3. Check "Detailed Logs (Plugin Support)"')
+        self._print_line("   4. Restart MTG Arena")
+        self._print_line("=" * 75 + "\n")
 
     def start(self):
         """Start tracking cards."""
@@ -31,6 +66,9 @@ class TrackerRuntimeMixin:
 
         self._print_startup_legend()
         # self._print_event(f"Session: {self._session_stats_line()}", "turn")
+
+        if self._detailed_logs_enabled() is False:
+            self._print_detailed_logs_warning()
 
         # self._print_line("\n   Waiting for game events...")
         self._print_line("\n Now ready to track games in MTGA!")
