@@ -16,19 +16,17 @@ dependencies = [
     "watchdog>=3.0.0",
     "python-dateutil>=2.8.2",
     "ijson>=3.2.0",
+    # Deck Downloader (bundled companion tool) — installed with the tracker
+    # so it runs out of the box from source and frozen builds alike.
+    "beautifulsoup4>=4.12,<5.0",
+    "cloudscraper>=1.2,<2.0",
+    "requests>=2.31,<3.0",
+    "rich>=13.7,<14.0",
 ]
 
 [project.optional-dependencies]
 gui = [
     "PyQt6>=6.6.0",
-]
-# Deck Downloader (bundled companion tool) — kept optional so the core
-# tracker stays stdlib-only for pip users.
-decks = [
-    "beautifulsoup4>=4.12,<5.0",
-    "cloudscraper>=1.2,<2.0",
-    "requests>=2.31,<3.0",
-    "rich>=13.7,<14.0",
 ]
 build = [
     "pyinstaller>=6.10.0",
