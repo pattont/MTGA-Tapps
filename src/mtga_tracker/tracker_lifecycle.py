@@ -402,6 +402,18 @@ class TrackerLifecycleMixin:
         game_info = data.get("gameInfo")
         if not isinstance(game_info, dict):
             return
+        stage = str(game_info.get("stage", ""))
+        match_state = str(game_info.get("matchState", ""))
+        if not self.game_state.in_match and (
+            "GameStage_GameOver" in stage
+            or "MatchState_GameComplete" in match_state
+            or "MatchState_MatchComplete" in match_state
+        ):
+            # Arena re-sends a match's final GameOver state even after the
+            # summary reset. Adopting identity from a dying packet outside a
+            # match would poison the NEXT game with the previous game's match
+            # UUID — its persist would then overwrite the finished game's row.
+            return
         match_id = game_info.get("matchID")
         if isinstance(match_id, str) and match_id and self.game_state.arena_match_id is None:
             self.game_state.arena_match_id = match_id
@@ -554,6 +566,11 @@ class TrackerLifecycleMixin:
         """Initialize tracking fields for a newly detected game."""
         self.game_state.format_str = "Unknown"
         self.game_state.match_type = "best_of_1"
+        # A stale Arena match UUID here is poison: this game's rows would be
+        # written under the PREVIOUS match's pinned ordinal, overwriting it.
+        # The current start line (or a Bo3 continuation below) re-supplies it.
+        self.game_state.arena_match_id = None
+        self.game_state.arena_match_over = False
         self._format_from_backfill = False
         self.game_state.game_start_time = self._now()
         self.game_state.in_match = True
