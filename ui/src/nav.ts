@@ -3,6 +3,8 @@ export interface AppNavItem {
   label: string;
   /** When set, the item navigates to this hash route instead of scrolling to a section. */
   route?: string;
+  /** When set, the item performs an app action instead of navigating. */
+  action?: 'deck-downloader';
 }
 
 export const dashboardNavItems: AppNavItem[] = [
@@ -19,6 +21,7 @@ export const dashboardNavItems: AppNavItem[] = [
   { id: 'sessions', label: 'Sessions' },
   { id: 'all-games', label: 'All Games', route: '#/games' },
   { id: 'db-health', label: 'DB Health', route: '#/audit' },
+  { id: 'deck-downloader', label: 'Deck Downloader', action: 'deck-downloader' },
 ];
 
 export const gamesNavItems: AppNavItem[] = [

@@ -6409,3 +6409,11 @@ def test_detailed_logs_detection_and_live_warning(tmp_path, capsys):
     tracker._process_line("DETAILED LOGS: ENABLED")
     out = capsys.readouterr().out
     assert "ready to track" in out
+
+
+def test_deck_downloader_command_resolves_from_source():
+    from mtga_tracker.deck_downloader_launcher import deck_downloader_command
+
+    command = deck_downloader_command()
+    assert command is not None
+    assert command[1:] == ["-m", "mtga_deck_downloader"]

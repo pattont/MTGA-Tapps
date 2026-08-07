@@ -235,6 +235,10 @@ class MenuBarController(QObject):
         self.open_dashboard_action.triggered.connect(self.open_dashboard)
         self.menu.addAction(self.open_dashboard_action)
 
+        self.deck_downloader_action = QAction("Deck Downloader", self)
+        self.deck_downloader_action.triggered.connect(self.open_deck_downloader)
+        self.menu.addAction(self.deck_downloader_action)
+
         self.show_log_action = QAction("Show Live Tracker Log", self)
         self.show_log_action.triggered.connect(self.show_live_log)
         self.menu.addAction(self.show_log_action)
@@ -292,6 +296,14 @@ class MenuBarController(QObject):
             self.launcher.open_dashboard()
         except Exception as exc:
             self.log_window.append_text(f"Could not open dashboard: {exc}\n")
+            self.show_live_log()
+
+    def open_deck_downloader(self) -> None:
+        from .deck_downloader_launcher import launch_deck_downloader
+
+        ok, message = launch_deck_downloader()
+        self.log_window.append_text(f"{'🃏' if ok else '⚠️'} {message}\n")
+        if not ok:
             self.show_live_log()
 
     def show_live_log(self) -> None:

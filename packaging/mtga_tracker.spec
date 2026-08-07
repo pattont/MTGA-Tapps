@@ -64,10 +64,54 @@ exe = EXE(
     icon=str(app_icon) if (is_windows and app_icon) else None,
 )
 
+# Companion console tool: the Deck Downloader terminal UI. Built from the
+# same dependency pool and collected into the same folder/.app so the menu
+# app can launch it in a terminal window.
+dd_analysis = Analysis(
+    [str(project_root / "packaging" / "deck_downloader_entrypoint.py")],
+    pathex=[str(project_root / "src")],
+    binaries=[],
+    datas=[
+        (
+            str(project_root / "src" / "mtga_deck_downloader" / "default_config.json"),
+            "mtga_deck_downloader",
+        ),
+    ],
+    hiddenimports=["cloudscraper", "bs4"],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+    optimize=0,
+)
+dd_pyz = PYZ(dd_analysis.pure)
+
+dd_exe = EXE(
+    dd_pyz,
+    dd_analysis.scripts,
+    [],
+    exclude_binaries=True,
+    name="MTGA Deck Downloader",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    console=True,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=str(app_icon) if (is_windows and app_icon) else None,
+)
+
 collection = COLLECT(
     exe,
+    dd_exe,
     analysis.binaries,
+    dd_analysis.binaries,
     analysis.datas,
+    dd_analysis.datas,
     strip=False,
     upx=True,
     upx_exclude=[],
