@@ -73,7 +73,7 @@ def launch_deck_downloader() -> Tuple[bool, str]:
     command = deck_downloader_command()
     if command is None:
         return False, (
-            "Deck Downloader is not available in this install. From a source "
+            "Deck Finder is not available in this install. From a source "
             "checkout run: pip install -e ."
         )
     # Frozen builds bundle everything; source runs need the tracker's own
@@ -82,7 +82,7 @@ def launch_deck_downloader() -> Tuple[bool, str]:
         missing = missing_dependencies()
         if missing:
             return False, (
-                "Deck Downloader dependencies are missing: "
+                "Deck Finder dependencies are missing: "
                 + ", ".join(missing)
                 + ". Run: pip install -e .  (from the MTGA-Tapps folder)"
             )
@@ -97,8 +97,8 @@ def launch_deck_downloader() -> Tuple[bool, str]:
             if not ok:
                 return False, message
     except Exception as exc:  # pragma: no cover - depends on host environment
-        return False, f"Could not launch the Deck Downloader: {exc}"
-    return True, "Deck Downloader opened in a terminal window."
+        return False, f"Could not launch the Deck Finder: {exc}"
+    return True, "Deck Finder opened in a terminal window."
 
 
 def _launch_macos_terminal(command: List[str]) -> None:
@@ -147,6 +147,6 @@ def _launch_linux_terminal(command: List[str]) -> Tuple[bool, str]:
         None,
     )
     if terminal is None:
-        return False, "No terminal emulator found to host the Deck Downloader."
+        return False, "No terminal emulator found to host the Deck Finder."
     subprocess.Popen([terminal, "-e", shell_command], cwd=str(PROJECT_ROOT))
     return True, ""

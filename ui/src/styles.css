@@ -3057,30 +3057,44 @@ tr.deck-change-row-out .card-link {
   line-height: 1.5;
 }
 
-/* Deck Downloader launcher in the sidebar — distinct from the gold routes */
-.sidebar nav button.nav-deck-downloader {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  font: inherit;
-  padding: 9px 10px;
-  border-radius: 6px;
-  font-size: 0.92rem;
-  color: var(--draw);
-  font-weight: 700;
+/* Bottom-of-sidebar stack: update pill, Deck Finder launcher, version */
+.sidebar-bottom {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
 }
 
-.sidebar nav button.nav-deck-downloader:hover,
-.sidebar nav button.nav-deck-downloader:focus-visible {
-  background: var(--panel-strong);
+.sidebar-bottom .sidebar-update,
+.sidebar-bottom .sidebar-version {
+  margin-top: 0;
+  align-self: center;
+}
+
+.sidebar-deck-finder {
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--draw) 45%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--draw) 10%, transparent);
+  color: var(--draw);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
+}
+
+.sidebar-deck-finder:hover,
+.sidebar-deck-finder:focus-visible {
+  border-color: var(--draw);
   color: color-mix(in srgb, var(--draw) 70%, var(--text));
 }
 
-.nav-deck-downloader-status {
-  margin: 6px 14px;
-  font-size: 0.8rem;
+.sidebar-deck-finder-status {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
   color: var(--muted);
+  text-align: center;
 }

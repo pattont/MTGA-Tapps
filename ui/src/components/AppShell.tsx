@@ -44,18 +44,18 @@ export function AppShell({
   }
   const [version, setVersion] = useState<string | null>(null);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
-  const [deckDownloaderStatus, setDeckDownloaderStatus] = useState<string | null>(null);
+  const [deckFinderStatus, setDeckFinderStatus] = useState<string | null>(null);
 
-  async function launchDeckDownloader() {
-    setDeckDownloaderStatus('Launching…');
+  async function launchDeckFinder() {
+    setDeckFinderStatus('Launching…');
     try {
       const response = await fetch('/api/deck-downloader/launch', { method: 'POST' });
       const payload = (await response.json()) as { ok?: boolean; message?: string };
-      setDeckDownloaderStatus(payload.message ?? (response.ok ? 'Opened.' : 'Launch failed.'));
+      setDeckFinderStatus(payload.message ?? (response.ok ? 'Opened.' : 'Launch failed.'));
     } catch {
-      setDeckDownloaderStatus('Could not reach the tracker to launch it.');
+      setDeckFinderStatus('Could not reach the tracker to launch it.');
     }
-    window.setTimeout(() => setDeckDownloaderStatus(null), 8000);
+    window.setTimeout(() => setDeckFinderStatus(null), 8000);
   }
 
   useEffect(() => {
@@ -224,17 +224,7 @@ export function AppShell({
         {collapsed ? null : (
         <nav aria-label="Dashboard sections">
           {navItems.map((item) =>
-            item.action === 'deck-downloader' ? (
-              <button
-                key={item.id}
-                className="nav-route nav-deck-downloader"
-                title="Open the Deck Downloader in a terminal window"
-                type="button"
-                onClick={() => void launchDeckDownloader()}
-              >
-                {item.label}
-              </button>
-            ) : item.route ? (
+            item.route ? (
               <a key={item.id} className="nav-route" href={item.route}>
                 {item.label}
               </a>
@@ -262,27 +252,39 @@ export function AppShell({
           )}
         </nav>
         )}
-        {!collapsed && deckDownloaderStatus ? (
-          <p className="nav-deck-downloader-status" role="status">
-            {deckDownloaderStatus}
-          </p>
-        ) : null}
-        {!collapsed && update ? (
-          <a
-            className="sidebar-update"
-            href={update.url}
-            rel="noreferrer"
-            target="_blank"
-            title="A newer version is available on GitHub"
-          >
-            Update {update.tag} available →
-          </a>
-        ) : null}
-        {!collapsed && version ? (
-          <span aria-label={`Tracker version ${version}`} className="sidebar-version">
-            v{version}
-          </span>
-        ) : null}
+        {collapsed ? null : (
+          <div className="sidebar-bottom">
+            {update ? (
+              <a
+                className="sidebar-update"
+                href={update.url}
+                rel="noreferrer"
+                target="_blank"
+                title="A newer version is available on GitHub"
+              >
+                Update {update.tag} available →
+              </a>
+            ) : null}
+            {deckFinderStatus ? (
+              <p className="sidebar-deck-finder-status" role="status">
+                {deckFinderStatus}
+              </p>
+            ) : null}
+            <button
+              className="sidebar-deck-finder"
+              title="Open the Deck Finder in a terminal window"
+              type="button"
+              onClick={() => void launchDeckFinder()}
+            >
+              Deck Finder
+            </button>
+            {version ? (
+              <span aria-label={`Tracker version ${version}`} className="sidebar-version">
+                v{version}
+              </span>
+            ) : null}
+          </div>
+        )}
       </aside>
       <main className="dashboard-main" id="main-content">
         <header className="topbar">

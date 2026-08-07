@@ -235,7 +235,7 @@ class MenuBarController(QObject):
         self.open_dashboard_action.triggered.connect(self.open_dashboard)
         self.menu.addAction(self.open_dashboard_action)
 
-        self.deck_downloader_action = QAction("Deck Downloader", self)
+        self.deck_downloader_action = QAction("Deck Finder", self)
         self.deck_downloader_action.triggered.connect(self.open_deck_downloader)
         self.menu.addAction(self.deck_downloader_action)
 
