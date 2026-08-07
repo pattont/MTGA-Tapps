@@ -143,6 +143,118 @@ def _parse_reply(raw: str) -> Optional[str]:
     return first if first else None
 
 
+def _candidates_prompt(card_names: List[str], limit: int) -> str:
+    lines = "\n".join(f"  - {name}" for name in card_names[:80])
+    return f"""You are an expert on current Magic: The Gathering Arena deck archetypes. A player was seen playing these cards in one game (not necessarily their full deck):
+
+{lines}
+
+List the 1 to {limit} most likely deck archetypes this player was playing, most likely first. Reply with ONLY a JSON array of short archetype names, e.g. ["Azorius Control", "Jeskai Convoke"]. If you cannot tell, reply []."""
+
+
+def _parse_candidates(raw: Optional[str], limit: int) -> List[str]:
+    """Extract up to `limit` archetype names from a (hopefully JSON) reply."""
+    if not raw or not isinstance(raw, str):
+        return []
+    match = re.search(r"\[.*?\]", raw, re.DOTALL)
+    names: List[str] = []
+    if match:
+        try:
+            parsed = json.loads(match.group(0))
+            if isinstance(parsed, list):
+                names = [str(item).strip() for item in parsed if str(item).strip()]
+        except json.JSONDecodeError:
+            names = []
+    if not names:
+        single = _parse_reply(raw)
+        names = [single] if single else []
+    cleaned: List[str] = []
+    for name in names:
+        if name.lower() in ("unknown", "n/a", "?"):
+            continue
+        if len(name) > 60:
+            name = name[:60].rsplit(" ", 1)[0] or name[:60]
+        if name and name not in cleaned:
+            cleaned.append(name)
+    return cleaned[:limit]
+
+
+def _complete_raw(prompt: str, max_tokens: int = 128) -> Optional[str]:
+    """Send a prompt to the configured provider; return the raw reply text."""
+    if not is_deck_llm_enabled():
+        return None
+    provider = _get_provider()
+    api_key = _get_api_key(provider)
+    if not api_key:
+        return None
+    try:
+        if provider == "gemini":
+            model = _get_gemini_model()
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{model}:generateContent?key={api_key}"
+            )
+            body = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.2},
+            }
+            req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST")
+            req.add_header("Content-Type", "application/json")
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+        if provider == "openai":
+            body = {
+                "model": _get_openai_model(),
+                "messages": [{"role": "user", "content": prompt}],
+                "max_completion_tokens": max_tokens,
+            }
+            req = urllib.request.Request(
+                "https://api.openai.com/v1/chat/completions",
+                data=json.dumps(body).encode("utf-8"),
+                method="POST",
+            )
+            req.add_header("Content-Type", "application/json")
+            req.add_header("Authorization", f"Bearer {api_key}")
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+            return data["choices"][0]["message"]["content"]
+        if provider == "claude":
+            body = {
+                "model": _get_claude_model(),
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            req = urllib.request.Request(
+                "https://api.anthropic.com/v1/messages",
+                data=json.dumps(body).encode("utf-8"),
+                method="POST",
+            )
+            req.add_header("Content-Type", "application/json")
+            req.add_header("x-api-key", api_key)
+            req.add_header("anthropic-version", "2023-06-01")
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+            for block in data.get("content", []):
+                if block.get("type") == "text":
+                    return block.get("text", "")
+    except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError, KeyError, IndexError):
+        return None
+    return None
+
+
+def identify_deck_candidates(card_names: List[str], limit: int = 3) -> List[str]:
+    """Return up to `limit` likely archetypes for the seen cards, best first.
+
+    One API call. Empty list when disabled, keyless, or the reply is unusable.
+    """
+    cards = [str(c).strip() for c in card_names if c and str(c).strip()]
+    if not cards:
+        return []
+    raw = _complete_raw(_candidates_prompt(cards, limit))
+    return _parse_candidates(raw, limit)
+
+
 def _call_gemini(prompt: str, api_key: str, timeout: int = 15) -> Optional[str]:
     model = _get_gemini_model()
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"

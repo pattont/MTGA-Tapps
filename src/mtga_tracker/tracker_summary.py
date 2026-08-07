@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from .deck_llm import identify_deck, is_deck_llm_enabled, diagnose as deck_llm_diagnose
+from .deck_llm import is_deck_llm_enabled, diagnose as deck_llm_diagnose
 from .state import CardEvent
 
 
@@ -281,9 +281,13 @@ class TrackerSummaryMixin:
             self._print_opponent_deck_guess()
 
     def _print_opponent_deck_guess(self) -> None:
-        """Print opponent archetype guess when deck LLM support is enabled."""
-        card_names = [event.card_name for event in self.opponent_cards]
-        archetype = identify_deck(card_names)
+        """Print opponent archetype guess when deck LLM support is enabled.
+
+        Routed through the per-game archetype cache so the summary print and
+        the analytics persist share ONE API call per game — calling the LLM
+        twice per game ran users into provider rate limits.
+        """
+        archetype = self._opponent_archetype(self._current_game_id())
         if archetype:
             self._print_line(f"   Opponent deck: {archetype}")
             return

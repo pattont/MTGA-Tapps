@@ -6411,6 +6411,22 @@ def test_detailed_logs_detection_and_live_warning(tmp_path, capsys):
     assert "ready to track" in out
 
 
+def test_deck_downloader_command_resolves_from_source():
+    from mtga_tracker.deck_downloader_launcher import deck_downloader_command
+
+    command = deck_downloader_command()
+    assert command is not None
+    assert command[1:] == ["-m", "mtga_deck_downloader"]
+
+
+def test_deck_downloader_missing_dependencies_empty_when_installed():
+    from mtga_tracker.deck_downloader_launcher import missing_dependencies
+
+    # This environment installs the tracker's full dependency set, so the
+    # launcher must consider the downloader runnable.
+    assert missing_dependencies() == []
+
+
 def test_stale_game_over_packet_cannot_poison_next_game_identity():
     """Arena re-sends a match's final GameOver state after the summary reset.
     Adopting its UUID outside a match made the NEXT game persist under the
@@ -6451,3 +6467,46 @@ def test_new_game_reset_clears_stale_arena_identity(tmp_path):
 
     assert tracker.game_state.arena_match_id is None
     assert tracker.game_state.arena_match_over is False
+
+
+def test_opponent_deck_guess_uses_shared_per_game_cache(monkeypatch, tmp_path):
+    """Summary print and analytics persist must share ONE LLM call per game."""
+    from mtga_tracker import tracker_analytics as ta
+
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.session_games_played = 0
+    tracker.opponent_cards = [
+        CardEvent("Lightning Bolt", "opponent"),
+        CardEvent("Monastery Swiftspear", "opponent"),
+        CardEvent("Play with Fire", "opponent"),
+    ]
+
+    calls = []
+    monkeypatch.setattr(ta, "is_deck_llm_enabled", lambda: True)
+    monkeypatch.setattr(
+        ta, "identify_deck", lambda names: calls.append(list(names)) or "Mono Red Aggro"
+    )
+
+    game_id = tracker._current_game_id()
+    first = tracker._opponent_archetype(game_id)   # summary print path
+    second = tracker._opponent_archetype(game_id)  # persist path
+    assert first == second == "Mono Red Aggro"
+    assert len(calls) == 1
+
+
+def test_parse_candidates_handles_json_prose_and_junk():
+    from mtga_tracker.deck_llm import _parse_candidates
+
+    assert _parse_candidates('["Azorius Control", "Jeskai Convoke"]', 3) == [
+        "Azorius Control",
+        "Jeskai Convoke",
+    ]
+    assert _parse_candidates('Sure! Here you go: ["Mono-Red Aggro"] hope that helps', 3) == [
+        "Mono-Red Aggro"
+    ]
+    assert _parse_candidates('["A", "B", "C", "D"]', 3) == ["A", "B", "C"]
+    assert _parse_candidates('["Unknown"]', 3) == []
+    assert _parse_candidates("Golgari Midrange", 3) == ["Golgari Midrange"]
+    assert _parse_candidates("", 3) == []
+    assert _parse_candidates(None, 3) == []
