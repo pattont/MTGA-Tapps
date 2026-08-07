@@ -67,8 +67,8 @@ class DeckAISettingsDialog(QDialog):
 
         note = QLabel(
             "OpenAI, Anthropic, and Gemini keys are supported. The key is "
-            "stored in settings.json in your tracker data folder and is only "
-            "ever sent to the provider you choose."
+            "stored in settings.json (top level of the tracker folder, next "
+            "to config.py) and is only ever sent to the provider you choose."
         )
         note.setWordWrap(True)
         note.setStyleSheet("color: gray; font-size: 11px;")

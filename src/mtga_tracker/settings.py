@@ -1,16 +1,47 @@
-"""User-editable desktop application settings."""
+"""User-editable desktop application settings.
+
+settings.json lives at the project top level, next to config.py, so it is
+easy to find and edit by hand. Frozen (installed) builds have no project
+checkout, so they keep it in the per-user data directory instead.
+"""
 
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict
 
-from .paths import DATA_DIR
+from .paths import DATA_DIR, PROJECT_ROOT
 
 
-SETTINGS_PATH = DATA_DIR / "settings.json"
+def _settings_file_path() -> Path:
+    if getattr(sys, "frozen", False):
+        return DATA_DIR / "settings.json"
+    return PROJECT_ROOT / "settings.json"
+
+
+SETTINGS_PATH = _settings_file_path()
+
+#: Where settings.json lived before it moved up to the project top level.
+LEGACY_SETTINGS_PATH = DATA_DIR / "settings.json"
+
+
+def _migrate_legacy_settings() -> None:
+    """One-time move of data/settings.json up to the project top level."""
+    if SETTINGS_PATH == LEGACY_SETTINGS_PATH or SETTINGS_PATH.exists():
+        return
+    try:
+        if LEGACY_SETTINGS_PATH.is_file():
+            SETTINGS_PATH.write_text(
+                LEGACY_SETTINGS_PATH.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+    except OSError:
+        pass
+
+
+_migrate_legacy_settings()
 DEFAULT_DASHBOARD_PORT = 8765
 MIN_DASHBOARD_PORT = 1024
 MAX_DASHBOARD_PORT = 65535

@@ -20,6 +20,7 @@ wheels/
 .installed.cfg
 *.egg
 config.py
+/settings.json
 
 # Virtual environments
 venv/
@@ -55,8 +56,6 @@ data/*.json
 data/*.csv
 data/*.sqlite3
 data/*.sqlite3.backup*
-data/backups/*.sqlite3
-data/backups/*.sqlite3.backup*
 data/*.sql
 !data/.gitkeep
 
@@ -68,6 +67,3 @@ data/backups/
 # Session scratch
 fable_src.tar.gz
 _to_delete/
-
-# FUSE artifacts from the Claude device bridge
-.fuse_hidden*
