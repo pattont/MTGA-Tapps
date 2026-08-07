@@ -4010,6 +4010,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802 - http.server API
         """Handle the dashboard's writes: game notes/tags and the DB reset."""
         parsed = urlparse(self.path)
+        if parsed.path == "/api/deck-downloader/launch":
+            # The dashboard server runs on the player's machine, so it can
+            # open the Deck Downloader terminal app on their behalf.
+            from .deck_downloader_launcher import launch_deck_downloader
+
+            ok, message = launch_deck_downloader()
+            _send_bytes(
+                self,
+                200 if ok else 409,
+                json.dumps({"ok": ok, "message": message}).encode("utf-8"),
+                "application/json; charset=utf-8",
+                {"Cache-Control": "no-store"},
+            )
+            return
         if parsed.path == "/api/db/reset":
             try:
                 length = int(self.headers.get("Content-Length") or 0)

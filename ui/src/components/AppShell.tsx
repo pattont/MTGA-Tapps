@@ -44,6 +44,19 @@ export function AppShell({
   }
   const [version, setVersion] = useState<string | null>(null);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [deckDownloaderStatus, setDeckDownloaderStatus] = useState<string | null>(null);
+
+  async function launchDeckDownloader() {
+    setDeckDownloaderStatus('Launching…');
+    try {
+      const response = await fetch('/api/deck-downloader/launch', { method: 'POST' });
+      const payload = (await response.json()) as { ok?: boolean; message?: string };
+      setDeckDownloaderStatus(payload.message ?? (response.ok ? 'Opened.' : 'Launch failed.'));
+    } catch {
+      setDeckDownloaderStatus('Could not reach the tracker to launch it.');
+    }
+    window.setTimeout(() => setDeckDownloaderStatus(null), 8000);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -211,7 +224,17 @@ export function AppShell({
         {collapsed ? null : (
         <nav aria-label="Dashboard sections">
           {navItems.map((item) =>
-            item.route ? (
+            item.action === 'deck-downloader' ? (
+              <button
+                key={item.id}
+                className="nav-route nav-deck-downloader"
+                title="Open the Deck Downloader in a terminal window"
+                type="button"
+                onClick={() => void launchDeckDownloader()}
+              >
+                {item.label}
+              </button>
+            ) : item.route ? (
               <a key={item.id} className="nav-route" href={item.route}>
                 {item.label}
               </a>
@@ -239,6 +262,11 @@ export function AppShell({
           )}
         </nav>
         )}
+        {!collapsed && deckDownloaderStatus ? (
+          <p className="nav-deck-downloader-status" role="status">
+            {deckDownloaderStatus}
+          </p>
+        ) : null}
         {!collapsed && update ? (
           <a
             className="sidebar-update"

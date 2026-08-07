@@ -3056,3 +3056,31 @@ tr.deck-change-row-out .card-link {
   text-align: left;
   line-height: 1.5;
 }
+
+/* Deck Downloader launcher in the sidebar — distinct from the gold routes */
+.sidebar nav button.nav-deck-downloader {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  padding: 9px 10px;
+  border-radius: 6px;
+  font-size: 0.92rem;
+  color: var(--draw);
+  font-weight: 700;
+}
+
+.sidebar nav button.nav-deck-downloader:hover,
+.sidebar nav button.nav-deck-downloader:focus-visible {
+  background: var(--panel-strong);
+  color: color-mix(in srgb, var(--draw) 70%, var(--text));
+}
+
+.nav-deck-downloader-status {
+  margin: 6px 14px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}

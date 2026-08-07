@@ -1,0 +1,40 @@
+{
+  "MoxfieldNames": [
+    {
+      "Name": "Ashlizzlle",
+      "ShortName": "Ash"
+    },
+    {
+      "Name": "SwayzeMTG",
+      "ShortName": "Sway"
+    },
+    {
+      "Name": "CovertGoBlue",
+      "ShortName": "CGB"
+    },
+    {
+      "Name": "CarloMTG",
+      "ShortName": "Carl"
+    }
+  ],
+  "AtherhubCreators": [
+    {
+      "Name": "MTGMalone",
+      "ShortName": "Malone"
+    },
+    {
+      "Name": "ManaMan",
+      "ShortName": "Mana"
+    },
+    {
+      "Name": "JayVillain",
+      "ShortName": "Jay"
+    }
+  ],
+  "TcgplayerCreators": [
+    {
+      "Name": "Arne Huschenbeth",
+      "ShortName": "Arne"
+    }
+  ]
+}
