@@ -71,3 +71,11 @@ def test_load_app_settings_bounds_dashboard_port(tmp_path):
     settings = load_app_settings(settings_path)
 
     assert settings.dashboard_port == 1024
+
+
+def test_settings_path_is_project_top_level_for_source_checkouts():
+    """settings.json must sit next to config.py, not buried in data/."""
+    from mtga_tracker.paths import PROJECT_ROOT
+    from mtga_tracker.settings import SETTINGS_PATH
+
+    assert SETTINGS_PATH == PROJECT_ROOT / "settings.json"

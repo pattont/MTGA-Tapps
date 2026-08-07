@@ -1,7 +1,8 @@
 """Deck archetype identification via LLM (Gemini, OpenAI, or Claude).
 
 Configuration is resolved in this order (first hit wins per value):
-  1. settings.json in the tracker data dir (written by the Settings dialog)
+  1. settings.json at the project top level, next to config.py (written by
+     the Settings dialog; installed builds keep it in the per-user data dir)
   2. config.py at the project root (source checkouts)
   3. Environment variables
 
@@ -54,7 +55,8 @@ def _env(key: str, default: str = "") -> str:
 
 # ---------------------------------------------------------------------------
 # Deck AI section of settings.json (written by the menu bar Settings dialog).
-# The file is shared with the desktop app's other settings (window size,
+# The file lives at the project top level next to config.py (see settings.py)
+# and is shared with the desktop app's other settings (window size,
 # dashboard port) — this module only touches the "deck_ai" key.
 # ---------------------------------------------------------------------------
 
