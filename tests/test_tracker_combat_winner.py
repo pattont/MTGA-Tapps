@@ -6409,3 +6409,45 @@ def test_detailed_logs_detection_and_live_warning(tmp_path, capsys):
     tracker._process_line("DETAILED LOGS: ENABLED")
     out = capsys.readouterr().out
     assert "ready to track" in out
+
+
+def test_stale_game_over_packet_cannot_poison_next_game_identity():
+    """Arena re-sends a match's final GameOver state after the summary reset.
+    Adopting its UUID outside a match made the NEXT game persist under the
+    previous match's pinned ordinal — overwriting the finished game's row."""
+    tracker = make_tracker()
+
+    # Post-summary state: not in a match. A dying packet must be ignored.
+    tracker.game_state.in_match = False
+    tracker._capture_arena_game_info(
+        {
+            "gameInfo": {
+                "matchID": "old-match-uuid",
+                "gameNumber": 1,
+                "stage": "GameStage_GameOver",
+                "matchState": "MatchState_GameComplete",
+            }
+        }
+    )
+    assert tracker.game_state.arena_match_id is None
+
+    # A live game-start packet is still captured normally.
+    tracker.game_state.in_match = True
+    tracker._capture_arena_game_info(
+        {"gameInfo": {"matchID": "new-match-uuid", "gameNumber": 1, "stage": "GameStage_Start"}}
+    )
+    assert tracker.game_state.arena_match_id == "new-match-uuid"
+
+
+def test_new_game_reset_clears_stale_arena_identity(tmp_path):
+    tracker = make_tracker()
+    log_path = tmp_path / "Player.log"
+    log_path.write_text("", encoding="utf-8")
+    tracker.parser.log_path = str(log_path)
+    tracker.game_state.arena_match_id = "stale-uuid"
+    tracker.game_state.arena_match_over = True
+
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+
+    assert tracker.game_state.arena_match_id is None
+    assert tracker.game_state.arena_match_over is False
