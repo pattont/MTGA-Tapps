@@ -6417,3 +6417,11 @@ def test_deck_downloader_command_resolves_from_source():
     command = deck_downloader_command()
     assert command is not None
     assert command[1:] == ["-m", "mtga_deck_downloader"]
+
+
+def test_deck_downloader_missing_dependencies_empty_when_installed():
+    from mtga_tracker.deck_downloader_launcher import missing_dependencies
+
+    # This environment installs the tracker's full dependency set, so the
+    # launcher must consider the downloader runnable.
+    assert missing_dependencies() == []
