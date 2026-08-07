@@ -28,6 +28,31 @@ class TrackerRuntimeMixin:
                 state = True
         return state
 
+    def _print_deck_ai_status(self) -> None:
+        """One startup line saying whether AI deck identification is active."""
+        try:
+            from .deck_llm import diagnose
+
+            status = diagnose()
+            if not status.get("enabled"):
+                return
+            provider_label = {
+                "openai": "OpenAI",
+                "claude": "Anthropic (Claude)",
+                "gemini": "Gemini",
+            }.get(str(status.get("provider") or ""), str(status.get("provider") or "?"))
+            if status.get("has_api_key"):
+                self._print_line(
+                    f" Deck AI: enabled — {provider_label} ({status.get('model') or '?'})"
+                )
+            else:
+                self._print_line(
+                    f" Deck AI: enabled but NO API KEY for {provider_label} — "
+                    "add one in Settings"
+                )
+        except Exception:
+            return
+
     def _print_detailed_logs_warning(self) -> None:
         """Print the can't-track warning for Arena's Detailed Logs setting."""
         self._print_line("")
@@ -59,6 +84,7 @@ class TrackerRuntimeMixin:
             card_db_path = resolve_db_path()
         self._print_line(f" Local Card DB: {self._display_path_without_username(card_db_path)}")
         self._print_line(f" Log DB: {self._display_path_without_username(self._console_db_path)}")
+        self._print_deck_ai_status()
         from . import __version__ as tracker_version
 
         self._print_line(f" Tracker Version: {tracker_version}")
