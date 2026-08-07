@@ -49,6 +49,14 @@ tracker features can retroactively backfill your old games.
 
 ## Quick start
 
+> [!CAUTION]
+> **The tracker cannot see your games unless "Detailed Logs" is enabled in
+> MTG Arena.** If everything looks fine but no games ever appear, this is
+> almost always why. In Arena: gear icon (top right) → **Adjust Options** →
+> **Account** → check **"Detailed Logs (Plugin Support)"** → restart Arena.
+>
+> ![Enable Detailed Logs (Plugin Support) under Account in MTG Arena's options](docs/images/detailed-logs-setting.png)
+
 **Install the app** (recommended): grab the installer for your OS from the
 [Releases page](../../releases), or build it yourself —
 

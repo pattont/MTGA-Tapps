@@ -294,6 +294,11 @@ class TrackerLifecycleMixin:
         prior_event_time = getattr(self, "_current_event_time", None)
         self._current_event_time = timestamp
         try:
+            # Arena restamps its Detailed Logs state whenever it relaunches.
+            if "DETAILED LOGS: DISABLED" in line:
+                self._print_detailed_logs_warning()
+            elif "DETAILED LOGS: ENABLED" in line:
+                self._print_line("✅ Detailed Logs are enabled in Arena — ready to track.")
             self._process_rank_progress(line)
             # Always try to pick up match metadata (format, player name) from any line
             self._parse_match_metadata(line)

@@ -210,6 +210,12 @@ function SetupCard() {
       <p className="setup-card-hint">
         Keep the tracker running while you play. This page refreshes on its own.
       </p>
+      <div className="setup-card-warning" role="alert">
+        <strong>Games not showing up?</strong> The tracker can only see games when{' '}
+        <strong>Detailed Logs</strong> are enabled in MTG Arena. In Arena, click the gear icon
+        (top right) → <em>Adjust Options</em> → <em>Account</em> → check{' '}
+        <em>"Detailed Logs (Plugin Support)"</em>, then restart Arena.
+      </div>
     </section>
   );
 }

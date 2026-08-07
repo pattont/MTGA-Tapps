@@ -6384,3 +6384,28 @@ def test_untracked_mode_reason_covers_event_name_and_sparky():
     assert tracker._untracked_mode_reason() is None
     tracker.game_state.opponent_display_name = "Sparky"
     assert tracker._untracked_mode_reason() == "practice game vs Sparky"
+
+
+def test_detailed_logs_detection_and_live_warning(tmp_path, capsys):
+    tracker = make_tracker()
+    log_path = tmp_path / "Player.log"
+    tracker.parser.log_path = str(log_path)
+
+    log_path.write_text("boot\nDETAILED LOGS: DISABLED\nmore\n", encoding="utf-8")
+    assert tracker._detailed_logs_enabled() is False
+
+    log_path.write_text("boot\nDETAILED LOGS: ENABLED\nmore\n", encoding="utf-8")
+    assert tracker._detailed_logs_enabled() is True
+
+    log_path.write_text("no marker here\n", encoding="utf-8")
+    assert tracker._detailed_logs_enabled() is None
+
+    # Live watch: Arena relaunching with the setting off prints the warning.
+    tracker._process_line("DETAILED LOGS: DISABLED")
+    out = capsys.readouterr().out
+    assert "DETAILED LOGS ARE DISABLED IN ARENA" in out
+    assert "Detailed Logs (Plugin Support)" in out
+
+    tracker._process_line("DETAILED LOGS: ENABLED")
+    out = capsys.readouterr().out
+    assert "ready to track" in out
