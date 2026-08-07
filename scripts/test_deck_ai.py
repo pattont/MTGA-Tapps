@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Test AI deck identification against your recent games' opponents.
 
-Uses the provider and API key from config.py (project root) exactly as the
-tracker does, and prints the top-3 archetype candidates per game. One API
-call per game.
+Uses the provider and API key exactly as the tracker does (settings.json,
+then config.py, then env) and prints the single best archetype guess per
+game. One API call per game.
 
     python3 scripts/test_deck_ai.py           # last 5 games
     python3 scripts/test_deck_ai.py --games 10
@@ -19,7 +19,13 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from mtga_tracker.deck_llm import diagnose, identify_deck_candidates  # noqa: E402
+from mtga_tracker.deck_llm import (  # noqa: E402
+    _build_prompt,
+    _complete_raw,
+    _parse_reply,
+    diagnose,
+    last_error,
+)
 from mtga_tracker.paths import DATA_DIR  # noqa: E402
 
 
@@ -30,9 +36,13 @@ def main() -> int:
     args = parser.parse_args()
 
     status = diagnose()
-    print(f"Provider: {status['provider']} | enabled: {status['enabled']} | key: {status['has_api_key']}")
+    print(
+        f"Provider: {status['provider']} | model: {status['model']} | "
+        f"enabled: {status['enabled']} | key: {status['has_api_key']} | "
+        f"settings.json: {status['settings_file']}"
+    )
     if not (status["enabled"] and status["has_api_key"]):
-        print("Deck AI is not configured — set DECK_LLM_ENABLED and an API key in config.py")
+        print("Deck AI is not configured — use the Settings menu or config.py")
         return 1
 
     conn = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
@@ -63,12 +73,14 @@ def main() -> int:
         if len(cards) < 3:
             print("  (too few cards seen to guess)")
             continue
-        candidates = identify_deck_candidates(cards)
-        if candidates:
-            for rank, name in enumerate(candidates, 1):
-                print(f"  {rank}. {name}")
+        raw = _complete_raw(_build_prompt(cards))
+        guess = _parse_reply(raw)
+        if guess:
+            print(f"  → {guess}")
         else:
-            print("  (no guess — check key, model, or rate limits)")
+            print(f"  (no guess) error: {last_error() or 'none reported'}")
+            if raw:
+                print(f"  raw reply: {raw[:300]}")
     conn.close()
     return 0
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -854,37 +855,84 @@ class TrackerAnalyticsMixin:
             )
 
     def _opponent_archetype(self, game_id: str) -> Optional[str]:
-        """Best-effort opponent archetype from observed cards (opt-in LLM).
+        """Cached AI archetype for a game, if the background lookup finished.
 
-        Only runs when deck_llm is explicitly enabled via config/env; the result
-        is cached per game so repeated persistence passes never re-call the API.
+        Never calls the API — _start_opponent_archetype_lookup does that on a
+        daemon thread so a slow provider can't hold up live tracking.
         """
-        try:
-            if not is_deck_llm_enabled():
-                return None
-        except Exception:
-            return None
-        cache = getattr(self, "_archetype_cache", None)
-        if cache is None:
-            cache = {}
-            self._archetype_cache = cache
-        if game_id in cache:
-            return cache[game_id]
-        card_names = []
+        cache = getattr(self, "_archetype_cache", None) or {}
+        return cache.get(game_id)
+
+    def _opponent_card_names(self) -> List[str]:
+        """Distinct opponent card names seen this game, in observed order."""
+        names: List[str] = []
         seen = set()
         for event in getattr(self, "opponent_cards", []) or []:
             name = str(getattr(event, "card_name", "") or "").strip()
             if name and name not in seen:
                 seen.add(name)
-                card_names.append(name)
-        archetype = None
-        if len(card_names) >= 3:
+                names.append(name)
+        return names
+
+    def _start_opponent_archetype_lookup(self, game_id: str) -> None:
+        """Fire one background AI deck-identification call for a finished game.
+
+        Fire-and-forget: tracking never waits on the provider. When the call
+        succeeds the worker caches the name, updates the persisted opponent
+        row (with brief retries in case persistence is still in flight), and
+        prints a postgame console line. At most one call per game.
+        """
+        try:
+            if not is_deck_llm_enabled() or self._is_untracked_match():
+                return
+        except Exception:
+            return
+        cache = getattr(self, "_archetype_cache", None)
+        if cache is None:
+            cache = {}
+            self._archetype_cache = cache
+        if game_id in cache:
+            return
+        card_names = self._opponent_card_names()
+        if len(card_names) < 3:
+            return
+        cache[game_id] = None  # mark attempted so no second call ever fires
+        db_path = getattr(self._analytics_store(), "path", None)
+
+        def _worker() -> None:
             try:
                 archetype = identify_deck(card_names)
             except Exception:
                 archetype = None
-        cache[game_id] = archetype
-        return archetype
+            if not archetype:
+                return
+            cache[game_id] = archetype
+            if db_path is not None:
+                # Persistence may still be finishing on the main thread —
+                # retry briefly until the opponent row exists to update.
+                for attempt in range(5):
+                    try:
+                        conn = sqlite3.connect(str(db_path), timeout=5)
+                        try:
+                            with conn:
+                                cursor = conn.execute(
+                                    "UPDATE participants SET deck_archetype = ? "
+                                    "WHERE game_id = ? AND role = 'opponent'",
+                                    (archetype, game_id),
+                                )
+                            if cursor.rowcount > 0:
+                                break
+                        finally:
+                            conn.close()
+                    except sqlite3.Error:
+                        pass
+                    time.sleep(2 * (attempt + 1))
+            try:
+                self._print_line(f"   🤖 Opponent deck (AI): {archetype}")
+            except Exception:
+                pass
+
+        threading.Thread(target=_worker, name="deck-ai-lookup", daemon=True).start()
 
     def _persist_game_detail_analytics(
         self,

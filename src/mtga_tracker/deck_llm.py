@@ -1,14 +1,22 @@
 """Deck archetype identification via LLM (Gemini, OpenAI, or Claude).
 
-Configure via config.py (project root) or env vars (env overrides config):
-  DECK_LLM_ENABLED         - True/False in config, or "1"/"true"/"yes" in env (default: False)
-  DECK_LLM_PROVIDER        - "Gemini" | "OpenAI" | "Claude" (default: "Gemini")
-  GEMINI_API_KEY           - API key for Gemini (when provider is Gemini)
-  CHATGPT_API_KEY          - API key for OpenAI (when provider is OpenAI)
-  CLAUDE_API_KEY           - API key for Anthropic Claude (when provider is Claude)
+Configuration is resolved in this order (first hit wins per value):
+  1. settings.json in the tracker data dir (written by the Settings dialog)
+  2. config.py at the project root (source checkouts)
+  3. Environment variables
+
+Recognized values (same names in settings.json, config.py, and env):
+  DECK_LLM_ENABLED         - True/False (default: False)
+  DECK_LLM_PROVIDER        - "OpenAI" | "Claude" | "Gemini" (default: "Gemini")
+  CHATGPT_API_KEY          - API key for OpenAI ("OPENAI_API_KEY" also honored in env)
+  CLAUDE_API_KEY           - API key for Anthropic Claude
+  GEMINI_API_KEY           - API key for Gemini
+  DECK_LLM_OPENAI_MODEL    - OpenAI model (default: "gpt-4o-mini")
+  DECK_LLM_CLAUDE_MODEL    - Claude model (default: "claude-3-5-haiku-20241022")
   DECK_LLM_GEMINI_MODEL    - Gemini model (default: "gemini-2.0-flash")
-  DECK_LLM_OPENAI_MODEL   - OpenAI model (default: "gpt-4o-mini"). Cheaper: "gpt-3.5-turbo"
-  DECK_LLM_CLAUDE_MODEL   - Claude model (default: "claude-3-5-haiku-20241022")
+
+The archetype call is intentionally cheap: one small request per game, made
+after the game completes, with reasoning-class models asked for low effort.
 """
 
 import json
@@ -16,7 +24,8 @@ import os
 import re
 import urllib.error
 import urllib.request
-from typing import Any, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 _config: Any = None
 
@@ -26,7 +35,7 @@ def _load_config() -> Any:
     if _config is None:
         try:
             import sys
-            from pathlib import Path
+
             # Ensure project root is on path so config.py is found when run from any CWD
             _here = Path(__file__).resolve().parent
             _root = _here.parent.parent
@@ -43,30 +52,105 @@ def _env(key: str, default: str = "") -> str:
     return (os.environ.get(key) or "").strip() or default
 
 
+# ---------------------------------------------------------------------------
+# Deck AI section of settings.json (written by the menu bar Settings dialog).
+# The file is shared with the desktop app's other settings (window size,
+# dashboard port) — this module only touches the "deck_ai" key.
+# ---------------------------------------------------------------------------
+
+_settings_cache: Optional[Dict[str, Any]] = None
+_settings_mtime: Optional[float] = None
+
+
+def settings_path() -> Path:
+    from .settings import SETTINGS_PATH
+
+    return SETTINGS_PATH
+
+
+def load_settings() -> Dict[str, Any]:
+    """Read the "deck_ai" section of settings.json, cached by mtime so a
+    running tracker picks up Settings-dialog edits without a restart."""
+    global _settings_cache, _settings_mtime
+    path = settings_path()
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        _settings_cache, _settings_mtime = {}, None
+        return {}
+    if _settings_cache is not None and _settings_mtime == mtime:
+        return _settings_cache
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        section = data.get("deck_ai") if isinstance(data, dict) else None
+        _settings_cache = section if isinstance(section, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        _settings_cache = {}
+    _settings_mtime = mtime
+    return _settings_cache
+
+
+def save_settings(values: Dict[str, Any]) -> Path:
+    """Merge `values` into settings.json's "deck_ai" section, leaving every
+    other section (window size, dashboard port, ...) untouched."""
+    global _settings_cache, _settings_mtime
+    path = settings_path()
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(document, dict):
+            document = {}
+    except (OSError, json.JSONDecodeError):
+        document = {}
+    section = document.get("deck_ai")
+    if not isinstance(section, dict):
+        section = {}
+    section.update(values)
+    document["deck_ai"] = section
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    _settings_cache = None
+    _settings_mtime = None
+    return path
+
+
+def _setting(key: str) -> Any:
+    """Value from settings.json, or None if absent/blank."""
+    value = load_settings().get(key)
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    return value
+
+
 def is_deck_llm_enabled() -> bool:
+    v = _setting("DECK_LLM_ENABLED")
+    if isinstance(v, bool):
+        return v
     cfg = _load_config()
     if cfg is not None and hasattr(cfg, "DECK_LLM_ENABLED"):
-        v = getattr(cfg, "DECK_LLM_ENABLED")
-        if isinstance(v, bool):
-            return v
-    v = _env("DECK_LLM_ENABLED", "0").lower()
-    return v in ("1", "true", "yes")
+        cv = getattr(cfg, "DECK_LLM_ENABLED")
+        if isinstance(cv, bool):
+            return cv
+    return _env("DECK_LLM_ENABLED", "0").lower() in ("1", "true", "yes")
 
 
 def _get_provider() -> str:
-    cfg = _load_config()
-    if cfg is not None and hasattr(cfg, "DECK_LLM_PROVIDER"):
-        p = (getattr(cfg, "DECK_LLM_PROVIDER") or "").strip().lower()
+    for raw in (
+        _setting("DECK_LLM_PROVIDER"),
+        getattr(_load_config(), "DECK_LLM_PROVIDER", None) if _load_config() else None,
+        _env("DECK_LLM_PROVIDER"),
+    ):
+        p = (raw or "").strip().lower() if isinstance(raw, str) else ""
         if p in ("gemini", "openai", "claude"):
             return p
-    p = _env("DECK_LLM_PROVIDER", "Gemini").strip().lower()
-    if p in ("gemini", "openai", "claude"):
-        return p
     return "gemini"
 
 
 def _get_api_key(provider: str) -> Optional[str]:
     def _val(cfg_key: str, env_keys: tuple) -> Optional[str]:
+        s = _setting(cfg_key)
+        if isinstance(s, str) and s:
+            return s
         cfg = _load_config()
         if cfg is not None and hasattr(cfg, cfg_key):
             k = getattr(cfg, cfg_key)
@@ -88,12 +172,15 @@ def _get_api_key(provider: str) -> Optional[str]:
 
 
 def _get_model(provider: str) -> str:
-    """Model name for the given provider. Config: DECK_LLM_GEMINI_MODEL / OPENAI_MODEL / CLAUDE_MODEL or env."""
-    cfg = _load_config()
+    """Model name for the given provider, from settings.json / config.py / env."""
     keys = {"gemini": "DECK_LLM_GEMINI_MODEL", "openai": "DECK_LLM_OPENAI_MODEL", "claude": "DECK_LLM_CLAUDE_MODEL"}
     key = keys.get(provider)
     if not key:
         return ""
+    s = _setting(key)
+    if isinstance(s, str) and s:
+        return s
+    cfg = _load_config()
     if cfg is not None and hasattr(cfg, key):
         m = getattr(cfg, key, None)
         if m and isinstance(m, str) and m.strip():
@@ -121,15 +208,18 @@ def _get_claude_model() -> str:
 
 def _build_prompt(card_names: List[str]) -> str:
     lines = "\n".join(f"  - {name}" for name in card_names[:80])  # cap for token safety
-    return f"""You are an expert on Magic: The Gathering Arena deck archetypes. Given a list of card names that one player was seen to play in a single game, respond with exactly one short deck archetype or deck name (e.g. "Izzet Control", "Mono-Red Aggro", "Selesnya Enchantments"). If you cannot tell, respond with "Unknown".
+    return f"""You are an expert on Magic: The Gathering Arena deck archetypes. A player was seen playing these cards in a single game (not necessarily their full deck):
 
-Cards seen (not necessarily the full deck):
 {lines}
 
-Reply with only the deck archetype or name, one short phrase, or "Unknown"."""
+Respond with exactly one short deck archetype name (e.g. "Izzet Control", "Mono-Red Aggro", "Selesnya Enchantments"). Rules:
+- Name the deck by its DOMINANT colors and strategy. If a color appears in only a card or two, it is a splash — leave it out of the name (a mostly-Jeskai deck with one black card is still "Jeskai ...").
+- If you do not recognize the specific cards (they may be from a newer set than you know), infer the colors and strategy from the card names and answer with a descriptive name like "Azorius Artifacts" or "Golgari Midrange" — never refuse.
+
+Reply with ONLY the archetype name, one short phrase."""
 
 
-def _parse_reply(raw: str) -> Optional[str]:
+def _parse_reply(raw: Optional[str]) -> Optional[str]:
     if not raw or not isinstance(raw, str):
         return None
     raw = raw.strip()
@@ -143,49 +233,92 @@ def _parse_reply(raw: str) -> Optional[str]:
     return first if first else None
 
 
-def _candidates_prompt(card_names: List[str], limit: int) -> str:
-    lines = "\n".join(f"  - {name}" for name in card_names[:80])
-    return f"""You are an expert on current Magic: The Gathering Arena deck archetypes. A player was seen playing these cards in one game (not necessarily their full deck):
-
-{lines}
-
-List the 1 to {limit} most likely deck archetypes this player was playing, most likely first. Reply with ONLY a JSON array of short archetype names, e.g. ["Azorius Control", "Jeskai Convoke"]. If you cannot tell, reply []."""
+#: Last _complete_raw failure, for diagnostics (scripts/test_deck_ai.py).
+_last_error: Optional[str] = None
 
 
-def _parse_candidates(raw: Optional[str], limit: int) -> List[str]:
-    """Extract up to `limit` archetype names from a (hopefully JSON) reply."""
-    if not raw or not isinstance(raw, str):
-        return []
-    match = re.search(r"\[.*?\]", raw, re.DOTALL)
-    names: List[str] = []
-    if match:
-        try:
-            parsed = json.loads(match.group(0))
-            if isinstance(parsed, list):
-                names = [str(item).strip() for item in parsed if str(item).strip()]
-        except json.JSONDecodeError:
-            names = []
-    if not names:
-        single = _parse_reply(raw)
-        names = [single] if single else []
-    cleaned: List[str] = []
-    for name in names:
-        if name.lower() in ("unknown", "n/a", "?"):
-            continue
-        if len(name) > 60:
-            name = name[:60].rsplit(" ", 1)[0] or name[:60]
-        if name and name not in cleaned:
-            cleaned.append(name)
-    return cleaned[:limit]
+def last_error() -> Optional[str]:
+    return _last_error
 
 
-def _complete_raw(prompt: str, max_tokens: int = 128) -> Optional[str]:
-    """Send a prompt to the configured provider; return the raw reply text."""
+#: OpenAI models that spend completion tokens on hidden reasoning.
+_REASONING_MODEL_RE = re.compile(r"^(o\d|gpt-5)", re.IGNORECASE)
+
+
+def _openai_complete(prompt: str, api_key: str, max_tokens: int) -> Optional[str]:
+    """OpenAI chat completion, tolerant of reasoning-family models.
+
+    Reasoning models (gpt-5 family, o-series) burn completion tokens on
+    hidden reasoning before emitting any visible text — and those hidden
+    tokens are billed. Two mitigations, both cost-savers: request low
+    reasoning effort when the model looks reasoning-class, and retry once
+    with a modestly larger budget only if the reply still comes back empty
+    with finish_reason=length.
+    """
+    global _last_error
+    model = _get_openai_model()
+
+    def _call(tokens: int, effort: Optional[str]) -> dict:
+        body: dict = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_completion_tokens": tokens,
+        }
+        if effort:
+            body["reasoning_effort"] = effort
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions",
+            data=json.dumps(body).encode("utf-8"),
+            method="POST",
+        )
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", f"Bearer {api_key}")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())["choices"][0]
+
+    # "low" is accepted across reasoning families (gpt-5, o-series); the
+    # cheapest label varies by model, so don't chase it. Non-reasoning
+    # models (gpt-4o-mini etc.) get no effort parameter at all.
+    effort: Optional[str] = "low" if _REASONING_MODEL_RE.match(model) else None
+    try:
+        choice = _call(max_tokens, effort)
+    except urllib.error.HTTPError as exc:
+        if effort and exc.code == 400:
+            # Model rejected reasoning_effort — drop it for every call.
+            effort = None
+            choice = _call(max_tokens, effort)
+        else:
+            raise
+    text = (choice.get("message", {}).get("content") or "").strip()
+    if not text and choice.get("finish_reason") == "length":
+        # Hidden reasoning consumed the whole budget; one modest retry.
+        choice = _call(2048, effort)
+        text = (choice.get("message", {}).get("content") or "").strip()
+    if not text:
+        _last_error = (
+            f"empty reply (finish_reason={choice.get('finish_reason')}) — "
+            "reasoning model consumed the token budget even after retry"
+        )
+        return None
+    return text
+
+
+def _complete_raw(prompt: str, max_tokens: int = 1024) -> Optional[str]:
+    """Send a prompt to the configured provider; return the raw reply text.
+
+    max_tokens is generous because reasoning-class models (OpenAI gpt-5
+    family, o-series) burn completion tokens on hidden reasoning before any
+    visible text — a small cap returns an EMPTY reply, not a shorter one.
+    """
+    global _last_error
+    _last_error = None
     if not is_deck_llm_enabled():
+        _last_error = "deck LLM disabled"
         return None
     provider = _get_provider()
     api_key = _get_api_key(provider)
     if not api_key:
+        _last_error = "no API key"
         return None
     try:
         if provider == "gemini":
@@ -204,21 +337,7 @@ def _complete_raw(prompt: str, max_tokens: int = 128) -> Optional[str]:
                 data = json.loads(resp.read().decode())
             return data["candidates"][0]["content"]["parts"][0]["text"]
         if provider == "openai":
-            body = {
-                "model": _get_openai_model(),
-                "messages": [{"role": "user", "content": prompt}],
-                "max_completion_tokens": max_tokens,
-            }
-            req = urllib.request.Request(
-                "https://api.openai.com/v1/chat/completions",
-                data=json.dumps(body).encode("utf-8"),
-                method="POST",
-            )
-            req.add_header("Content-Type", "application/json")
-            req.add_header("Authorization", f"Bearer {api_key}")
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode())
-            return data["choices"][0]["message"]["content"]
+            return _openai_complete(prompt, api_key, max_tokens)
         if provider == "claude":
             body = {
                 "model": _get_claude_model(),
@@ -238,199 +357,47 @@ def _complete_raw(prompt: str, max_tokens: int = 128) -> Optional[str]:
             for block in data.get("content", []):
                 if block.get("type") == "text":
                     return block.get("text", "")
-    except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError, KeyError, IndexError):
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = exc.read().decode()[:300]
+        except Exception:
+            detail = ""
+        _last_error = f"HTTP {exc.code}: {detail}"
         return None
+    except urllib.error.URLError as exc:
+        _last_error = f"network: {exc.reason}"
+        return None
+    except (json.JSONDecodeError, KeyError, IndexError) as exc:
+        _last_error = f"unexpected response shape: {exc}"
+        return None
+    _last_error = "no text in response"
     return None
 
 
-def identify_deck_candidates(card_names: List[str], limit: int = 3) -> List[str]:
-    """Return up to `limit` likely archetypes for the seen cards, best first.
-
-    One API call. Empty list when disabled, keyless, or the reply is unusable.
-    """
-    cards = [str(c).strip() for c in card_names if c and str(c).strip()]
-    if not cards:
-        return []
-    raw = _complete_raw(_candidates_prompt(cards, limit))
-    return _parse_candidates(raw, limit)
-
-
-def _call_gemini(prompt: str, api_key: str, timeout: int = 15) -> Optional[str]:
-    model = _get_gemini_model()
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-    body = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"maxOutputTokens": 64, "temperature": 0.2},
-    }
-    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST")
-    req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode())
-    except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError):
-        return None
-    try:
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-        return _parse_reply(text)
-    except (KeyError, IndexError):
-        return None
-
-
-def test_call(card_names: List[str]) -> tuple[Optional[str], Optional[str]]:
-    """Returns (archetype, error_message). For test_deck_llm.py to show API errors."""
-    if not is_deck_llm_enabled():
-        return (None, "DECK_LLM_ENABLED is False")
-    cards = [str(c).strip() for c in card_names if c and str(c).strip()]
-    if not cards:
-        return (None, "No cards")
-    provider = _get_provider()
-    api_key = _get_api_key(provider)
-    if not api_key:
-        return (None, "No API key in config or env")
-    prompt = _build_prompt(cards)
-    if provider == "gemini":
-        model = _get_gemini_model()
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-        body = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 64, "temperature": 0.2}}
-        req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST")
-        req.add_header("Content-Type", "application/json")
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode())
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-            return (_parse_reply(text), None)
-        except urllib.error.HTTPError as e:
-            return (None, f"HTTP {e.code}: {e.read().decode()[:300]}")
-        except urllib.error.URLError as e:
-            return (None, f"Network: {e.reason}")
-        except (KeyError, IndexError, json.JSONDecodeError) as e:
-            return (None, str(e))
-    if provider == "openai":
-        model = _get_openai_model()
-        url = "https://api.openai.com/v1/chat/completions"
-        body = {"model": model, "messages": [{"role": "user", "content": prompt}], "max_completion_tokens": 64}
-        req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST")
-        req.add_header("Content-Type", "application/json")
-        req.add_header("Authorization", f"Bearer {api_key}")
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode())
-            text = data["choices"][0]["message"]["content"]
-            return (_parse_reply(text), None)
-        except urllib.error.HTTPError as e:
-            return (None, f"HTTP {e.code}: {e.read().decode()[:500]}")
-        except urllib.error.URLError as e:
-            return (None, f"Network: {e.reason}")
-        except (KeyError, IndexError, json.JSONDecodeError) as e:
-            return (None, str(e))
-    if provider == "claude":
-        model = _get_claude_model()
-        url = "https://api.anthropic.com/v1/messages"
-        body = {"model": model, "max_tokens": 64, "messages": [{"role": "user", "content": prompt}]}
-        req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST")
-        req.add_header("Content-Type", "application/json")
-        req.add_header("x-api-key", api_key)
-        req.add_header("anthropic-version", "2023-06-01")
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode())
-            for block in data.get("content", []):
-                if block.get("type") == "text":
-                    return (_parse_reply(block.get("text", "")), None)
-            return (None, "No text in response")
-        except urllib.error.HTTPError as e:
-            return (None, f"HTTP {e.code}: {e.read().decode()[:500]}")
-        except urllib.error.URLError as e:
-            return (None, f"Network: {e.reason}")
-        except (KeyError, IndexError, json.JSONDecodeError) as e:
-            return (None, str(e))
-    return (identify_deck(cards), None)
-
-
-def _call_openai(prompt: str, api_key: str, timeout: int = 15) -> Optional[str]:
-    model = _get_openai_model()
-    url = "https://api.openai.com/v1/chat/completions"
-    body = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_completion_tokens": 64,
-    }
-    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", f"Bearer {api_key}")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode())
-    except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError):
-        return None
-    try:
-        text = data["choices"][0]["message"]["content"]
-        return _parse_reply(text)
-    except (KeyError, IndexError):
-        return None
-
-
-def _call_claude(prompt: str, api_key: str, timeout: int = 15) -> Optional[str]:
-    model = _get_claude_model()
-    url = "https://api.anthropic.com/v1/messages"
-    body = {
-        "model": model,
-        "max_tokens": 64,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("x-api-key", api_key)
-    req.add_header("anthropic-version", "2023-06-01")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode())
-    except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError):
-        return None
-    try:
-        for block in data.get("content", []):
-            if block.get("type") == "text":
-                return _parse_reply(block.get("text", ""))
-        return None
-    except (KeyError, IndexError):
-        return None
-
-
 def diagnose() -> dict:
-    """Return config/API status for debugging. Use from test_deck_llm.py."""
+    """Return config/API status for debugging (scripts/test_deck_ai.py)."""
     cfg = _load_config()
     enabled = is_deck_llm_enabled()
     provider = _get_provider()
     api_key = _get_api_key(provider)
     return {
         "config_loaded": cfg is not None,
+        "settings_file": settings_path().is_file(),
         "enabled": enabled,
         "provider": provider,
+        "model": _get_model(provider),
         "has_api_key": bool(api_key and api_key.strip()),
     }
 
 
 def identify_deck(card_names: List[str]) -> Optional[str]:
-    """Identify deck archetype from a list of card names using the configured LLM.
+    """Identify the opponent's deck archetype from observed card names.
 
-    Reads DECK_LLM_ENABLED, DECK_LLM_PROVIDER, and the appropriate API key from
-    config.py (if present) or env vars (env overrides config).
-    Returns a short string (e.g. "Izzet Control") or None if disabled, no key, or error.
+    One cheap API call. Returns a short string (e.g. "Izzet Control") or
+    None when disabled, keyless, or the reply is unusable. Callers should
+    invoke this off the tracking thread — it can take seconds.
     """
-    if not is_deck_llm_enabled():
-        return None
     cards = [str(c).strip() for c in card_names if c and str(c).strip()]
     if not cards:
         return None
-    provider = _get_provider()
-    api_key = _get_api_key(provider)
-    if not api_key:
-        return None
-    prompt = _build_prompt(cards)
-    if provider == "gemini":
-        return _call_gemini(prompt, api_key)
-    if provider == "openai":
-        return _call_openai(prompt, api_key)
-    if provider == "claude":
-        return _call_claude(prompt, api_key)
-    return None
+    return _parse_reply(_complete_raw(_build_prompt(cards)))

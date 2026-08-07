@@ -235,6 +235,10 @@ class MenuBarController(QObject):
         self.open_dashboard_action.triggered.connect(self.open_dashboard)
         self.menu.addAction(self.open_dashboard_action)
 
+        self.deck_downloader_action = QAction("Deck Finder", self)
+        self.deck_downloader_action.triggered.connect(self.open_deck_downloader)
+        self.menu.addAction(self.deck_downloader_action)
+
         self.show_log_action = QAction("Show Live Tracker Log", self)
         self.show_log_action.triggered.connect(self.show_live_log)
         self.menu.addAction(self.show_log_action)
@@ -242,6 +246,10 @@ class MenuBarController(QObject):
         self.open_data_action = QAction("Open Data Folder", self)
         self.open_data_action.triggered.connect(self.open_data_folder)
         self.menu.addAction(self.open_data_action)
+
+        self.settings_action = QAction("Settings…", self)
+        self.settings_action.triggered.connect(self.open_settings)
+        self.menu.addAction(self.settings_action)
 
         self.menu.addSeparator()
         self.toggle_tracker_action = QAction("Stop Tracking", self)
@@ -294,6 +302,14 @@ class MenuBarController(QObject):
             self.log_window.append_text(f"Could not open dashboard: {exc}\n")
             self.show_live_log()
 
+    def open_deck_downloader(self) -> None:
+        from .deck_downloader_launcher import launch_deck_downloader
+
+        ok, message = launch_deck_downloader()
+        self.log_window.append_text(f"{'🃏' if ok else '⚠️'} {message}\n")
+        if not ok:
+            self.show_live_log()
+
     def show_live_log(self) -> None:
         self.log_window.show()
         self.log_window.raise_()
@@ -301,6 +317,17 @@ class MenuBarController(QObject):
 
     def open_data_folder(self) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(DATA_DIR)))
+
+    def open_settings(self) -> None:
+        from .settings_dialog import open_settings_dialog
+
+        try:
+            if open_settings_dialog(self.log_window):
+                self.log_window.append_text(
+                    "⚙️ Settings saved — AI deck identification applies from the next game.\n"
+                )
+        except Exception as exc:
+            self.log_window.append_text(f"⚠️ Could not open Settings: {exc}\n")
 
     def toggle_tracker(self) -> None:
         if self.launcher.tracker_is_running:
