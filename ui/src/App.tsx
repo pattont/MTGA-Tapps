@@ -878,7 +878,7 @@ export default function App() {
                   ? opponentNavItems
                   : undefined
         }
-        heading={gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : cardName ? formatCardName(cardName) : (gameRoute ? 'Game Detail' : deckName ?? opponentRoute?.name ?? dashboardTitle)}
+        heading={gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute?.name ?? dashboardTitle)}
       >
         {gamesRoute ? (
           <GamesPage
