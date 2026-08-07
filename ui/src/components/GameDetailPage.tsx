@@ -445,13 +445,16 @@ export function GameDetailPage({
     .sort(([a], [b]) => a - b)
     .map(([turn, counts]) => ({ turn, ...counts }));
   const timelineReturnHash = gameRouteHash(gameId, backHref, 'game-timeline');
+  // AI-identified archetype (dominant colors + strategy) overrides the plain
+  // color label; the pips still show every color actually seen.
+  const opponentDeckLabel = detail.opponent.deck_archetype ?? detail.opponent.color_label;
   const opponentDeckType = detail.opponent.colors ? (
-    <span className="color-combo">
+    <span className="color-combo" title={detail.opponent.color_label ?? undefined}>
       <ColorPips colors={detail.opponent.colors} size={20} />
-      {detail.opponent.color_label}
+      {opponentDeckLabel}
     </span>
   ) : (
-    'Unknown'
+    detail.opponent.deck_archetype ?? 'Unknown'
   );
   const matchGames = detail.match_games ?? [];
   const matchWins = matchGames.filter((game) => game.outcome === 'win').length;

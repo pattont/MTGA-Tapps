@@ -281,16 +281,12 @@ class TrackerSummaryMixin:
             self._print_opponent_deck_guess()
 
     def _print_opponent_deck_guess(self) -> None:
-        """Print opponent archetype guess when deck LLM support is enabled.
+        """Kick off (or report) the AI opponent-deck identification.
 
-        Routed through the per-game archetype cache so the summary print and
-        the analytics persist share ONE API call per game — calling the LLM
-        twice per game ran users into provider rate limits.
+        The API call runs on a background thread so a slow provider never
+        holds up tracking — the result prints its own console line when it
+        arrives and lands in the game's saved record. One call per game.
         """
-        archetype = self._opponent_archetype(self._current_game_id())
-        if archetype:
-            self._print_line(f"   Opponent deck: {archetype}")
-            return
         diagnostics = deck_llm_diagnose()
         if not diagnostics.get("has_api_key"):
             key_name = {
@@ -299,10 +295,15 @@ class TrackerSummaryMixin:
                 "claude": "CLAUDE_API_KEY",
             }.get(diagnostics.get("provider") or "gemini", "GEMINI_API_KEY")
             self._print_line(
-                f"   Opponent deck: (LLM: no API key — set {key_name} in config.py or env)"
+                f"   Opponent deck: (AI: no API key — set {key_name} in Settings or config.py)"
             )
-        else:
-            self._print_line("   Opponent deck: (LLM: request failed — check key/network)")
+            return
+        game_id = self._current_game_id()
+        archetype = self._opponent_archetype(game_id)
+        if archetype:
+            self._print_line(f"   Opponent deck (AI): {archetype}")
+            return
+        self._start_opponent_archetype_lookup(game_id)
 
     def _print_exile_and_match_stats_summary(self) -> None:
         """Print exile counters and aggregate match stats."""

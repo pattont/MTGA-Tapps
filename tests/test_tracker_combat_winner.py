@@ -6469,8 +6469,19 @@ def test_new_game_reset_clears_stale_arena_identity(tmp_path):
     assert tracker.game_state.arena_match_over is False
 
 
-def test_opponent_deck_guess_uses_shared_per_game_cache(monkeypatch, tmp_path):
-    """Summary print and analytics persist must share ONE LLM call per game."""
+class _InlineThread:
+    """threading.Thread stand-in that runs the target synchronously."""
+
+    def __init__(self, target=None, name=None, daemon=None):
+        self._target = target
+
+    def start(self):
+        if self._target is not None:
+            self._target()
+
+
+def test_opponent_archetype_lookup_fires_once_and_caches(monkeypatch):
+    """The background AI lookup runs at most one API call per game."""
     from mtga_tracker import tracker_analytics as ta
 
     tracker = make_tracker()
@@ -6487,26 +6498,78 @@ def test_opponent_deck_guess_uses_shared_per_game_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(
         ta, "identify_deck", lambda names: calls.append(list(names)) or "Mono Red Aggro"
     )
+    monkeypatch.setattr(ta.threading, "Thread", _InlineThread)
+    monkeypatch.setattr(ta.time, "sleep", lambda seconds: None)
 
     game_id = tracker._current_game_id()
-    first = tracker._opponent_archetype(game_id)   # summary print path
-    second = tracker._opponent_archetype(game_id)  # persist path
-    assert first == second == "Mono Red Aggro"
+    assert tracker._opponent_archetype(game_id) is None  # nothing cached yet
+    tracker._start_opponent_archetype_lookup(game_id)  # summary print path
+    tracker._start_opponent_archetype_lookup(game_id)  # persist path
+    assert tracker._opponent_archetype(game_id) == "Mono Red Aggro"
     assert len(calls) == 1
 
 
-def test_parse_candidates_handles_json_prose_and_junk():
-    from mtga_tracker.deck_llm import _parse_candidates
+def test_opponent_archetype_lookup_never_blocks_or_calls_when_disabled(monkeypatch):
+    from mtga_tracker import tracker_analytics as ta
 
-    assert _parse_candidates('["Azorius Control", "Jeskai Convoke"]', 3) == [
-        "Azorius Control",
-        "Jeskai Convoke",
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.opponent_cards = [
+        CardEvent("Lightning Bolt", "opponent"),
+        CardEvent("Monastery Swiftspear", "opponent"),
+        CardEvent("Play with Fire", "opponent"),
     ]
-    assert _parse_candidates('Sure! Here you go: ["Mono-Red Aggro"] hope that helps', 3) == [
-        "Mono-Red Aggro"
-    ]
-    assert _parse_candidates('["A", "B", "C", "D"]', 3) == ["A", "B", "C"]
-    assert _parse_candidates('["Unknown"]', 3) == []
-    assert _parse_candidates("Golgari Midrange", 3) == ["Golgari Midrange"]
-    assert _parse_candidates("", 3) == []
-    assert _parse_candidates(None, 3) == []
+    monkeypatch.setattr(ta, "is_deck_llm_enabled", lambda: False)
+    monkeypatch.setattr(
+        ta, "identify_deck", lambda names: (_ for _ in ()).throw(AssertionError("called"))
+    )
+    monkeypatch.setattr(ta.threading, "Thread", _InlineThread)
+    tracker._start_opponent_archetype_lookup(tracker._current_game_id())
+
+
+def test_parse_reply_handles_prose_and_junk():
+    from mtga_tracker.deck_llm import _parse_reply
+
+    assert _parse_reply("Jeskai Control") == "Jeskai Control"
+    assert _parse_reply('"Mono-Red Aggro"\nExtra prose here') == "Mono-Red Aggro"
+    assert _parse_reply("Unknown") is None
+    assert _parse_reply("") is None
+    assert _parse_reply(None) is None
+
+
+def test_deck_ai_settings_json_section(monkeypatch, tmp_path):
+    """settings.json's deck_ai section wins, and saving preserves other sections."""
+    from mtga_tracker import deck_llm
+
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(
+        json.dumps(
+            {
+                "dashboard": {"port": 9999},
+                "deck_ai": {
+                    "DECK_LLM_ENABLED": True,
+                    "DECK_LLM_PROVIDER": "openai",
+                    "CHATGPT_API_KEY": "sk-test",
+                    "DECK_LLM_OPENAI_MODEL": "gpt-test",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(deck_llm, "settings_path", lambda: settings_file)
+    deck_llm._settings_cache = None
+    deck_llm._settings_mtime = None
+
+    assert deck_llm.is_deck_llm_enabled() is True
+    assert deck_llm._get_provider() == "openai"
+    assert deck_llm._get_api_key("openai") == "sk-test"
+    assert deck_llm._get_model("openai") == "gpt-test"
+
+    deck_llm.save_settings({"DECK_LLM_ENABLED": False})
+    document = json.loads(settings_file.read_text(encoding="utf-8"))
+    assert document["dashboard"] == {"port": 9999}  # untouched
+    assert document["deck_ai"]["CHATGPT_API_KEY"] == "sk-test"  # merged, not replaced
+    assert deck_llm.is_deck_llm_enabled() is False
+
+    deck_llm._settings_cache = None
+    deck_llm._settings_mtime = None

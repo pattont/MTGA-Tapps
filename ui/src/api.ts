@@ -523,6 +523,7 @@ export interface GameParticipant {
   seat_id?: number | null;
   display_name?: string | null;
   deck_name?: string | null;
+  deck_archetype?: string | null;
   went_first?: number | null;
   mulligans?: number | null;
   opening_hand_size?: number | null;
