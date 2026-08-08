@@ -124,12 +124,26 @@ def _launch_macos_terminal(command: List[str]) -> None:
     subprocess.Popen(["osascript", "-e", applescript])
 
 
+def _windows_console_command_line(command: List[str]) -> str:
+    """Build the cmd.exe line that sizes the console and runs the command.
+
+    cmd does NOT understand the backslash-escaped quotes Popen produces for
+    argument lists, so a quoted path like "MTGA Deck Downloader.exe" got
+    mangled into fragments ('deck downloader.exe is not recognized...').
+    Instead pass ONE raw string using cmd's own rule: with /S /C the first
+    and last quote of the tail are stripped, so wrapping the whole compound
+    command in quotes keeps the inner quoted paths intact.
+    """
+    quoted = " ".join(f'"{part}"' if " " in part else part for part in command)
+    return (
+        f'cmd /S /C "mode con: cols={TERMINAL_COLUMNS} lines={TERMINAL_ROWS} & {quoted}"'
+    )
+
+
 def _launch_windows_console(command: List[str]) -> None:
     """Open a new console sized for the TUI."""
-    command_line = subprocess.list2cmdline(command)
-    sized = f"mode con: cols={TERMINAL_COLUMNS} lines={TERMINAL_ROWS} & {command_line}"
     subprocess.Popen(
-        ["cmd", "/c", sized],
+        _windows_console_command_line(command),
         cwd=str(PROJECT_ROOT),
         creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010),
     )
