@@ -44,6 +44,19 @@ export function AppShell({
   }
   const [version, setVersion] = useState<string | null>(null);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [deckFinderStatus, setDeckFinderStatus] = useState<string | null>(null);
+
+  async function launchDeckFinder() {
+    setDeckFinderStatus('Launching…');
+    try {
+      const response = await fetch('/api/deck-downloader/launch', { method: 'POST' });
+      const payload = (await response.json()) as { ok?: boolean; message?: string };
+      setDeckFinderStatus(payload.message ?? (response.ok ? 'Opened.' : 'Launch failed.'));
+    } catch {
+      setDeckFinderStatus('Could not reach the tracker to launch it.');
+    }
+    window.setTimeout(() => setDeckFinderStatus(null), 8000);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -239,22 +252,39 @@ export function AppShell({
           )}
         </nav>
         )}
-        {!collapsed && update ? (
-          <a
-            className="sidebar-update"
-            href={update.url}
-            rel="noreferrer"
-            target="_blank"
-            title="A newer version is available on GitHub"
-          >
-            Update {update.tag} available →
-          </a>
-        ) : null}
-        {!collapsed && version ? (
-          <span aria-label={`Tracker version ${version}`} className="sidebar-version">
-            v{version}
-          </span>
-        ) : null}
+        {collapsed ? null : (
+          <div className="sidebar-bottom">
+            {update ? (
+              <a
+                className="sidebar-update"
+                href={update.url}
+                rel="noreferrer"
+                target="_blank"
+                title="A newer version is available on GitHub"
+              >
+                Update {update.tag} available →
+              </a>
+            ) : null}
+            {deckFinderStatus ? (
+              <p className="sidebar-deck-finder-status" role="status">
+                {deckFinderStatus}
+              </p>
+            ) : null}
+            <button
+              className="sidebar-deck-finder"
+              title="Open the Deck Finder in a terminal window"
+              type="button"
+              onClick={() => void launchDeckFinder()}
+            >
+              Deck Finder
+            </button>
+            {version ? (
+              <span aria-label={`Tracker version ${version}`} className="sidebar-version">
+                v{version}
+              </span>
+            ) : null}
+          </div>
+        )}
       </aside>
       <main className="dashboard-main" id="main-content">
         <header className="topbar">

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mtga-tracker"
-version = "0.4.2"
+version = "0.5.0"
 description = "Track cards played in Magic: The Gathering Arena"
 readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}
@@ -16,6 +16,12 @@ dependencies = [
     "watchdog>=3.0.0",
     "python-dateutil>=2.8.2",
     "ijson>=3.2.0",
+    # Deck Downloader (bundled companion tool) — installed with the tracker
+    # so it runs out of the box from source and frozen builds alike.
+    "beautifulsoup4>=4.12,<5.0",
+    "cloudscraper>=1.2,<2.0",
+    "requests>=2.31,<3.0",
+    "rich>=13.7,<14.0",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +39,7 @@ dev = [
 ]
 
 [project.scripts]
+mtga-deck-downloader = "mtga_deck_downloader.__main__:main"
 mtga-tracker = "mtga_tracker.main:main"
 mtga-tracker-app = "mtga_tracker.app:main"
 mtga-tracker-audit-db = "mtga_tracker.db_audit:main"
@@ -44,6 +51,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 mtga_tracker = ["assets/*"]
+mtga_deck_downloader = ["default_config.json"]
 
 [tool.black]
 line-length = 100
