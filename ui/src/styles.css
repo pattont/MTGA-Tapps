@@ -3056,3 +3056,45 @@ tr.deck-change-row-out .card-link {
   text-align: left;
   line-height: 1.5;
 }
+
+/* Bottom-of-sidebar stack: update pill, Deck Finder launcher, version */
+.sidebar-bottom {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.sidebar-bottom .sidebar-update,
+.sidebar-bottom .sidebar-version {
+  margin-top: 0;
+  align-self: center;
+}
+
+.sidebar-deck-finder {
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--draw) 45%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--draw) 10%, transparent);
+  color: var(--draw);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
+}
+
+.sidebar-deck-finder:hover,
+.sidebar-deck-finder:focus-visible {
+  border-color: var(--draw);
+  color: color-mix(in srgb, var(--draw) 70%, var(--text));
+}
+
+.sidebar-deck-finder-status {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--muted);
+  text-align: center;
+}

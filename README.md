@@ -141,7 +141,9 @@ they won't be saved.
 
 Everything is local SQLite. Stored logs are scrubbed of tokens and personal
 paths before persistence. The only network traffic is your browser fetching
-Scryfall card art; card *identification* uses Arena's own local card database
+Scryfall card art — plus, only when you open the bundled Deck Downloader,
+its requests to the public decklist sites you browse there. Card
+*identification* uses Arena's own local card database
 (`Raw_CardDatabase_*.mtga`, discovered automatically under the Steam/Epic
 install, override with `MTGA_DATA_DIR`).
 
