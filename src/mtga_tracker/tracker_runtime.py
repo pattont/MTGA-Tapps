@@ -83,6 +83,16 @@ class TrackerRuntimeMixin:
         if callable(resolve_db_path):
             card_db_path = resolve_db_path()
         self._print_line(f" Local Card DB: {self._display_path_without_username(card_db_path)}")
+        if card_db_path is None:
+            self._print_line(
+                " ⚠️  Without Arena's card database, cards appear as 'Card #NNNN'. If Arena is"
+            )
+            self._print_line(
+                "    installed somewhere custom, set the MTGA_DATA_DIR environment variable to"
+            )
+            self._print_line(
+                "    its card-data folder: <Arena install>\\MTGA_Data\\Downloads\\Raw"
+            )
         self._print_line(f" Log DB: {self._display_path_without_username(self._console_db_path)}")
         self._print_deck_ai_status()
         from . import __version__ as tracker_version
