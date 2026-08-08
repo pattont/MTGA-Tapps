@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.1
+
+- **Fixed "Local Card DB: not found" on Windows** (cards showing as `Card #NNNN`): the tracker
+  now reads Steam's `libraryfolders.vdf` and checks every configured Steam library on every
+  drive (root located via Program Files and the registry), plus Epic Games install paths — on
+  Windows and macOS. When the DB still can't be found, the startup banner explains the
+  consequence and the `MTGA_DATA_DIR` override.
+- **Fixed the packaged Deck Finder starting with "No providers found"**: its provider modules
+  load dynamically, so PyInstaller never bundled them. The build now collects every submodule
+  and the registry has a frozen-build fallback list guarded by a drift test.
+- Windows path display now uses `%USERPROFILE%` instead of `~`, so locations in the startup
+  banner paste straight into Explorer or cmd.
+- The AI deck guess no longer prints a stray console line after "Ready for next game..." — it
+  lands silently in the game record and shows on Game Detail.
+
 ## 0.5.0
 
 - Bundled the **Deck Finder** (MTGA Deck Downloader) as a companion tool: launch it from the
