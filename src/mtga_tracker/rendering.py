@@ -59,20 +59,28 @@ def apply_style(
     return f"{prefix}{text}{reset}"
 
 
+#: Home-directory placeholder for displayed paths. Unix shells expand `~`,
+#: but Windows does not — `%USERPROFILE%` is what Explorer's address bar and
+#: cmd actually expand, so redacted paths stay copy-pasteable there.
+HOME_PLACEHOLDER = "%USERPROFILE%" if os.name == "nt" else "~"
+
+
 def display_path_without_username(path_value: Any) -> str:
-    """Return a display path with the user's home directory shortened to ~/."""
+    """Return a display path with the user's home directory redacted.
+
+    Unix: `~/...`. Windows: `%USERPROFILE%\\...`, which pastes straight into
+    Explorer or a cmd prompt and resolves to the real folder.
+    """
     if path_value is None:
         return "not found"
     try:
         path = Path(path_value).resolve()
         home = Path.home().resolve()
         if path == home:
-            return "~"
+            return HOME_PLACEHOLDER
         if path.is_relative_to(home):
-            # Use the platform separator after ~ so Windows shows
-            # ~\AppData\... instead of the mixed ~/AppData\... form.
-            return "~" + os.sep + str(path.relative_to(home))
-        return str(path).replace(str(home), "~")
+            return HOME_PLACEHOLDER + os.sep + str(path.relative_to(home))
+        return str(path).replace(str(home), HOME_PLACEHOLDER)
     except Exception:
-        return str(path_value).replace(str(Path.home()), "~")
+        return str(path_value).replace(str(Path.home()), HOME_PLACEHOLDER)
 
