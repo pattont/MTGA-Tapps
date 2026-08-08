@@ -878,9 +878,9 @@ class TrackerAnalyticsMixin:
         """Fire one background AI deck-identification call for a finished game.
 
         Fire-and-forget: tracking never waits on the provider. When the call
-        succeeds the worker caches the name, updates the persisted opponent
-        row (with brief retries in case persistence is still in flight), and
-        prints a postgame console line. At most one call per game.
+        succeeds the worker caches the name and updates the persisted opponent
+        row (with brief retries in case persistence is still in flight); the
+        dashboard's Game Detail page surfaces it. At most one call per game.
         """
         try:
             if not is_deck_llm_enabled() or self._is_untracked_match():
@@ -927,10 +927,9 @@ class TrackerAnalyticsMixin:
                     except sqlite3.Error:
                         pass
                     time.sleep(2 * (attempt + 1))
-            try:
-                self._print_line(f"   🤖 Opponent deck (AI): {archetype}")
-            except Exception:
-                pass
+            # No console output: the result arrives after "Ready for next
+            # game..." and a late line looks out of place. The dashboard's
+            # Game Detail page shows the identified archetype instead.
 
         threading.Thread(target=_worker, name="deck-ai-lookup", daemon=True).start()
 

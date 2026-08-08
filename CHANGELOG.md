@@ -10,7 +10,7 @@
 - Added **AI opponent-deck identification**: with an OpenAI, Anthropic, or Gemini key, one
   small background call after each completed game names the opponent's archetype by its
   dominant colors and strategy. Shown as the Opponent Deck Type on Game Detail (color label as
-  fallback), printed with the postgame console summary, and never blocks live tracking.
+  fallback); it never blocks live tracking.
   Reasoning-class OpenAI models are asked for low effort and retried once on token-starved
   empty replies; failures now surface a real error via `scripts/test_deck_ai.py`.
 - Added a **Settings… dialog** to the menu bar app for the AI provider, key, and model, plus a
