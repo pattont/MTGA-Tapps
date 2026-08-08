@@ -49,3 +49,48 @@ def test_default_data_dir_honors_environment_override(tmp_path, monkeypatch):
     monkeypatch.setenv("MTGA_TRACKER_DATA_DIR", str(tmp_path))
 
     assert paths_mod._default_data_dir() == tmp_path
+
+
+def test_parse_steam_library_paths_handles_escaped_backslashes():
+    vdf = '''
+"libraryfolders"
+{
+    "0"
+    {
+        "path"		"C:\\\\Program Files (x86)\\\\Steam"
+        "label"		""
+    }
+    "1"
+    {
+        "path"		"D:\\\\SteamLibrary"
+    }
+}
+'''
+    assert paths_mod._parse_steam_library_paths(vdf) == [
+        r"C:\Program Files (x86)\Steam",
+        r"D:\SteamLibrary",
+    ]
+
+
+def test_steam_mtga_raw_dirs_finds_secondary_library(tmp_path):
+    steam_root = tmp_path / "Steam"
+    library = tmp_path / "OtherDrive" / "SteamLibrary"
+    raw = library / "steamapps" / "common" / "MTGA" / "MTGA_Data" / "Downloads" / "Raw"
+    raw.mkdir(parents=True)
+    vdf_dir = steam_root / "steamapps"
+    vdf_dir.mkdir(parents=True)
+    (vdf_dir / "libraryfolders.vdf").write_text(
+        '"libraryfolders"\n{\n  "0"\n  {\n    "path"\t\t"%s"\n  }\n}\n'
+        % str(library).replace("\\", "\\\\"),
+        encoding="utf-8",
+    )
+
+    assert paths_mod._steam_mtga_raw_dirs(steam_root) == [raw]
+
+
+def test_steam_mtga_raw_dirs_without_vdf_checks_default_root(tmp_path):
+    steam_root = tmp_path / "Steam"
+    raw = steam_root / "steamapps" / "common" / "MTGA" / "MTGA_Data" / "Downloads" / "Raw"
+    raw.mkdir(parents=True)
+
+    assert paths_mod._steam_mtga_raw_dirs(steam_root) == [raw]

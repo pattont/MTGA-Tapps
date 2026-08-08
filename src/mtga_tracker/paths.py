@@ -5,9 +5,71 @@ Automatically detects project paths and provides global variables for file locat
 
 import os
 import platform
+import re
 import sys
 from pathlib import Path
 from typing import List, Optional
+
+
+#: Relative path from a game install root to Arena's raw card database folder.
+_MTGA_RAW_SUFFIX = Path("MTGA_Data") / "Downloads" / "Raw"
+
+
+def _parse_steam_library_paths(vdf_text: str) -> List[str]:
+    """Extract library folder paths from Steam's libraryfolders.vdf.
+
+    The VDF format stores them as `"path"  "D:\\\\SteamLibrary"` entries with
+    doubled backslashes. A full VDF parser is overkill for two keys.
+    """
+    values = re.findall(r'"path"\s+"((?:[^"\\]|\\.)*)"', vdf_text)
+    return [value.replace("\\\\", "\\") for value in values]
+
+
+def _steam_mtga_raw_dirs(steam_root: Path) -> List[Path]:
+    """Return existing MTGA raw-DB folders across ALL of a Steam install's
+    libraries — games regularly live on a different drive than Steam itself."""
+    libraries = [steam_root]
+    for vdf in (
+        steam_root / "steamapps" / "libraryfolders.vdf",
+        steam_root / "config" / "libraryfolders.vdf",
+    ):
+        try:
+            text = vdf.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for library in _parse_steam_library_paths(text):
+            path = Path(library)
+            if path not in libraries:
+                libraries.append(path)
+    out: List[Path] = []
+    for library in libraries:
+        candidate = library / "steamapps" / "common" / "MTGA" / _MTGA_RAW_SUFFIX
+        if candidate.is_dir() and candidate not in out:
+            out.append(candidate)
+    return out
+
+
+def _windows_steam_roots() -> List[Path]:
+    """Steam install roots on Windows: both Program Files plus the registry."""
+    roots: List[Path] = []
+    for env_name in ("ProgramFiles(x86)", "ProgramFiles"):
+        base = os.getenv(env_name)
+        if base:
+            roots.append(Path(base) / "Steam")
+    try:
+        import winreg  # type: ignore[import-not-found]
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
+            steam_path, _ = winreg.QueryValueEx(key, "SteamPath")
+        if steam_path:
+            roots.append(Path(str(steam_path)))
+    except Exception:
+        pass
+    deduped: List[Path] = []
+    for root in roots:
+        if root.is_dir() and root not in deduped:
+            deduped.append(root)
+    return deduped
 
 
 def get_mtga_raw_card_db_folders(override_dir: Optional[str] = None) -> List[Path]:
@@ -36,21 +98,29 @@ def get_mtga_raw_card_db_folders(override_dir: Optional[str] = None) -> List[Pat
             return [p]
         return []
     if platform.system() == "Darwin":
-        # Steam (most up to date) then Epic
-        steam = Path.home() / "Library" / "Application Support" / "Steam" / "steamapps" / "common" / "MTGA" / "MTGA_Data" / "Downloads" / "Raw"
-        if steam.is_dir():
-            out.append(steam)
+        # Steam (most up to date, any library drive) then Epic
+        out.extend(_steam_mtga_raw_dirs(Path.home() / "Library" / "Application Support" / "Steam"))
         epic = Path.home() / "Library" / "Application Support" / "com.wizards.mtga" / "Downloads" / "RAW"
         if epic.is_dir():
             out.append(epic)
     elif platform.system() == "Windows":
-        windows_candidates = [
+        # Steam first: walk every configured Steam library (libraryfolders.vdf),
+        # not just the default C: install — game libraries on other drives are
+        # common and were previously reported as "Local Card DB: not found".
+        for steam_root in _windows_steam_roots():
+            for found in _steam_mtga_raw_dirs(steam_root):
+                if found not in out:
+                    out.append(found)
+        static_candidates = [
             Path(r"C:\Program Files (x86)\Steam\steamapps\common\MTGA\MTGA_Data\Downloads\Raw"),
+            Path(r"C:\Program Files\Steam\steamapps\common\MTGA\MTGA_Data\Downloads\Raw"),
             Path(r"C:\Program Files\Wizards of the Coast\MTGA\MTGA_Data\Downloads\Raw"),
             Path(r"C:\Program Files (x86)\Wizards of the Coast\MTGA\MTGA_Data\Downloads\Raw"),
+            Path(r"C:\Program Files\Epic Games\MagicTheGathering\MTGA_Data\Downloads\Raw"),
+            Path(r"C:\Program Files (x86)\Epic Games\MagicTheGathering\MTGA_Data\Downloads\Raw"),
         ]
-        for candidate in windows_candidates:
-            if candidate.is_dir():
+        for candidate in static_candidates:
+            if candidate.is_dir() and candidate not in out:
                 out.append(candidate)
     return out
 
