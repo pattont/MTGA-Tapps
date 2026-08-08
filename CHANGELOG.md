@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.5.0
+
+- Bundled the **Deck Finder** (MTGA Deck Downloader) as a companion tool: launch it from the
+  menu bar or the dashboard sidebar, browse creator decklists (Moxfield, AetherHub, TCGplayer,
+  magic.gg, MTGO, Untapped) in a sized terminal window, and copy lists in Arena import format.
+  Its dependencies install with the tracker; creator lists live in `deckfinder_config.json` at
+  the project top level.
+- Added **AI opponent-deck identification**: with an OpenAI, Anthropic, or Gemini key, one
+  small background call after each completed game names the opponent's archetype by its
+  dominant colors and strategy. Shown as the Opponent Deck Type on Game Detail (color label as
+  fallback), printed with the postgame console summary, and never blocks live tracking.
+  Reasoning-class OpenAI models are asked for low effort and retried once on token-starved
+  empty replies; failures now surface a real error via `scripts/test_deck_ai.py`.
+- Added a **Settings… dialog** to the menu bar app for the AI provider, key, and model, plus a
+  Deck AI status line in the tracker startup banner.
+- Moved `settings.json` to the project top level next to `config.py` (installed builds keep it
+  in the app data folder; the old `data/settings.json` migrates automatically) and anchored the
+  `.gitignore` `config.py` pattern so the Deck Finder's config module is tracked.
+- Fixed finished games being overwritten by the next game's data when Arena re-sent a match's
+  final GameOver state after the summary reset.
+
 ## Unreleased
 
 ### Fable optimizations branch

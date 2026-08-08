@@ -36,6 +36,22 @@ Primary code paths:
   (Mono-X, guilds, shards/wedges, 4c names, 5c). The UI mirrors this in `ui/src/colorCombos.ts`.
 - `src/mtga_tracker/payload_codec.py` / `payload_dump.py`: zlib codec for the raw payload
   archive and the CLI to print archived payloads as readable JSON.
+- `src/mtga_tracker/deck_llm.py`: opt-in AI opponent-deck identification (OpenAI/Claude/Gemini).
+  Config resolution order: `settings.json` ("deck_ai" section) → `config.py` → env. One cheap
+  call per completed game, fired from `_start_opponent_archetype_lookup` on a daemon thread —
+  it must NEVER block live tracking. Reasoning-class OpenAI models (gpt-5/o-series) get
+  `reasoning_effort: low` and a retry on token-starved empty replies.
+- `src/mtga_tracker/settings.py`: shared `settings.json` — top level of the repo next to
+  `config.py` for source runs, per-user data dir for frozen builds (legacy `data/settings.json`
+  migrates automatically).
+- `src/mtga_tracker/settings_dialog.py`: PyQt Settings dialog (menu bar → Settings…) that writes
+  the "deck_ai" section of `settings.json`.
+- `src/mtga_tracker/deck_downloader_launcher.py`: launches the bundled Deck Finder in a sized
+  terminal window (menu bar item and `POST /api/deck-downloader/launch` from the dashboard).
+- `src/mtga_deck_downloader/`: the bundled Deck Finder (vendored copy of MTGA-DeckDownloader).
+  Treat it as a companion tool: keep its internals as-is except where integration requires.
+  Its creator config is `deckfinder_config.json` at the repo top level; its tests live in
+  `tests/deck_downloader/` and run as part of the normal pytest suite.
 - `tests/test_tracker_combat_winner.py`: broad regression coverage for tracker behavior.
 
 ## Commands
@@ -71,7 +87,9 @@ Common runtime files:
 
 - Arena log: `~/Library/Logs/Wizards Of The Coast/MTGA/Player.log`
 - Analytics DB: `data/mtga_tracker.sqlite3`
-- Desktop settings: `data/settings.json` from source or the installed app data folder
+- Desktop + Deck AI settings: `settings.json` at the repo top level from source, or the
+  installed app data folder for frozen builds
+- Deck Finder creators: `deckfinder_config.json` at the repo top level
 - Unhandled annotation log: `data/mtga_tracker_unhandled_annotations.log`
 - Local card DB source: MTGA `Raw_CardDatabase_*.mtga` under the MTGA install/download folders, or `MTGA_DATA_DIR`.
 
@@ -118,6 +136,11 @@ Preserve these behaviors unless the user explicitly changes requirements:
   top of Overview, and displays local vector W/U/B/R/G mana symbols rather than upscaled raster
   icons. Browser tab titles use `MTGA Tracker – <page>`.
 - Unhandled annotations go to the text diagnostics log, not SQLite.
+- AI deck identification makes at most ONE provider call per game, only after the game
+  completes, only for tracked matches, and always on a background thread. The result lands in
+  `participants.deck_archetype`; Game Detail shows it as the Opponent Deck Type with the plain
+  color label as fallback. Keep calls cheap — no extra calls, no retries beyond the existing
+  token-starvation retry.
 
 ## MTGA Log Gotchas
 

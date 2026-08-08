@@ -30,7 +30,14 @@ combat summaries, and the complete event timeline.
 
 **Opponent intelligence.** Revealed cards identify the opponent's colors, named
 with community archetype names (Dimir, Jeskai, Mono-Red…), tracked across your
-history so you can see which matchups actually beat you.
+history so you can see which matchups actually beat you. Optionally, bring your
+own AI key (OpenAI, Anthropic, or Gemini) and the tracker names the opponent's
+actual archetype — "Jeskai Control", "Gruul Aggro" — after each game.
+
+**Deck Finder.** A bundled companion tool that browses current decklists from
+creators and sites (Moxfield, AetherHub, TCGplayer, magic.gg, MTGO, Untapped)
+and copies any list straight to your clipboard in Arena import format. Launch
+it from the menu bar or the dashboard sidebar.
 
 **The long game.** Win-rate trends, ranked ladder progress by season, session
 habits and fatigue splits, format breakdowns, and a database health audit that
@@ -122,6 +129,30 @@ Ready-made SQL reports live in [`data/_queries/`](data/_queries/README.md):
 sqlite3 data/mtga_tracker.sqlite3 < data/_queries/WinRateByDeck.sql
 ```
 
+## AI deck identification (optional)
+
+With an API key, the tracker makes one small request per completed game and
+names the opponent's deck — the Game Detail page shows it as the Opponent Deck
+Type (falling back to plain colors when there's no guess), and the console
+prints it with the postgame summary. The call runs in the background after the
+game ends, so tracking never waits on it.
+
+Configure it from the menu bar: **Settings…** → enable, pick a provider
+(OpenAI, Anthropic, or Gemini), paste your key, optionally set a model. The
+choice is saved to `settings.json` at the top level of the project folder
+(installed builds keep it in the app data folder), and your key is only ever
+sent to the provider you chose. Without a key the feature simply stays off.
+
+## Deck Finder
+
+The bundled Deck Finder opens in its own terminal window from the menu bar
+("Deck Finder") or the button at the bottom of the dashboard sidebar. Browse
+featured creators or search the supported sites, then copy any decklist in
+Arena's import format. Its creator lists live in `deckfinder_config.json` at
+the top level of the project folder — edit it to add your own Moxfield,
+AetherHub, or TCGplayer creators. Everything it needs installs with the
+tracker; no separate setup.
+
 ## What isn't tracked
 
 Some game modes are intentionally excluded from your saved stats, because
@@ -141,8 +172,10 @@ they won't be saved.
 
 Everything is local SQLite. Stored logs are scrubbed of tokens and personal
 paths before persistence. The only network traffic is your browser fetching
-Scryfall card art — plus, only when you open the bundled Deck Downloader,
-its requests to the public decklist sites you browse there. Card
+Scryfall card art — plus, only when you open the bundled Deck Finder,
+its requests to the public decklist sites you browse there — and, only if
+you enable AI deck identification, one small request per game to the AI
+provider you configured. Card
 *identification* uses Arena's own local card database
 (`Raw_CardDatabase_*.mtga`, discovered automatically under the Steam/Epic
 install, override with `MTGA_DATA_DIR`).
@@ -151,7 +184,8 @@ Where things live:
 
 - Arena log — `~/Library/Logs/Wizards Of The Coast/MTGA/Player.log` (macOS),
   `%APPDATA%\LocalLow\Wizards Of The Coast\MTGA\Player.log` (Windows)
-- Source runs — `data/mtga_tracker.sqlite3` and `data/settings.json`
+- Source runs — `data/mtga_tracker.sqlite3`, with `settings.json` and
+  `deckfinder_config.json` at the top level of the project folder
 - Installed builds — `~/Library/Application Support/MTGA Tracker` (macOS),
   `%LOCALAPPDATA%\MTGA Tracker` (Windows), fully independent of the repo
 
