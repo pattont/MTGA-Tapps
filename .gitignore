@@ -19,7 +19,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-config.py
+/config.py
 /settings.json
 
 # Virtual environments
