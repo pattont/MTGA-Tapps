@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.2
+
+- **Fixed the Deck Finder button on Windows** flashing a console that instantly closed
+  ("...is not recognized as an internal or external command"): cmd.exe cannot parse the
+  backslash-escaped quotes Popen produces for argument lists, so the spaced exe path was split
+  apart. The launcher now builds a single cmd /S /C line using cmd's own quoting rules.
+  Double-clicking the exe always worked; only the menu-bar/dashboard launch was affected.
+
 ## 0.5.1
 
 - **Fixed "Local Card DB: not found" on Windows** (cards showing as `Card #NNNN`): the tracker
@@ -10,10 +18,6 @@
 - **Fixed the packaged Deck Finder starting with "No providers found"**: its provider modules
   load dynamically, so PyInstaller never bundled them. The build now collects every submodule
   and the registry has a frozen-build fallback list guarded by a drift test.
-- **Fixed the Deck Finder button on Windows** flashing a console that instantly closed
-  ("...is not recognized as an internal or external command"): cmd.exe cannot parse the
-  backslash-escaped quotes Popen produces for argument lists, so the spaced exe path was split
-  apart. The launcher now builds a single cmd /S /C line using cmd's own quoting rules.
 - Windows path display now uses `%USERPROFILE%` instead of `~`, so locations in the startup
   banner paste straight into Explorer or cmd.
 - The AI deck guess no longer prints a stray console line after "Ready for next game..." — it
