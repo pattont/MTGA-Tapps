@@ -4,6 +4,8 @@ import re
 import sys
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_submodules
+
 
 project_root = Path.cwd()
 ui_dist = project_root / "ui" / "dist"
@@ -77,7 +79,10 @@ dd_analysis = Analysis(
             "mtga_deck_downloader",
         ),
     ],
-    hiddenimports=["cloudscraper", "bs4"],
+    # The provider/scraper modules are loaded dynamically (pkgutil) and are
+    # invisible to PyInstaller's static analysis — collect every submodule or
+    # the frozen Deck Finder starts with "No providers found".
+    hiddenimports=["cloudscraper", "bs4"] + collect_submodules("mtga_deck_downloader"),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -9,7 +9,16 @@ def test_apply_style_respects_color_flag():
 
 
 def test_display_path_without_username_redacts_home():
+    import os
+
+    from mtga_tracker.rendering import HOME_PLACEHOLDER
+
     home_path = Path.home() / "Library" / "Logs" / "Wizards Of The Coast" / "MTGA" / "Player.log"
 
-    assert display_path_without_username(home_path).startswith("~/")
+    displayed = display_path_without_username(home_path)
+    assert displayed.startswith(HOME_PLACEHOLDER + os.sep)
+    assert str(Path.home()) not in displayed
+    # Windows must show %USERPROFILE% (Explorer/cmd expand it); Unix shows ~.
+    expected = "%USERPROFILE%" if os.name == "nt" else "~"
+    assert HOME_PLACEHOLDER == expected
 
