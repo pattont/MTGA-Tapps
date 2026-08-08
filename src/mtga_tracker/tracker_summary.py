@@ -284,8 +284,10 @@ class TrackerSummaryMixin:
         """Kick off (or report) the AI opponent-deck identification.
 
         The API call runs on a background thread so a slow provider never
-        holds up tracking — the result prints its own console line when it
-        arrives and lands in the game's saved record. One call per game.
+        holds up tracking. The result lands silently in the game's saved
+        record (shown on the dashboard's Game Detail page) — a late console
+        line after "Ready for next game..." looked out of place. One call
+        per game.
         """
         diagnostics = deck_llm_diagnose()
         if not diagnostics.get("has_api_key"):

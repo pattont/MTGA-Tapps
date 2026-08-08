@@ -133,9 +133,8 @@ sqlite3 data/mtga_tracker.sqlite3 < data/_queries/WinRateByDeck.sql
 
 With an API key, the tracker makes one small request per completed game and
 names the opponent's deck — the Game Detail page shows it as the Opponent Deck
-Type (falling back to plain colors when there's no guess), and the console
-prints it with the postgame summary. The call runs in the background after the
-game ends, so tracking never waits on it.
+Type, falling back to plain colors when there's no guess. The call runs in the
+background after the game ends, so tracking never waits on it.
 
 Configure it from the menu bar: **Settings…** → enable, pick a provider
 (OpenAI, Anthropic, or Gemini), paste your key, optionally set a model. The
