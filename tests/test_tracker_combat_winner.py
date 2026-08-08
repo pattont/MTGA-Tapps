@@ -6427,6 +6427,29 @@ def test_deck_downloader_missing_dependencies_empty_when_installed():
     assert missing_dependencies() == []
 
 
+def test_windows_console_command_line_survives_spaced_paths():
+    """cmd.exe can't parse Popen's backslash-escaped quotes — the frozen
+    'MTGA Deck Downloader.exe' path was split at its spaces and Windows said
+    'deck downloader.exe is not recognized as an internal or external
+    command'. The launch line must use plain quotes and the /S /C wrapper."""
+    from mtga_tracker.deck_downloader_launcher import _windows_console_command_line
+
+    line = _windows_console_command_line(
+        [r"C:\Program Files\MTGA Tracker\MTGA Deck Downloader.exe"]
+    )
+    assert line == (
+        'cmd /S /C "mode con: cols=140 lines=42 & '
+        '"C:\\Program Files\\MTGA Tracker\\MTGA Deck Downloader.exe""'
+    )
+    assert "\\\"" not in line  # no backslash-escaped quotes for cmd to choke on
+
+    # Source runs: only the interpreter path needs quoting.
+    line = _windows_console_command_line(
+        [r"C:\Python 3\python.exe", "-m", "mtga_deck_downloader"]
+    )
+    assert '"C:\\Python 3\\python.exe" -m mtga_deck_downloader"' in line
+
+
 def test_stale_game_over_packet_cannot_poison_next_game_identity():
     """Arena re-sends a match's final GameOver state after the summary reset.
     Adopting its UUID outside a match made the NEXT game persist under the
