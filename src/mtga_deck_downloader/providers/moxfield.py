@@ -11,7 +11,7 @@ from mtga_deck_downloader.scrapers.moxfield import MoxfieldScraper
 class MoxfieldProvider(DeckProvider):
     key = "moxfield"
     display_name = "moxfield.com"
-    description = "Creator decks from public Moxfield profiles loaded from config.json."
+    description = "Creator decks from public Moxfield profiles loaded from deckfinder_config.json."
     homepage = "https://moxfield.com/"
 
     def __init__(self) -> None:

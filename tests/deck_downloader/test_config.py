@@ -11,7 +11,7 @@ from mtga_deck_downloader import config as config_module
 class ConfigTests(unittest.TestCase):
     def test_load_config_supports_moxfield_short_names(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            config_path = Path(temp_dir) / "config.json"
+            config_path = Path(temp_dir) / "deckfinder_config.json"
             config_path.write_text(
                 json.dumps(
                     {
@@ -50,7 +50,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_explicit_config_path_wins(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            config_path = Path(temp_dir) / "config.json"
+            config_path = Path(temp_dir) / "deckfinder_config.json"
             config_path.write_text('{"MoxfieldNames": ["Explicit"]}', encoding="utf-8")
 
             resolved = config_module.resolve_config_path(config_path)
