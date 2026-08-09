@@ -57,7 +57,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,  # packed executables trip AV heuristics; the size win is not worth it
     console=False,
     argv_emulation=False,
     target_arch=None,
@@ -101,7 +101,7 @@ dd_exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,  # packed executables trip AV heuristics; the size win is not worth it
     console=True,
     argv_emulation=False,
     target_arch=None,
@@ -118,7 +118,7 @@ collection = COLLECT(
     analysis.datas,
     dd_analysis.datas,
     strip=False,
-    upx=True,
+    upx=False,  # packed executables trip AV heuristics; the size win is not worth it
     upx_exclude=[],
     name="MTGA Tracker",
 )
