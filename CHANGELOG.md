@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.3
+
+- **Arena installs are now found anywhere** — standalone (.msi) installs on any drive
+  included. The tracker reads the install path Arena itself announces in the head of
+  `Player.log` (the Unity `[Subsystems]` header, verified against a real log) and derives
+  the card-database folder from it, ahead of the Steam-library and Program Files guesses.
+- **Databases recorded without the card DB heal completely.** The startup backfill that
+  rewrites `Card #N` placeholders now also covers mulligan-hand rows, labels with no
+  matching `cards` row, and duplicate-name collisions — so a user whose install was
+  previously unfindable gets their full history renamed on the first launch after updating.
+  The DB Health finding for these labels now explains that restart-to-fix in plain language.
+- Builds no longer use UPX compression, which was tripping antivirus heuristics on the
+  unsigned Windows executables.
+- Docs: `AGENTS.md` expanded and corrected as the single agent guide (no `CLAUDE.md`);
+  added `docs/MTGA_INSTALL_DISCOVERY.md`.
+
 ## 0.5.2
 
 - **Fixed the Deck Finder button on Windows** flashing a console that instantly closed
