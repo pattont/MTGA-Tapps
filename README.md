@@ -222,6 +222,7 @@ guidance lives ([CLAUDE.md](CLAUDE.md) is a one-line pointer at it).
 - [docs/RELEASE_PLAN.md](docs/RELEASE_PLAN.md) — packaging, GitHub Releases, alpha checklist
 - [docs/OVERLAY_TRACKER_PLAN.md](docs/OVERLAY_TRACKER_PLAN.md) — planned in-game overlay
 - [docs/MTGA_LOG_FORMAT.md](docs/MTGA_LOG_FORMAT.md) — how Arena's log actually works
+- [docs/MTGA_INSTALL_DISCOVERY.md](docs/MTGA_INSTALL_DISCOVERY.md) — plan for finding Arena's card DB in standalone/non-default installs
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — seat detection and log issues
 
 ## License
