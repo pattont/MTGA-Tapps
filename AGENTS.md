@@ -2,8 +2,8 @@
 
 Guidance for coding agents working on this MTGA tracker. Keep this file current when tracker behavior, database schema, or test commands change.
 
-This is the single source of truth for agent instructions. `CLAUDE.md` exists only so
-Claude Code auto-loads this file; do not duplicate guidance there.
+This is the single source of truth for agent instructions — there is deliberately no
+`CLAUDE.md`; do not add one.
 
 ## Project Overview
 
@@ -18,7 +18,9 @@ Repo layout:
   non-test debug scripts and is not part of the suite.
 - `packaging/` + `scripts/`: PyInstaller specs, entry points, and OS build scripts.
 - `docs/`: log-format reference and design/release plans. `CHANGELOG.md` tracks releases;
-  the version lives in `pyproject.toml` and is shown in the tracker startup banner.
+  the version lives in exactly TWO files that must stay in sync — `pyproject.toml` and
+  `src/mtga_tracker/__init__.py` (`__version__`, which the build scripts and startup banner
+  read).
 
 ### Entry points
 
@@ -153,7 +155,7 @@ UI changes require vitest, tsc, lint, and a fresh `npm run build` (the dashboard
 
 ## Local Paths
 
-Do not hardcode user-specific absolute paths in code or docs intended for general output. The app should display redacted home paths with `~`.
+Do not hardcode user-specific absolute paths in code or docs intended for general output. The app displays redacted home paths as `~` on macOS/Linux and `%USERPROFILE%` on Windows (`rendering.display_path_without_username`).
 
 Common runtime files:
 
@@ -313,6 +315,7 @@ High-risk areas needing tests:
 - Python is formatted with black at line length 100 (`[tool.black]` in `pyproject.toml`) and
   targets Python 3.9+; avoid syntax newer than that. TypeScript must pass `tsc -b` and eslint.
 - Record user-visible changes in `CHANGELOG.md` under the release being prepared, and bump the
-  version in `pyproject.toml` only when cutting a release (the tag drives the release workflow).
+  version only when cutting a release — in BOTH `pyproject.toml` and
+  `src/mtga_tracker/__init__.py` (the tag drives the release workflow).
 - Never commit generated or local-only files: `ui/dist/`, `data/*.sqlite3*`, `config.py`,
   `settings.json`, and `.claude/` are all gitignored on purpose.
