@@ -325,7 +325,12 @@ def _unknown_card_label_findings(conn: sqlite3.Connection) -> Iterable[AuditFind
                 severity="warning",
                 table_name=table_name,
                 row_id=str(row_id),
-                message=f"{table_name}.{column_name} still has unresolved card label {display_name!r}.",
+                message=(
+                    f"{table_name}.{column_name} has unresolved card label {display_name!r}. "
+                    "This fixes itself: restart the tracker once it can see Arena's card "
+                    "database (the startup banner's 'Local Card DB' line) and the real card "
+                    "names are filled in automatically."
+                ),
                 current_value=display_name,
                 suggested_value=None,
                 repairable=False,
