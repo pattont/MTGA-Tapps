@@ -6596,3 +6596,53 @@ def test_deck_ai_settings_json_section(monkeypatch, tmp_path):
 
     deck_llm._settings_cache = None
     deck_llm._settings_mtime = None
+
+
+def test_backfill_resolves_card_labels_recorded_without_card_db(tmp_path):
+    """A database recorded while Arena's card DB was unfindable heals at the
+    first startup that can see it — including labels with no cards row and
+    mulligan-hand rows, which the original backfill missed."""
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "analytics.sqlite3"
+
+    store = AnalyticsStore(tracker._console_db_path)
+    conn = store.connect()
+    with conn:
+        conn.execute(
+            "INSERT INTO cards (name, arena_id, first_seen_at) "
+            "VALUES ('Card #72301', NULL, '2026-08-01T00:00:00')"
+        )
+        conn.execute(
+            "INSERT INTO game_card_summary (game_id, participant_id, display_name) "
+            "VALUES ('g1', 'p1', 'Card #72301')"
+        )
+        # Placeholder with NO matching cards row — must still be rewritten.
+        conn.execute(
+            "INSERT INTO game_card_summary (game_id, participant_id, display_name) "
+            "VALUES ('g1', 'p1', 'Card #98430')"
+        )
+        conn.execute(
+            "INSERT INTO game_mulligan_hands "
+            "(game_id, participant_id, hand_number, hand_position, display_name) "
+            "VALUES ('g1', 'p1', 1, 1, 'Card #72301')"
+        )
+    store.close()
+    tracker.analytics = None  # force _analytics_store to re-open at the tmp path
+
+    names = {72301: "Llanowar Elves", 98430: "Shivan Dragon"}
+    tracker.card_db.get_card_name = lambda grp_id: names.get(grp_id)
+
+    tracker._backfill_unresolved_card_labels()
+
+    conn = sqlite3.connect(tracker._console_db_path)
+    summary = sorted(
+        row[0] for row in conn.execute("SELECT display_name FROM game_card_summary")
+    )
+    mulligan = [row[0] for row in conn.execute("SELECT display_name FROM game_mulligan_hands")]
+    card_row = conn.execute(
+        "SELECT name, arena_id FROM cards WHERE name = 'Llanowar Elves'"
+    ).fetchone()
+    conn.close()
+    assert summary == ["Llanowar Elves", "Shivan Dragon"]
+    assert mulligan == ["Llanowar Elves"]
+    assert card_row == ("Llanowar Elves", 72301)
