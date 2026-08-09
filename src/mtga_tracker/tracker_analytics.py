@@ -246,13 +246,27 @@ class TrackerAnalyticsMixin:
         except (AttributeError, sqlite3.Error, OSError, TypeError, ValueError):
             return
 
+    #: Every table whose display_name can carry a "Card #N" placeholder.
+    _CARD_LABEL_TABLES = (
+        "game_card_summary",
+        "game_drawn_cards",
+        "game_opening_hand_cards",
+        "game_deck_cards",
+        "game_mulligan_hands",
+    )
+
     def _backfill_unresolved_card_labels(self) -> None:
         """Resolve leftover "Card #N" labels once the Arena card DB knows them.
 
         Cards can persist under their numeric fallback when a set is newer
-        than the local card database (or an object id slipped through). Each
-        startup retries the lookup and rewrites the cards row plus every
-        display_name that carried the placeholder.
+        than the local card database, an object id slipped through, or —
+        the big one — games were recorded while Arena's card DB could not be
+        found at all. Each startup retries the lookup and rewrites every
+        display_name that carried the placeholder, so a database recorded
+        "blind" heals itself on the first launch that can see the card DB.
+
+        Cost when there is nothing to fix: one SELECT per table returning
+        zero rows. This must stay cheap — it runs on every startup.
         """
         conn = self._analytics_connect()
         if conn is None:
@@ -260,17 +274,25 @@ class TrackerAnalyticsMixin:
         get_name = getattr(self.card_db, "get_card_name", None)
         if get_name is None:
             return
+        # Collect labels from the cards table AND the game tables: a
+        # display_name can carry a placeholder with no matching cards row.
+        labels = set()
         try:
-            rows = conn.execute(
-                "SELECT id, name FROM cards WHERE name LIKE 'Card #%'"
-            ).fetchall()
+            for row in conn.execute("SELECT name FROM cards WHERE name LIKE 'Card #%'"):
+                labels.add(str(row[0] or ""))
+            for table_name in self._CARD_LABEL_TABLES:
+                for row in conn.execute(
+                    f"SELECT DISTINCT display_name FROM {table_name} "
+                    "WHERE display_name LIKE 'Card #%'"
+                ):
+                    labels.add(str(row[0] or ""))
         except sqlite3.Error:
             return
         resolved = 0
         try:
             with conn:
-                for card_id, old_name in rows:
-                    match = re.match(r"^Card #(\d+)$", str(old_name or ""))
+                for old_name in sorted(labels):
+                    match = re.match(r"^Card #(\d+)$", old_name)
                     if not match:
                         continue
                     grp_id = int(match.group(1))
@@ -280,20 +302,16 @@ class TrackerAnalyticsMixin:
                         continue
                     if not new_name or new_name.startswith("Card #"):
                         continue
-                    before = conn.total_changes
+                    # Rename the cards row when possible; if the real name
+                    # already has a row (OR IGNORE no-op), the stale label row
+                    # is left as a harmless orphan — display names are still
+                    # rewritten below either way, which is what users see.
                     conn.execute(
                         "UPDATE OR IGNORE cards SET name = ?, arena_id = COALESCE(arena_id, ?) "
-                        "WHERE id = ?",
-                        (new_name, grp_id, card_id),
+                        "WHERE name = ?",
+                        (new_name, grp_id, old_name),
                     )
-                    if conn.total_changes == before:
-                        continue  # a card with that name already exists; leave the label
-                    for table_name in (
-                        "game_card_summary",
-                        "game_drawn_cards",
-                        "game_opening_hand_cards",
-                        "game_deck_cards",
-                    ):
+                    for table_name in self._CARD_LABEL_TABLES:
                         conn.execute(
                             f"UPDATE {table_name} SET display_name = ? WHERE display_name = ?",
                             (new_name, old_name),
