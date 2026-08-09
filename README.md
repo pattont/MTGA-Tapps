@@ -152,6 +152,8 @@ the top level of the project folder — edit it to add your own Moxfield,
 AetherHub, or TCGplayer creators. Everything it needs installs with the
 tracker; no separate setup.
 
+![Deck Finder & Downloader](docs/images/deck-finder.png)
+
 ## What isn't tracked
 
 Some game modes are intentionally excluded from your saved stats, because
