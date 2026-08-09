@@ -213,7 +213,8 @@ cd ui && npm run dev
 Layout: `src/mtga_tracker/` (tracker mixins, analytics store, dashboard
 server), `ui/` (React/TypeScript dashboard), `tests/`, `packaging/` + `scripts/`
 (PyInstaller builds), `docs/`. Working on it with an AI agent? Start with
-[AGENTS.md](AGENTS.md) — it's kept current on purpose.
+[AGENTS.md](AGENTS.md) — it's kept current on purpose, and it's the only place agent
+guidance lives.
 
 ## Documentation
 
@@ -221,6 +222,7 @@ server), `ui/` (React/TypeScript dashboard), `tests/`, `packaging/` + `scripts/`
 - [docs/RELEASE_PLAN.md](docs/RELEASE_PLAN.md) — packaging, GitHub Releases, alpha checklist
 - [docs/OVERLAY_TRACKER_PLAN.md](docs/OVERLAY_TRACKER_PLAN.md) — planned in-game overlay
 - [docs/MTGA_LOG_FORMAT.md](docs/MTGA_LOG_FORMAT.md) — how Arena's log actually works
+- [docs/MTGA_INSTALL_DISCOVERY.md](docs/MTGA_INSTALL_DISCOVERY.md) — plan for finding Arena's card DB in standalone/non-default installs
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — seat detection and log issues
 
 ## License

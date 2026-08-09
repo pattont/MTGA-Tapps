@@ -20,7 +20,7 @@ def test_card_database_retries_local_db_resolution_after_initial_miss(tmp_path, 
     raw_dir = tmp_path / "Raw"
     raw_dir.mkdir()
     monkeypatch.setattr(
-        card_database, "get_mtga_raw_card_db_folders", lambda mtga_data_dir=None: [raw_dir]
+        card_database, "get_mtga_raw_card_db_folders", lambda mtga_data_dir=None, log_path=None: [raw_dir]
     )
 
     db = CardDatabase()
@@ -44,7 +44,7 @@ def test_card_database_resolves_primary_type_category_from_local_db(tmp_path, mo
     conn.commit()
     conn.close()
     monkeypatch.setattr(
-        card_database, "get_mtga_raw_card_db_folders", lambda mtga_data_dir=None: [raw_dir]
+        card_database, "get_mtga_raw_card_db_folders", lambda mtga_data_dir=None, log_path=None: [raw_dir]
     )
 
     db = CardDatabase()

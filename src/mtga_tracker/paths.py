@@ -14,6 +14,75 @@ from typing import List, Optional
 #: Relative path from a game install root to Arena's raw card database folder.
 _MTGA_RAW_SUFFIX = Path("MTGA_Data") / "Downloads" / "Raw"
 
+#: Unity announces its own data directory in the head of Player.log at startup.
+#: Current Arena (Unity 2022.3, IL2CPP) prints the "[Subsystems]" line — verified
+#: against a real macOS Steam log; older Mono-backend builds printed "Mono path[0]".
+#: Either one is Arena reporting its own install location, which covers ANY drive
+#: and ANY installer (standalone .msi on G:\, Steam, Epic) with zero guessing.
+_LOG_INSTALL_PATTERNS = (
+    re.compile(r"Discovering subsystems at path (.+?)[/\\]UnitySubsystems\s*$"),
+    re.compile(r"Mono path\[0\] = '(.+?)[/\\]Managed'"),
+)
+
+
+def _unity_data_dirs_from_log_head(head_text: str) -> List[Path]:
+    """Extract Unity data-directory paths announced in a Player.log head."""
+    found: List[Path] = []
+    for line in head_text.splitlines():
+        for pattern in _LOG_INSTALL_PATTERNS:
+            match = pattern.search(line)
+            if match:
+                path = Path(match.group(1).strip())
+                if path not in found:
+                    found.append(path)
+    return found
+
+
+def _raw_dir_near_unity_data_dir(data_dir: Path) -> Optional[Path]:
+    """Map a Unity data dir to the MTGA_Data/Downloads/Raw folder near it.
+
+    Windows: the data dir IS `<install>\\MTGA_Data`, so its own Downloads\\Raw.
+    macOS Steam: the data dir is inside `MTGA.app/Contents/Resources/Data` while
+    the downloads live in `MTGA_Data` NEXT TO the app — so walk up the ancestors
+    and look beside each one. Only returns a folder that exists.
+    """
+    for base in (data_dir, *data_dir.parents):
+        candidates = [base / "MTGA_Data" / "Downloads" / "Raw"]
+        if base.name == "MTGA_Data":
+            candidates.insert(0, base / "Downloads" / "Raw")
+        for candidate in candidates:
+            try:
+                if candidate.is_dir():
+                    return candidate
+            except OSError:
+                continue
+    return None
+
+
+def mtga_raw_dir_from_player_log(log_path) -> Optional[Path]:
+    """Derive Arena's card-DB folder from the Unity header in Player.log.
+
+    Player.log always lives in the user profile (LocalLow / ~/Library/Logs)
+    regardless of where the game is installed — which is why the tracker can
+    find the log but not the install. The log head fixes that: Arena states
+    its own install path there. Also reads Player-prev.log in case the
+    current log was truncated mid-write. Never raises; returns None on miss.
+    """
+    if not log_path:
+        return None
+    log_file = Path(log_path)
+    for candidate_log in (log_file, log_file.parent / "Player-prev.log"):
+        try:
+            with open(candidate_log, "r", encoding="utf-8", errors="ignore") as handle:
+                head = handle.read(65536)
+        except OSError:
+            continue
+        for data_dir in _unity_data_dirs_from_log_head(head):
+            raw = _raw_dir_near_unity_data_dir(data_dir)
+            if raw is not None:
+                return raw
+    return None
+
 
 def _parse_steam_library_paths(vdf_text: str) -> List[str]:
     """Extract library folder paths from Steam's libraryfolders.vdf.
@@ -72,15 +141,20 @@ def _windows_steam_roots() -> List[Path]:
     return deduped
 
 
-def get_mtga_raw_card_db_folders(override_dir: Optional[str] = None) -> List[Path]:
+def get_mtga_raw_card_db_folders(
+    override_dir: Optional[str] = None, log_path: Optional[str] = None
+) -> List[Path]:
     """Return folders to search for Raw_CardDatabase_*.mtga, in order of preference.
 
     Uses the current user's home (no hardcoded usernames). If override_dir or
     MTGA_DATA_DIR env is set, that path is the only candidate.
 
-    Platform defaults:
-    - macOS: Steam install first (most up to date), then Epic (com.wizards.mtga)
-    - Windows: common Steam/Wizards install locations under MTGA_Data/Downloads/Raw
+    Resolution order after the overrides:
+    1. The install path Arena itself announces in the Player.log head (when
+       log_path is given) — the only signal that works for ANY install
+       location, including a standalone .msi install on a non-system drive.
+    2. Platform defaults: every Steam library (libraryfolders.vdf), Epic,
+       and the static Program Files locations.
 
     Returns:
         List of existing directory Paths to search; caller globs for Raw_CardDatabase_*.mtga.
@@ -97,11 +171,20 @@ def get_mtga_raw_card_db_folders(override_dir: Optional[str] = None) -> List[Pat
         if p.is_dir():
             return [p]
         return []
+    # Arena's own report of where it lives beats every guess below — this is
+    # what finds a standalone .msi install on G:\ or any other custom location.
+    log_derived = mtga_raw_dir_from_player_log(log_path) if log_path else None
+    if log_derived is not None:
+        out.append(log_derived)
     if platform.system() == "Darwin":
-        # Steam (most up to date, any library drive) then Epic
-        out.extend(_steam_mtga_raw_dirs(Path.home() / "Library" / "Application Support" / "Steam"))
+        # Steam (most up to date, any library drive) then Epic/standalone
+        for found in _steam_mtga_raw_dirs(
+            Path.home() / "Library" / "Application Support" / "Steam"
+        ):
+            if found not in out:
+                out.append(found)
         epic = Path.home() / "Library" / "Application Support" / "com.wizards.mtga" / "Downloads" / "RAW"
-        if epic.is_dir():
+        if epic.is_dir() and epic not in out:
             out.append(epic)
     elif platform.system() == "Windows":
         # Steam first: walk every configured Steam library (libraryfolders.vdf),
