@@ -130,9 +130,9 @@ class CardDatabase:
             print(f"Warning: Could not load 17LandsCards.csv: {e}")
 
     def _find_mtga_card_database_paths(self) -> List[tuple]:
-        """Find Raw_CardDatabase_*.mtga in com.wizards.mtga/Downloads/RAW (or MTGA_DATA_DIR override)."""
+        """Find Raw_CardDatabase_*.mtga via override, Player.log header, or default installs."""
         out = []
-        for folder in get_mtga_raw_card_db_folders(self._mtga_data_dir):
+        for folder in get_mtga_raw_card_db_folders(self._mtga_data_dir, log_path=self.log_path):
             for p in folder.glob("Raw_CardDatabase_*.mtga"):
                 if p.is_file() and not p.name.endswith(".mtga.dat"):
                     out.append((p, None))
