@@ -2,14 +2,57 @@
 
 Guidance for coding agents working on this MTGA tracker. Keep this file current when tracker behavior, database schema, or test commands change.
 
+This is the single source of truth for agent instructions. `CLAUDE.md` exists only so
+Claude Code auto-loads this file; do not duplicate guidance there.
+
 ## Project Overview
 
-This is a Python log-only tracker for Magic: The Gathering Arena. It tails MTGA `Player.log`, parses GRE game-state messages, prints a readable console log, and persists dashboard-friendly analytics to SQLite.
+This is a Python log-only tracker for Magic: The Gathering Arena. It tails MTGA `Player.log`, parses GRE game-state messages, prints a readable console log, and persists dashboard-friendly analytics to SQLite. A React/TypeScript dashboard (`ui/`) is built to static assets and served by the Python dashboard server — there is no separate web backend, no account, and no cloud.
+
+Repo layout:
+
+- `src/mtga_tracker/`: tracker runtime, analytics store, dashboard server, desktop app.
+- `src/mtga_deck_downloader/`: the bundled Deck Finder companion tool.
+- `ui/`: React/Vite dashboard frontend (built to the gitignored `ui/dist`).
+- `tests/`: pytest suite, including `tests/deck_downloader/`. `tests/deprecated/` holds
+  non-test debug scripts and is not part of the suite.
+- `packaging/` + `scripts/`: PyInstaller specs, entry points, and OS build scripts.
+- `docs/`: log-format reference and design/release plans. `CHANGELOG.md` tracks releases;
+  the version lives in `pyproject.toml` and is shown in the tracker startup banner.
+
+### Entry points
+
+`pyproject.toml` defines these console scripts (all runnable as `python -m` equivalents):
+
+- `mtga-tracker-app` → `app.py`: unified launcher (tracker + dashboard + menu-bar app).
+- `mtga-tracker` → `main.py`: console tracker only.
+- `mtga-tracker-dashboard` → `dashboard.py`: dashboard server only.
+- `mtga-tracker-audit-db` → `db_audit.py`, `mtga-tracker-draw-quality` → `draw_quality.py`.
+- `mtga-deck-downloader` → `mtga_deck_downloader.__main__`.
 
 Primary code paths:
 
-- `src/mtga_tracker/main.py`: CLI entry point.
+- `src/mtga_tracker/main.py`: console-tracker CLI entry point.
+- `src/mtga_tracker/app.py`: unified launcher that wires one `AnalyticsStore`/`--db` into both
+  the tracker thread and the dashboard server, with or without the GUI (`--no-gui`).
+- `src/mtga_tracker/menu_app.py`: PyQt6 menu-bar/tray controller and Live Tracker Log window.
+  GUI-only; guarded by the `gui` extra and skipped in headless test runs.
+- `src/mtga_tracker/paths.py`: cross-platform discovery of `Player.log`, the data dir, and
+  Arena's raw card DB (macOS, Windows Steam libraries via `libraryfolders.vdf`, Epic,
+  `MTGA_DATA_DIR` override). All path logic belongs here — do not inline OS checks elsewhere.
+- `src/mtga_tracker/log_entry.py`: groups raw file lines into complete log entries (Arena
+  writes some events as a header plus continuation JSON).
+- `src/mtga_tracker/log_json.py` / `log_timestamp.py` / `log_sanitize.py`: JSON extraction,
+  timestamp parsing, and privacy scrubbing of raw log text before archival.
 - `src/mtga_tracker/log_parser.py`: JSON extraction and ordered game-state/client-message parsing.
+- `src/mtga_tracker/event_router.py`: lightweight log-entry routing plus parser health counters.
+- `src/mtga_tracker/client_actions.py`: normalizes client-to-GRE actions.
+- `src/mtga_tracker/annotations.py`: dataclass helpers for parsed GRE annotation details.
+- `src/mtga_tracker/opening_hand.py`: opening-hand payload helpers.
+- `src/mtga_tracker/state.py`: mutable tracker state and event models (`CardEvent`, etc.).
+- `src/mtga_tracker/rendering.py`: low-level console rendering helpers (terminal/stream level);
+  game-facing formatting lives in `tracker_rendering.py`.
+- `src/mtga_tracker/rank_progress.py`: parses and normalizes MTGA rank snapshots.
 - `src/mtga_tracker/tracker.py`: thin `CardTracker` composition/init class. Keep it small.
 - `src/mtga_tracker/tracker_runtime.py`: startup banner, live polling loop, stop/cleanup.
 - `src/mtga_tracker/tracker_lifecycle.py`: game start/end, match lifecycle, winner/outcome handling.
@@ -32,6 +75,8 @@ Primary code paths:
   color-identity lookup from Arena's local card DB.
 - `src/mtga_tracker/analytics.py`: `AnalyticsStore` — schema, numbered migrations, and startup
   maintenance (card-color backfill, imported-deck-name canonicalization).
+- `src/mtga_tracker/analytics_persistence.py`: focused persistence helpers split out of the
+  store; put new write helpers here rather than growing `analytics.py`.
 - `src/mtga_tracker/colors.py`: WUBRG normalization and community color-combo naming
   (Mono-X, guilds, shards/wedges, 4c names, 5c). The UI mirrors this in `ui/src/colorCombos.ts`.
 - `src/mtga_tracker/payload_codec.py` / `payload_dump.py`: zlib codec for the raw payload
@@ -56,28 +101,55 @@ Primary code paths:
 
 ## Commands
 
-Use the repo virtualenv unless there is a clear reason not to.
+Use the repo virtualenv unless there is a clear reason not to. In a sandbox without one,
+create it first (`python3 -m venv venv && venv/bin/pip install -e '.[dev,gui]'`) or drop the
+`venv/bin/` prefix and use the ambient interpreter.
 
 ```bash
+# Setup
+python3 -m venv venv && venv/bin/pip install -e '.[dev,gui]'   # add ,build for PyInstaller
+
 # Full Python suite as CI/agents run it (menu app needs a display; one env-specific deselect):
 venv/bin/python -m pytest tests -q --ignore=tests/test_menu_app.py \
   --deselect "tests/test_log_parser.py::test_find_log_path_error_handling"
 venv/bin/python -m pytest tests/test_tracker_combat_winner.py -q
+
+# Run
+venv/bin/python -m mtga_tracker.app                 # tracker + dashboard + menu bar
+venv/bin/python -m mtga_tracker.app --no-gui        # same, headless in one terminal
 venv/bin/python -m mtga_tracker.main
+venv/bin/python -m mtga_tracker.dashboard           # http://127.0.0.1:8765 (--port to change)
+venv/bin/python -m mtga_deck_downloader
+
+# Inspect / maintain
 venv/bin/python -m mtga_tracker.db_audit
 venv/bin/python -m mtga_tracker.db_audit --repair
-venv/bin/python -m mtga_tracker.dashboard
 venv/bin/python -m mtga_tracker.draw_quality --card "Llanowar Elves"
 venv/bin/python -m mtga_tracker.payload_dump "<game_id>"
+
+# Frontend
 cd ui && npm install
 cd ui && npx vitest run
 cd ui && npx tsc -b && npm run lint
 cd ui && npm run build
+cd ui && npm run dev        # Vite proxies /api to 127.0.0.1:8765 for hot-reload work
 ```
 
-The full suite is fast; run it after tracker changes. UI changes require vitest, tsc, lint,
-and a fresh `npm run build` (the dashboard serves `ui/dist`, which is gitignored — rebuild
-and redeploy `dist` alongside source changes).
+The full suite is fast; run it after tracker changes. It includes `tests/deck_downloader/`.
+UI changes require vitest, tsc, lint, and a fresh `npm run build` (the dashboard serves
+`ui/dist`, which is gitignored — rebuild and redeploy `dist` alongside source changes).
+
+## Packaging and Releases
+
+- `scripts/build_macos_app.sh` → `dist/MTGA Tracker.app`; `scripts/build_macos_installer.sh`
+  → DMG; `scripts/build_windows_app.ps1` → Windows zip. All go through
+  `packaging/mtga_tracker.spec` and the `packaging/*_entrypoint.py` shims, and embed the
+  `pyproject.toml` version in the artifact name.
+- The build scripts prefer the repo venv and fall back to `$PYTHON`; they build `ui/dist`
+  as part of the bundle, so UI changes must be built before packaging.
+- `.github/workflows/release.yml` builds both OS artifacts and attaches them to a **draft**
+  GitHub Release on a `v*` tag or manual dispatch. Publishing the draft is the human "go"
+  button; ordinary pushes never run it. See `docs/RELEASE_PLAN.md`.
 
 ## Local Paths
 
@@ -85,13 +157,21 @@ Do not hardcode user-specific absolute paths in code or docs intended for genera
 
 Common runtime files:
 
-- Arena log: `~/Library/Logs/Wizards Of The Coast/MTGA/Player.log`
-- Analytics DB: `data/mtga_tracker.sqlite3`
+- Arena log: `~/Library/Logs/Wizards Of The Coast/MTGA/Player.log` (macOS) or
+  `%USERPROFILE%\AppData\LocalLow\Wizards Of The Coast\MTGA\Player.log` (Windows)
+- Analytics DB: `data/mtga_tracker.sqlite3` from source; the installed app uses
+  `~/Library/Application Support/MTGA Tracker` (macOS) or `%LOCALAPPDATA%\MTGA Tracker`
+  (Windows)
 - Desktop + Deck AI settings: `settings.json` at the repo top level from source, or the
   installed app data folder for frozen builds
 - Deck Finder creators: `deckfinder_config.json` at the repo top level
 - Unhandled annotation log: `data/mtga_tracker_unhandled_annotations.log`
 - Local card DB source: MTGA `Raw_CardDatabase_*.mtga` under the MTGA install/download folders, or `MTGA_DATA_DIR`.
+  On Windows this means every Steam library from `libraryfolders.vdf` plus Epic installs, not
+  just the default Program Files path — resolve it through `paths.py`, never a hardcoded root.
+
+Windows is a first-class target: use `pathlib`, quote paths for `cmd`, and prefer pasteable
+`%USERPROFILE%`/`%LOCALAPPDATA%` forms over POSIX-only examples in user-facing output.
 
 The unified launcher must pass its selected `--db` path to both `CardTracker` and the dashboard.
 Never allow those components to silently use separate default databases.
@@ -183,7 +263,11 @@ Important tables:
   raw SQL shows blobs. Lossless, so historical backfills stay possible.
 - `rank_snapshots`: constructed and limited rank changes by season, with optional ranked match/game linkage.
 - `game_annotations`: user notes and comma-joined tags per game, written by the dashboard's
-  `POST /api/game/annotation` endpoint (the only write path in the dashboard server).
+  `POST /api/game/annotation` endpoint — the only endpoint that writes analytics data. The
+  dashboard's other POSTs are `POST /api/db/reset` (destructive; requires a
+  `{"confirm": "RESET"}` body and takes a backup first) and
+  `POST /api/deck-downloader/launch` (spawns the Deck Finder locally). Everything else the
+  dashboard serves is read-only GET; keep it that way.
 - `schema_migrations`: numbered one-time migrations applied by `AnalyticsStore.apply_pending_migrations`
   (baseline is version 1; add new migrations there rather than ad-hoc ALTERs when possible).
 
@@ -226,3 +310,9 @@ High-risk areas needing tests:
 - When adding a new event type, update summary stats and DB persistence if it affects analytics.
 - If a log annotation is unknown, write a diagnostic to `data/mtga_tracker_unhandled_annotations.log` and avoid noisy UI output.
 - Do not introduce network dependencies for normal card resolution when the local MTGA card DB can provide the data.
+- Python is formatted with black at line length 100 (`[tool.black]` in `pyproject.toml`) and
+  targets Python 3.9+; avoid syntax newer than that. TypeScript must pass `tsc -b` and eslint.
+- Record user-visible changes in `CHANGELOG.md` under the release being prepared, and bump the
+  version in `pyproject.toml` only when cutting a release (the tag drives the release workflow).
+- Never commit generated or local-only files: `ui/dist/`, `data/*.sqlite3*`, `config.py`,
+  `settings.json`, and `.claude/` are all gitignored on purpose.
