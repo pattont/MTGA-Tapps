@@ -2,7 +2,11 @@
 
 Plan for locating `Raw_CardDatabase_*.mtga` when Arena was installed by the standalone
 Wizards installer instead of Steam or Epic — including installs on a non-system drive.
-Nothing here is implemented yet.
+
+**Status: Phase 1 is implemented and verified against a real Player.log.**
+`paths.mtga_raw_dir_from_player_log()` parses the Unity header and is threaded through
+`CardDatabase`; the log-derived folder is checked before every platform guess. Phases 2–4
+(Settings folder picker, registry/Epic-manifest fallbacks, macOS cleanups) remain open.
 
 ## Two different databases — do not confuse them
 
@@ -64,16 +68,22 @@ tidying and a fallback, not a rescue — see [macOS](#macos-mostly-already-works
 ## The approach: ask Player.log where Arena is
 
 Arena is a Unity game, and Unity writes its own install path into the first few lines of
-`Player.log` at startup:
+`Player.log` at startup. **Verified against a real log** (macOS Steam build, Unity
+2022.3.62f2): current Arena is an IL2CPP build and prints **no `Mono path[0]` line at
+all** — the original draft's assumed marker does not exist anymore. What IS there, on line
+4 of both `Player.log` and `Player-prev.log`, is the `[Subsystems]` line:
 
 ```
-Mono path[0] = 'G:/MTGA/MTGA_Data/Managed'
-Mono config path[0] = 'G:/MTGA/MTGA_Data/MonoBleedingEdge/etc'
+[Subsystems] Discovering subsystems at path <unity data dir>/UnitySubsystems
 ```
 
-If that holds, the install root is the parent of `MTGA_Data`, and the card DB folder is
-`<root>/MTGA_Data/Downloads/Raw`. This is the primary mechanism, not one heuristic among
-many, because it is the only signal that is *authoritative* rather than a guess:
+On Windows the Unity data dir is `<install>\MTGA_Data`, so the card DB folder is its own
+`Downloads\Raw`. On the macOS Steam build the data dir is inside the app bundle
+(`MTGA.app/Contents/Resources/Data`) while `MTGA_Data` sits next to the bundle — the
+implementation walks up the ancestors and looks beside each one, which handles both shapes
+with one rule. `Mono path[0]` is still matched as a secondary pattern for older builds.
+This is the primary mechanism, not one heuristic among many, because it is the only signal
+that is *authoritative* rather than a guess:
 
 - **Arena itself reported it.** Every other tier infers a location from a launcher's
   bookkeeping or from where installers usually put things.
@@ -86,12 +96,14 @@ many, because it is the only signal that is *authoritative* rather than a guess:
 
 We already read this file. We already know its path. We just aren't reading the top of it.
 
-> **This must be confirmed against a real Player.log before it is built.** The evidence is
-> circumstantial but strong: `log_sanitize.py` already scrubs `Renderer:`, `Vendor:`,
-> `VRAM:`, and `Driver:` lines, which are the Unity graphics-init block that sits a few
-> lines below `Mono path[0]` in a standard Unity player log. See
-> [Verification](#verification-gates-the-work) for how to confirm it, and what changes if it
-> turns out to be absent.
+> **Confirmed.** A real macOS Steam `Player.log` was inspected: the `[Subsystems]` line is
+> present in the head of both `Player.log` and `Player-prev.log`, and the `Mono path[0]`
+> line the first draft assumed is absent on current builds. Two answers for the record:
+> the tracker always knows where `Player.log` is because Unity writes it to a fixed
+> per-user location (LocalLow on Windows, `~/Library/Logs` on macOS) that is independent of
+> the install drive — which is exactly why the log was found while the card DB was not. And
+> `log_sanitize.py` does not interfere: it scrubs text we *archive*, not the raw file we
+> *read* — discovery reads the raw head directly and never persists it.
 
 ## Resolution order
 
@@ -288,30 +300,31 @@ where we looked and point at the picker:
 green check when a `Raw_CardDatabase_*.mtga` is found. That is the whole feature for the
 long tail.
 
-## Verification gates the work
+## Verification — done for macOS, one ask left for Windows
 
-The log header is now the load-bearing assumption, so confirm it before building on it.
-Ideally from the Discord reporter, since a standalone-on-`G:` install is exactly the case we
+Confirmed against a real macOS Steam log: the `[Subsystems]` header exists in both
+`Player.log` and `Player-prev.log`, no `Mono path[0]` on current builds (the implementation
+matches both patterns and both slash directions anyway).
+
+Still worth collecting from the Discord reporter, since standalone-on-`G:` is the case we
 cannot reproduce:
 
-1. First 40 lines of their `Player.log`, scrubbed of anything personal — looking for
-   `Mono path[0]`, and whether the path uses forward or back slashes.
-2. `dir /b G:\<their install>\MTGA_Data\Downloads\Raw` — confirms the suffix is identical for
-   standalone installs and that the DB file naming matches.
-3. Whether that header survives a long Arena session, or only appears on a cold start.
-4. `reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" /s /f MTGA` — tells
-   us how much the registry fallback is worth.
+1. The first ~10 lines of their `Player.log` — confirms the `[Subsystems]` line appears on
+   Windows standalone builds too, and its exact path shape.
+2. `reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" /s /f MTGA` — tells
+   us how much the Phase 3 registry fallback is worth.
 
-**If (1) comes back without a `Mono path` line,** the plan inverts: the registry scan and
-Epic manifests become the primary Windows mechanism, the folder picker becomes the main
-escape hatch, and everything else in this document stands as written. Worth knowing before
-writing code either way.
+If their log head somehow lacks the line, the Phase 3 fallbacks (registry, Epic manifests)
+get promoted; nothing else in this document changes.
 
 ## Phases
 
-**Phase 1 — the fix.** `mtga_raw_dir_from_player_log()` in `paths.py`, threaded through
-`CardDatabase`, plus the `mtga_data_dir` setting with forgiving normalization and the
-improved miss banner. Solves the reported case.
+**Phase 1 — the fix. (DONE)** `mtga_raw_dir_from_player_log()` in `paths.py`, threaded
+through `CardDatabase`, with `Player-prev.log` fallback, both header patterns, both slash
+directions, ancestor-walk resolution for the Windows and macOS install shapes, and
+fail-closed/never-raise guarantees — all under test. Solves the reported case. The
+`mtga_data_dir` settings.json cache and forgiving normalization move to Phase 2 with the
+picker, since the log read is cheap enough to run every resolve.
 
 **Phase 2 — the escape hatch.** "Locate Arena…" in the Settings dialog.
 

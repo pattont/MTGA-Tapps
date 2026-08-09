@@ -214,7 +214,7 @@ Layout: `src/mtga_tracker/` (tracker mixins, analytics store, dashboard
 server), `ui/` (React/TypeScript dashboard), `tests/`, `packaging/` + `scripts/`
 (PyInstaller builds), `docs/`. Working on it with an AI agent? Start with
 [AGENTS.md](AGENTS.md) — it's kept current on purpose, and it's the only place agent
-guidance lives ([CLAUDE.md](CLAUDE.md) is a one-line pointer at it).
+guidance lives.
 
 ## Documentation
 
