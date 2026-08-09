@@ -1,8 +1,26 @@
-# Finding Arena's Install (and its Card DB) Without a Launcher
+# Finding Arena's Card Database
 
 Plan for locating `Raw_CardDatabase_*.mtga` when Arena was installed by the standalone
 Wizards installer instead of Steam or Epic — including installs on a non-system drive.
 Nothing here is implemented yet.
+
+## Two different databases — do not confuse them
+
+| | Our analytics DB | Arena's card DB |
+|---|---|---|
+| File | `mtga_tracker.sqlite3` | `Raw_CardDatabase_*.mtga` |
+| Owner | Us | Wizards |
+| Access | Read-write | **Read-only, always** |
+| Purpose | Tracking games we observed | Card names, types, colors for gameplay |
+| Location | `data/` from source; `%LOCALAPPDATA%\MTGA Tracker` (Windows) or `~/Library/Application Support/MTGA Tracker` (macOS) installed | Inside Arena's install on Windows; `~/Library/Application Support/com.wizards.mtga/Downloads/RAW` on macOS |
+| Finding it | Solved. We choose the path | **The problem this document solves** |
+
+Our SQLite database has nothing to do with this problem. We put it where we like, and
+`paths.py` already handles that. Arena's card database is somebody else's file in somebody
+else's directory, we only ever read it, and we cannot reliably find it. That is the entire
+issue.
+
+Nothing in this plan writes to Arena's install, ever.
 
 ## The report
 
@@ -12,15 +30,15 @@ printed `Local Card DB: not found`, so every card rendered as `Card #NNNN`. Thei
 
 That split is the whole problem, and it points at the fix.
 
-## Why the log is found but the install is not
+## Why the log is found but the card DB is not
 
-`Player.log` lives in the user profile, at a path that has nothing to do with where the
-game was installed:
+`Player.log` lives in the user profile, at a path that has nothing to do with where the game
+was installed:
 
 - Windows: `%USERPROFILE%\AppData\LocalLow\Wizards Of The Coast\MTGA\Player.log`
 - macOS: `~/Library/Logs/Wizards Of The Coast/MTGA/Player.log`
 
-The card database does not. On Windows it lives *inside the install*:
+Arena's card database does not. On Windows it lives *inside the install*:
 
 ```
 <install root>\MTGA_Data\Downloads\Raw\Raw_CardDatabase_*.mtga
@@ -43,7 +61,7 @@ downloaded card data under a user-scoped, install-independent path:
 volume still writes its card data to that same folder in the home directory. macOS needs
 tidying and a fallback, not a rescue — see [macOS](#macos-mostly-already-works) below.
 
-## The key idea: ask the log where the game is
+## The approach: ask Player.log where Arena is
 
 Arena is a Unity game, and Unity writes its own install path into the first few lines of
 `Player.log` at startup:
@@ -53,11 +71,18 @@ Mono path[0] = 'G:/MTGA/MTGA_Data/Managed'
 Mono config path[0] = 'G:/MTGA/MTGA_Data/MonoBleedingEdge/etc'
 ```
 
-If that holds, the install root is `Path(mono_path).parent.parent` — the parent of
-`MTGA_Data` — and the raw folder is `<root>/MTGA_Data/Downloads/Raw`. That single signal
-covers every case at once: any drive letter, any directory, standalone or Steam or Epic,
-Windows or macOS, with no registry reads, no launcher-specific manifests, and no scanning.
-It is also self-correcting — if the user moves or reinstalls the game, the next log says so.
+If that holds, the install root is the parent of `MTGA_Data`, and the card DB folder is
+`<root>/MTGA_Data/Downloads/Raw`. This is the primary mechanism, not one heuristic among
+many, because it is the only signal that is *authoritative* rather than a guess:
+
+- **Arena itself reported it.** Every other tier infers a location from a launcher's
+  bookkeeping or from where installers usually put things.
+- **It covers every case at once** — any drive letter, any directory, standalone or Steam or
+  Epic, Windows or macOS — with no registry reads, no launcher-specific manifests, and no
+  scanning.
+- **It self-corrects.** Move the game, reinstall it, switch drives, and the next log says so.
+  A cached or hardcoded path silently goes stale; this one cannot.
+- **It costs one read of a file we already have open.**
 
 We already read this file. We already know its path. We just aren't reading the top of it.
 
@@ -65,47 +90,114 @@ We already read this file. We already know its path. We just aren't reading the 
 > circumstantial but strong: `log_sanitize.py` already scrubs `Renderer:`, `Vendor:`,
 > `VRAM:`, and `Driver:` lines, which are the Unity graphics-init block that sits a few
 > lines below `Mono path[0]` in a standard Unity player log. See
-> [Verification](#verification-before-any-code) for how to confirm it.
+> [Verification](#verification-gates-the-work) for how to confirm it, and what changes if it
+> turns out to be absent.
 
-## Proposed resolution order
+## Resolution order
 
-Cheapest and most authoritative first. Stop at the first hit that actually contains a
-`Raw_CardDatabase_*.mtga` file.
+Three questions, in order. Stop at the first folder that actually contains a
+`Raw_CardDatabase_*.mtga`.
 
-| # | Source | Platform | Cost | Notes |
-|---|--------|----------|------|-------|
-| 0 | Explicit override | both | free | `MTGA_DATA_DIR`, `--mtga-data-dir`, or `settings.json` |
-| 1 | Cached resolved path | both | free | Re-validated; falls through if the folder vanished |
-| 2 | `Player.log` Unity header | both | ~1 read | The primary fix |
-| 3 | macOS Application Support | macOS | free | `com.wizards.mtga/Downloads/RAW` |
-| 4 | Steam `libraryfolders.vdf` | both | cheap | Already implemented; keep |
-| 5 | Epic manifests | Windows | cheap | Replaces the hardcoded Epic paths |
-| 6 | Registry uninstall keys | Windows | cheap | Catches the standalone installer |
-| 7 | Static default paths | both | free | Already implemented; keep as a backstop |
-| 8 | Bounded drive sweep | Windows | expensive | **Opt-in only.** Never at startup |
-| 9 | Ask the user | both | free | Folder picker; persists to `settings.json` |
+**1. Do we already have it?**
 
-Every tier stays a pure function returning candidate folders, so `get_mtga_raw_card_db_folders`
-keeps its current shape and the caller keeps globbing for the newest DB file.
+| Source | Notes |
+|---|---|
+| `MTGA_DATA_DIR` env / `mtga_data_dir` argument | Existing behavior; an explicit override wins over everything |
+| `mtga_data_dir` in `settings.json` | New. What the user picked, or what we resolved last time |
 
-## Windows
+A stored path is re-validated on use. If the folder vanished — uninstall, moved drive — it
+falls through instead of failing.
 
-### Tier 2 — the log header
+**2. Ask Player.log.** The Unity header above. This is where a standalone `G:\` install gets
+found.
 
-Read the first ~40 lines of `Player.log` (and `Player-prev.log` as a fallback; Arena
-truncates `Player.log` on each launch, so the header is at the top of the current file
-unless the tracker attached to a partially-written one). Match `Mono path[0] = '<path>'`,
-walk up from `MTGA_Data`, and confirm `MTGA_Data\Downloads\Raw` exists underneath.
+**3. Fall back, then ask.**
+
+| Source | Platform | Notes |
+|---|---|---|
+| macOS Application Support | macOS | `com.wizards.mtga/Downloads/RAW`; already implemented |
+| Steam `libraryfolders.vdf` | both | Already implemented; keep |
+| Epic manifests | Windows | Replaces the hardcoded Epic paths |
+| Registry uninstall keys | Windows | Catches a standalone install with no usable log |
+| Static default paths | both | Already implemented; cheap backstop |
+| Ask the user | both | Folder picker; the answer persists to `settings.json` |
+
+The fallbacks matter less than they did in the previous draft of this plan. They exist for
+the case where the log header is missing or stale — not as the main event. If verification
+shows the header is reliable, the Windows-specific tiers (registry, Epic manifests) become
+optional polish rather than required work.
+
+## Implementation
+
+The integration points already exist, which is most of why this is cheap.
+
+`CardDatabase.__init__` already accepts `log_path` and stores it as `self.log_path` — it is
+passed in for card-name extraction. But `_find_mtga_card_database_paths()` calls:
+
+```python
+get_mtga_raw_card_db_folders(self._mtga_data_dir)
+```
+
+and drops the log on the floor. The change is to thread it through:
+
+```python
+get_mtga_raw_card_db_folders(self._mtga_data_dir, log_path=self.log_path)
+```
+
+with a new helper in `paths.py` — all path logic belongs there, per `AGENTS.md`:
+
+```python
+def mtga_raw_dir_from_player_log(log_path) -> Optional[Path]:
+    """Derive Arena's card-DB folder from the Unity header at the top of Player.log."""
+```
+
+It reads the first ~40 lines, matches `Mono path[0] = '<path>'`, walks up from `MTGA_Data`,
+and returns `<root>/MTGA_Data/Downloads/Raw` only if that directory exists. Then
+`get_mtga_raw_card_db_folders` inserts the result immediately after the override checks and
+before the Steam walk.
 
 Guard rails:
 
-- Accept forward slashes; Unity writes POSIX-style separators even on Windows.
-- Only trust a path whose `MTGA_Data\Downloads\Raw` exists. A stale header from a
-  since-uninstalled drive should fail closed and fall through to the next tier.
-- Never persist the raw header line — it contains the user's home directory on some layouts
-  and `log_sanitize.scrub_raw_log` must keep applying to anything archived.
+- **Accept forward slashes.** Unity writes POSIX-style separators even on Windows.
+- **Fail closed.** Only return a path whose `Downloads/Raw` exists. A stale header pointing
+  at a since-removed drive must fall through, not poison the result.
+- **Never raise.** A missing, unreadable, or truncated log returns `None`. Card-DB discovery
+  must never be able to crash startup.
+- **Read `Player-prev.log` as a fallback.** Arena truncates `Player.log` on each launch, so
+  the header is normally at the top of the current file — but if the tracker attached to a
+  partially-written one, the previous log has the same install path.
+- **Do not persist the raw header line.** It can contain the user's home directory;
+  `log_sanitize.scrub_raw_log` must keep applying to anything archived.
 
-### Tier 5 — Epic manifests
+### Caching, without breaking re-resolution
+
+`_resolve_mtga_db_path()` deliberately re-resolves after a miss, because Arena can download
+or update `Raw_CardDatabase_*.mtga` while the tracker is running. Caching must not defeat
+that.
+
+So: cache the **folder**, never a specific DB file. The resolved folder can go into
+`settings.json` as `mtga_data_dir` so the derivation is paid for once, while
+`_find_mtga_card_database_paths()` keeps globbing that folder for the newest file on every
+resolve. Existing behavior is unchanged; it just starts from a folder we know.
+
+### Normalize forgivingly
+
+A stored or user-picked path invites picking the wrong level. Accept any of these and
+resolve to the same place:
+
+```
+G:\MTGA
+G:\MTGA\MTGA_Data
+G:\MTGA\MTGA_Data\Downloads
+G:\MTGA\MTGA_Data\Downloads\Raw
+```
+
+## Windows fallbacks
+
+Only needed if verification shows the log header is unreliable, or for users whose log
+predates a move.
+
+### Epic manifests
 
 Epic records real install locations as JSON, so this handles Epic-on-`G:` too:
 
@@ -115,9 +207,9 @@ C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests\*.item
 
 Each `.item` is JSON with `InstallLocation` and `DisplayName`. Match the Arena entry and use
 its `InstallLocation`. This strictly supersedes the two hardcoded
-`...\Epic Games\MagicTheGathering\...` entries currently in the static list.
+`...\Epic Games\MagicTheGathering\...` entries in the current static list.
 
-### Tier 6 — registry uninstall keys
+### Registry uninstall keys
 
 The standalone installer registers an uninstall entry. Enumerate subkeys of:
 
@@ -133,36 +225,22 @@ leave it blank — derive the directory from `DisplayIcon` or `UninstallString` 
 
 Open keys with an explicit WOW64 view (`KEY_READ | KEY_WOW64_64KEY`, then the `32KEY`
 variant) rather than relying on the bitness of whichever Python is running; a frozen 32-bit
-build would otherwise see a mirrored view of the registry. Wrap the whole thing in the same
-broad `except Exception` the existing `_windows_steam_roots()` uses — registry access fails
-in enough odd ways that discovery must never be able to crash startup.
+build would otherwise see a mirrored view of the registry. Wrap it in the same broad
+`except Exception` that `_windows_steam_roots()` already uses.
 
-Also worth probing while we are in the registry: `HKCU\Software\Wizards Of The Coast\MTGA`,
-the Unity PlayerPrefs key. It proves Arena has run but does **not** carry an install path, so
-it is useful only as a diagnostic ("Arena is installed, we just can't find where").
+`HKCU\Software\Wizards Of The Coast\MTGA` (Unity PlayerPrefs) is worth probing as a
+diagnostic only — it proves Arena has run but carries no install path, so it can distinguish
+"Arena isn't installed" from "Arena is installed and we can't find it".
 
-### Tier 8 — bounded drive sweep, opt-in only
+### Drive scanning — deliberately not doing this
 
-If everything above misses, we could probe fixed drives. This must never run automatically:
-a recursive walk of a large `G:\` takes minutes, spins up sleeping disks, and looks like the
-app has hung.
+A recursive walk of a large `G:\` takes minutes, spins up sleeping disks, and looks like the
+app has hung. It can never run at startup.
 
-If we build it at all, bound it hard — enumerate fixed drives, then check a short list of
-plausible roots per drive at depth ≤ 2:
-
-```
-<drive>\MTGA
-<drive>\Games\MTGA
-<drive>\Program Files\Wizards of the Coast\MTGA
-<drive>\SteamLibrary\steamapps\common\MTGA
-<drive>\Epic Games\MagicTheGathering
-```
-
-Skip removable and network drives. Run it from an explicit "Search my drives" button, with a
-progress indication and a cancel — not from the startup path.
-
-Honestly, tier 9 (just ask) beats this on every axis except pride. Build tier 9 first and
-see whether anyone still needs tier 8.
+If the log header, the launcher tiers, and a folder picker all fail, the honest answer is to
+ask the user, not to search their computer. Should it ever prove necessary, bound it hard —
+fixed drives only, a short list of plausible roots per drive at depth ≤ 2, behind an explicit
+"Search my drives" button with progress and cancel. It stays out of scope here.
 
 ## macOS — mostly already works
 
@@ -175,7 +253,7 @@ worth doing:
   `Downloads\Raw` on Windows. That works on a default case-insensitive APFS volume and
   breaks on a case-sensitive one. Resolve the child directory by case-folded comparison
   instead of assuming either spelling.
-- **Add the app bundle as a fallback** for the case where card data really does live inside
+- **Add the app bundle as a fallback**, for the case where card data really does live inside
   the bundle. Spotlight answers this in one call, including external volumes:
 
   ```bash
@@ -185,33 +263,17 @@ worth doing:
   With `/Applications/MTGA.app` and `~/Applications/MTGA.app` as static fallbacks in case
   Spotlight indexing is disabled. Inside a Unity `.app`, the data root is
   `Contents/Resources/Data`, not `MTGA_Data`, so the suffix differs from Windows — do not
-  reuse `_MTGA_RAW_SUFFIX` blindly.
+  reuse `_MTGA_RAW_SUFFIX` blindly. The same caveat applies to the log-derived path on macOS.
 - **Relabel the "Epic" comment**, which describes the shared non-Steam path and misleads
   anyone reading `paths.py` for the standalone case.
 
-## Failure UX — the part that actually matters
+## Failure UX
 
 Discovery will still miss sometimes. Missing well is worth more than one more heuristic.
 
-**Persist the answer.** Add an `mtga_data_dir` key to `settings.json` (alongside the existing
-`deck_ai` section) so a resolved-or-chosen path is paid for once. Re-validate on load and
-fall back to discovery if the folder disappeared. Cache the *folder*, never a specific
-`Raw_CardDatabase_*.mtga` file — `card_database.py` deliberately re-globs because Arena
-updates the DB while the tracker is running.
-
-**Normalize forgivingly.** A folder picker invites picking the wrong level. Accept any of
-these and resolve to the same place:
-
-```
-G:\MTGA
-G:\MTGA\MTGA_Data
-G:\MTGA\MTGA_Data\Downloads
-G:\MTGA\MTGA_Data\Downloads\Raw
-```
-
 **Make the miss message actionable.** The banner in `tracker_runtime.py` currently names the
-`MTGA_DATA_DIR` env var, which is the least discoverable option we offer. It should instead
-say where we looked, and point at the picker:
+`MTGA_DATA_DIR` env var, which is the least discoverable option we offer. It should say
+where we looked and point at the picker:
 
 ```
  ⚠️  Local Card DB: not found — cards will appear as 'Card #NNNN'.
@@ -222,74 +284,80 @@ say where we looked, and point at the picker:
 ```
 
 **Add "Locate Arena…" to the Settings dialog.** `settings_dialog.py` already writes
-`settings.json`; this is one more row with a folder picker, a validation line, and a green
-check when a `Raw_CardDatabase_*.mtga` is found. That is the whole feature for the long tail.
+`settings.json`; this is one more row with a folder picker, forgiving normalization, and a
+green check when a `Raw_CardDatabase_*.mtga` is found. That is the whole feature for the
+long tail.
 
-## Verification before any code
+## Verification gates the work
 
-The log-header approach is the load-bearing assumption. Confirm it first — ideally from the
-Discord reporter, since a standalone-on-`G:` install is exactly the case we cannot reproduce:
+The log header is now the load-bearing assumption, so confirm it before building on it.
+Ideally from the Discord reporter, since a standalone-on-`G:` install is exactly the case we
+cannot reproduce:
 
 1. First 40 lines of their `Player.log`, scrubbed of anything personal — looking for
    `Mono path[0]`, and whether the path uses forward or back slashes.
-2. `dir /b G:\<their install>\MTGA_Data\Downloads\Raw` — confirms the suffix is identical
-   for standalone installs and that the DB file naming matches.
-3. The default install directory the standalone installer proposes.
-4. `reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" /s /f MTGA` —
-   confirms whether an uninstall entry with `InstallLocation` exists.
+2. `dir /b G:\<their install>\MTGA_Data\Downloads\Raw` — confirms the suffix is identical for
+   standalone installs and that the DB file naming matches.
+3. Whether that header survives a long Arena session, or only appears on a cold start.
+4. `reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" /s /f MTGA` — tells
+   us how much the registry fallback is worth.
 
-If (1) comes back without a `Mono path` line, tiers 5, 6, and 9 carry the plan on their own
-and the ordering above still holds; only the primary fix changes.
+**If (1) comes back without a `Mono path` line,** the plan inverts: the registry scan and
+Epic manifests become the primary Windows mechanism, the folder picker becomes the main
+escape hatch, and everything else in this document stands as written. Worth knowing before
+writing code either way.
 
-## Implementation phases
+## Phases
 
-**Phase 1 — the fix.** Log-header derivation, the `mtga_data_dir` setting with forgiving
-normalization, and the improved miss banner. Solves the reported case and most future ones.
+**Phase 1 — the fix.** `mtga_raw_dir_from_player_log()` in `paths.py`, threaded through
+`CardDatabase`, plus the `mtga_data_dir` setting with forgiving normalization and the
+improved miss banner. Solves the reported case.
 
-**Phase 2 — Windows breadth.** Registry uninstall scan and Epic manifests; retire the
-hardcoded Epic paths.
+**Phase 2 — the escape hatch.** "Locate Arena…" in the Settings dialog.
 
-**Phase 3 — the escape hatch.** "Locate Arena…" in the Settings dialog.
+**Phase 3 — Windows breadth, if still needed.** Registry uninstall scan and Epic manifests;
+retire the hardcoded Epic paths.
 
-**Phase 4 — only if still needed.** Opt-in bounded drive sweep.
+**Phase 4 — macOS cleanups.** Case-insensitive resolution, `mdfind` fallback, comment fix.
 
-**Phase 5 — macOS cleanups.** Case-insensitive resolution, `mdfind` fallback, comment fix.
-
-Phases 1–3 are independent of each other and can land in any order.
+Phases 1 and 2 are independent and can land in either order.
 
 ## Testing
 
 All of it must be testable on any OS, with no real registry, Spotlight, or Arena install.
 `platform.system()`, `winreg`, and `subprocess` all get monkeypatched; every candidate root
-is a `tmp_path` fixture.
+is a `tmp_path` fixture, and Player.log headers are short string fixtures.
 
 - Unity header parsing: Windows-style and POSIX-style paths, a missing header, a header
-  pointing at a since-deleted drive, and `Player-prev.log` fallback.
+  pointing at a since-deleted drive, a truncated file, and `Player-prev.log` fallback.
+- Precedence: an explicit override beats the log; the log beats the Steam walk; a stored
+  `mtga_data_dir` that no longer exists falls through rather than winning.
 - Forgiving normalization: all four input levels above resolve to the same folder; a garbage
   path resolves to nothing rather than raising.
-- Registry: a fake `winreg` module with an entry whose `InstallLocation` is empty, so the
-  `DisplayIcon` derivation path is covered.
-- Epic manifests: a `.item` fixture, plus a malformed one that must be skipped silently.
-- Precedence: with several tiers matching at once, the earliest tier wins; with an explicit
-  override set, nothing else is consulted.
+- Re-resolution still works: after a miss, a `Raw_CardDatabase_*.mtga` appearing mid-session
+  is picked up — the folder cache must not defeat `_resolve_mtga_db_path`'s retry.
+- Registry: a fake `winreg` with an entry whose `InstallLocation` is empty, covering the
+  `DisplayIcon` derivation path.
+- Epic manifests: an `.item` fixture, plus a malformed one that must be skipped silently.
 - Regression: existing Steam `libraryfolders.vdf` behavior is unchanged.
 - Discovery never raises. Every tier gets a failure-injection case asserting that startup
   still completes with `Local Card DB: not found` rather than a traceback.
 
 ## Non-goals
 
+- Writing anything to Arena's install, or reading anything from it other than
+  `Raw_CardDatabase_*.mtga`.
 - Recursive whole-disk scanning at startup, under any circumstances.
 - Fetching card data over the network when the local DB is missing. The existing Scryfall
   fallback is unchanged; the "no network dependency for normal card resolution" rule in
   `AGENTS.md` stands.
-- Reading anything from the Arena install other than `Raw_CardDatabase_*.mtga`.
+- Anything touching our own analytics database. It is unrelated to this problem.
 - Linux install discovery. Proton/Wine layouts are a separate question and nobody has asked.
 
 ## Open questions
 
-- Does the standalone Windows installer ever write card data outside the install root — an
-  `%LOCALAPPDATA%` path analogous to the macOS Application Support folder? If so, Windows
-  gets a free tier-3 equivalent and most of this plan becomes optional.
-- Does `Mono path[0]` survive Arena's own log rotation, or only appear on a cold start?
-- Should the resolved path be shown in the dashboard as well as the console banner? Users
-  who run the menu-bar app may never look at the startup output.
+- Does `Mono path[0]` survive Arena's own log rotation, or only appear on a cold start? This
+  is question 3 in [Verification](#verification-gates-the-work) and decides how much the
+  fallback tiers are worth.
+- Should the resolved path be shown in the dashboard as well as the console banner? Users who
+  run the menu-bar app may never look at the startup output.
