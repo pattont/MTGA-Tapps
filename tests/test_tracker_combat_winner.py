@@ -6646,3 +6646,54 @@ def test_backfill_resolves_card_labels_recorded_without_card_db(tmp_path):
     assert summary == ["Llanowar Elves", "Shivan Dragon"]
     assert mulligan == ["Llanowar Elves"]
     assert card_row == ("Llanowar Elves", 72301)
+
+
+def test_backfill_converges_and_stops_reporting_duplicates(tmp_path):
+    """A 'Card #N' cards row whose real name already has its own row must be
+    folded into it ONCE — not counted and re-reported as 'Resolved N' on
+    every single launch (the resolved-32-every-startup bug)."""
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "analytics.sqlite3"
+    store = AnalyticsStore(tracker._console_db_path)
+    conn = store.connect()
+    with conn:
+        conn.execute(
+            "INSERT INTO cards (name, arena_id, first_seen_at) "
+            "VALUES ('Llanowar Elves', 72301, '2026-08-01T00:00:00')"
+        )
+        conn.execute(
+            "INSERT INTO cards (name, arena_id, first_seen_at) "
+            "VALUES ('Card #72301', NULL, '2026-08-02T00:00:00')"
+        )
+        stale_id = conn.execute(
+            "SELECT id FROM cards WHERE name = 'Card #72301'"
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO game_card_summary (game_id, participant_id, card_id, display_name) "
+            "VALUES ('g1', 'p1', ?, 'Card #72301')",
+            (stale_id,),
+        )
+    store.close()
+    tracker.analytics = None
+    tracker.card_db.get_card_name = lambda grp_id: "Llanowar Elves"
+
+    printed = []
+    tracker._print_line = lambda text="", style=None: printed.append(text)
+
+    tracker._backfill_unresolved_card_labels()
+    assert any("Resolved 1" in line for line in printed)
+
+    printed.clear()
+    tracker._backfill_unresolved_card_labels()
+    assert printed == []  # converged: nothing left to fix, nothing reported
+
+    conn = sqlite3.connect(tracker._console_db_path)
+    card_names = [row[0] for row in conn.execute("SELECT name FROM cards ORDER BY name")]
+    display, card_id = conn.execute(
+        "SELECT display_name, card_id FROM game_card_summary"
+    ).fetchone()
+    real_id = conn.execute("SELECT id FROM cards WHERE name = 'Llanowar Elves'").fetchone()[0]
+    conn.close()
+    assert card_names == ["Llanowar Elves"]  # placeholder row folded and removed
+    assert display == "Llanowar Elves"
+    assert card_id == real_id
