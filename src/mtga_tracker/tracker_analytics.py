@@ -302,27 +302,68 @@ class TrackerAnalyticsMixin:
                         continue
                     if not new_name or new_name.startswith("Card #"):
                         continue
-                    # Rename the cards row when possible; if the real name
-                    # already has a row (OR IGNORE no-op), the stale label row
-                    # is left as a harmless orphan — display names are still
-                    # rewritten below either way, which is what users see.
+                    changes_before = conn.total_changes
                     conn.execute(
                         "UPDATE OR IGNORE cards SET name = ?, arena_id = COALESCE(arena_id, ?) "
                         "WHERE name = ?",
                         (new_name, grp_id, old_name),
                     )
+                    # OR IGNORE everywhere: a row for the real name may already
+                    # exist in the same game (UNIQUE constraints) — never let
+                    # one collision roll back the whole repair.
                     for table_name in self._CARD_LABEL_TABLES:
                         conn.execute(
-                            f"UPDATE {table_name} SET display_name = ? WHERE display_name = ?",
+                            f"UPDATE OR IGNORE {table_name} SET display_name = ? "
+                            "WHERE display_name = ?",
                             (new_name, old_name),
                         )
-                    resolved += 1
+                    conn.execute(
+                        "UPDATE OR IGNORE participant_commanders SET card_name = ? "
+                        "WHERE card_name = ?",
+                        (new_name, old_name),
+                    )
+                    self._fold_stale_card_row(conn, old_name, new_name)
+                    # Only labels where a row actually changed count — a
+                    # duplicate-name no-op must not report "Resolved N" on
+                    # every single launch.
+                    if conn.total_changes != changes_before:
+                        resolved += 1
         except sqlite3.Error:
             return
         if resolved:
             self._print_line(
                 f"🃏 Resolved {resolved} previously unknown card label(s) from the Arena card DB."
             )
+
+    def _fold_stale_card_row(self, conn, old_name: str, new_name: str) -> None:
+        """Fold a leftover "Card #N" cards row into the real card's row.
+
+        When the real name already had its own cards row, the rename above
+        was a no-op and the placeholder row would linger — and be re-scanned
+        on every launch. Repoint card_id references at the real row and
+        delete the placeholder once nothing references it.
+        """
+        stale = conn.execute("SELECT id FROM cards WHERE name = ?", (old_name,)).fetchone()
+        if stale is None:
+            return
+        real = conn.execute("SELECT id FROM cards WHERE name = ?", (new_name,)).fetchone()
+        if real is None:
+            return
+        stale_id, real_id = int(stale[0]), int(real[0])
+        reference_tables = self._CARD_LABEL_TABLES + ("participant_commanders",)
+        remaining = 0
+        for table_name in reference_tables:
+            conn.execute(
+                f"UPDATE OR IGNORE {table_name} SET card_id = ? WHERE card_id = ?",
+                (real_id, stale_id),
+            )
+            remaining += int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM {table_name} WHERE card_id = ?", (stale_id,)
+                ).fetchone()[0]
+            )
+        if remaining == 0:
+            conn.execute("DELETE FROM cards WHERE id = ?", (stale_id,))
 
     def _recover_missing_turn_timings(self) -> None:
         """Recover persisted turn durations from durable console headers at startup."""

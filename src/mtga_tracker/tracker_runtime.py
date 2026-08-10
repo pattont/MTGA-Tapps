@@ -103,20 +103,26 @@ class TrackerRuntimeMixin:
         self._print_startup_legend()
         # self._print_event(f"Session: {self._session_stats_line()}", "turn")
 
-        if self._detailed_logs_enabled() is False:
+        # Remember the state so the live loop only announces CHANGES —
+        # Arena restamps it on relaunch and repeats cluttered the startup.
+        detailed_logs_state = self._detailed_logs_enabled()
+        self._detailed_logs_last_state = detailed_logs_state
+        if detailed_logs_state is False:
             self._print_detailed_logs_warning()
 
-        # self._print_line("\n   Waiting for game events...")
-        self._print_line("\n Now ready to track games in MTGA!")
-        self._print_line("\n Press Ctrl+C to stop")
-        self._print_line("=" * 75 + "\n")
-
-        # Deck metadata is often logged before startup; backfill from recent lines once.
+        # One-time maintenance runs INSIDE the startup block so its messages
+        # (resolved card labels, recovered timings) sit with the banner
+        # instead of dangling after "Now ready to track".
         self._recover_missing_turn_timings()
         self._backfill_card_colors()
         self._backfill_unresolved_card_labels()
         self._backfill_recent_match_metadata()
         self._backfill_rank_progress()
+
+        # self._print_line("\n   Waiting for game events...")
+        self._print_line("\n Now ready to track games in MTGA!")
+        self._print_line("\n Press Ctrl+C to stop")
+        self._print_line("=" * 75 + "\n")
 
         # Start from current end of file
         self.parser.reset_position()
