@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.4
 
 - **Proper Windows installer**: releases now ship `MTGA-Tracker-<version>-setup.exe`
   (Inno Setup) with a Start Menu entry, an Apps & Features uninstaller, and in-place

@@ -18,6 +18,10 @@ default (no admin prompt); pick "Install for all users" during setup if you want
 Program Files. Prefer a no-install portable copy? Grab the `-windows.zip` instead and
 run `MTGA Tracker.exe` from anywhere.
 
+On macOS it's a DMG — drag **MTGA Tracker** to Applications and you're done. The
+**Deck Finder** companion tool is bundled inside the app on both platforms (launch it
+from the menu bar or the dashboard sidebar); there is nothing separate to install.
+
 **Build it yourself on macOS:**
 
 ```bash
@@ -35,7 +39,10 @@ Dashboard**, **Show Live Tracker Log**, **Start/Stop Tracking**, **Open Data Fol
 `%LOCALAPPDATA%\MTGA Tracker` (Windows).
 
 Unsigned alpha builds: macOS Gatekeeper will balk the first time — right-click the app
-→ **Open** → **Open**. On Windows, use SmartScreen's **More info → Run anyway**.
+→ **Open** → **Open**. The first Deck Finder launch from a downloaded build may prompt
+separately (it's its own executable inside the app); allow it via **System Settings →
+Privacy & Security → Open Anyway** if so. On Windows, use SmartScreen's
+**More info → Run anyway** on the setup.exe or zip.
 
 ## Option 2 — Run from source (development)
 
