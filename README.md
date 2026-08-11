@@ -67,7 +67,9 @@ tracker features can retroactively backfill your old games.
 **Install the app** (recommended): grab the installer for your OS from the
 [Releases page](../../releases) — on Windows, `MTGA-Tracker-<version>-setup.exe`
 gives you a Start Menu entry, an Apps & Features uninstaller, and in-place
-upgrades (a portable `-windows.zip` is also published). Or build it yourself —
+upgrades (a portable `-windows.zip` is also published); on macOS, a
+drag-to-Applications DMG. The Deck Finder is bundled inside the app on both
+platforms — one install gets you everything. Or build it yourself —
 
 ```bash
 # macOS app / DMG

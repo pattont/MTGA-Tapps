@@ -150,6 +150,11 @@ UI changes require vitest, tsc, lint, and a fresh `npm run build` (the dashboard
   `packaging/mtga_tracker.spec` and the `packaging/*_entrypoint.py` shims, and embed the
   `pyproject.toml` version in the artifact name. Never change the installer's `AppId`
   GUID — it is what makes newer setups upgrade in place.
+- The macOS BUNDLE embeds BOTH executables ("MTGA Tracker" and "MTGA Deck Downloader")
+  in `MTGA Tracker.app/Contents/MacOS/` — the DMG intentionally shows one app and the
+  Deck Finder ships inside it. After a macOS build, verify both binaries are present
+  (`ls "dist/MTGA Tracker.app/Contents/MacOS/"`) and that the menu-bar Deck Finder
+  launch opens a Terminal with all providers listed.
 - The build scripts prefer the repo venv and fall back to `$PYTHON`; they build `ui/dist`
   as part of the bundle, so UI changes must be built before packaging.
 - `.github/workflows/release.yml` builds both OS artifacts and attaches them to a **draft**
