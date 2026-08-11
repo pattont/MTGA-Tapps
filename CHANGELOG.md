@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- **Proper Windows installer**: releases now ship `MTGA-Tracker-<version>-setup.exe`
+  (Inno Setup) with a Start Menu entry, an Apps & Features uninstaller, and in-place
+  upgrades. Installs per-user by default (no admin prompt) with an optional
+  all-users/Program Files mode; uninstall asks before touching your tracked-game data.
+  The portable `-windows.zip` is still published alongside it.
+- **Multi-target spells show every target**: Arena sends one TargetSpec annotation per
+  chosen target, and the tracker kept only the last one — Ram Through showed only the
+  creature taking damage, not the attacker dealing it. Targets now merge in selection
+  order. BlockerDeclared annotations got the same hardening (every affected id is
+  treated as a blocker).
+- The install-discovery log parser gained a second, Windows-verified marker (Arena's
+  localization line names a file inside `Downloads\Raw` directly) and now normalizes
+  Arena's mixed forward/back slashes.
+- The "Resolved N previously unknown card label(s)" message no longer repeats on every
+  launch: duplicate-name placeholder rows are folded into the real card's row once,
+  and only actual changes are counted.
+- Startup output tidied: Detailed Logs state prints only on changes, and one-time
+  maintenance messages appear inside the startup banner instead of after it.
+
 ## 0.5.3
 
 - **Arena installs are now found anywhere** — standalone (.msi) installs on any drive

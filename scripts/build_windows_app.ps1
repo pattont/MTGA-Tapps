@@ -45,9 +45,29 @@ $ZipPath = Join-Path $RootDir "dist\MTGA-Tracker-$Version-windows.zip"
 if (Test-Path $ZipPath) { Remove-Item $ZipPath }
 Compress-Archive -Path $AppDir -DestinationPath $ZipPath
 
+Write-Host "==> Building installer (Inno Setup)"
+$Iscc = Get-Command iscc -ErrorAction SilentlyContinue
+if ($Iscc) {
+    $IsccPath = $Iscc.Source
+} else {
+    $IsccPath = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+}
+$SetupPath = Join-Path $RootDir "dist\MTGA-Tracker-$Version-setup.exe"
+if (Test-Path $IsccPath) {
+    & $IsccPath /Qp "/DMyAppVersion=$Version" (Join-Path $RootDir "packaging\windows_installer.iss")
+    if ($LASTEXITCODE -ne 0) { throw "Inno Setup (ISCC) failed" }
+    if (-not (Test-Path $SetupPath)) { throw "ISCC finished but $SetupPath is missing" }
+} else {
+    $SetupPath = $null
+    Write-Host "!! Inno Setup not found - installer skipped. Install it with:"
+    Write-Host "   choco install innosetup -y    (or from jrsoftware.org)"
+}
+
 Write-Host ""
 Write-Host "Built: $ExePath"
 Write-Host "Built: $ZipPath"
+if ($SetupPath) { Write-Host "Built: $SetupPath" }
 Write-Host ""
-Write-Host "Testers: extract the zip anywhere and run 'MTGA Tracker.exe'."
+Write-Host "Users: run the -setup.exe for a normal install (Start Menu + uninstaller),"
+Write-Host "or extract the zip anywhere for a portable run of 'MTGA Tracker.exe'."
 Write-Host "SmartScreen will warn on unsigned builds - More info -> Run anyway."

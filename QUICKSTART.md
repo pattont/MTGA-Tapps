@@ -12,6 +12,12 @@ Get MTGA Tracker running in a few minutes.
 **From a GitHub Release** (once published — see `docs/RELEASE_PLAN.md`): download the
 installer for your OS from the Releases page, install, and launch **MTGA Tracker**.
 
+On Windows that's `MTGA-Tracker-<version>-setup.exe` — a normal installer with a Start
+Menu entry, an entry in Apps & Features, and in-place upgrades. It installs per-user by
+default (no admin prompt); pick "Install for all users" during setup if you want it in
+Program Files. Prefer a no-install portable copy? Grab the `-windows.zip` instead and
+run `MTGA Tracker.exe` from anywhere.
+
 **Build it yourself on macOS:**
 
 ```bash
