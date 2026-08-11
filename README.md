@@ -65,7 +65,9 @@ tracker features can retroactively backfill your old games.
 > ![Enable Detailed Logs (Plugin Support) under Account in MTG Arena's options](docs/images/detailed-logs-setting.png)
 
 **Install the app** (recommended): grab the installer for your OS from the
-[Releases page](../../releases), or build it yourself —
+[Releases page](../../releases) — on Windows, `MTGA-Tracker-<version>-setup.exe`
+gives you a Start Menu entry, an Apps & Features uninstaller, and in-place
+upgrades (a portable `-windows.zip` is also published). Or build it yourself —
 
 ```bash
 # macOS app / DMG

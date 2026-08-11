@@ -144,9 +144,12 @@ UI changes require vitest, tsc, lint, and a fresh `npm run build` (the dashboard
 ## Packaging and Releases
 
 - `scripts/build_macos_app.sh` → `dist/MTGA Tracker.app`; `scripts/build_macos_installer.sh`
-  → DMG; `scripts/build_windows_app.ps1` → Windows zip. All go through
+  → DMG; `scripts/build_windows_app.ps1` → Windows zip AND `MTGA-Tracker-<ver>-setup.exe`
+  (Inno Setup via `packaging/windows_installer.iss`; skipped with a warning when ISCC is
+  not installed — CI runs `choco install innosetup`). All go through
   `packaging/mtga_tracker.spec` and the `packaging/*_entrypoint.py` shims, and embed the
-  `pyproject.toml` version in the artifact name.
+  `pyproject.toml` version in the artifact name. Never change the installer's `AppId`
+  GUID — it is what makes newer setups upgrade in place.
 - The build scripts prefer the repo venv and fall back to `$PYTHON`; they build `ui/dist`
   as part of the bundle, so UI changes must be built before packaging.
 - `.github/workflows/release.yml` builds both OS artifacts and attaches them to a **draft**
