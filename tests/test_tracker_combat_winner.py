@@ -6718,3 +6718,41 @@ def test_target_specs_merge_across_annotations_for_multi_target_spells():
     # Re-processing the same annotation (poll overlap) must not duplicate.
     tracker._capture_target_specs([spec(578, 294)])
     assert tracker._target_ids_for_instance(294) == [301, 578]
+
+
+def test_double_block_reports_both_blockers(capsys):
+    """Two creatures blocking one attacker must both appear — whether Arena
+    sends one BlockerDeclared annotation per blocker (the normal shape) or
+    batches both blockers into one annotation's affectedIds."""
+    tracker = make_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.turn_number = 5
+
+    game_objects = [
+        {"instanceId": 30, "grpId": 303, "ownerSeatId": 1,
+         "power": {"value": 2}, "toughness": {"value": 2}},
+        {"instanceId": 31, "grpId": 305, "ownerSeatId": 1,
+         "power": {"value": 1}, "toughness": {"value": 1}},
+        {"instanceId": 40, "grpId": 404, "ownerSeatId": 2},
+    ]
+    annotation = {"details": [{"key": "attacker_id", "valueInt32": [40]}]}
+
+    # Normal shape: one annotation per blocker.
+    tracker._handle_blocker_declared([30], annotation, game_objects)
+    tracker._handle_blocker_declared([31], annotation, game_objects)
+    out = capsys.readouterr().out
+    assert "blocking [Card404] with [Card303 (2/2)]" in out
+    assert "blocking [Card404] with [Card305 (1/1)]" in out
+
+    # Batched shape: both blockers in one annotation must also both report.
+    tracker2 = make_tracker()
+    tracker2.game_state.player_seat_id = 1
+    tracker2.game_state.opponent_seat_id = 2
+    tracker2.game_state.turn_number = 5
+    tracker2._handle_blocker_declared([30, 31], annotation, game_objects)
+    out = capsys.readouterr().out
+    assert "blocking [Card404] with [Card303 (2/2)]" in out
+    assert "blocking [Card404] with [Card305 (1/1)]" in out
+    assert tracker2.game_state.blockers[30] == [40]
+    assert tracker2.game_state.blockers[31] == [40]

@@ -415,11 +415,27 @@ class TrackerCombatMixin:
         annotation: Dict[str, Any],
         game_objects: List[Dict[str, Any]],
     ):
-        """Handle blocker declarations."""
+        """Handle blocker declarations.
+
+        Arena normally emits ONE BlockerDeclared annotation per blocker, so
+        a double block arrives as two annotations. Every affected id is
+        still treated as a blocker here so a batched annotation can never
+        silently drop blockers — the same failure shape as the multi-target
+        TargetSpec overwrite (Ram Through) that hid a spell target.
+        """
         if not affected_ids:
             return
+        for blocker_id in affected_ids:
+            if blocker_id is not None:
+                self._handle_one_blocker_declared(blocker_id, annotation, game_objects)
 
-        blocker_id = affected_ids[0]
+    def _handle_one_blocker_declared(
+        self,
+        blocker_id: int,
+        annotation: Dict[str, Any],
+        game_objects: List[Dict[str, Any]],
+    ):
+        """Record and report one blocker from a BlockerDeclared annotation."""
 
         # Try to find which attackers are being blocked
         attacker_ids: List[int] = []
