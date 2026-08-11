@@ -6697,3 +6697,24 @@ def test_backfill_converges_and_stops_reporting_duplicates(tmp_path):
     assert card_names == ["Llanowar Elves"]  # placeholder row folded and removed
     assert display == "Llanowar Elves"
     assert card_id == real_id
+
+
+def test_target_specs_merge_across_annotations_for_multi_target_spells():
+    """Ram Through sends one TargetSpec per chosen target; the second must
+    not overwrite the first or the cast line loses a target."""
+    tracker = make_tracker()
+
+    def spec(affected, source):
+        return {
+            "type": ["AnnotationType_TargetSpec"],
+            "affectedIds": [affected],
+            "affectorId": source,
+        }
+
+    tracker._capture_target_specs([spec(301, 294)])  # own Steel Leaf Champion
+    tracker._capture_target_specs([spec(578, 294)])  # opposing Sarkhan
+    assert tracker._target_ids_for_instance(294) == [301, 578]
+
+    # Re-processing the same annotation (poll overlap) must not duplicate.
+    tracker._capture_target_specs([spec(578, 294)])
+    assert tracker._target_ids_for_instance(294) == [301, 578]
