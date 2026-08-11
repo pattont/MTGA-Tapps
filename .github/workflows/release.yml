@@ -1,9 +1,9 @@
 name: Release
 
-# Builds the macOS DMG and Windows zip and attaches them to a DRAFT GitHub
-# Release. Trigger by pushing a version tag (v0.2.0, v0.3.0-alpha.1, ...) or
-# manually from the Actions tab. Publishing the draft on github.com is the
-# human "go" button. Ordinary pushes never run this.
+# Builds the macOS DMG and Windows zip + setup.exe and attaches them to a
+# DRAFT GitHub Release. Trigger by pushing a version tag (v0.2.0,
+# v0.3.0-alpha.1, ...) or manually from the Actions tab. Publishing the draft
+# on github.com is the human "go" button. Ordinary pushes never run this.
 
 on:
   push:
@@ -27,7 +27,9 @@ jobs:
             artifact: dist/MTGA-Tracker-*.dmg
           - os: windows-latest
             build: pwsh scripts/build_windows_app.ps1
-            artifact: dist/MTGA-Tracker-*-windows.zip
+            artifact: |
+              dist/MTGA-Tracker-*-windows.zip
+              dist/MTGA-Tracker-*-setup.exe
     runs-on: ${{ matrix.os }}
     env:
       # The build scripts prefer a repo venv; on CI use the runner's python.
@@ -44,6 +46,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Install Inno Setup (Windows)
+        if: runner.os == 'Windows'
+        run: choco install innosetup -y --no-progress
 
       - name: Install Python build dependencies
         run: python3 -m pip install -e ".[gui,build]"
