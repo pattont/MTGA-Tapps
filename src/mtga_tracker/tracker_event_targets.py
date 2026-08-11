@@ -128,8 +128,19 @@ class TrackerTargetsMixin:
                 for value in detail.get("valueInt32") or []:
                     if value is not None:
                         source_ids.append(int(value))
+            # MERGE, never overwrite: Arena emits one TargetSpec annotation
+            # per target SELECTION, so a two-target spell (Ram Through:
+            # "target creature you control" + "target creature you don't")
+            # arrives as two annotations for the same source. Overwriting
+            # kept only the last-chosen target in the cast line and timeline.
+            keys = [source_id for source_id in source_ids]
             for source_id in source_ids:
-                self.game_state.instance_target_ids[source_id] = target_ids
                 stack_key = self._stack_key(source_id)
-                if stack_key is not None:
-                    self.game_state.instance_target_ids[int(stack_key)] = target_ids
+                if stack_key is not None and int(stack_key) not in keys:
+                    keys.append(int(stack_key))
+            for key in keys:
+                merged = list(self.game_state.instance_target_ids.get(key) or [])
+                for target_id in target_ids:
+                    if target_id not in merged:
+                        merged.append(target_id)
+                self.game_state.instance_target_ids[key] = merged

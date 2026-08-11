@@ -21,18 +21,27 @@ _MTGA_RAW_SUFFIX = Path("MTGA_Data") / "Downloads" / "Raw"
 #: and ANY installer (standalone .msi on G:\, Steam, Epic) with zero guessing.
 _LOG_INSTALL_PATTERNS = (
     re.compile(r"Discovering subsystems at path (.+?)[/\\]UnitySubsystems\s*$"),
+    # Windows-verified (real standalone-install log): Arena names a file
+    # inside Downloads\Raw itself when loading localization, with mixed
+    # forward/back separators ("G:/Games/MTGA/MTGA_Data\Downloads\Raw\...").
+    re.compile(r"Loading SqlLocalizationManager from file: (.+?)[/\\]Raw_ClientLocalization"),
     re.compile(r"Mono path\[0\] = '(.+?)[/\\]Managed'"),
 )
 
 
 def _unity_data_dirs_from_log_head(head_text: str) -> List[Path]:
-    """Extract Unity data-directory paths announced in a Player.log head."""
+    """Extract Arena-announced install paths from a Player.log head.
+
+    Arena mixes forward and back slashes in the same path on Windows, so
+    normalize before Path() — otherwise a POSIX-style parse treats
+    "MTGA_Data\\Downloads\\Raw" as one opaque component.
+    """
     found: List[Path] = []
     for line in head_text.splitlines():
         for pattern in _LOG_INSTALL_PATTERNS:
             match = pattern.search(line)
             if match:
-                path = Path(match.group(1).strip())
+                path = Path(match.group(1).strip().replace("\\", "/"))
                 if path not in found:
                     found.append(path)
     return found

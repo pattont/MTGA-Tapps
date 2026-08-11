@@ -197,3 +197,17 @@ def test_log_derived_dir_leads_and_env_override_still_wins(tmp_path, monkeypatch
     override = _fake_raw_dir(tmp_path, "override")
     monkeypatch.setenv("MTGA_DATA_DIR", str(override))
     assert paths_mod.get_mtga_raw_card_db_folders(log_path=str(log)) == [override]
+
+
+def test_localization_line_yields_raw_dir_directly(tmp_path):
+    # Real line shape from a Windows standalone-install user's log, mixed
+    # separators included — it names a file inside Downloads\Raw itself.
+    raw = _fake_raw_dir(tmp_path, "Games", "MTGA", "MTGA_Data", "Downloads", "Raw")
+    base = str(tmp_path).replace("\\", "/")
+    head = (
+        f"[UnityCrossThreadLogger]Loading SqlLocalizationManager from file: "
+        f"{base}/Games/MTGA/MTGA_Data\\Downloads\\Raw\\Raw_ClientLocalization_abc.mtga {{}}\n"
+    )
+    log = tmp_path / "Player.log"
+    log.write_text(head, encoding="utf-8")
+    assert paths_mod.mtga_raw_dir_from_player_log(log) == raw
