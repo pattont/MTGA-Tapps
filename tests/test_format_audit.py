@@ -572,3 +572,23 @@ def test_post_game_tail_events_are_not_flagged_or_detached(tmp_path):
         row = conn.execute("SELECT game_id FROM game_events").fetchone()
     assert result.repaired_count == 0
     assert row == ("game-1",)  # still attached, not detached to NULL
+
+
+def test_brawl_queue_labels():
+    from mtga_tracker.format_normalizer import normalize_match_format
+
+    cases = {
+        "Play_Brawl_Historic": ("Historic Brawl", True),   # unranked 100-card play queue
+        "Brawl_Ladder": ("Brawl (Ranked)", True),
+        "Play_Brawl": ("Standard Brawl", True),
+        "Historic_Brawl": ("Historic Brawl", True),
+        "Brawl": ("Brawl", True),
+    }
+    for raw, (label, is_brawl) in cases.items():
+        normalized = normalize_match_format(raw)
+        assert normalized.label == label, raw
+        assert normalized.is_brawl is is_brawl, raw
+    # Midweek Magic Brawl stays a Midweek Magic event (untracked), never Brawl.
+    midweek = normalize_match_format("MWM_Brawl_20260811")
+    assert midweek.family == "midweek_magic"
+    assert midweek.is_brawl is False

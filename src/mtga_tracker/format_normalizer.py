@@ -170,9 +170,21 @@ def _normalize_match_format_inner(
             family="sealed",
             best_of=1,
         )
-    if "historicbrawl" in normalized:
+    # Arena's Brawl queues (verified against a real log):
+    #   Play_Brawl_Historic → the unranked 100-card play queue → "Historic Brawl"
+    #   Brawl_Ladder        → the ranked Brawl queue          → "Brawl (Ranked)"
+    #   Play_Brawl          → the unranked Standard Brawl queue → "Standard Brawl"
+    if "historicbrawl" in normalized or "brawlhistoric" in normalized:
         return NormalizedFormat(
             raw=raw, label="Historic Brawl", family="historic_brawl", best_of=1, is_brawl=True
+        )
+    if "brawlladder" in normalized or ("brawl" in normalized and "ranked" in normalized):
+        return NormalizedFormat(
+            raw=raw, label="Brawl (Ranked)", family="brawl", best_of=1, is_brawl=True
+        )
+    if "standardbrawl" in normalized or "playbrawl" in normalized:
+        return NormalizedFormat(
+            raw=raw, label="Standard Brawl", family="standard_brawl", best_of=1, is_brawl=True
         )
     if "brawl" in normalized:
         return NormalizedFormat(raw=raw, label="Brawl", family="brawl", best_of=1, is_brawl=True)
