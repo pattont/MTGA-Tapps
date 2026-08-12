@@ -358,7 +358,8 @@ def _game_event_assignment_findings(conn: sqlite3.Connection) -> Iterable[AuditF
         )
         SELECT COUNT(*)
         FROM assignments
-        WHERE COALESCE(current_game_id, '') <> COALESCE(expected_game_id, '')
+        WHERE expected_game_id IS NOT NULL
+          AND COALESCE(current_game_id, '') <> expected_game_id
         """
     ).fetchone()
     mismatched = int(row[0] or 0) if row else 0
@@ -369,8 +370,9 @@ def _game_event_assignment_findings(conn: sqlite3.Connection) -> Iterable[AuditF
             table_name="game_events",
             row_id="bulk",
             message=(
-                f"{mismatched} event rows are attached to a game that does not contain "
-                "the event timestamp."
+                f"{mismatched} event rows fall inside a DIFFERENT game's time window than "
+                "the one they are attached to. The tracker reassigns these automatically "
+                "at its next startup; db_audit --repair fixes them immediately."
             ),
             current_value=str(mismatched),
             suggested_value="Assign by session and game time interval",
@@ -690,6 +692,15 @@ def audit_database(
 
 
 def _repair_game_event_assignments(conn: sqlite3.Connection) -> int:
+    """Reassign events whose timestamp falls inside a DIFFERENT game's window.
+
+    Events outside every game window are left alone on purpose: post-game
+    tails, Bo3 sideboarding gaps, and rank updates legitimately carry
+    timestamps after their game's ended_at, and detaching them (the old
+    behavior) stripped real timeline rows. Only a confident cross-game
+    placement is corrected. Idempotent and cheap enough for startup
+    maintenance (idx_games_session_window supports the range probe).
+    """
     conn.execute("DROP TABLE IF EXISTS temp.game_event_assignment_repairs")
     conn.execute(
         """
@@ -736,7 +747,7 @@ def _repair_game_event_assignments(conn: sqlite3.Connection) -> int:
             SELECT COUNT(*)
             FROM game_events e
             JOIN game_event_assignment_repairs r ON r.event_id = e.id
-            WHERE COALESCE(e.game_id, '') <> COALESCE(r.game_id, '')
+            WHERE r.game_id IS NOT NULL AND COALESCE(e.game_id, '') <> r.game_id
             """
         ).fetchone()[0]
         or 0
@@ -767,7 +778,7 @@ def _repair_game_event_assignments(conn: sqlite3.Connection) -> int:
             SELECT e.id
             FROM game_events e
             JOIN game_event_assignment_repairs r ON r.event_id = e.id
-            WHERE COALESCE(e.game_id, '') <> COALESCE(r.game_id, '')
+            WHERE r.game_id IS NOT NULL AND COALESCE(e.game_id, '') <> r.game_id
         )
         """
     )
