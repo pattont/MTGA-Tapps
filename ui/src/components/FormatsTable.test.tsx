@@ -58,3 +58,35 @@ describe('FormatsTable', () => {
     );
   });
 });
+
+describe('groupLimitedFormats', () => {
+  it('collapses per-set limited rows under one expandable base row', async () => {
+    const { groupLimitedFormats } = await import('./FormatsTable');
+    const rows = [
+      { format_label: 'Premier Draft - MSH', raw_formats: 'PremierDraft_MSH_20260623', games: 8, wins: 5, losses: 3, win_rate: 62.5 },
+      { format_label: 'Premier Draft - HOB', raw_formats: 'PremierDraft_HOB_20260811', games: 4, wins: 1, losses: 3, win_rate: 25.0 },
+      { format_label: 'Standard Ranked', raw_formats: 'Ladder', games: 100, wins: 55, losses: 45, win_rate: 55.0 },
+    ];
+    const grouped = groupLimitedFormats(rows);
+    const premier = grouped.find((row) => row.format_label === 'Premier Draft');
+    expect(premier).toBeTruthy();
+    expect(premier?.games).toBe(12);
+    expect(premier?.wins).toBe(6);
+    expect(premier?.losses).toBe(6);
+    expect(premier?.win_rate).toBe(50);
+    expect(premier?.sub_rows?.map((row) => row.format_label)).toEqual(['HOB', 'MSH']);
+    // Constructed rows pass through untouched, no sub-rows.
+    const ladder = grouped.find((row) => row.format_label === 'Standard Ranked');
+    expect(ladder).toBeTruthy();
+    expect((ladder as { sub_rows?: unknown[] }).sub_rows).toBeUndefined();
+  });
+
+  it('does not split Traditional Sealed into the Sealed group', async () => {
+    const { groupLimitedFormats } = await import('./FormatsTable');
+    const grouped = groupLimitedFormats([
+      { format_label: 'Traditional Sealed - MSH', raw_formats: 'Trad_Sealed_MSH', games: 4, wins: 2, losses: 2, win_rate: 50.0 },
+      { format_label: 'Sealed - MSH', raw_formats: 'Sealed_MSH', games: 6, wins: 3, losses: 3, win_rate: 50.0 },
+    ]);
+    expect(grouped.map((row) => row.format_label).sort()).toEqual(['Sealed', 'Traditional Sealed']);
+  });
+});
