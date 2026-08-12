@@ -1775,7 +1775,31 @@ def dashboard_snapshot(
                     JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
                     JOIN cards c ON c.id = s.card_id
                     WHERE s.game_id = g.id AND po.game_id = g.id
-                  ) AS opp_color_letters
+                  ) AS opp_color_letters,
+                  (
+                    SELECT GROUP_CONCAT(pc.card_name, ' & ')
+                    FROM participant_commanders pc
+                    WHERE pc.participant_id = p.id
+                  ) AS player_commander,
+                  (
+                    SELECT GROUP_CONCAT(pc.card_name, ' & ')
+                    FROM participant_commanders pc
+                    JOIN participants po ON po.id = pc.participant_id
+                    WHERE po.game_id = g.id AND po.role = 'opponent'
+                  ) AS opponent_commander,
+                  (
+                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    FROM participant_commanders pc
+                    JOIN cards c ON c.name = pc.card_name
+                    WHERE pc.participant_id = p.id
+                  ) AS player_commander_colors,
+                  (
+                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    FROM participant_commanders pc
+                    JOIN participants po ON po.id = pc.participant_id
+                    JOIN cards c ON c.name = pc.card_name
+                    WHERE po.game_id = g.id AND po.role = 'opponent'
+                  ) AS opponent_commander_colors
                 FROM games g
                 JOIN matches m ON m.id = g.match_id
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
@@ -1979,6 +2003,14 @@ def dashboard_snapshot(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )
         row["opp_colors"] = normalize_colors(str(row.pop("opp_color_letters", "") or ""))
+        if "player_commander_colors" in row:
+            row["player_commander_colors"] = normalize_colors(
+                str(row.get("player_commander_colors") or "")
+            )
+        if "opponent_commander_colors" in row:
+            row["opponent_commander_colors"] = normalize_colors(
+                str(row.get("opponent_commander_colors") or "")
+            )
     for row in match_rows:
         row["format_label"] = format_label(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
@@ -2318,7 +2350,31 @@ def deck_detail(
                     JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
                     JOIN cards c ON c.id = s.card_id
                     WHERE s.game_id = g.id AND po.game_id = g.id
-                  ) AS opp_color_letters
+                  ) AS opp_color_letters,
+                  (
+                    SELECT GROUP_CONCAT(pc.card_name, ' & ')
+                    FROM participant_commanders pc
+                    WHERE pc.participant_id = p.id
+                  ) AS player_commander,
+                  (
+                    SELECT GROUP_CONCAT(pc.card_name, ' & ')
+                    FROM participant_commanders pc
+                    JOIN participants po ON po.id = pc.participant_id
+                    WHERE po.game_id = g.id AND po.role = 'opponent'
+                  ) AS opponent_commander,
+                  (
+                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    FROM participant_commanders pc
+                    JOIN cards c ON c.name = pc.card_name
+                    WHERE pc.participant_id = p.id
+                  ) AS player_commander_colors,
+                  (
+                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    FROM participant_commanders pc
+                    JOIN participants po ON po.id = pc.participant_id
+                    JOIN cards c ON c.name = pc.card_name
+                    WHERE po.game_id = g.id AND po.role = 'opponent'
+                  ) AS opponent_commander_colors
                 FROM games g
                 JOIN matches m ON m.id = g.match_id
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
@@ -2378,6 +2434,14 @@ def deck_detail(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )
         row["opp_colors"] = normalize_colors(str(row.pop("opp_color_letters", "") or ""))
+        if "player_commander_colors" in row:
+            row["player_commander_colors"] = normalize_colors(
+                str(row.get("player_commander_colors") or "")
+            )
+        if "opponent_commander_colors" in row:
+            row["opponent_commander_colors"] = normalize_colors(
+                str(row.get("opponent_commander_colors") or "")
+            )
     for row in opener_rows:
         row["display_name"] = _clean_card_name(row.get("display_name"))
     return {
@@ -3532,6 +3596,14 @@ def all_games(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )
         row["opp_colors"] = normalize_colors(str(row.pop("opp_color_letters", "") or ""))
+        if "player_commander_colors" in row:
+            row["player_commander_colors"] = normalize_colors(
+                str(row.get("player_commander_colors") or "")
+            )
+        if "opponent_commander_colors" in row:
+            row["opponent_commander_colors"] = normalize_colors(
+                str(row.get("opponent_commander_colors") or "")
+            )
     return {"games": rows, "total": len(rows)}
 
 

@@ -63,6 +63,12 @@ interface SortableTableProps<T extends object> {
    * beneath it, excluded from sorting and pagination counts.
    */
   getSubRows?: (row: T) => T[] | null | undefined;
+  /**
+   * Full-width detail content for a row (e.g. a Brawl game's commander
+   * matchup). A row with detail gets the same expander chevron; the detail
+   * renders in one cell spanning every column.
+   */
+  renderDetailRow?: (row: T) => ReactNode | null | undefined;
   /** Extra class for a row's <tr>, e.g. to highlight changed rows. */
   getRowClassName?: (row: T) => string | undefined;
 }
@@ -77,6 +83,7 @@ export function SortableTable<T extends object>({
   pageSize,
   paginationKey = '',
   getSubRows,
+  renderDetailRow,
   getRowClassName,
 }: SortableTableProps<T>) {
   const [expandedKeys, setExpandedKeys] = useState<Set<string | number>>(() => new Set());
@@ -203,7 +210,8 @@ export function SortableTable<T extends object>({
             {visibleRows.map((row) => {
               const rowKey = getRowKey(row);
               const subRows = getSubRows?.(row) ?? null;
-              const expandable = Boolean(subRows && subRows.length > 0);
+              const detail = renderDetailRow?.(row) ?? null;
+              const expandable = Boolean((subRows && subRows.length > 0) || detail);
               const expanded = expandable && expandedKeys.has(rowKey);
               const rowClasses = [
                 expandable ? 'table-row-expandable' : null,
@@ -238,6 +246,11 @@ export function SortableTable<T extends object>({
                       </td>
                     ))}
                   </tr>
+                  {expanded && detail ? (
+                    <tr className="table-subrow table-detail-row">
+                      <td colSpan={columns.length}>{detail}</td>
+                    </tr>
+                  ) : null}
                   {expanded && subRows
                     ? subRows.map((subRow) => (
                         <tr key={getRowKey(subRow)} className="table-subrow">

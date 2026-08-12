@@ -1125,6 +1125,25 @@ function Dashboard({
           paginationKey={recentQuickFilter}
           getRowKey={(row) => (row.match_row ? `match:${row.match_id}` : row.game_id)}
           getSubRows={(row) => row.sub_games}
+          renderDetailRow={(row) =>
+            !row.match_row && (row.player_commander || row.opponent_commander) ? (
+              <div className="commander-matchup">
+                <span className="color-combo">
+                  {row.player_commander_colors ? (
+                    <ColorPips colors={row.player_commander_colors} />
+                  ) : null}
+                  {row.player_commander ?? 'Unknown commander'}
+                </span>
+                <span className="commander-matchup-vs">vs</span>
+                <span className="color-combo">
+                  {row.opponent_commander_colors ? (
+                    <ColorPips colors={row.opponent_commander_colors} />
+                  ) : null}
+                  {row.opponent_commander ?? 'Unknown commander'}
+                </span>
+              </div>
+            ) : null
+          }
           initialSort={{ key: 'started_at', direction: 'desc' }}
           rows={filteredRecentGames}
         />

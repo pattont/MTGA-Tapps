@@ -3098,3 +3098,22 @@ tr.deck-change-row-out .card-link {
   color: var(--muted);
   text-align: center;
 }
+
+/* Brawl: commander-vs-commander detail row under a Recent Games row. */
+.table-detail-row td {
+  padding: 8px 12px 10px 40px;
+}
+
+.commander-matchup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-weight: 600;
+}
+
+.commander-matchup-vs {
+  color: var(--text-muted, #8b93a7);
+  font-weight: 400;
+  font-size: 0.85em;
+}

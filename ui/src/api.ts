@@ -223,6 +223,11 @@ export interface RecentGameRow {
   is_screw?: boolean;
   /** Opponent's revealed WUBRG colors (e.g. "UR"); empty when nothing colored was seen. */
   opp_colors?: string;
+  /** Brawl: commander names (partners joined with " & "); null outside Brawl. */
+  player_commander?: string | null;
+  opponent_commander?: string | null;
+  player_commander_colors?: string | null;
+  opponent_commander_colors?: string | null;
 }
 
 export interface AllGamesRow extends RecentGameRow {
