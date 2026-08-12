@@ -24,6 +24,7 @@ from .format_normalizer import (
     is_jump_in_format,
     is_midweek_format,
     is_momir_format,
+    is_welcome_deck_format,
     normalize_match_format,
 )
 from .deck_llm import identify_deck, is_deck_llm_enabled
@@ -66,6 +67,8 @@ class TrackerAnalyticsMixin:
                 return "Midweek Magic"
             if is_momir_format(value):
                 return "Momir"
+            if is_welcome_deck_format(value):
+                return "Welcome Deck Duels"
         return None
 
     def _session_snapshot(self) -> SessionSnapshot:

@@ -548,6 +548,7 @@ class AnalyticsStore:
             (12, AnalyticsStore._migrate_v12_delete_orphan_ghost_events),
             (13, AnalyticsStore._migrate_v13_merge_split_bo3_matches),
             (14, AnalyticsStore._migrate_v14_purge_untracked_modes),
+            (15, AnalyticsStore._migrate_v15_purge_welcome_deck_duels),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -865,6 +866,97 @@ class AnalyticsStore:
             )
 
     @staticmethod
+    def _delete_games_and_recompute_sessions(conn: sqlite3.Connection, doomed_games) -> None:
+        """Delete games (and all their child rows), drop emptied matches, and
+        recompute the aggregates of every session that lost games. Shared by
+        the untracked-mode purge migrations (v14 Jump In/MWM/Momir/Sparky,
+        v15 Welcome Deck Duels)."""
+        affected_sessions = {
+            str(row[0])
+            for game_id in doomed_games
+            for row in conn.execute("SELECT session_id FROM games WHERE id = ?", (game_id,))
+        }
+        for game_id in doomed_games:
+            conn.execute(
+                "DELETE FROM participant_commanders WHERE participant_id IN "
+                "(SELECT id FROM participants WHERE game_id = ?)",
+                (game_id,),
+            )
+            for table_name in (
+                "game_card_summary",
+                "game_deck_cards",
+                "game_opening_hand_cards",
+                "game_mulligan_hands",
+                "game_drawn_cards",
+                "game_events",
+                "game_turns",
+                "game_participant_stats",
+                "game_annotations",
+                "participants",
+            ):
+                conn.execute(f"DELETE FROM {table_name} WHERE game_id = ?", (game_id,))
+            conn.execute("DELETE FROM games WHERE id = ?", (game_id,))
+        conn.execute(
+            "DELETE FROM matches WHERE NOT EXISTS (SELECT 1 FROM games g WHERE g.match_id = matches.id)"
+        )
+
+        # Recompute the aggregates of sessions that lost games.
+        for session_id in affected_sessions:
+            counts = conn.execute(
+                """
+                SELECT COUNT(*),
+                       SUM(outcome = 'win'),
+                       SUM(outcome = 'loss'),
+                       SUM(outcome = 'draw'),
+                       SUM(outcome NOT IN ('win', 'loss', 'draw'))
+                FROM games WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+            if not counts or not counts[0]:
+                conn.execute("DELETE FROM tracker_sessions WHERE id = ?", (session_id,))
+                continue
+            conn.execute(
+                "UPDATE tracker_sessions SET games_played = ?, wins = ?, losses = ?, "
+                "draws = ?, unknown_results = ? WHERE id = ?",
+                (
+                    int(counts[0]),
+                    int(counts[1] or 0),
+                    int(counts[2] or 0),
+                    int(counts[3] or 0),
+                    int(counts[4] or 0),
+                    session_id,
+                ),
+            )
+
+    @staticmethod
+    def _migrate_v15_purge_welcome_deck_duels(conn: sqlite3.Connection) -> None:
+        """Delete Welcome Deck Duels games (pre-made deck vs pre-made deck).
+
+        The mode joined the untracked list after some games had already
+        persisted (e.g. format "Welcome Deck Duels HOB"); like the other
+        novelty modes, it would skew constructed win rates and draw math.
+        """
+        from .format_normalizer import is_welcome_deck_format
+
+        doomed_matches = [
+            str(row[0])
+            for row in conn.execute("SELECT id, format, queue, event_name FROM matches")
+            if any(is_welcome_deck_format(value) for value in row[1:])
+        ]
+        doomed_games = set()
+        for match_id in doomed_matches:
+            for row in conn.execute("SELECT id FROM games WHERE match_id = ?", (match_id,)):
+                doomed_games.add(str(row[0]))
+        if not doomed_games:
+            return
+        AnalyticsStore._delete_games_and_recompute_sessions(conn, doomed_games)
+        print(
+            f"🚫 Removed {len(doomed_games)} Welcome Deck Duels game(s) "
+            "(pre-made deck mode; not tracked)."
+        )
+
+    @staticmethod
     def _migrate_v14_purge_untracked_modes(conn: sqlite3.Connection) -> None:
         """Delete games from modes the tracker intentionally does not track.
 
@@ -896,61 +988,7 @@ class AnalyticsStore:
             for row in conn.execute("SELECT id FROM games WHERE match_id = ?", (match_id,)):
                 doomed_games.add(str(row[0]))
 
-        affected_sessions = {
-            str(row[0])
-            for game_id in doomed_games
-            for row in conn.execute("SELECT session_id FROM games WHERE id = ?", (game_id,))
-        }
-        for game_id in doomed_games:
-            conn.execute(
-                "DELETE FROM participant_commanders WHERE participant_id IN "
-                "(SELECT id FROM participants WHERE game_id = ?)",
-                (game_id,),
-            )
-            for table_name in (
-                "game_card_summary",
-                "game_deck_cards",
-                "game_opening_hand_cards",
-                "game_mulligan_hands",
-                "game_drawn_cards",
-                "game_events",
-                "game_turns",
-                "game_participant_stats",
-                "game_annotations",
-                "participants",
-            ):
-                conn.execute(f"DELETE FROM {table_name} WHERE game_id = ?", (game_id,))
-            conn.execute("DELETE FROM games WHERE id = ?", (game_id,))
-        conn.execute("DELETE FROM matches WHERE NOT EXISTS (SELECT 1 FROM games g WHERE g.match_id = matches.id)")
-
-        # Recompute the aggregates of sessions that lost games.
-        for session_id in affected_sessions:
-            counts = conn.execute(
-                """
-                SELECT COUNT(*),
-                       SUM(outcome = 'win'),
-                       SUM(outcome = 'loss'),
-                       SUM(outcome = 'draw'),
-                       SUM(outcome NOT IN ('win', 'loss', 'draw'))
-                FROM games WHERE session_id = ?
-                """,
-                (session_id,),
-            ).fetchone()
-            if not counts or not counts[0]:
-                conn.execute("DELETE FROM tracker_sessions WHERE id = ?", (session_id,))
-                continue
-            conn.execute(
-                "UPDATE tracker_sessions SET games_played = ?, wins = ?, losses = ?, "
-                "draws = ?, unknown_results = ? WHERE id = ?",
-                (
-                    int(counts[0]),
-                    int(counts[1] or 0),
-                    int(counts[2] or 0),
-                    int(counts[3] or 0),
-                    int(counts[4] or 0),
-                    session_id,
-                ),
-            )
+        AnalyticsStore._delete_games_and_recompute_sessions(conn, doomed_games)
 
         # Only labels in games older than a week are truly dead: a brand-new
         # set's card can resolve once Arena updates its local card database,
