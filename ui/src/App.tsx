@@ -23,6 +23,7 @@ import { Badge } from './components/Badge';
 import { CardDetailPage } from './components/CardDetailPage';
 import { CardLink } from './components/CardLink';
 import { ColorPips } from './components/ColorPips';
+import { makeCommanderColumns } from './commanderColumns';
 import { makeOpponentColorColumns } from './opponentColorColumns';
 import { DeckDetailPage } from './components/DeckDetailPage';
 import { DeckLink } from './components/DeckLink';
@@ -480,6 +481,9 @@ const openerLandColumns: Column<OpenerLandRow>[] = [
 const homeOpponentColorColumns = makeOpponentColorColumns((row) =>
   gamesRouteHash({ colors: row.colors }),
 );
+
+const yourCommanderColumns = makeCommanderColumns('Your Commander');
+const facedCommanderColumns = makeCommanderColumns('Opponent Commander');
 
 const opponentThreatColumns: Column<OpponentThreatRow>[] = [
   {
@@ -1280,6 +1284,48 @@ function Dashboard({
           </section>
         </div>
       </Section>
+
+      {(snapshot.your_commanders ?? []).length > 0 || (snapshot.faced_commanders ?? []).length > 0 ? (
+        <Section
+          id="brawl"
+          title="Brawl"
+          description="Commander win rates from your Brawl games — the commander is visible from the opening hand, so every tracked Brawl game counts."
+        >
+          <div className="section-heading">
+            <div>
+              <h3>Your Commanders</h3>
+              <p className="section-description">
+                Record with each commander you brought to the ladder. Partner commanders count
+                under each partner.
+              </p>
+            </div>
+          </div>
+          <SortableTable
+            caption="Record by your commander"
+            columns={yourCommanderColumns}
+            getRowKey={(row) => row.commander}
+            initialSort={{ key: 'games', direction: 'desc' }}
+            pageSize={10}
+            rows={snapshot.your_commanders ?? []}
+          />
+          <div className="section-heading">
+            <div>
+              <h3>Faced Commanders</h3>
+              <p className="section-description">
+                The commanders your opponents brought, and your record against each.
+              </p>
+            </div>
+          </div>
+          <SortableTable
+            caption="Record against opponent commanders"
+            columns={facedCommanderColumns}
+            getRowKey={(row) => row.commander}
+            initialSort={{ key: 'games', direction: 'desc' }}
+            pageSize={10}
+            rows={snapshot.faced_commanders ?? []}
+          />
+        </Section>
+      ) : null}
 
       <Section
         id="opponent-meta"

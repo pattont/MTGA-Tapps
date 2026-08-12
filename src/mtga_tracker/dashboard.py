@@ -785,6 +785,61 @@ def _opponent_color_rows(
     return result
 
 
+def _commander_rows(
+    conn: sqlite3.Connection, where: str, params: List[Any], role: str
+) -> List[Dict[str, Any]]:
+    """Win/loss record grouped by commander (Brawl games).
+
+    role='player' → the user's commanders; role='opponent' → commanders
+    faced. A game with partner commanders counts under each partner. Colors
+    come from the commander card's color identity when the cards table
+    knows it.
+    """
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT
+              g.outcome,
+              pc.card_name,
+              (
+                SELECT c.color_identity FROM cards c WHERE c.name = pc.card_name
+              ) AS colors
+            FROM games g
+            JOIN participants p ON p.game_id = g.id AND p.role = ?
+            JOIN participant_commanders pc ON pc.participant_id = p.id
+            WHERE {where}
+            """,
+            [role, *params],
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    buckets: Dict[str, Dict[str, Any]] = {}
+    for outcome, card_name, colors in rows:
+        name = str(card_name or "").strip()
+        if not name:
+            continue
+        entry = buckets.setdefault(
+            name,
+            {
+                "commander": name,
+                "colors": normalize_colors(str(colors or "")),
+                "games": 0,
+                "wins": 0,
+                "losses": 0,
+            },
+        )
+        entry["games"] += 1
+        if outcome == "win":
+            entry["wins"] += 1
+        elif outcome == "loss":
+            entry["losses"] += 1
+    result = list(buckets.values())
+    for entry in result:
+        entry["win_rate"] = _win_rate(entry["wins"], entry["losses"])
+    result.sort(key=lambda item: (-item["games"], item["commander"]))
+    return result
+
+
 def _schedule_rows(
     conn: sqlite3.Connection, where: str, params: List[Any]
 ) -> Dict[str, List[Dict[str, Any]]]:
@@ -1889,6 +1944,8 @@ def dashboard_snapshot(
         opponent_threat_rows = _opponent_threat_rows(conn, where, params)
         matchup_rows = _matchup_rows(conn, where, params)
         opponent_color_rows = _opponent_color_rows(conn, where, params)
+        your_commander_rows = _commander_rows(conn, where, params, "player")
+        faced_commander_rows = _commander_rows(conn, where, params, "opponent")
         deck_visuals = _deck_visuals(conn)
         for row in deck_rows:
             deck_name = row["deck_name"]
@@ -1965,6 +2022,8 @@ def dashboard_snapshot(
         "opener_lands": opener_land_rows,
         "opponent_threats": opponent_threat_rows,
         "opponent_colors": opponent_color_rows,
+        "your_commanders": your_commander_rows,
+        "faced_commanders": faced_commander_rows,
         "matchups": matchup_rows,
         "recent": recent_rows,
         "trend": trend_rows,
