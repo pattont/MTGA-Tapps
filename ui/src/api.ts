@@ -154,6 +154,15 @@ export interface OpponentColorRow {
   pct_of_games?: number | null;
 }
 
+export interface CommanderRow {
+  commander: string;
+  colors: string;
+  games: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+}
+
 export interface OpponentThreatRow {
   display_name: string;
   type_category: string;
@@ -329,6 +338,8 @@ export interface DashboardSnapshot {
   opener_lands: OpenerLandRow[];
   opponent_threats: OpponentThreatRow[];
   opponent_colors?: OpponentColorRow[];
+  your_commanders?: CommanderRow[];
+  faced_commanders?: CommanderRow[];
   matchups: MatchupRow[];
   recent: RecentGameRow[];
   matches: MatchRow[];

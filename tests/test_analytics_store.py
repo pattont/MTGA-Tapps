@@ -749,3 +749,69 @@ def test_migration_v15_purges_welcome_deck_duels(tmp_path):
     assert games == ["s1:match:3:game:1"]  # both Welcome Deck games removed
     assert matches == ["s1:match:3"]
     assert session == (1, 1, 0)  # aggregates recomputed
+
+
+def test_snapshot_commander_rows_group_brawl_records(tmp_path):
+    from mtga_tracker.dashboard import dashboard_snapshot
+
+    db_path = tmp_path / "analytics.sqlite3"
+    conn = sqlite3.connect(db_path)
+    AnalyticsStore.ensure_schema(conn)
+    with conn:
+        conn.execute(
+            "INSERT INTO tracker_sessions (id, started_at) VALUES ('s1', '2026-08-12T10:00:00')"
+        )
+        conn.execute(
+            "INSERT INTO cards (name, color_identity, first_seen_at) "
+            "VALUES ('Freyalise, Skyshroud Partisan', 'G', '2026-08-12T10:00:00')"
+        )
+        for n, (outcome, mine, theirs) in enumerate(
+            (
+                ("win", "Freyalise, Skyshroud Partisan", "Kaalia of the Vast"),
+                ("loss", "Freyalise, Skyshroud Partisan", "Kaalia of the Vast"),
+                ("win", "Freyalise, Skyshroud Partisan", "Atraxa, Grand Unifier"),
+            ),
+            start=1,
+        ):
+            conn.execute(
+                "INSERT INTO matches (id, session_id, format) VALUES (?, 's1', 'Historic Brawl')",
+                (f"m{n}",),
+            )
+            game_id = f"g{n}"
+            conn.execute(
+                "INSERT INTO games (id, session_id, match_id, started_at, ended_at, outcome) "
+                "VALUES (?, 's1', ?, '2026-08-12T10:00:00', '2026-08-12T10:10:00', ?)",
+                (game_id, f"m{n}", outcome),
+            )
+            for role, commander in (("player", mine), ("opponent", theirs)):
+                pid = f"{game_id}:participant:{role}"
+                conn.execute(
+                    "INSERT INTO participants (id, game_id, role, display_name) "
+                    "VALUES (?, ?, ?, ?)",
+                    (pid, game_id, role, role),
+                )
+                conn.execute(
+                    "INSERT INTO participant_commanders (participant_id, card_name) "
+                    "VALUES (?, ?)",
+                    (pid, commander),
+                )
+    conn.close()
+
+    snapshot = dashboard_snapshot(db_path)
+    yours = snapshot["your_commanders"]
+    faced = snapshot["faced_commanders"]
+    assert yours == [
+        {
+            "commander": "Freyalise, Skyshroud Partisan",
+            "colors": "G",
+            "games": 3,
+            "wins": 2,
+            "losses": 1,
+            "win_rate": yours[0]["win_rate"],
+        }
+    ]
+    assert yours[0]["win_rate"] is not None and round(yours[0]["win_rate"], 1) == 66.7
+    assert [(row["commander"], row["games"], row["wins"]) for row in faced] == [
+        ("Kaalia of the Vast", 2, 1),
+        ("Atraxa, Grand Unifier", 1, 1),
+    ]
