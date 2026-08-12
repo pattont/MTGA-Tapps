@@ -540,3 +540,35 @@ def test_is_welcome_deck_format_matches_reported_shapes():
     assert not is_welcome_deck_format("Welcome_To_Standard_2027")
     assert not is_welcome_deck_format("Ladder")
     assert not is_welcome_deck_format(None)
+
+
+def test_post_game_tail_events_are_not_flagged_or_detached(tmp_path):
+    """Events after a game's ended_at with no other containing game are TAILS
+    (Bo3 sideboarding, rank updates, summary lines) — they belong to their
+    game. The old audit counted them as mismatches and the old repair
+    detached them, which is what non-technical users kept reporting."""
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            "INSERT INTO tracker_sessions (id, started_at) VALUES ('session-1', '2026-07-01T12:00:00')"
+        )
+        conn.execute("INSERT INTO matches (id, session_id) VALUES ('match-1', 'session-1')")
+        conn.execute(
+            "INSERT INTO games (id, session_id, match_id, started_at, ended_at, outcome) "
+            "VALUES ('game-1', 'session-1', 'match-1', '2026-07-01T12:00:00', '2026-07-01T12:05:00', 'win')"
+        )
+        # 90 seconds after the game ended: a between-games tail event.
+        conn.execute(
+            "INSERT INTO game_events (session_id, match_id, game_id, event_time, text) "
+            "VALUES ('session-1', 'match-1', 'game-1', '2026-07-01T12:06:30', 'Rank update')"
+        )
+
+    findings = audit_database(db_path)
+    assert not any(f.code == "GAME_EVENT_ASSIGNMENT_MISMATCH" for f in findings)
+
+    result = repair_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT game_id FROM game_events").fetchone()
+    assert result.repaired_count == 0
+    assert row == ("game-1",)  # still attached, not detached to NULL

@@ -6756,3 +6756,44 @@ def test_double_block_reports_both_blockers(capsys):
     assert "blocking [Card404] with [Card305 (1/1)]" in out
     assert tracker2.game_state.blockers[30] == [40]
     assert tracker2.game_state.blockers[31] == [40]
+
+
+def test_startup_reassigns_cross_game_events_automatically(tmp_path, capsys):
+    """The GAME_EVENT_ASSIGNMENT_MISMATCH repair runs at startup so users
+    never need to run db_audit --repair by hand."""
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "analytics.sqlite3"
+
+    store = AnalyticsStore(tracker._console_db_path)
+    conn = store.connect()
+    with conn:
+        conn.execute(
+            "INSERT INTO tracker_sessions (id, started_at) VALUES ('s1', '2026-07-01T12:00:00')"
+        )
+        conn.executemany(
+            "INSERT INTO matches (id, session_id) VALUES (?, 's1')",
+            (("m1",), ("m2",)),
+        )
+        conn.executemany(
+            "INSERT INTO games (id, session_id, match_id, started_at, ended_at, outcome) "
+            "VALUES (?, 's1', ?, ?, ?, 'win')",
+            (
+                ("g1", "m1", "2026-07-01T12:00:00", "2026-07-01T12:05:00"),
+                ("g2", "m2", "2026-07-01T12:10:00", "2026-07-01T12:15:00"),
+            ),
+        )
+        # Attached to g1 but timestamped inside g2's window: truly misassigned.
+        conn.execute(
+            "INSERT INTO game_events (session_id, match_id, game_id, event_time, text) "
+            "VALUES ('s1', 'm1', 'g1', '2026-07-01T12:11:00', 'You: cast [Opt]')"
+        )
+    store.close()
+    tracker.analytics = None
+
+    tracker._reassign_misattributed_game_events()
+
+    conn = sqlite3.connect(tracker._console_db_path)
+    row = conn.execute("SELECT match_id, game_id FROM game_events").fetchone()
+    conn.close()
+    assert row == ("m2", "g2")
+    assert "Reassigned 1 game event(s)" in capsys.readouterr().out

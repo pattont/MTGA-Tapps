@@ -368,6 +368,35 @@ class TrackerAnalyticsMixin:
         if remaining == 0:
             conn.execute("DELETE FROM cards WHERE id = ?", (stale_id,))
 
+    def _reassign_misattributed_game_events(self) -> None:
+        """Startup repair: move events that fall inside a DIFFERENT game's window.
+
+        Same operation as db_audit --repair's event reassignment, run
+        automatically so non-technical users never need the CLI. Costs one
+        indexed pass over game_events (~150ms on an 80k-event database);
+        events outside every game window are deliberately left where they
+        are (post-game tails belong to their game).
+        """
+        conn = self._analytics_connect()
+        if conn is None:
+            return
+        try:
+            from .db_audit import _repair_game_event_assignments
+
+            repaired = 0
+
+            def _run() -> None:
+                nonlocal repaired
+                repaired = _repair_game_event_assignments(conn)
+
+            self._run_analytics_write(conn, _run)
+        except (ImportError, sqlite3.Error, OSError):
+            return
+        if repaired:
+            self._print_line(
+                f"🧭 Reassigned {repaired} game event(s) to the game matching their timestamps."
+            )
+
     def _recover_missing_turn_timings(self) -> None:
         """Recover persisted turn durations from durable console headers at startup."""
         conn = self._analytics_connect()

@@ -385,6 +385,9 @@ class AnalyticsStore:
             CREATE INDEX IF NOT EXISTS idx_games_session_match
             ON games(session_id, match_id);
 
+            CREATE INDEX IF NOT EXISTS idx_games_session_window
+            ON games(session_id, started_at, ended_at);
+
             CREATE INDEX IF NOT EXISTS idx_participants_game_role
             ON participants(game_id, role);
 
