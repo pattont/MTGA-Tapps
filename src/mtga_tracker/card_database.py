@@ -154,15 +154,63 @@ class CardDatabase:
         self._mtga_db_path = None
         return None
 
-    def _query_mtga_local_db(self, grp_id: int) -> Optional[str]:
-        """Look up card name for grp_id from local MTGA SQLite (Cards ⋈ Localizations_enUS). On-demand only."""
+    @staticmethod
+    def _connect_mtga_db(db_path: Path):
+        """Open Arena's card DB strictly read-only.
+
+        A plain sqlite3.connect() CREATES an empty file when the path does
+        not exist — inside Arena's own folder, which we must never write to
+        (e.g. if Arena removes the DB between our exists() check and the
+        connect). mode=ro makes that a clean exception instead.
+        """
         import sqlite3
 
+        return sqlite3.connect(f"file:{Path(db_path).as_posix()}?mode=ro", uri=True)
+
+    def _recheck_for_newer_db(self) -> bool:
+        """After a lookup miss, see if Arena has downloaded a newer card DB.
+
+        On set-release day Arena drops a NEW Raw_CardDatabase while the
+        tracker is running — sometimes alongside the old one, which still
+        exists and so never fails the cached-path check. A miss on an
+        unknown id is the tell. Throttled to once a minute so genuinely
+        unknown ids (art variants, tokens) don't glob the folder per miss.
+        Returns True when the resolved DB actually changed.
+        """
+        now = time.monotonic()
+        if now - getattr(self, "_db_recheck_at", 0.0) < 60.0:
+            return False
+        self._db_recheck_at = now
+        try:
+            paths = self._find_mtga_card_database_paths()
+        except OSError:
+            return False
+        if not paths:
+            return False
+        newest = paths[0][0]
+        if self._mtga_db_path is not None and newest == self._mtga_db_path:
+            return False
+        self._mtga_db_path = newest
+        self._mtga_db_resolved = True
+        return True
+
+    def _query_mtga_local_db(self, grp_id: int) -> Optional[str]:
+        """Look up card name for grp_id from local MTGA SQLite (Cards ⋈ Localizations_enUS). On-demand only."""
         db_path = self._resolve_mtga_db_path()
         if not db_path:
             return None
+        name = self._query_name_from_db(db_path, grp_id)
+        if name:
+            return name
+        # Miss: a brand-new set's card may live in a NEWER card DB that
+        # Arena downloaded mid-session. Switch and retry once.
+        if self._recheck_for_newer_db() and self._mtga_db_path is not None:
+            return self._query_name_from_db(self._mtga_db_path, grp_id)
+        return None
+
+    def _query_name_from_db(self, db_path: Path, grp_id: int) -> Optional[str]:
         try:
-            conn = sqlite3.connect(str(db_path))
+            conn = self._connect_mtga_db(db_path)
             cur = conn.cursor()
             # Cards.TitleId = Localizations_enUS.LocId; get name for this GrpId
             cur.execute(
@@ -209,7 +257,7 @@ class CardDatabase:
 
         resolved: Dict[int, str] = {}
         try:
-            conn = sqlite3.connect(str(db_path))
+            conn = self._connect_mtga_db(db_path)
             cur = conn.cursor()
             cur.execute(
                 'SELECT "AbilityIds", "HiddenAbilityIds" FROM "Cards" WHERE "GrpId" = ?',
@@ -252,7 +300,7 @@ class CardDatabase:
         db_path = self._resolve_mtga_db_path()
         if db_path:
             try:
-                conn = sqlite3.connect(str(db_path))
+                conn = self._connect_mtga_db(db_path)
                 cur = conn.cursor()
                 cur.execute('PRAGMA table_info("Cards")')
                 columns = {str(row[1]) for row in cur.fetchall()}
@@ -303,7 +351,7 @@ class CardDatabase:
         if not db_path:
             return None
         try:
-            conn = sqlite3.connect(str(db_path))
+            conn = self._connect_mtga_db(db_path)
             cur = conn.cursor()
             cur.execute(
                 """
@@ -363,7 +411,7 @@ class CardDatabase:
 
         category = None
         try:
-            conn = sqlite3.connect(str(db_path))
+            conn = self._connect_mtga_db(db_path)
             cur = conn.cursor()
             cur.execute('SELECT "Types" FROM "Cards" WHERE "GrpId" = ?', (grp_id_int,))
             row = cur.fetchone()
