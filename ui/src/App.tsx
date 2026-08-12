@@ -1344,7 +1344,7 @@ function Dashboard({
             columns={yourCommanderColumns}
             getRowKey={(row) => row.commander}
             initialSort={{ key: 'games', direction: 'desc' }}
-            pageSize={10}
+            pageSize={8}
             rows={snapshot.your_commanders ?? []}
           />
           <div className="section-heading">
@@ -1360,7 +1360,7 @@ function Dashboard({
             columns={facedCommanderColumns}
             getRowKey={(row) => row.commander}
             initialSort={{ key: 'games', direction: 'desc' }}
-            pageSize={10}
+            pageSize={8}
             rows={snapshot.faced_commanders ?? []}
           />
         </Section>
