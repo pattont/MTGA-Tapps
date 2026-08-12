@@ -231,6 +231,15 @@ Preserve these behaviors unless the user explicitly changes requirements:
   `participants.deck_archetype`; Game Detail shows it as the Opponent Deck Type with the plain
   color label as fallback. Keep calls cheap — no extra calls, no retries beyond the existing
   token-starvation retry.
+- Brawl: commanders for both seats persist to `participant_commanders`; starting life is 25.
+  Queue labels: Play_Brawl_Historic → "Historic Brawl", Brawl_Ladder → "Brawl (Ranked)",
+  Play_Brawl → "Standard Brawl"; MWM_Brawl resolves to Midweek Magic FIRST (untracked). A
+  queue identifier always outranks deck metadata: a deck's Format ATTRIBUTE
+  ("HistoricBrawl"/"HistoricBrawlRanked") describes the deck, not the queue, and must never
+  relabel a match whose format already normalizes to a Brawl queue.
+- The Overview's Brawl section (record strip + Your/Faced Commanders tables, paged at 8)
+  renders only when Brawl data exists; the Formats table groups per-set limited entries
+  ("Premier Draft - MSH") under an expandable base row.
 
 ## MTGA Log Gotchas
 
@@ -246,6 +255,12 @@ Arena logs are not a simple chronological event stream. Be careful with inferred
 - State-based actions may appear as zone transfers with categories like zero toughness or zero loyalty. These should be user-visible when they explain a death/removal.
 - Some effects are only visible through zone movement and object snapshots, not through clear English annotations.
 - Copy/transform state may require tracking object state changes, not only card names. Example: `Likeness Looter` can become a copy of a graveyard creature.
+- Brawl queues are indistinguishable in match-room metadata: Arena stamps every
+  Historic-pool Brawl match's room with eventId `Play_Brawl_Historic` regardless of the
+  queue that created it. The authoritative queue signal is the `EventSetDeckV3` join
+  (`EventName: Brawl_Ladder` for cBrawl), and Arena's deck attributes use "HistoricBrawl*"
+  naming everywhere — never infer the queue from them (substring 'historicbrawl' inside
+  'HistoricBrawlRanked' has mislabeled real cBrawl matches twice).
 
 ## Analytics DB
 

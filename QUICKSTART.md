@@ -33,8 +33,8 @@ scripts/build_macos_installer.sh
 
 The app lives in the menu bar: it starts tracking, opens the Live Tracker Log window,
 serves the dashboard locally, and opens it in your browser. Menu items: **Open
-Dashboard**, **Show Live Tracker Log**, **Start/Stop Tracking**, **Open Data Folder**,
-**Quit**. Installed builds keep their database under
+Dashboard**, **Deck Finder**, **Show Live Tracker Log**, **Open Data Folder**,
+**Settings…** (AI deck identification), **Start/Stop Tracking**, **Quit**. Installed builds keep their database under
 `~/Library/Application Support/MTGA Tracker` (macOS) or
 `%LOCALAPPDATA%\MTGA Tracker` (Windows).
 
