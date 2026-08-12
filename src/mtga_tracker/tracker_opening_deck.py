@@ -123,8 +123,20 @@ class TrackerOpeningDeckMixin:
             g.opponent_commanders = self._unique_names(g.commanders_by_seat[g.opponent_seat_id])
 
     def _best_brawl_format_label(self) -> str:
-        """Return best Brawl label based on known metadata."""
-        candidates = [self.game_state.format_str, self.game_state.player_deck_event_name]
+        """Return best Brawl label based on known metadata.
+
+        A trusted queue already on the match wins verbatim: a cBrawl match
+        (Brawl_Ladder) must never be downgraded to "Historic Brawl" just
+        because some deck's format attribute says "HistoricBrawlRanked" —
+        that substring contains "historicbrawl" and poisoned the label
+        (reported from a real cBrawl session log). Only when no brawl queue
+        is known do we guess from deck metadata, checking the ranked marker
+        BEFORE the historic one for the same reason.
+        """
+        current_raw = str(self.game_state.format_str or "")
+        if normalize_match_format(current_raw).is_brawl:
+            return current_raw
+        candidates = [self.game_state.player_deck_event_name]
         for candidate in self._deck_candidates.values():
             candidates.append(candidate.get("format_attr"))
             candidates.append(candidate.get("internal_event_name"))
@@ -132,6 +144,8 @@ class TrackerOpeningDeckMixin:
             text = self._normalize_match_text(raw)
             if not text:
                 continue
+            if "brawlladder" in text or ("brawl" in text and "ranked" in text):
+                return "Brawl (Ranked)"
             if "historicbrawl" in text:
                 return "Historic Brawl"
             if "brawl" in text:
@@ -841,7 +855,16 @@ class TrackerOpeningDeckMixin:
                 or "bestof3" in format_norm
                 or format_norm in {"constructedbestof3", "bestof3"}
             )
-            if not used_trusted_queue_format and not implies_best_of_three and (
+            # A deck's Format ATTRIBUTE (e.g. "HistoricBrawl",
+            # "HistoricBrawlRanked") describes the deck, not the queue — it
+            # must never replace a format that already names a Brawl queue
+            # (Brawl_Ladder / Play_Brawl_Historic). This rewrote a real
+            # cBrawl match to "HistoricBrawl" when the player set a deck
+            # between matches.
+            existing_is_brawl_queue = normalize_match_format(
+                str(self.game_state.format_str or "")
+            ).is_brawl
+            if not used_trusted_queue_format and not implies_best_of_three and not existing_is_brawl_queue and (
                 self.game_state.format_str == "Unknown" or self._format_from_backfill
             ):
                 self.game_state.format_str = format_attr

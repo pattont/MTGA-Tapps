@@ -6797,3 +6797,36 @@ def test_startup_reassigns_cross_game_events_automatically(tmp_path, capsys):
     conn.close()
     assert row == ("m2", "g2")
     assert "Reassigned 1 game event(s)" in capsys.readouterr().out
+
+
+def test_cbrawl_match_is_not_downgraded_by_ranked_deck_attribute():
+    """A Brawl_Ladder (cBrawl) match kept its queue until the command zone
+    appeared — then _best_brawl_format_label scanned deck candidates and the
+    'HistoricBrawlRanked' format attribute substring-matched 'historicbrawl',
+    rewriting the match to 'Historic Brawl'. Reported from a real 17-match
+    cBrawl session where one match flipped."""
+    tracker = make_tracker()
+    tracker.game_state.format_str = "Brawl_Ladder"
+    tracker._deck_candidates = {
+        "Brawl_Ladder::Demonic Tutelage": {
+            "deck_name": "Demonic Tutelage",
+            "format_attr": "HistoricBrawlRanked",
+            "internal_event_name": "Brawl_Ladder",
+        }
+    }
+    assert tracker._best_brawl_format_label() == "Brawl_Ladder"
+
+    # With NO queue known, the ranked deck attribute should guess ranked —
+    # not fall through the historicbrawl substring to "Historic Brawl".
+    tracker.game_state.format_str = ""
+    assert tracker._best_brawl_format_label() == "Brawl (Ranked)"
+
+    # And a plain unranked attribute still guesses Historic Brawl.
+    tracker._deck_candidates = {
+        "Play_Brawl_Historic::Emperor Unrank": {
+            "deck_name": "Emperor Unrank",
+            "format_attr": "HistoricBrawl",
+            "internal_event_name": "Play_Brawl_Historic",
+        }
+    }
+    assert tracker._best_brawl_format_label() == "Historic Brawl"
