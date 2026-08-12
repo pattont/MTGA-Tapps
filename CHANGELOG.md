@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.5
+
+- **Fixed DB Health falsely reporting `GAME_EVENT_ASSIGNMENT_MISMATCH`** for post-game tail
+  events (Bo3 sideboarding gaps, rank updates, summary lines) — on a real database every
+  flagged row was a tail and none were misassigned. The old repair also *detached* those
+  rows, deleting real timeline entries. The finding and repair now only act on events whose
+  timestamp falls inside a different game's window, and the reassignment runs automatically
+  at tracker startup (a new index takes the pass from 4.4s to ~150ms) so nobody needs
+  `db_audit --repair` by hand.
+- **Stopped tracking Welcome Deck Duels** (pre-made deck vs pre-made deck, e.g.
+  "Welcome Deck Duels HOB"); migration v15 removes already-saved games of this mode and
+  recomputes session stats. The README's "What isn't tracked" list and the dashboard's
+  format filter are updated to match.
+- **A new set's card database is picked up mid-session**: after each game the tracker allows
+  one re-scan for a newer `Raw_CardDatabase`, so set-release day no longer needs a restart
+  when Arena drops the new DB alongside the old one. Arena's card DB is now always opened
+  strictly read-only, so the tracker can never create or modify files in Arena's folder.
+
 ## 0.5.4
 
 - **Proper Windows installer**: releases now ship `MTGA-Tracker-<version>-setup.exe`
