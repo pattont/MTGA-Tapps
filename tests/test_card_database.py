@@ -78,12 +78,15 @@ def test_new_set_db_dropped_alongside_old_is_picked_up_mid_session(tmp_path, mon
     _write_raw_card_db(new_db, grp_id=222, name="New Set Card")
     os.utime(new_db, (_time.time(), _time.time()))
 
+    db.allow_db_recheck()  # a game just ended
     assert db.get_card_name(222) == "New Set Card"  # miss → recheck → switch
     assert db._mtga_db_path == new_db
     assert db.get_card_name(111) == "Old Set Card"  # still cached from before
 
 
-def test_db_recheck_is_throttled(tmp_path, monkeypatch):
+def test_db_recheck_runs_at_most_once_per_arming(tmp_path, monkeypatch):
+    """Misses only re-scan the folder once per game boundary — repeated
+    unknown ids (art variants, tokens) must not glob the disk per miss."""
     raw_dir = tmp_path / "Raw"
     raw_dir.mkdir()
     monkeypatch.setattr(
@@ -105,8 +108,13 @@ def test_db_recheck_is_throttled(tmp_path, monkeypatch):
 
     db._find_mtga_card_database_paths = counting
     for _ in range(5):
-        db.get_card_name(999999)  # repeated misses within the throttle window
-    assert len(calls) <= 1
+        db.get_card_name(999999)  # repeated misses; initial arming allows ONE re-scan
+    assert len(calls) == 1
+
+    db.allow_db_recheck()  # game ended — one more re-scan allowed
+    db.get_card_name(999999)
+    db.get_card_name(999998)
+    assert len(calls) == 2
 
 
 def test_connect_mtga_db_never_creates_a_file(tmp_path):
