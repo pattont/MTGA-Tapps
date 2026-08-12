@@ -154,6 +154,22 @@ export interface OpponentColorRow {
   pct_of_games?: number | null;
 }
 
+export interface BrawlQueueRow {
+  format_label: string;
+  games: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+}
+
+export interface BrawlSummary {
+  games: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  queues: BrawlQueueRow[];
+}
+
 export interface CommanderRow {
   commander: string;
   colors: string;
@@ -343,6 +359,7 @@ export interface DashboardSnapshot {
   opener_lands: OpenerLandRow[];
   opponent_threats: OpponentThreatRow[];
   opponent_colors?: OpponentColorRow[];
+  brawl?: BrawlSummary;
   your_commanders?: CommanderRow[];
   faced_commanders?: CommanderRow[];
   matchups: MatchupRow[];

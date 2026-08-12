@@ -785,6 +785,59 @@ def _opponent_color_rows(
     return result
 
 
+def _brawl_summary(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> Dict[str, Any]:
+    """Overall Brawl record plus a per-queue split.
+
+    Brawl-only players should get a headline record, not just commander
+    tables. Games are classified through the format normalizer so every
+    Brawl queue (Historic, Ranked, Standard) counts regardless of the raw
+    identifier Arena used.
+    """
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT m.format, g.outcome
+            FROM games g
+            JOIN matches m ON m.id = g.match_id
+            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            WHERE {where}
+            """,
+            params,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {"games": 0, "wins": 0, "losses": 0, "win_rate": None, "queues": []}
+    total = {"games": 0, "wins": 0, "losses": 0}
+    queues: Dict[str, Dict[str, Any]] = {}
+    for raw_format, outcome in rows:
+        normalized = normalize_match_format(str(raw_format or ""))
+        if not normalized.is_brawl:
+            continue
+        total["games"] += 1
+        entry = queues.setdefault(
+            normalized.label, {"format_label": normalized.label, "games": 0, "wins": 0, "losses": 0}
+        )
+        entry["games"] += 1
+        if outcome == "win":
+            total["wins"] += 1
+            entry["wins"] += 1
+        elif outcome == "loss":
+            total["losses"] += 1
+            entry["losses"] += 1
+    queue_rows = list(queues.values())
+    for entry in queue_rows:
+        entry["win_rate"] = _win_rate(entry["wins"], entry["losses"])
+    queue_rows.sort(key=lambda item: (-item["games"], item["format_label"]))
+    return {
+        "games": total["games"],
+        "wins": total["wins"],
+        "losses": total["losses"],
+        "win_rate": _win_rate(total["wins"], total["losses"]),
+        "queues": queue_rows,
+    }
+
+
 def _commander_rows(
     conn: sqlite3.Connection, where: str, params: List[Any], role: str
 ) -> List[Dict[str, Any]]:
@@ -1969,6 +2022,7 @@ def dashboard_snapshot(
         matchup_rows = _matchup_rows(conn, where, params)
         opponent_color_rows = _opponent_color_rows(conn, where, params)
         your_commander_rows = _commander_rows(conn, where, params, "player")
+        brawl_summary = _brawl_summary(conn, where, params)
         faced_commander_rows = _commander_rows(conn, where, params, "opponent")
         deck_visuals = _deck_visuals(conn)
         for row in deck_rows:
@@ -2054,6 +2108,7 @@ def dashboard_snapshot(
         "opener_lands": opener_land_rows,
         "opponent_threats": opponent_threat_rows,
         "opponent_colors": opponent_color_rows,
+        "brawl": brawl_summary,
         "your_commanders": your_commander_rows,
         "faced_commanders": faced_commander_rows,
         "matchups": matchup_rows,
