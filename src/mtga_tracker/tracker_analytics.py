@@ -1088,6 +1088,12 @@ class TrackerAnalyticsMixin:
                 AnalyticsStore.backfill_card_colors(conn, color_index)
         except (AttributeError, sqlite3.Error, OSError, TypeError, ValueError):
             pass
+        try:
+            # Game boundary: allow one re-scan for a newer Arena card DB
+            # (set-release day drops a new Raw_CardDatabase mid-session).
+            self.card_db.allow_db_recheck()
+        except AttributeError:
+            pass
         self._refresh_session_participant_stats(conn)
 
     def _persist_turn_timings(self, conn: sqlite3.Connection, game_id: str) -> None:

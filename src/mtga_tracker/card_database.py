@@ -75,6 +75,8 @@ class CardDatabase:
         # Local MTGA SQLite DB: path resolved on first lookup (no preload)
         self._mtga_db_path: Optional[Path] = None
         self._mtga_db_resolved: bool = False
+        # One newer-DB re-scan allowed initially; re-armed at each game end.
+        self._db_recheck_armed: bool = True
         self._ability_text_cache: Dict[int, Dict[int, str]] = {}
 
     _17LANDS_CSV_URL = "https://17lands-public.s3.amazonaws.com/analysis_data/cards/cards.csv"
@@ -167,20 +169,29 @@ class CardDatabase:
 
         return sqlite3.connect(f"file:{Path(db_path).as_posix()}?mode=ro", uri=True)
 
+    def allow_db_recheck(self) -> None:
+        """Arm ONE re-scan for a newer Arena card DB.
+
+        Called by the tracker at each game end (and once at construction).
+        The next lookup MISS consumes it — so on set-release day the first
+        unknown new-set card after a game boundary switches the session to
+        the new database, while ordinary play never rescans the folder.
+        """
+        self._db_recheck_armed = True
+
     def _recheck_for_newer_db(self) -> bool:
         """After a lookup miss, see if Arena has downloaded a newer card DB.
 
         On set-release day Arena drops a NEW Raw_CardDatabase while the
         tracker is running — sometimes alongside the old one, which still
         exists and so never fails the cached-path check. A miss on an
-        unknown id is the tell. Throttled to once a minute so genuinely
-        unknown ids (art variants, tokens) don't glob the folder per miss.
+        unknown id is the tell. Runs at most once per arming (one per game),
+        so genuinely unknown ids (art variants, tokens) cost nothing extra.
         Returns True when the resolved DB actually changed.
         """
-        now = time.monotonic()
-        if now - getattr(self, "_db_recheck_at", 0.0) < 60.0:
+        if not getattr(self, "_db_recheck_armed", False):
             return False
-        self._db_recheck_at = now
+        self._db_recheck_armed = False
         try:
             paths = self._find_mtga_card_database_paths()
         except OSError:
