@@ -815,3 +815,47 @@ def test_snapshot_commander_rows_group_brawl_records(tmp_path):
         ("Kaalia of the Vast", 2, 1),
         ("Atraxa, Grand Unifier", 1, 1),
     ]
+
+
+def test_snapshot_brawl_summary_counts_all_brawl_queues(tmp_path):
+    from mtga_tracker.dashboard import dashboard_snapshot
+
+    db_path = tmp_path / "analytics.sqlite3"
+    conn = sqlite3.connect(db_path)
+    AnalyticsStore.ensure_schema(conn)
+    with conn:
+        conn.execute(
+            "INSERT INTO tracker_sessions (id, started_at) VALUES ('s1', '2026-08-12T10:00:00')"
+        )
+        for n, (fmt, outcome) in enumerate(
+            (
+                ("Play_Brawl_Historic", "win"),
+                ("Play_Brawl_Historic", "loss"),
+                ("Brawl_Ladder", "win"),
+                ("Ladder", "win"),  # constructed — must stay out of the Brawl record
+            ),
+            start=1,
+        ):
+            conn.execute(
+                "INSERT INTO matches (id, session_id, format) VALUES (?, 's1', ?)",
+                (f"m{n}", fmt),
+            )
+            conn.execute(
+                "INSERT INTO games (id, session_id, match_id, started_at, ended_at, outcome) "
+                "VALUES (?, 's1', ?, '2026-08-12T10:00:00', '2026-08-12T10:10:00', ?)",
+                (f"g{n}", f"m{n}", outcome),
+            )
+            conn.execute(
+                "INSERT INTO participants (id, game_id, role, display_name) "
+                "VALUES (?, ?, 'player', 'you')",
+                (f"g{n}:p", f"g{n}"),
+            )
+    conn.close()
+
+    brawl = dashboard_snapshot(db_path)["brawl"]
+    assert (brawl["games"], brawl["wins"], brawl["losses"]) == (3, 2, 1)
+    assert round(brawl["win_rate"], 1) == 66.7
+    assert [(q["format_label"], q["games"], q["wins"]) for q in brawl["queues"]] == [
+        ("Historic Brawl", 2, 1),
+        ("Brawl (Ranked)", 1, 1),
+    ]

@@ -1304,12 +1304,32 @@ function Dashboard({
         </div>
       </Section>
 
-      {(snapshot.your_commanders ?? []).length > 0 || (snapshot.faced_commanders ?? []).length > 0 ? (
+      {(snapshot.brawl?.games ?? 0) > 0 ||
+      (snapshot.your_commanders ?? []).length > 0 ||
+      (snapshot.faced_commanders ?? []).length > 0 ? (
         <Section
           id="brawl"
           title="Brawl"
           description="Commander win rates from your Brawl games — the commander is visible from the opening hand, so every tracked Brawl game counts."
         >
+          {snapshot.brawl && snapshot.brawl.games > 0 ? (
+            <section className="metric-grid" aria-label="Brawl record">
+              <MetricCard label="Brawl Games" value={formatNumber(snapshot.brawl.games)} />
+              <MetricCard
+                label="Brawl Record"
+                value={`${formatNumber(snapshot.brawl.wins)} – ${formatNumber(snapshot.brawl.losses)}`}
+              />
+              <MetricCard label="Brawl Win Rate" value={formatPercent(snapshot.brawl.win_rate)} />
+              {snapshot.brawl.queues.map((queue) => (
+                <MetricCard
+                  key={queue.format_label}
+                  label={queue.format_label}
+                  value={`${formatNumber(queue.wins)} – ${formatNumber(queue.losses)}`}
+                  detail={formatPercent(queue.win_rate)}
+                />
+              ))}
+            </section>
+          ) : null}
           <div className="section-heading">
             <div>
               <h3>Your Commanders</h3>
