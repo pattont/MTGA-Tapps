@@ -528,3 +528,15 @@ def test_repair_database_recovers_completed_missing_game_but_not_incomplete_game
         ).fetchone()
     assert game == ("game-1", 180, "win", "Opponent reached 0 life", 1)
     assert player == ("Tapps", "Boros Dragons", 1, 18, 1)
+
+
+def test_is_welcome_deck_format_matches_reported_shapes():
+    from mtga_tracker.format_normalizer import is_welcome_deck_format
+
+    assert is_welcome_deck_format("Welcome Deck Duels HOB")
+    assert is_welcome_deck_format("Welcome_Deck_Duels_HOB")
+    assert is_welcome_deck_format("WelcomeDeckDuels")
+    # "welcome" alone must not be enough — only the welcome-deck stem.
+    assert not is_welcome_deck_format("Welcome_To_Standard_2027")
+    assert not is_welcome_deck_format("Ladder")
+    assert not is_welcome_deck_format(None)

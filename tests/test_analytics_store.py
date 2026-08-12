@@ -703,3 +703,49 @@ def test_migration_v14_purges_untracked_modes(tmp_path):
     assert events == 0
     assert labels == 0
     assert session == (1, 0, 1)
+
+
+def test_migration_v15_purges_welcome_deck_duels(tmp_path):
+    store = AnalyticsStore(tmp_path / "analytics.sqlite3")
+    conn = store.connect()
+    with conn:
+        conn.execute(
+            "INSERT INTO matches (id, session_id, format) "
+            "VALUES ('s1:match:1', 's1', 'Welcome Deck Duels HOB')"
+        )
+        conn.execute(
+            "INSERT INTO matches (id, session_id, format, queue) "
+            "VALUES ('s1:match:2', 's1', 'Unknown', 'Welcome_Deck_Duels_HOB')"
+        )
+        conn.execute(
+            "INSERT INTO matches (id, session_id, format) VALUES ('s1:match:3', 's1', 'Ladder')"
+        )
+        for match_n, outcome in ((1, "win"), (2, "loss"), (3, "win")):
+            game_id = f"s1:match:{match_n}:game:1"
+            conn.execute(
+                "INSERT INTO games (id, session_id, match_id, game_number, started_at, outcome) "
+                "VALUES (?, 's1', ?, 1, '2026-08-11T12:00:00', ?)",
+                (game_id, f"s1:match:{match_n}", outcome),
+            )
+            conn.execute(
+                "INSERT INTO participants (id, game_id, role, display_name) "
+                "VALUES (?, ?, 'opponent', 'Human')",
+                (f"{game_id}:opp", game_id),
+            )
+        conn.execute(
+            "INSERT INTO tracker_sessions (id, started_at, games_played, wins, losses, draws, unknown_results) "
+            "VALUES ('s1', '2026-08-11T11:00:00', 3, 2, 1, 0, 0)"
+        )
+        conn.execute("DELETE FROM schema_migrations WHERE version = 15")
+    AnalyticsStore.apply_pending_migrations(conn)
+
+    games = [row[0] for row in conn.execute("SELECT id FROM games ORDER BY id")]
+    matches = [row[0] for row in conn.execute("SELECT id FROM matches ORDER BY id")]
+    session = conn.execute(
+        "SELECT games_played, wins, losses FROM tracker_sessions WHERE id = 's1'"
+    ).fetchone()
+    store.close()
+
+    assert games == ["s1:match:3:game:1"]  # both Welcome Deck games removed
+    assert matches == ["s1:match:3"]
+    assert session == (1, 1, 0)  # aggregates recomputed

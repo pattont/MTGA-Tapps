@@ -44,6 +44,18 @@ def is_midweek_format(value: Optional[str]) -> bool:
     return normalized.startswith("mwm") or "midweekmagic" in normalized
 
 
+def is_welcome_deck_format(value: Optional[str]) -> bool:
+    """Return True when Arena metadata identifies a Welcome Deck event.
+
+    Welcome Deck Duels (e.g. "Welcome Deck Duels HOB" / Welcome_Deck_...)
+    pit one pre-made deck against another — no deck building, no ladder
+    relevance — so they stay out of saved analytics. Matching the
+    "welcomedeck" stem keeps ordinary event names containing "welcome"
+    alone from being swept up.
+    """
+    return "welcomedeck" in normalize_match_text(value)
+
+
 def is_jump_in_format(value: Optional[str]) -> bool:
     """Return True when Arena metadata identifies a Jump In! event.
 

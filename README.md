@@ -166,6 +166,7 @@ mixing them into constructed analytics would skew win rates and draw math:
 - **Jump In!** (`Jump_In_*` events)
 - **Midweek Magic** (`MWM_*` events)
 - **Momir** and similar novelty modes
+- **Welcome Deck Duels** (pre-made deck vs pre-made deck)
 - **Practice games against Sparky** (the Arena bot) — this includes bot
   Color Challenges; Starter Deck Duels against human opponents ARE tracked
 - Games the tracker joined mid-way (no reliable opener/draw data)

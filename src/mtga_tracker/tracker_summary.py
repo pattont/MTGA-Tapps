@@ -385,8 +385,8 @@ class TrackerSummaryMixin:
         untracked_reason = self._untracked_mode_reason()
         if untracked_reason:
             self._print_line(
-                f"🚫 Not tracked: {untracked_reason}. Jump In, Midweek Magic, Momir, and "
-                "games vs Sparky are excluded from your saved stats."
+                f"🚫 Not tracked: {untracked_reason}. Jump In, Midweek Magic, Momir, "
+                "Welcome Deck Duels, and games vs Sparky are excluded from your saved stats."
             )
         self._print_best_of_three_status()
         self._print_starting_hand_summary()
