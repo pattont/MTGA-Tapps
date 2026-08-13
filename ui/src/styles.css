@@ -499,10 +499,10 @@ a.best-deck-name:focus-visible {
 
 .overview-analytics {
   display: grid;
-  gap: 20px;
-  margin-top: 18px;
+  gap: 14px;
+  margin-top: 12px;
   border-top: 1px solid var(--border);
-  padding-top: 18px;
+  padding-top: 12px;
 }
 
 /* Subgroups live inside the section box now — no nested boxes, rules only. */
@@ -524,7 +524,7 @@ a.best-deck-name:focus-visible {
     border-top: 0;
     padding-top: 0;
     border-left: 1px solid var(--border);
-    padding-left: 20px;
+    padding-left: 14px;
   }
 }
 
@@ -666,7 +666,7 @@ a.best-deck-name:focus-visible {
 .dashboard-section {
   min-width: 0;
   overflow: hidden;
-  margin-top: 18px;
+  margin-top: 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel);
@@ -678,7 +678,7 @@ a.best-deck-name:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 16px 16px 0;
+  padding: 12px 12px 0;
 }
 
 .dashboard-section-collapsed .section-heading {
@@ -852,7 +852,7 @@ a.best-deck-name:focus-visible {
 .table-wrap {
   width: 100%;
   overflow-x: auto;
-  padding: 8px 12px 12px;
+  padding: 4px 10px 8px;
 }
 
 .table-container {
@@ -2454,47 +2454,22 @@ tbody tr:hover {
   font-weight: 700;
 }
 
-/* Group labels match table header typography, tinted by result. */
-.outcome-group-title {
-  margin: 12px 16px 0;
-  padding: 0 9px;
-  font-size: 0.76rem;
-  font-weight: 700;
-  letter-spacing: 0;
-  text-transform: uppercase;
+/* How Games End: a real table so alignment matches every other table.
+   Group rows are styled exactly like thead bars, tinted by result. */
+.outcome-reason-grid {
+  min-width: 0;
 }
 
-.outcome-group-title-win {
+.outcome-reason-grid .outcome-group-row th {
+  background: var(--thead-bg);
+}
+
+.outcome-reason-grid .outcome-group-row-win th {
   color: var(--win, #4ade80);
 }
 
-.outcome-group-title-loss {
+.outcome-reason-grid .outcome-group-row-loss th {
   color: var(--loss, #f87171);
-}
-
-/* Compact reason list styled like table rows: reason left, count right. */
-.outcome-reason-list {
-  list-style: none;
-  margin: 0 16px;
-  padding: 0;
-}
-
-.outcome-reason-list li {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 9px;
-  color: var(--text);
-  font-size: 0.9rem;
-}
-
-.outcome-reason-list li + li {
-  border-top: 1px solid var(--border);
-}
-
-.outcome-reason-count {
-  font-variant-numeric: tabular-nums;
 }
 
 .mulligan-history-missing {

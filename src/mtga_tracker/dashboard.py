@@ -1188,7 +1188,7 @@ def _opener_land_rows(
         conn.execute(
             f"""
             SELECT
-              MIN(opener_lands, 5) AS lands,
+              MIN(opener_lands, 4) AS lands,
               COUNT(*) AS games,
               SUM(outcome = 'win') AS wins,
               SUM(outcome = 'loss') AS losses,
@@ -1210,7 +1210,7 @@ def _opener_land_rows(
               WHERE {where} AND g.outcome IN ('win', 'loss')
             )
             WHERE opener_cards > 0
-            GROUP BY MIN(opener_lands, 5)
+            GROUP BY MIN(opener_lands, 4)
             ORDER BY lands
             """,
             params,
@@ -1218,7 +1218,7 @@ def _opener_land_rows(
     )
     for row in rows:
         lands = int(row.get("lands") or 0)
-        row["label"] = "5+ lands" if lands >= 5 else f"{lands} {'land' if lands == 1 else 'lands'}"
+        row["label"] = "4+ lands" if lands >= 4 else f"{lands} {'land' if lands == 1 else 'lands'}"
     return rows
 
 
