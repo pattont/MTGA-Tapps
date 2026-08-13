@@ -1192,10 +1192,12 @@ def _opener_land_rows(
               COUNT(*) AS games,
               SUM(outcome = 'win') AS wins,
               SUM(outcome = 'loss') AS losses,
-              ROUND(100.0 * SUM(outcome = 'win') / NULLIF(SUM(outcome IN ('win', 'loss')), 0), 1) AS win_rate
+              ROUND(100.0 * SUM(outcome = 'win') / NULLIF(SUM(outcome IN ('win', 'loss')), 0), 1) AS win_rate,
+              ROUND(AVG(mulligans), 2) AS avg_mulligans
             FROM (
               SELECT
                 g.outcome,
+                COALESCE(p.mulligans, 0) AS mulligans,
                 (
                   SELECT COUNT(*) FROM game_opening_hand_cards oh
                   WHERE oh.participant_id = p.id
@@ -1799,7 +1801,8 @@ def dashboard_snapshot(
                   COUNT(*) AS games,
                   SUM(g.outcome = 'win') AS wins,
                   SUM(g.outcome = 'loss') AS losses,
-                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
+                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate,
+                  ROUND(AVG(COALESCE(p.mulligans, 0)), 2) AS avg_mulligans
                 FROM games g
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
                 WHERE {where}

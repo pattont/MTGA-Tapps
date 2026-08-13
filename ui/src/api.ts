@@ -41,6 +41,7 @@ export interface PlayDrawRow {
   wins: number;
   losses: number;
   win_rate: number | null;
+  avg_mulligans?: number | null;
 }
 
 export interface DeckPlayDrawRow {
@@ -152,6 +153,7 @@ export interface OpenerLandRow {
   wins: number;
   losses: number;
   win_rate: number | null;
+  avg_mulligans?: number | null;
 }
 
 export interface OpponentColorRow {
