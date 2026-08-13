@@ -1208,16 +1208,33 @@ class TrackerAnalyticsMixin:
         if self._is_untracked_match():
             return
         # A "game" with no turns, no opening hand, and no draws is a ghost:
-        # typically a post-concede message tail misread as a new game.
+        # typically a post-concede message tail misread as a new game. BUT a
+        # concede during the mulligan decision is a REAL game with a real
+        # result (an opponent scooping to your opener is a win Arena scores)
+        # — the opening mulligan prompt is the tell, because re-sent final
+        # states never carry one.
         took_any_turn = any(self.game_state.turns_taken_by_seat.get(seat) for seat in (1, 2))
+        pregame_concede = (
+            self.game_state.opening_mulligan_prompt_seen
+            or bool(self.game_state._hand_before_mulligan)
+        ) and outcome in ("win", "loss")
         if (
             not took_any_turn
             and not self.game_state.starting_hand
             and not self.game_state.drawn_card_events.get(self.game_state.player_seat_id)
+            and not pregame_concede
         ):
             self._print_line("👻 Skipping ghost game record (no turns or cards observed).")
             self._purge_ghost_game_breadcrumbs()
             return
+        # Pre-keep concede: the hand shown during the mulligan decision IS
+        # the opening hand — adopt it so the game record shows those cards.
+        if not self.game_state.starting_hand and self.game_state._hand_before_mulligan:
+            self._finalize_starting_hand(
+                list(self.game_state._hand_before_mulligan),
+                list(self.game_state._hand_before_mulligan_ids),
+                list(self.game_state._hand_before_mulligan_events),
+            )
         conn = self._analytics_connect()
         if conn is None:
             return
