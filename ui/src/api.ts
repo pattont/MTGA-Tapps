@@ -121,6 +121,16 @@ export interface FatigueRow {
   win_rate: number | null;
 }
 
+export interface MatchLevelSummary {
+  /** Decided matches: a Bo3 counts once (2-1 = one win); Bo1 game = one match. */
+  matches: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  longest_win: number;
+  longest_loss: number;
+}
+
 export interface StreakSummary {
   games: number;
   current: { kind: string; length: number } | null;
@@ -355,6 +365,8 @@ export interface DashboardSnapshot {
   schedule: { by_weekday: ScheduleRow[]; by_time_of_day: ScheduleRow[] };
   fatigue: FatigueRow[];
   streaks: StreakSummary;
+  match_summary?: MatchLevelSummary;
+  ranked_summary?: MatchLevelSummary;
   outcome_reasons: OutcomeReasonRow[];
   opener_lands: OpenerLandRow[];
   opponent_threats: OpponentThreatRow[];

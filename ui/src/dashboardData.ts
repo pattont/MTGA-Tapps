@@ -51,6 +51,19 @@ function bestDeckFrom(decks: DeckRow[]): DeckRow | undefined {
 }
 
 export function metricCards(snapshot: DashboardSnapshot): MetricDefinition[] {
+  const matches = snapshot.match_summary;
+  if (matches) {
+    // Match-level: a Bo3 counts once (a 2-1 is one win) — only the match
+    // result matters on the ladder, ranked or not.
+    return [
+      { label: 'Matches', value: String(matches.matches) },
+      { label: 'Wins', value: String(matches.wins) },
+      { label: 'Losses', value: String(matches.losses) },
+      { label: 'Win Rate', value: formatPercent(matches.win_rate) },
+      { label: 'Longest Win Streak', value: String(matches.longest_win) },
+      { label: 'Longest Loss Streak', value: String(matches.longest_loss) },
+    ];
+  }
   return [
     { label: 'Games', value: String(snapshot.summary.games) },
     { label: 'Wins', value: String(snapshot.summary.wins) },

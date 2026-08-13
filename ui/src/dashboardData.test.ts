@@ -104,6 +104,30 @@ describe('metricCards', () => {
     });
   });
 
+  it('prefers the match-level summary with streaks when present', () => {
+    const snapshot = {
+      ...snapshotWithDecks([]),
+      summary: { games: 10, wins: 6, losses: 4, draws: 0, win_rate: 60.0 },
+      match_summary: {
+        matches: 8,
+        wins: 5,
+        losses: 3,
+        win_rate: 62.5,
+        longest_win: 4,
+        longest_loss: 2,
+      },
+    } satisfies DashboardSnapshot;
+
+    expect(metricCards(snapshot)).toEqual([
+      { label: 'Matches', value: '8' },
+      { label: 'Wins', value: '5' },
+      { label: 'Losses', value: '3' },
+      { label: 'Win Rate', value: '62.5%' },
+      { label: 'Longest Win Streak', value: '4' },
+      { label: 'Longest Loss Streak', value: '2' },
+    ]);
+  });
+
   it('favors a proven winning record over a one-game perfect record', () => {
     const snapshot = snapshotWithDecks([
       {

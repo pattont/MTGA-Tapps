@@ -2454,6 +2454,27 @@ tbody tr:hover {
   font-weight: 700;
 }
 
+.outcome-group-title {
+  margin: 14px 16px 6px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.outcome-group-title-win {
+  color: var(--win, #4ade80);
+}
+
+.outcome-group-title-loss {
+  color: var(--loss, #f87171);
+}
+
+/* Two-column reason tables fit their panel instead of forcing a scrollbar. */
+.outcome-reason-table table {
+  min-width: 0;
+}
+
 .mulligan-history-missing {
   margin: 0;
   padding: 12px 16px 0;

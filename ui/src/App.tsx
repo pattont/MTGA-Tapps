@@ -452,7 +452,12 @@ const fatigueColumns: Column<FatigueRow>[] = [
   },
 ];
 
-const outcomeReasonColumns: Column<OutcomeReasonRow>[] = [
+interface OutcomeReasonGroupRow {
+  reason: string;
+  games: number;
+}
+
+const outcomeReasonGroupColumns: Column<OutcomeReasonGroupRow>[] = [
   {
     key: 'reason',
     header: 'How It Ended',
@@ -460,9 +465,23 @@ const outcomeReasonColumns: Column<OutcomeReasonRow>[] = [
     sortValue: (row) => row.reason,
   },
   { key: 'games', header: 'Games', numeric: true },
-  { key: 'wins', header: 'Your Wins', numeric: true },
-  { key: 'losses', header: 'Your Losses', numeric: true },
 ];
+
+/** Split outcome reasons into win-condition and loss-condition lists. */
+function groupOutcomeReasons(rows: OutcomeReasonRow[]): {
+  wins: OutcomeReasonGroupRow[];
+  losses: OutcomeReasonGroupRow[];
+} {
+  const wins = rows
+    .filter((row) => row.wins > 0)
+    .map((row) => ({ reason: row.reason, games: row.wins }))
+    .sort((a, b) => b.games - a.games);
+  const losses = rows
+    .filter((row) => row.losses > 0)
+    .map((row) => ({ reason: row.reason, games: row.losses }))
+    .sort((a, b) => b.games - a.games);
+  return { wins, losses };
+}
 
 const openerLandColumns: Column<OpenerLandRow>[] = [
   { key: 'label', header: 'Kept Opener' },
@@ -988,6 +1007,11 @@ function Dashboard({
     });
   }, [snapshot.draw_quality, snapshot.recent]);
 
+  const outcomeGroups = useMemo(
+    () => groupOutcomeReasons(snapshot.outcome_reasons ?? []),
+    [snapshot.outcome_reasons],
+  );
+
   const filteredRecentGames = useMemo(() => {
     const active = FORMAT_QUICK_FILTERS.find((filter) => filter.id === recentQuickFilter);
     const base =
@@ -1058,6 +1082,69 @@ function Dashboard({
       </section>
 
       <Section
+        id="outcomes"
+        title="Wins & Losses"
+        description="How your games look when you win versus when you lose, how they actually end, and what your kept opening hands cost you."
+      >
+        <div className="section-heading">
+          <div>
+            <h3>Wins vs Losses</h3>
+            <p className="section-description">
+              How your games look when you win compared to when you lose.
+            </p>
+          </div>
+        </div>
+        <SortableTable
+          caption="Combat splits by result"
+          columns={combatSplitColumns}
+          getRowKey={(row) => row.split}
+          rows={snapshot.combat_split ?? []}
+        />
+        <div className="overview-analytics">
+          <section className="overview-panel" aria-labelledby="outcomes-reasons-title">
+            <div className="section-heading">
+              <div>
+                <h3 id="outcomes-reasons-title">How Games End</h3>
+              </div>
+            </div>
+            <h4 className="outcome-group-title outcome-group-title-win">Wins</h4>
+            <div className="outcome-reason-table">
+              <SortableTable
+                caption="How wins end"
+                columns={outcomeReasonGroupColumns}
+                getRowKey={(row) => row.reason}
+                initialSort={{ key: 'games', direction: 'desc' }}
+                rows={outcomeGroups.wins}
+              />
+            </div>
+            <h4 className="outcome-group-title outcome-group-title-loss">Losses</h4>
+            <div className="outcome-reason-table">
+              <SortableTable
+                caption="How losses end"
+                columns={outcomeReasonGroupColumns}
+                getRowKey={(row) => row.reason}
+                initialSort={{ key: 'games', direction: 'desc' }}
+                rows={outcomeGroups.losses}
+              />
+            </div>
+          </section>
+          <section className="overview-panel" aria-labelledby="outcomes-opener-title">
+            <div className="section-heading">
+              <div>
+                <h3 id="outcomes-opener-title">Kept Opener Lands</h3>
+              </div>
+            </div>
+            <SortableTable
+              caption="Win rate by lands in kept opening hand"
+              columns={openerLandColumns}
+              getRowKey={(row) => row.label}
+              rows={snapshot.opener_lands ?? []}
+            />
+          </section>
+        </div>
+      </Section>
+
+      <Section
         id="trend"
         title="Win Rate Trend"
         description="Rolling win rate across your most recent finished games."
@@ -1070,8 +1157,18 @@ function Dashboard({
       <Section
         id="rank-progress"
         title="Ranked Progress"
-        description="Constructed ladder progress by season. Ranked Standard Best-of-1 and Best-of-3 share this rank."
+        description="Constructed ladder progress by season. Ranked Standard Best-of-1 and Best-of-3 share this rank. Record below counts constructed ranked queues only, match-level (a Bo3 counts once)."
       >
+        {snapshot.ranked_summary && snapshot.ranked_summary.matches > 0 ? (
+          <section className="metric-grid" aria-label="Ranked record">
+            <MetricCard label="Ranked Matches" value={formatNumber(snapshot.ranked_summary.matches)} />
+            <MetricCard label="Wins" value={formatNumber(snapshot.ranked_summary.wins)} />
+            <MetricCard label="Losses" value={formatNumber(snapshot.ranked_summary.losses)} />
+            <MetricCard label="Win Rate" value={formatPercent(snapshot.ranked_summary.win_rate)} />
+            <MetricCard label="Longest Win Streak" value={formatNumber(snapshot.ranked_summary.longest_win)} />
+            <MetricCard label="Longest Loss Streak" value={formatNumber(snapshot.ranked_summary.longest_loss)} />
+          </section>
+        ) : null}
         {(snapshot.filter_options.rank_seasons ?? []).length > 1 ? (
           <div className="table-filter">
             <label>
@@ -1179,20 +1276,6 @@ function Dashboard({
           paginationKey={deckSearch.trim().toLocaleLowerCase()}
           rows={filteredDecks}
         />
-        <div className="section-heading">
-          <div>
-            <h3>Wins vs Losses</h3>
-            <p className="section-description">
-              How your games look when you win compared to when you lose.
-            </p>
-          </div>
-        </div>
-        <SortableTable
-          caption="Combat splits by result"
-          columns={combatSplitColumns}
-          getRowKey={(row) => row.split}
-          rows={snapshot.combat_split ?? []}
-        />
       </Section>
 
       <Section
@@ -1253,55 +1336,6 @@ function Dashboard({
           getRowKey={(row) => row.label}
           rows={snapshot.fatigue ?? []}
         />
-      </Section>
-
-      <Section
-        id="outcomes"
-        title="Streaks & Outcomes"
-        description="Run lengths, how games actually end, and what your kept opening hands cost you."
-      >
-        <section className="metric-grid" aria-label="Streaks">
-          <MetricCard
-            label="Current Streak"
-            value={
-              snapshot.streaks?.current
-                ? `${snapshot.streaks.current.length} ${snapshot.streaks.current.kind === 'win' ? 'W' : 'L'}`
-                : '—'
-            }
-          />
-          <MetricCard label="Longest Win Streak" value={formatNumber(snapshot.streaks?.longest_win)} />
-          <MetricCard label="Longest Loss Streak" value={formatNumber(snapshot.streaks?.longest_loss)} />
-          <MetricCard label="Decided Games" value={formatNumber(snapshot.streaks?.games)} />
-        </section>
-        <div className="overview-analytics">
-          <section className="overview-panel" aria-labelledby="outcomes-reasons-title">
-            <div className="section-heading">
-              <div>
-                <h3 id="outcomes-reasons-title">How Games End</h3>
-              </div>
-            </div>
-            <SortableTable
-              caption="Outcome reasons"
-              columns={outcomeReasonColumns}
-              getRowKey={(row) => row.reason}
-              initialSort={{ key: 'games', direction: 'desc' }}
-              rows={snapshot.outcome_reasons ?? []}
-            />
-          </section>
-          <section className="overview-panel" aria-labelledby="outcomes-opener-title">
-            <div className="section-heading">
-              <div>
-                <h3 id="outcomes-opener-title">Kept Opener Lands</h3>
-              </div>
-            </div>
-            <SortableTable
-              caption="Win rate by lands in kept opening hand"
-              columns={openerLandColumns}
-              getRowKey={(row) => row.label}
-              rows={snapshot.opener_lands ?? []}
-            />
-          </section>
-        </div>
       </Section>
 
       {(snapshot.brawl?.games ?? 0) > 0 ||
