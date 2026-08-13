@@ -336,6 +336,13 @@ const playDrawColumns: Column<PlayDrawRow>[] = [
   { key: 'wins', header: 'Wins', numeric: true },
   { key: 'losses', header: 'Losses', numeric: true },
   {
+    key: 'avg_mulligans',
+    header: 'Avg Mulligans',
+    render: (row) => formatNumber(row.avg_mulligans),
+    sortValue: (row) => row.avg_mulligans,
+    numeric: true,
+  },
+  {
     key: 'win_rate',
     header: 'Win Rate',
     render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
@@ -350,13 +357,6 @@ const momentumColumns: Column<MomentumRow>[] = [
   { key: 'wins', header: 'Wins', numeric: true },
   { key: 'losses', header: 'Losses', numeric: true },
   {
-    key: 'win_rate',
-    header: 'Win Rate',
-    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
-    sortValue: (row) => row.win_rate,
-    numeric: true,
-  },
-  {
     key: 'avg_mulligans',
     header: 'Avg Mulligans',
     render: (row) => formatNumber(row.avg_mulligans),
@@ -368,6 +368,13 @@ const momentumColumns: Column<MomentumRow>[] = [
     header: 'On Play',
     render: (row) => formatPercent(row.on_play_pct),
     sortValue: (row) => row.on_play_pct,
+    numeric: true,
+  },
+  {
+    key: 'win_rate',
+    header: 'Win Rate',
+    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
+    sortValue: (row) => row.win_rate,
     numeric: true,
   },
 ];
@@ -478,6 +485,13 @@ const openerLandColumns: Column<OpenerLandRow>[] = [
   { key: 'games', header: 'Games', numeric: true },
   { key: 'wins', header: 'Wins', numeric: true },
   { key: 'losses', header: 'Losses', numeric: true },
+  {
+    key: 'avg_mulligans',
+    header: 'Avg Mulligans',
+    render: (row) => formatNumber(row.avg_mulligans),
+    sortValue: (row) => row.avg_mulligans,
+    numeric: true,
+  },
   {
     key: 'win_rate',
     header: 'Win Rate',
