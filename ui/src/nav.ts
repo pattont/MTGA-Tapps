@@ -7,7 +7,6 @@ export interface AppNavItem {
 
 export const dashboardNavItems: AppNavItem[] = [
   { id: 'overview', label: 'Overview' },
-  { id: 'outcomes', label: 'Wins & Losses' },
   { id: 'trend', label: 'Win Rate Trend' },
   { id: 'rank-progress', label: 'Ranked Progress' },
   { id: 'recent-games', label: 'Recent Games' },

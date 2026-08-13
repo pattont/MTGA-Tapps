@@ -665,9 +665,9 @@ describe('App', () => {
     const dashboardNav = screen.getByRole('navigation', { name: 'Dashboard sections' });
     expect(within(dashboardNav).getAllByRole('link').slice(0, 4).map((link) => link.textContent)).toEqual([
       'Overview',
-      'Wins & Losses',
       'Win Rate Trend',
       'Ranked Progress',
+      'Recent Games',
     ]);
     expect(
       Array.from(document.querySelectorAll<HTMLElement>('.dashboard-main > section[id]')).map(
@@ -675,7 +675,6 @@ describe('App', () => {
       ),
     ).toEqual([
       'overview',
-      'outcomes',
       'trend',
       'rank-progress',
       'recent-games',
