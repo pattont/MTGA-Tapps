@@ -11,13 +11,17 @@ export function formatDateTime(value: string): string {
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  // Compact "8/2/26, 12:49AM" so date columns stay narrow in game tables.
-  const hours24 = date.getHours();
-  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  const meridiem = hours24 < 12 ? 'AM' : 'PM';
-  const year = String(date.getFullYear() % 100).padStart(2, '0');
-  return `${date.getMonth() + 1}/${date.getDate()}/${year}, ${hours12}:${minutes}${meridiem}`;
+  // Compact locale-aware date ("8/2/26, 12:49AM" in the US, "2/8/26, 12:49AM"
+  // in day-first regions) so date columns stay narrow and read naturally.
+  const formatted = date.toLocaleString(undefined, {
+    year: '2-digit',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  // Tighten "12:49 AM" to "12:49AM" without disturbing 24-hour locales.
+  return formatted.replace(/\s([AaPp])\.?\s?[Mm]\.?$/, (_, letter: string) => `${letter.toUpperCase()}M`);
 }
 
 export function formatDuration(seconds: number | null | undefined): string {
