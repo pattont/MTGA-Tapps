@@ -6881,3 +6881,163 @@ def test_true_ghost_tail_is_still_skipped(tmp_path, capsys):
     games = conn.execute("SELECT COUNT(*) FROM games").fetchone()[0]
     conn.close()
     assert games == 0
+
+
+def _game_over_line(results, persistent_annotations=None):
+    message = {
+        "gameInfo": {
+            "stage": "GameStage_GameOver",
+            "matchState": "MatchState_GameComplete",
+            "results": results,
+        }
+    }
+    if persistent_annotations is not None:
+        message["persistentAnnotations"] = persistent_annotations
+    return json.dumps(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {"type": "GREMessageType_GameStateMessage", "gameStateMessage": message}
+                ]
+            }
+        }
+    )
+
+
+def _loss_annotation(seat, reason):
+    return {
+        "id": 999,
+        "affectedIds": [seat],
+        "type": ["AnnotationType_LossOfGame"],
+        "details": [
+            {"key": "reason", "type": "KeyValuePairValueType_string", "valueString": [reason]}
+        ],
+    }
+
+
+def test_outcome_decked_opponent_from_loss_annotation():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.player_life = 12
+    tracker.game_state.opponent_life = 25
+
+    tracker._check_game_end(
+        _game_over_line(
+            [
+                {
+                    "scope": "MatchScope_Game",
+                    "result": "ResultType_WinLoss",
+                    "winningTeamId": 1,
+                    "reason": "ResultReason_Game",
+                }
+            ],
+            persistent_annotations=[_loss_annotation(2, "SBA_DrawEmptyLibrary")],
+        )
+    )
+
+    assert tracker.game_state.winner_seat == 1
+    assert tracker.game_state.loss_reason_code == "SBA_DrawEmptyLibrary"
+    assert tracker._resolve_game_outcome() == (
+        "win",
+        "Opponent got decked (drew from an empty library)",
+    )
+
+
+def test_outcome_poisoned_player_from_loss_annotation():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.player_life = 15
+    tracker.game_state.opponent_life = 3
+
+    tracker._check_game_end(
+        _game_over_line(
+            [
+                {
+                    "scope": "MatchScope_Game",
+                    "result": "ResultType_WinLoss",
+                    "winningTeamId": 2,
+                    "reason": "ResultReason_Game",
+                }
+            ],
+            persistent_annotations=[_loss_annotation(1, "SBA_Poisoned")],
+        )
+    )
+
+    assert tracker._resolve_game_outcome() == ("loss", "You got poisoned (10 counters)")
+
+
+def test_outcome_life_total_annotation_matches_legacy_wording():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 2
+    tracker.game_state.opponent_seat_id = 1
+    tracker.game_state.player_life = 8
+    tracker.game_state.opponent_life = -3
+
+    tracker._check_game_end(
+        _game_over_line(
+            [
+                {
+                    "scope": "MatchScope_Game",
+                    "result": "ResultType_WinLoss",
+                    "winningTeamId": 2,
+                    "reason": "ResultReason_Game",
+                }
+            ],
+            persistent_annotations=[_loss_annotation(1, "SBA_LifeTotal")],
+        )
+    )
+
+    assert tracker._resolve_game_outcome() == ("win", "Opponent reached 0 life")
+
+
+def test_outcome_timeout_reason():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.player_life = 14
+    tracker.game_state.opponent_life = 9
+
+    tracker._check_game_end(
+        _game_over_line(
+            [
+                {
+                    "scope": "MatchScope_Game",
+                    "result": "ResultType_WinLoss",
+                    "winningTeamId": 1,
+                    "reason": "ResultReason_Timeout",
+                }
+            ]
+        )
+    )
+
+    assert tracker._resolve_game_outcome() == ("win", "Opponent timed out")
+
+
+def test_outcome_concede_still_default_without_annotation():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.player_life = 20
+    tracker.game_state.opponent_life = 4
+
+    tracker._check_game_end(
+        _game_over_line(
+            [
+                {
+                    "scope": "MatchScope_Game",
+                    "result": "ResultType_WinLoss",
+                    "winningTeamId": 1,
+                    "reason": "ResultReason_Concede",
+                }
+            ]
+        )
+    )
+
+    assert tracker._resolve_game_outcome() == ("win", "Opponent conceded/disconnected")

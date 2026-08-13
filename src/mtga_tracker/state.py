@@ -141,6 +141,12 @@ class GameState:
         self.winner_reason = ""
         self.result_type: Optional[str] = None
         self.result_reason: Optional[str] = None
+        #: ResultReason_* from the structured WinLoss result (Concede/Game/Timeout).
+        self.win_result_reason: Optional[str] = None
+        #: SBA_* code from AnnotationType_LossOfGame (LifeTotal/DrawEmptyLibrary/
+        #: Poisoned...) plus the seat it hit — the precise "how the game ended".
+        self.loss_reason_code: Optional[str] = None
+        self.loss_reason_seat: Optional[int] = None
         self.first_player_seat: Optional[int] = None
         self.pending_player_turn_header: Optional[tuple] = None
         self.pending_opponent_turn_header: Optional[tuple] = None
