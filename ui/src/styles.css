@@ -1499,7 +1499,12 @@ tbody tr:hover {
 }
 
 .table-filter {
-  padding: 12px 16px 0;
+  padding: 10px 12px 6px;
+}
+
+.table-filter > input[type='search'] {
+  width: 100%;
+  max-width: 280px;
 }
 
 .table-filter label {
