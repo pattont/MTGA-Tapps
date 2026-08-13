@@ -125,6 +125,50 @@ def _timeline_text_segments(
     return segments or [{"kind": "text", "text": text}]
 
 
+_EVENT_TIMESTAMP_RE = re.compile(r"\d+:\d{2}")
+
+
+def _timeline_card_turns(
+    timeline: List[Dict[str, Any]],
+) -> Tuple[Dict[Tuple[str, str], List[int]], Dict[str, List[int]]]:
+    """Extract per-card turn numbers from a game's timeline events.
+
+    Returns (played_turns, opponent_seen_turns). played_turns maps
+    (actor_role, clean card name) -> the turn of every cast/land event, one
+    entry per cast so recasts list each turn. opponent_seen_turns maps clean
+    card name -> every turn an opponent card surfaced in a cast, land play,
+    zone change, or transform, for first-revealed-turn display. Only the
+    event's primary card (the first bracketed name after the timestamp) is
+    attributed, so removal targets aren't credited to the wrong side.
+    """
+    played: Dict[Tuple[str, str], List[int]] = {}
+    opponent_seen: Dict[str, List[int]] = {}
+    for event in timeline:
+        turn = event.get("turn_number")
+        role = event.get("actor_role")
+        event_type = event.get("event_type")
+        if turn is None or role not in ("player", "opponent"):
+            continue
+        if event_type not in ("cast", "land", "zone", "ability"):
+            continue
+        text = str(event.get("text") or "")
+        name: Optional[str] = None
+        for match in _BRACKET_CONTENT_RE.finditer(text):
+            candidate = match.group(1).strip()
+            if _EVENT_TIMESTAMP_RE.fullmatch(candidate):
+                continue
+            name = _clean_card_name(candidate)
+            break
+        if not name:
+            continue
+        turn_value = int(turn)
+        if event_type in ("cast", "land"):
+            played.setdefault((str(role), name), []).append(turn_value)
+        if role == "opponent":
+            opponent_seen.setdefault(name, []).append(turn_value)
+    return played, opponent_seen
+
+
 def _is_land_row(row: Dict[str, Any]) -> bool:
     return is_land_row(row)
 
@@ -2911,6 +2955,34 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                 (game_id,),
             )
         )
+        played_turns, opponent_seen_turns = _timeline_card_turns(timeline)
+        # Opponent draws revealed by name also count as a "seen" moment.
+        for drawn_name, drawn_turn in conn.execute(
+            """
+            SELECT display_name, turn_number
+            FROM game_drawn_cards
+            WHERE game_id = ? AND participant_id = ? AND turn_number IS NOT NULL
+            """,
+            (game_id, opponent_participant_id),
+        ):
+            clean_drawn = _clean_card_name(drawn_name)
+            if clean_drawn:
+                opponent_seen_turns.setdefault(clean_drawn, []).append(int(drawn_turn))
+        for row in cards_played:
+            aliases = _card_name_aliases(row.get("display_name"))
+            row["turns_played"] = sorted(
+                turn
+                for alias in aliases
+                for turn in played_turns.get(("player", alias), [])
+            )
+        for row in opponent_cards:
+            aliases = _card_name_aliases(row.get("display_name"))
+            seen = [
+                turn
+                for alias in aliases
+                for turn in opponent_seen_turns.get(alias, [])
+            ]
+            row["first_seen_turn"] = min(seen) if seen else None
         linkable_cards: Dict[str, Optional[str]] = {}
         for display_name, type_category in conn.execute(
             """

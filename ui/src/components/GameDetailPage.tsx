@@ -1,3 +1,4 @@
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   fetchGameDetail,
@@ -115,7 +116,22 @@ const deckChangeColumns: Column<DeckChangeCard>[] = [
   },
 ];
 
+function formatTurnList(turns: number[] | undefined): string {
+  if (!turns || turns.length === 0) {
+    return '—';
+  }
+  return turns.map((turn) => `T${turn}`).join(', ');
+}
+
 const playedColumns: Column<GamePlayedCardRow>[] = [
+  {
+    key: 'turns_played',
+    header: 'Turn(s)',
+    render: (row) => formatTurnList(row.turns_played),
+    sortValue: (row) =>
+      row.turns_played && row.turns_played.length > 0 ? row.turns_played[0] : Number.POSITIVE_INFINITY,
+    numeric: true,
+  },
   {
     key: 'display_name',
     header: 'Card',
@@ -132,6 +148,13 @@ const playedColumns: Column<GamePlayedCardRow>[] = [
 ];
 
 const opponentCardColumns: Column<OpponentVisibleCardRow>[] = [
+  {
+    key: 'first_seen_turn',
+    header: 'Revealed',
+    render: (row) => (row.first_seen_turn != null ? `T${row.first_seen_turn}` : '—'),
+    sortValue: (row) => row.first_seen_turn ?? Number.POSITIVE_INFINITY,
+    numeric: true,
+  },
   {
     key: 'display_name',
     header: 'Card',
@@ -220,6 +243,11 @@ export function GameDetailPage({
   const [noteStatus, setNoteStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [noteError, setNoteError] = useState<string | null>(null);
   const [, setAnnotationLoaded] = useState(false);
+  // Keyed by game so navigating to another game resets to the first page
+  // without needing an effect.
+  const [drawTurnPageState, setDrawTurnPageState] = useState({ gameId, page: 0 });
+  const drawTurnPage = drawTurnPageState.gameId === gameId ? drawTurnPageState.page : 0;
+  const setDrawTurnPage = (page: number) => setDrawTurnPageState({ gameId, page });
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -444,6 +472,24 @@ export function GameDetailPage({
   const drawsByTurn = Array.from(drawsByTurnMap.entries())
     .sort(([a], [b]) => a - b)
     .map(([turn, counts]) => ({ turn, ...counts }));
+  // Long games (hello, Brawl) page the draws-by-turn strip and table together,
+  // ten turns at a time.
+  const DRAW_TURNS_PER_PAGE = 10;
+  const drawTurnPageCount = Math.max(1, Math.ceil(drawsByTurn.length / DRAW_TURNS_PER_PAGE));
+  const activeDrawTurnPage = Math.min(drawTurnPage, drawTurnPageCount - 1);
+  const drawTurnsPaged = drawTurnPageCount > 1;
+  const visibleDrawTurnRows = drawTurnsPaged
+    ? drawsByTurn.slice(
+        activeDrawTurnPage * DRAW_TURNS_PER_PAGE,
+        (activeDrawTurnPage + 1) * DRAW_TURNS_PER_PAGE,
+      )
+    : drawsByTurn;
+  const visibleDrawTurns = new Set(visibleDrawTurnRows.map((row) => row.turn));
+  const visibleDrawnRows = drawTurnsPaged
+    ? detail.drawn.filter(
+        (row) => row.turn_number === null || row.turn_number === undefined || visibleDrawTurns.has(row.turn_number),
+      )
+    : detail.drawn;
   const timelineReturnHash = gameRouteHash(gameId, backHref, 'game-timeline');
   // AI-identified archetype (dominant colors + strategy) overrides the plain
   // color label; the pips still show every color actually seen.
@@ -797,9 +843,9 @@ export function GameDetailPage({
       </Section>
 
       <Section id="game-draws" title="Drawn Cards">
-        {drawsByTurn.length > 0 ? (
+        {visibleDrawTurnRows.length > 0 ? (
           <div className="draws-by-turn" aria-label="Draws by turn">
-            {drawsByTurn.map(({ turn, lands, nonlands }) => (
+            {visibleDrawTurnRows.map(({ turn, lands, nonlands }) => (
               <div key={turn} className="draws-by-turn-cell">
                 <span className="draws-by-turn-turn">T{turn}</span>
                 <span className="draws-by-turn-counts">
@@ -810,11 +856,42 @@ export function GameDetailPage({
             ))}
           </div>
         ) : null}
+        {drawTurnsPaged ? (
+          <nav className="table-pagination" aria-label="Drawn cards turn pagination">
+            <p>
+              Turns {visibleDrawTurnRows[0]?.turn}–{visibleDrawTurnRows[visibleDrawTurnRows.length - 1]?.turn} of{' '}
+              {drawsByTurn[drawsByTurn.length - 1]?.turn}
+            </p>
+            <div className="table-pagination-controls">
+              <button
+                type="button"
+                aria-label="Previous turns"
+                title="Previous turns"
+                disabled={activeDrawTurnPage === 0}
+                onClick={() => setDrawTurnPage(activeDrawTurnPage - 1)}
+              >
+                <ChevronLeft aria-hidden="true" />
+              </button>
+              <span>
+                Page {activeDrawTurnPage + 1} of {drawTurnPageCount}
+              </span>
+              <button
+                type="button"
+                aria-label="Next turns"
+                title="Next turns"
+                disabled={activeDrawTurnPage === drawTurnPageCount - 1}
+                onClick={() => setDrawTurnPage(activeDrawTurnPage + 1)}
+              >
+                <ChevronRight aria-hidden="true" />
+              </button>
+            </div>
+          </nav>
+        ) : null}
         <SortableTable
           caption="Drawn cards"
           columns={drawnColumns}
           getRowKey={(row) => `${row.draw_position}-${row.display_name}`}
-          rows={detail.drawn}
+          rows={visibleDrawnRows}
         />
       </Section>
 

@@ -1047,7 +1047,12 @@ def test_game_detail_reports_header_cards_and_timeline(tmp_path):
         },
     ]
     assert detail["cards_played"] == [
-        {"display_name": "Mouse Mentor", "type_category": "Creature", "played_count": 2}
+        {
+            "display_name": "Mouse Mentor",
+            "type_category": "Creature",
+            "played_count": 2,
+            "turns_played": [],
+        }
     ]
     assert detail["opponent_cards"] == [
         {
@@ -1058,6 +1063,7 @@ def test_game_detail_reports_header_cards_and_timeline(tmp_path):
             "discarded_count": 1,
             "milled_count": 0,
             "exiled_count": 1,
+            "first_seen_turn": None,
         }
     ]
     assert [row["event_type"] for row in detail["timeline"]] == ["turn", "damage"]
@@ -1096,6 +1102,95 @@ def test_game_detail_reports_header_cards_and_timeline(tmp_path):
         {"turn_number": 1, "player_life": 20, "opponent_life": 20},
         {"turn_number": 4, "player_life": 12, "opponent_life": 0},
     ]
+
+
+def test_game_detail_reports_played_and_revealed_turns(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category,
+                played_count, drawn_count, milled_count
+            )
+            values (?, ?, NULL, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("game-1", "player-1", "Mouse Mentor (Creature 2/1)", "Creature", 2, 0, 0),
+                ("game-1", "player-1", "Mountain (Land)", "Land", 1, 0, 0),
+                ("game-1", "opponent-1", "Lightning Helix (Instant)", "Instant", 2, 0, 0),
+                # Never cast: revealed only through a mill.
+                ("game-1", "opponent-1", "Duress (Sorcery)", "Sorcery", 0, 0, 1),
+            ],
+        )
+        conn.executemany(
+            """
+            insert into game_events (
+                session_id, match_id, game_id, event_time, elapsed_seconds, turn_number,
+                phase, step, actor_role, event_type, text, player_life, opponent_life
+            )
+            values ('session-1', 'match-1', 'game-1', ?, ?, ?, NULL, NULL, ?, ?, ?, NULL, NULL)
+            """,
+            [
+                ("2026-06-04T00:01:05", 5, 1, "player", "land", "[0:05] You: played [Mountain (Land)]"),
+                (
+                    "2026-06-04T00:01:20",
+                    20,
+                    3,
+                    "player",
+                    "cast",
+                    "[0:20] You: cast [Mouse Mentor (Creature 2/1)]",
+                ),
+                (
+                    "2026-06-04T00:01:40",
+                    40,
+                    4,
+                    "opponent",
+                    "cast",
+                    "[0:40] Opponent: cast [Lightning Helix (Instant)] -> [Mouse Mentor (2/1)]",
+                ),
+                (
+                    "2026-06-04T00:01:55",
+                    55,
+                    5,
+                    "player",
+                    "cast",
+                    "[0:55] You: cast [Mouse Mentor (Creature 2/1)]",
+                ),
+                (
+                    "2026-06-04T00:02:05",
+                    65,
+                    6,
+                    "opponent",
+                    "cast",
+                    "[1:05] Opponent: cast [Lightning Helix (Instant)]",
+                ),
+                (
+                    "2026-06-04T00:02:15",
+                    75,
+                    7,
+                    "opponent",
+                    "zone",
+                    "[1:15] Opponent: [Duress] was milled",
+                ),
+            ],
+        )
+
+    detail = game_detail(db_path, "game-1")
+
+    played = {row["display_name"]: row for row in detail["cards_played"]}
+    # Every cast turn is listed, one entry per cast.
+    assert played["Mouse Mentor"]["turns_played"] == [3, 5]
+    assert played["Mountain"]["turns_played"] == [1]
+
+    opponent = {row["display_name"]: row for row in detail["opponent_cards"]}
+    # First reveal = the first cast, even though it was cast twice...
+    assert opponent["Lightning Helix"]["first_seen_turn"] == 4
+    # ...and zone events (mill/discard/exile) count as reveals too.
+    assert opponent["Duress"]["first_seen_turn"] == 7
+    # The opponent's Helix targeting Mouse Mentor must NOT credit the player's
+    # Mouse Mentor with a turn-4 play (only the event's primary card counts).
+    assert played["Mouse Mentor"]["turns_played"] == [3, 5]
 
 
 def test_opponent_detail_reports_head_to_head_history(tmp_path):
