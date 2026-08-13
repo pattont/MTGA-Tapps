@@ -328,9 +328,10 @@ const deckColumns: Column<DeckWithCombatRow>[] = [
 const playDrawColumns: Column<PlayDrawRow>[] = [
   {
     key: 'play_draw',
-    header: 'Play / Draw',
+    // The panel heading already says "Play / Draw" — no need to repeat it.
+    header: '',
+    sortable: false,
     render: (row) => row.play_draw ?? 'Unknown',
-    sortValue: (row) => row.play_draw,
   },
   { key: 'games', header: 'Games', numeric: true },
   { key: 'wins', header: 'Wins', numeric: true },

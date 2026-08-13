@@ -2454,12 +2454,14 @@ tbody tr:hover {
   font-weight: 700;
 }
 
+/* Group labels match table header typography, tinted by result. */
 .outcome-group-title {
-  margin: 10px 16px 0;
-  font-size: 0.8rem;
+  margin: 12px 16px 0;
+  padding: 0 9px;
+  font-size: 0.76rem;
   font-weight: 700;
+  letter-spacing: 0;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .outcome-group-title-win {
@@ -2470,10 +2472,10 @@ tbody tr:hover {
   color: var(--loss, #f87171);
 }
 
-/* Compact reason list: no table chrome, reason left, count right. */
+/* Compact reason list styled like table rows: reason left, count right. */
 .outcome-reason-list {
   list-style: none;
-  margin: 2px 16px 4px;
+  margin: 0 16px;
   padding: 0;
 }
 
@@ -2482,7 +2484,9 @@ tbody tr:hover {
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  padding: 5px 0;
+  padding: 8px 9px;
+  color: var(--text);
+  font-size: 0.9rem;
 }
 
 .outcome-reason-list li + li {
@@ -2491,7 +2495,6 @@ tbody tr:hover {
 
 .outcome-reason-count {
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
 }
 
 .mulligan-history-missing {
