@@ -865,6 +865,7 @@ export interface CardDetail {
   opponent_impact?: CardOpponentImpact;
   by_deck: CardByDeckRow[];
   multiplicity?: CardMultiplicity;
+  opponent_multiplicity?: CardMultiplicity;
   opener_impact: CardOpenerImpact;
 }
 

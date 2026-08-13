@@ -100,6 +100,39 @@ const multiplicityColumns: Column<CardMultiplicityBucket>[] = [
   },
 ];
 
+const opponentMultiplicityColumns: Column<CardMultiplicityBucket>[] = [
+  { key: 'label', header: 'Copies Shown' },
+  { key: 'games', header: 'Games', numeric: true },
+  {
+    key: 'pct_of_games',
+    header: 'Share of Games',
+    render: (row) => formatPercent(row.pct_of_games),
+    sortValue: (row) => row.pct_of_games,
+    numeric: true,
+  },
+  {
+    key: 'pct_at_least',
+    header: 'At Least This Many',
+    render: (row) => formatPercent(row.pct_at_least),
+    sortValue: (row) => row.pct_at_least,
+    numeric: true,
+  },
+  {
+    key: 'wins',
+    header: 'Your Record',
+    render: (row) => `${row.wins}–${row.losses}`,
+    sortValue: (row) => row.wins - row.losses,
+    numeric: true,
+  },
+  {
+    key: 'win_rate',
+    header: 'Your Win Rate',
+    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
+    sortValue: (row) => row.win_rate,
+    numeric: true,
+  },
+];
+
 export function CardDetailPage({
   cardName,
   backHref = '#overview',
@@ -321,6 +354,25 @@ export function CardDetailPage({
           />
         ) : (
           <p className="empty-state">No per-game copy data recorded for this card yet.</p>
+        )}
+      </Section>
+
+      <Section
+        id="card-opponent-multiplicity"
+        title="Opponent Repeat Draws"
+        description="How often opponents showed one, two, or more copies of this card in a single game — casts and revealed draws — and how your win rate held up. Opponent decklists are unknown, so there's no expected column."
+      >
+        {detail.opponent_multiplicity && detail.opponent_multiplicity.games > 0 ? (
+          <SortableTable
+            caption="Opponent copies shown per game"
+            columns={opponentMultiplicityColumns}
+            compact
+            getRowKey={(row) => row.label}
+            initialSort={{ key: 'label', direction: 'asc' }}
+            rows={detail.opponent_multiplicity.buckets}
+          />
+        ) : (
+          <p className="empty-state">No opponent has shown this card in a tracked game yet.</p>
         )}
       </Section>
 
