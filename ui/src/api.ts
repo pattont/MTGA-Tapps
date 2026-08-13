@@ -594,6 +594,8 @@ export interface GameDrawnCardRow extends GameCardRow {
 
 export interface GamePlayedCardRow extends GameCardRow {
   played_count: number;
+  /** Turn of every cast/play from the timeline (recasts repeat); absent on old games. */
+  turns_played?: number[];
 }
 
 export interface OpponentVisibleCardRow extends GamePlayedCardRow {
@@ -601,6 +603,8 @@ export interface OpponentVisibleCardRow extends GamePlayedCardRow {
   discarded_count: number;
   milled_count: number;
   exiled_count: number;
+  /** First turn this card surfaced (cast, land, zone change, revealed draw). */
+  first_seen_turn?: number | null;
 }
 
 export type TimelineTextSegment =
