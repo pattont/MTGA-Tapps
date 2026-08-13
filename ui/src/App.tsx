@@ -1,4 +1,4 @@
-import { Flame, HeartCrack, Swords, Target, TrendingDown, Trophy } from 'lucide-react';
+import { ChartNoAxesCombined, Flame, HeartCrack, Swords, TrendingDown, Trophy } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { pageTitle } from './branding';
@@ -227,7 +227,7 @@ const METRIC_ICONS: Record<string, ReactNode> = {
   matches: <Swords />,
   wins: <Trophy />,
   losses: <HeartCrack />,
-  winRate: <Target />,
+  winRate: <ChartNoAxesCombined />,
   winStreak: <Flame />,
   lossStreak: <TrendingDown />,
 };
