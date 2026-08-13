@@ -508,8 +508,15 @@ a.best-deck-name:focus-visible {
   white-space: nowrap;
 }
 
+/* The whole overview — metric cards down through How Games End — lives in
+   one bordered container, mockup-style. */
 .overview-section {
   min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
 }
 
 .overview-analytics {
@@ -651,21 +658,43 @@ a.best-deck-name:focus-visible {
   line-height: 1.35;
 }
 
+/* Text block left, big icon right, both vertically centered (mockup style).
+   Cards without an icon collapse the icon column and look unchanged. */
 .metric-card {
-  position: relative;
+  grid-template-areas:
+    'label icon'
+    'value icon'
+    'detail icon';
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-content: center;
+  column-gap: 14px;
+  padding: 14px 18px;
+}
+
+.metric-card > span:not(.metric-card-icon) {
+  grid-area: label;
+}
+
+.metric-card strong,
+.metric-card .metric-link {
+  grid-area: value;
+}
+
+.metric-card-detail {
+  grid-area: detail;
 }
 
 .metric-card-icon {
-  position: absolute;
-  top: 10px;
-  right: 12px;
+  grid-area: icon;
+  align-self: center;
+  display: inline-flex;
   color: var(--muted);
-  opacity: 0.75;
+  opacity: 0.8;
 }
 
 .metric-card-icon svg {
-  width: 20px;
-  height: 20px;
+  width: 32px;
+  height: 32px;
 }
 
 .metric-card-win {
