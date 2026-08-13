@@ -7,7 +7,6 @@ import {
   type DashboardSnapshot,
   type DeckRow,
   type FatigueRow,
-  type MatchupRow,
   type OpenerLandRow,
   type OpponentThreatRow,
   type OutcomeReasonRow,
@@ -516,28 +515,6 @@ const opponentThreatColumns: Column<OpponentThreatRow>[] = [
     header: 'Loss Rate',
     render: (row) => formatPercent(row.loss_rate),
     sortValue: (row) => row.loss_rate,
-    numeric: true,
-  },
-];
-
-const matchupColumns: Column<MatchupRow>[] = [
-  {
-    key: 'deck_name',
-    header: 'Your Deck',
-    render: (row) => (
-      <DeckLink deckName={row.deck_name}>
-        <strong>{row.deck_name}</strong>
-      </DeckLink>
-    ),
-    sortValue: (row) => row.deck_name,
-  },
-  { key: 'opponent_archetype', header: 'Opponent Archetype' },
-  { key: 'games', header: 'Games', numeric: true },
-  {
-    key: 'win_rate',
-    header: 'Win Rate',
-    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
-    sortValue: (row) => row.win_rate,
     numeric: true,
   },
 ];
@@ -1261,15 +1238,13 @@ function Dashboard({
         description="Record plus combat telemetry per deck: damage pace, attacks, and lifegain. Profile is judged by damage dealt per turn."
       >
         <div className="table-filter">
-          <label>
-            <span>Search decks</span>
-            <input
-              type="search"
-              value={deckSearch}
-              onChange={(event) => setDeckSearch(event.target.value)}
-              placeholder="Deck name"
-            />
-          </label>
+          <input
+            type="search"
+            aria-label="Search decks"
+            value={deckSearch}
+            onChange={(event) => setDeckSearch(event.target.value)}
+            placeholder="Search decks"
+          />
         </div>
         <SortableTable
           caption="Deck performance"
@@ -1407,7 +1382,7 @@ function Dashboard({
       <Section
         id="opponent-meta"
         title="Opponent Meta"
-        description="What the ladder is beating you with, and matchup records when opponent archetypes are identified."
+        description="What the ladder is beating you with."
       >
         <div className="section-heading">
           <div>
@@ -1441,27 +1416,6 @@ function Dashboard({
           pageSize={15}
           rows={snapshot.opponent_threats ?? []}
         />
-        <div className="section-heading">
-          <div>
-            <h3>Matchups</h3>
-            <p className="section-description">
-              Your decks against identified opponent archetypes. Archetype identification is optional — enable
-              the deck LLM in config.py (DECK_LLM_ENABLED plus an API key) and future games will be tagged.
-            </p>
-          </div>
-        </div>
-        {(snapshot.matchups ?? []).length > 0 ? (
-          <SortableTable
-            caption="Matchup records"
-            columns={matchupColumns}
-            getRowKey={(row) => `${row.deck_name}|${row.opponent_archetype}`}
-            initialSort={{ key: 'games', direction: 'desc' }}
-            pageSize={15}
-            rows={snapshot.matchups ?? []}
-          />
-        ) : (
-          <p className="empty-state">No identified opponent archetypes yet.</p>
-        )}
       </Section>
 
       <Section id="formats" title="Formats">
