@@ -1095,24 +1095,35 @@ function Dashboard({
                 <h3 id="outcomes-reasons-title">How Games End</h3>
               </div>
             </div>
-            <h4 className="outcome-group-title outcome-group-title-win">Wins</h4>
-            <ul className="outcome-reason-list" aria-label="How wins end">
-              {outcomeGroups.wins.map((row) => (
-                <li key={row.reason}>
-                  <span>{row.reason.replaceAll('_', ' ')}</span>
-                  <span className="outcome-reason-count">{formatNumber(row.games)}</span>
-                </li>
-              ))}
-            </ul>
-            <h4 className="outcome-group-title outcome-group-title-loss">Losses</h4>
-            <ul className="outcome-reason-list" aria-label="How losses end">
-              {outcomeGroups.losses.map((row) => (
-                <li key={row.reason}>
-                  <span>{row.reason.replaceAll('_', ' ')}</span>
-                  <span className="outcome-reason-count">{formatNumber(row.games)}</span>
-                </li>
-              ))}
-            </ul>
+            <div className="table-wrap" role="region" aria-label="How games end" tabIndex={0}>
+              <table className="outcome-reason-grid">
+                <caption>How games end</caption>
+                <tbody>
+                  <tr className="outcome-group-row outcome-group-row-win">
+                    <th colSpan={2} scope="colgroup">
+                      Wins
+                    </th>
+                  </tr>
+                  {outcomeGroups.wins.map((row) => (
+                    <tr key={`win-${row.reason}`}>
+                      <td>{row.reason.replaceAll('_', ' ')}</td>
+                      <td className="num">{formatNumber(row.games)}</td>
+                    </tr>
+                  ))}
+                  <tr className="outcome-group-row outcome-group-row-loss">
+                    <th colSpan={2} scope="colgroup">
+                      Losses
+                    </th>
+                  </tr>
+                  {outcomeGroups.losses.map((row) => (
+                    <tr key={`loss-${row.reason}`}>
+                      <td>{row.reason.replaceAll('_', ' ')}</td>
+                      <td className="num">{formatNumber(row.games)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </section>
           <section className="overview-panel" aria-labelledby="outcomes-opener-title">
             <div className="section-heading">
