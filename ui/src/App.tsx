@@ -1095,9 +1095,9 @@ function Dashboard({
                 <h3 id="outcomes-reasons-title">How Games End</h3>
               </div>
             </div>
-            <div className="table-wrap" role="region" aria-label="How games end" tabIndex={0}>
+            <div className="table-wrap" role="region" aria-label="How wins end" tabIndex={0}>
               <table className="outcome-reason-grid">
-                <caption>How games end</caption>
+                <caption>How wins end</caption>
                 <tbody>
                   <tr className="outcome-group-row outcome-group-row-win">
                     <th colSpan={2} scope="colgroup">
@@ -1110,6 +1110,13 @@ function Dashboard({
                       <td className="num">{formatNumber(row.games)}</td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="table-wrap" role="region" aria-label="How losses end" tabIndex={0}>
+              <table className="outcome-reason-grid">
+                <caption>How losses end</caption>
+                <tbody>
                   <tr className="outcome-group-row outcome-group-row-loss">
                     <th colSpan={2} scope="colgroup">
                       Losses
