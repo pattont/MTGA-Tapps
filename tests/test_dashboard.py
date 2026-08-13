@@ -2059,6 +2059,66 @@ def test_dashboard_snapshot_reports_mana_readiness(tmp_path):
     assert two["behind_win_rate"] == 100.0
 
 
+def test_dashboard_snapshot_counts_bo3_matches_once_and_splits_ranked(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            "insert into matches (id, session_id, format, queue, event_name, best_of) values (?, 'session-1', ?, ?, ?, ?)",
+            [
+                ("match-bo3", "Traditional_Ladder", "Traditional_Ladder", "Traditional_Ladder", 3),
+                ("match-brawl", "Brawl_Ladder", "Brawl_Ladder", "Brawl_Ladder", 1),
+            ],
+        )
+        games = [
+            # Ranked Bo3 that went 2-1: one ranked match win, not three results.
+            ("game-b1", "match-bo3", "2026-06-05T00:01:00", "win"),
+            ("game-b2", "match-bo3", "2026-06-05T00:10:00", "loss"),
+            ("game-b3", "match-bo3", "2026-06-05T00:20:00", "win"),
+            # Ranked Brawl: counts in the combined row, not the constructed ranked row.
+            ("game-br", "match-brawl", "2026-06-05T01:00:00", "win"),
+        ]
+        for game_id, match_id, started, outcome in games:
+            conn.execute(
+                """
+                insert into games (id, session_id, match_id, game_number, started_at, outcome,
+                                   duration_seconds, total_turns, player_turns, opponent_turns)
+                values (?, 'session-1', ?, 1, ?, ?, 300, 10, 5, 5)
+                """,
+                (game_id, match_id, started, outcome),
+            )
+            conn.execute(
+                """
+                insert into participants (id, game_id, seat_id, role, display_name, deck_name,
+                                          went_first, mulligans, opening_hand_size, starting_life, ending_life)
+                values (?, ?, 1, 'player', 'Tapps', 'Boros Mouse', 1, 0, 7, 20, 12)
+                """,
+                (f"p-{game_id}", game_id),
+            )
+
+    snapshot = dashboard_snapshot(db_path)
+
+    # Combined: 2 fixture Bo1 games (1-1) + Bo3 match (one win) + brawl win.
+    match_summary = snapshot["match_summary"]
+    assert match_summary["matches"] == 4
+    assert match_summary["wins"] == 3
+    assert match_summary["losses"] == 1
+    assert match_summary["win_rate"] == 75.0
+    # win, loss (fixture) then Bo3 win + brawl win back-to-back.
+    assert match_summary["longest_win"] == 2
+    assert match_summary["longest_loss"] == 1
+
+    # Constructed ranked only: just the Bo3 ladder match; Brawl (Ranked) excluded.
+    ranked = snapshot["ranked_summary"]
+    assert ranked == {
+        "matches": 1,
+        "wins": 1,
+        "losses": 0,
+        "win_rate": 100.0,
+        "longest_win": 1,
+        "longest_loss": 0,
+    }
+
+
 def test_card_detail_reports_multiplicity(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
     with sqlite3.connect(db_path) as conn:
@@ -2157,6 +2217,19 @@ def test_dashboard_snapshot_reports_schedule_fatigue_and_streaks(tmp_path):
 
     reasons = {row["reason"]: row for row in snapshot["outcome_reasons"]}
     assert reasons["opponent_conceded"]["wins"] == 1
+
+    # Bo1 games count individually at match level too.
+    match_summary = snapshot["match_summary"]
+    assert match_summary == {
+        "matches": 2,
+        "wins": 1,
+        "losses": 1,
+        "win_rate": 50.0,
+        "longest_win": 1,
+        "longest_loss": 1,
+    }
+    # The fixture's Play queue is unranked, so the ranked slice is empty.
+    assert snapshot["ranked_summary"]["matches"] == 0
 
     opener = {row["lands"]: row for row in snapshot["opener_lands"]}
     # game-1 kept a 1-land opener and won; game-2 has no recorded opener rows

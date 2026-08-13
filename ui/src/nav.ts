@@ -7,13 +7,13 @@ export interface AppNavItem {
 
 export const dashboardNavItems: AppNavItem[] = [
   { id: 'overview', label: 'Overview' },
+  { id: 'outcomes', label: 'Wins & Losses' },
   { id: 'trend', label: 'Win Rate Trend' },
   { id: 'rank-progress', label: 'Ranked Progress' },
   { id: 'recent-games', label: 'Recent Games' },
   { id: 'decks', label: 'Decks' },
   { id: 'land-drops', label: 'Land Availability' },
   { id: 'habits', label: 'Habits & Schedule' },
-  { id: 'outcomes', label: 'Streaks & Outcomes' },
   { id: 'opponent-meta', label: 'Opponent Meta' },
   { id: 'formats', label: 'Formats' },
   { id: 'sessions', label: 'Sessions' },

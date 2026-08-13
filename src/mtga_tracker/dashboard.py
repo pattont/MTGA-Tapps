@@ -1080,6 +1080,84 @@ def _streak_summary(conn: sqlite3.Connection, where: str, params: List[Any]) -> 
     }
 
 
+def _match_level_results(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> List[Dict[str, Any]]:
+    """One row per match (Bo1 games are their own match), ordered by start.
+
+    A Bo3 that went 2-1 is a single result here — only the match outcome
+    matters on the ladder, so Bo3 games are never counted individually.
+    Matches with no decided games (or tied abandoned ones) get outcome None.
+    """
+    rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              CASE
+                WHEN COALESCE(m.best_of, 1) >= 3 THEN COALESCE(g.match_id, g.id)
+                ELSE g.id
+              END AS match_key,
+              MIN(COALESCE(m.format, '(unknown)')) AS raw_format,
+              MAX(COALESCE(m.best_of, 1)) AS best_of,
+              MIN(COALESCE(g.started_at, g.ended_at)) AS started_at,
+              SUM(g.outcome = 'win') AS wins,
+              SUM(g.outcome = 'loss') AS losses
+            FROM games g
+            LEFT JOIN matches m ON m.id = g.match_id
+            WHERE {where}
+            GROUP BY match_key
+            ORDER BY MIN(COALESCE(g.started_at, g.ended_at)), match_key
+            """,
+            params,
+        )
+    )
+    for row in rows:
+        wins = int(row.get("wins") or 0)
+        losses = int(row.get("losses") or 0)
+        row["outcome"] = "win" if wins > losses else "loss" if losses > wins else None
+    return rows
+
+
+def _summarize_match_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Match-level record and streaks over pre-ordered match results."""
+    wins = losses = 0
+    longest_win = longest_loss = 0
+    current_run = 0
+    current_kind: Optional[str] = None
+    for result in results:
+        outcome = result.get("outcome")
+        if outcome not in ("win", "loss"):
+            continue
+        if outcome == "win":
+            wins += 1
+        else:
+            losses += 1
+        if outcome == current_kind:
+            current_run += 1
+        else:
+            current_kind = outcome
+            current_run = 1
+        if outcome == "win":
+            longest_win = max(longest_win, current_run)
+        else:
+            longest_loss = max(longest_loss, current_run)
+    decided = wins + losses
+    return {
+        "matches": decided,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": round(100.0 * wins / decided, 1) if decided else None,
+        "longest_win": longest_win,
+        "longest_loss": longest_loss,
+    }
+
+
+def _is_constructed_ranked_format(raw_format: Any) -> bool:
+    """True for ladder queues that move the constructed rank (Brawl excluded)."""
+    normalized = normalize_match_format(str(raw_format or ""))
+    return "(Ranked)" in normalized.label and not normalized.is_brawl
+
+
 def _outcome_reason_rows(
     conn: sqlite3.Connection, where: str, params: List[Any]
 ) -> List[Dict[str, Any]]:
@@ -2060,6 +2138,15 @@ def dashboard_snapshot(
         schedule = _schedule_rows(conn, where, params)
         fatigue_rows = _fatigue_rows(conn, where, params)
         streaks = _streak_summary(conn, where, params)
+        match_results = _match_level_results(conn, where, params)
+        match_summary = _summarize_match_results(match_results)
+        ranked_summary = _summarize_match_results(
+            [
+                result
+                for result in match_results
+                if _is_constructed_ranked_format(result.get("raw_format"))
+            ]
+        )
         outcome_reason_rows = _outcome_reason_rows(conn, where, params)
         opener_land_rows = _opener_land_rows(conn, where, params)
         opponent_threat_rows = _opponent_threat_rows(conn, where, params)
@@ -2148,6 +2235,8 @@ def dashboard_snapshot(
         "schedule": schedule,
         "fatigue": fatigue_rows,
         "streaks": streaks,
+        "match_summary": match_summary,
+        "ranked_summary": ranked_summary,
         "outcome_reasons": outcome_reason_rows,
         "opener_lands": opener_land_rows,
         "opponent_threats": opponent_threat_rows,
