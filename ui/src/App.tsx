@@ -457,16 +457,6 @@ interface OutcomeReasonGroupRow {
   games: number;
 }
 
-const outcomeReasonGroupColumns: Column<OutcomeReasonGroupRow>[] = [
-  {
-    key: 'reason',
-    header: 'How It Ended',
-    render: (row) => row.reason.replaceAll('_', ' '),
-    sortValue: (row) => row.reason,
-  },
-  { key: 'games', header: 'Games', numeric: true },
-];
-
 /** Split outcome reasons into win-condition and loss-condition lists. */
 function groupOutcomeReasons(rows: OutcomeReasonRow[]): {
   wins: OutcomeReasonGroupRow[];
@@ -1049,6 +1039,24 @@ function Dashboard({
         </section>
         <BestDeckBar metric={bestDeckMetric(snapshot, filters)} />
         <div className="overview-analytics">
+          <section className="overview-panel" aria-labelledby="overview-wvl-title">
+            <div className="section-heading">
+              <div>
+                <h3 id="overview-wvl-title">Wins vs Losses</h3>
+                <p className="section-description">
+                  How your games look when you win compared to when you lose.
+                </p>
+              </div>
+            </div>
+            <SortableTable
+              caption="Combat splits by result"
+              columns={combatSplitColumns}
+              getRowKey={(row) => row.split}
+              rows={snapshot.combat_split ?? []}
+            />
+          </section>
+        </div>
+        <div className="overview-analytics">
           <section className="overview-panel" aria-labelledby="overview-play-draw-title">
             <div className="section-heading">
               <div>
@@ -1079,27 +1087,6 @@ function Dashboard({
             />
           </section>
         </div>
-      </section>
-
-      <Section
-        id="outcomes"
-        title="Wins & Losses"
-        description="How your games look when you win versus when you lose, how they actually end, and what your kept opening hands cost you."
-      >
-        <div className="section-heading">
-          <div>
-            <h3>Wins vs Losses</h3>
-            <p className="section-description">
-              How your games look when you win compared to when you lose.
-            </p>
-          </div>
-        </div>
-        <SortableTable
-          caption="Combat splits by result"
-          columns={combatSplitColumns}
-          getRowKey={(row) => row.split}
-          rows={snapshot.combat_split ?? []}
-        />
         <div className="overview-analytics">
           <section className="overview-panel" aria-labelledby="outcomes-reasons-title">
             <div className="section-heading">
@@ -1108,25 +1095,23 @@ function Dashboard({
               </div>
             </div>
             <h4 className="outcome-group-title outcome-group-title-win">Wins</h4>
-            <div className="outcome-reason-table">
-              <SortableTable
-                caption="How wins end"
-                columns={outcomeReasonGroupColumns}
-                getRowKey={(row) => row.reason}
-                initialSort={{ key: 'games', direction: 'desc' }}
-                rows={outcomeGroups.wins}
-              />
-            </div>
+            <ul className="outcome-reason-list" aria-label="How wins end">
+              {outcomeGroups.wins.map((row) => (
+                <li key={row.reason}>
+                  <span>{row.reason.replaceAll('_', ' ')}</span>
+                  <span className="outcome-reason-count">{formatNumber(row.games)}</span>
+                </li>
+              ))}
+            </ul>
             <h4 className="outcome-group-title outcome-group-title-loss">Losses</h4>
-            <div className="outcome-reason-table">
-              <SortableTable
-                caption="How losses end"
-                columns={outcomeReasonGroupColumns}
-                getRowKey={(row) => row.reason}
-                initialSort={{ key: 'games', direction: 'desc' }}
-                rows={outcomeGroups.losses}
-              />
-            </div>
+            <ul className="outcome-reason-list" aria-label="How losses end">
+              {outcomeGroups.losses.map((row) => (
+                <li key={row.reason}>
+                  <span>{row.reason.replaceAll('_', ' ')}</span>
+                  <span className="outcome-reason-count">{formatNumber(row.games)}</span>
+                </li>
+              ))}
+            </ul>
           </section>
           <section className="overview-panel" aria-labelledby="outcomes-opener-title">
             <div className="section-heading">
@@ -1142,7 +1127,7 @@ function Dashboard({
             />
           </section>
         </div>
-      </Section>
+      </section>
 
       <Section
         id="trend"
