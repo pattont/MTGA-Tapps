@@ -51,6 +51,7 @@ function limitedBase(label: string): string | null {
   return null;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper, exported for tests
 export function groupLimitedFormats(rows: FormatRow[]): GroupedFormatRow[] {
   const out: GroupedFormatRow[] = [];
   const groups = new Map<string, GroupedFormatRow>();

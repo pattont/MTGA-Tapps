@@ -1987,6 +1987,56 @@ def test_card_detail_reports_multiplicity(tmp_path):
     assert buckets[1]["pct_of_games"] == 50.0
     assert buckets[1]["win_rate"] == 100.0
     assert buckets[1]["expected_pct_at_least"] is not None
+    # Buckets 2–4+ are always emitted (even at zero games) so the expected
+    # percentages for rare multiples stay visible.
+    for key in (2, 3, 4):
+        assert buckets[key]["games"] == 0
+        assert buckets[key]["win_rate"] is None
+        assert buckets[key]["expected_pct_at_least"] is not None
+    assert buckets[4]["label"] == "4+"
+
+
+def test_card_detail_reports_opponent_multiplicity(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category,
+                played_count, drawn_count
+            ) values (?, ?, NULL, 'Lightning Helix', 'Instant', ?, ?)
+            """,
+            [
+                # game-1 (a win for the player): opponent resolved it 3 times.
+                ("game-1", "opponent-1", 3, 0),
+                # game-2 (a loss): one copy, visible as both a draw and a cast
+                # (max, not sum, so it still counts as one copy).
+                ("game-2", "opponent-2", 1, 1),
+            ],
+        )
+
+    detail = card_detail(db_path, "Lightning Helix")
+
+    opp = detail["opponent_multiplicity"]
+    assert opp["games"] == 2
+    buckets = {row["copies_seen"]: row for row in opp["buckets"]}
+    assert set(buckets) == {1, 2, 3, 4}
+    assert buckets[3]["games"] == 1
+    assert buckets[3]["win_rate"] == 100.0
+    assert buckets[3]["pct_at_least"] == 50.0
+    assert buckets[1]["games"] == 1
+    assert buckets[1]["win_rate"] == 0.0
+    assert buckets[1]["pct_at_least"] == 100.0
+    assert buckets[2]["games"] == 0
+    assert buckets[2]["win_rate"] is None
+    # At-least is cumulative over higher buckets even through empty ones.
+    assert buckets[2]["pct_at_least"] == 50.0
+    assert buckets[4]["games"] == 0
+    assert buckets[4]["label"] == "4+"
+    # No decklist knowledge for opponents: expectation is always absent.
+    assert all(row["expected_pct_at_least"] is None for row in opp["buckets"])
+    # Player-side multiplicity has no data for this card.
+    assert detail["multiplicity"]["games"] == 0
 
 
 def test_dashboard_snapshot_reports_schedule_fatigue_and_streaks(tmp_path):

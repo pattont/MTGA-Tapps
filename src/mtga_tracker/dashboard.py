@@ -3208,6 +3208,9 @@ def _card_multiplicity(
     decklist, where it was seen), count how many copies the player saw
     (opening hand + visible draws) and compare against the hypergeometric
     expectation from the decklist copies and total cards seen that game.
+
+    Buckets 1 through 4+ are always emitted (even at zero games) so the
+    expected percentages for rarer multiples stay visible.
     """
     name_clause = _card_name_clause("", variants)
     name_params = _card_name_params(variants)
@@ -3295,6 +3298,13 @@ def _card_multiplicity(
                     draw_count=min(cards_seen, deck_size),
                 )
 
+    # Always surface the 1..4+ rows: a zero-game row still shows the
+    # hypergeometric expectation, which is the interesting part for 3 and 4.
+    for key in (1, 2, 3, 4):
+        buckets.setdefault(
+            key, {"copies_seen": key, "games": 0, "wins": 0, "losses": 0}
+        )
+
     total_games = len(seen_rows)
     bucket_rows = []
     for key in sorted(buckets):
@@ -3313,6 +3323,81 @@ def _card_multiplicity(
                     if expected_games and key in expected_at_least and key > 0
                     else None
                 ),
+                "wins": bucket["wins"],
+                "losses": bucket["losses"],
+                "win_rate": round(100.0 * bucket["wins"] / decided, 1) if decided else None,
+            }
+        )
+    return {"games": total_games, "buckets": bucket_rows}
+
+
+def _card_opponent_multiplicity(
+    conn: sqlite3.Connection, variants: List[str]
+) -> Dict[str, Any]:
+    """Repeat-copy analysis from the opponent's side of your games.
+
+    Opponent decklists are unknown, so there is no hypergeometric expectation
+    here; copies are what the opponent visibly produced in a game (casts plus
+    revealed draws, per game_card_summary). Win rates are yours: how you fared
+    when an opponent showed N copies of this card in one game. A recurred copy
+    (recast from the graveyard, say) counts each time it is played, which is
+    the right lens for "they kept resolving it".
+    """
+    name_clause = _card_name_clause("s", variants)
+    rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              g.id AS game_id,
+              g.outcome,
+              SUM(MAX(COALESCE(s.played_count, 0), COALESCE(s.drawn_count, 0)))
+                AS copies_seen
+            FROM game_card_summary s
+            JOIN participants p ON p.id = s.participant_id AND p.role = 'opponent'
+            JOIN games g ON g.id = s.game_id
+            WHERE {name_clause}
+              AND (COALESCE(s.played_count, 0) > 0 OR COALESCE(s.drawn_count, 0) > 0)
+            GROUP BY g.id, g.outcome
+            """,
+            _card_name_params(variants),
+        )
+    )
+    if not rows:
+        return {"games": 0, "buckets": []}
+
+    buckets: Dict[int, Dict[str, Any]] = {}
+    for row in rows:
+        copies = max(int(row.get("copies_seen") or 0), 1)
+        bucket_key = min(copies, 4)
+        bucket = buckets.setdefault(
+            bucket_key,
+            {"copies_seen": bucket_key, "games": 0, "wins": 0, "losses": 0},
+        )
+        bucket["games"] += 1
+        if row.get("outcome") == "win":
+            bucket["wins"] += 1
+        elif row.get("outcome") == "loss":
+            bucket["losses"] += 1
+
+    for key in (1, 2, 3, 4):
+        buckets.setdefault(
+            key, {"copies_seen": key, "games": 0, "wins": 0, "losses": 0}
+        )
+
+    total_games = len(rows)
+    bucket_rows = []
+    for key in sorted(buckets):
+        bucket = buckets[key]
+        decided = bucket["wins"] + bucket["losses"]
+        games_at_least = sum(b["games"] for k, b in buckets.items() if k >= key)
+        bucket_rows.append(
+            {
+                "copies_seen": key,
+                "label": f"{key}+" if key == 4 else str(key),
+                "games": bucket["games"],
+                "pct_of_games": round(100.0 * bucket["games"] / total_games, 1),
+                "pct_at_least": round(100.0 * games_at_least / total_games, 1),
+                "expected_pct_at_least": None,
                 "wins": bucket["wins"],
                 "losses": bucket["losses"],
                 "win_rate": round(100.0 * bucket["wins"] / decided, 1) if decided else None,
@@ -3453,6 +3538,7 @@ def card_detail(
             match_params,
         ).fetchone()
         multiplicity = _card_multiplicity(conn, variants)
+        opponent_multiplicity = _card_opponent_multiplicity(conn, variants)
 
     opponent_usage = next((row for row in by_role if row["role"] == "opponent"), None)
     opponent_games = int(opponent_usage["games_seen"] or 0) if opponent_usage else 0
@@ -3505,6 +3591,7 @@ def card_detail(
         },
         "by_deck": by_deck,
         "multiplicity": multiplicity,
+        "opponent_multiplicity": opponent_multiplicity,
         "opener_impact": {
             "games_in_opener": int(opener[0] or 0) if opener else 0,
             "wins": int(opener[1] or 0) if opener else 0,
