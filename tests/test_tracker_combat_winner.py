@@ -6830,3 +6830,54 @@ def test_cbrawl_match_is_not_downgraded_by_ranked_deck_attribute():
         }
     }
     assert tracker._best_brawl_format_label() == "Historic Brawl"
+
+
+def test_pregame_concede_is_a_real_game_not_a_ghost(tmp_path, capsys):
+    """Opponent concedes while you're looking at your opening 7: no turns, no
+    kept hand, no draws — but a mulligan prompt was seen and Arena scored a
+    winner. That's a real win, not a ghost, and the visible hand becomes the
+    opening hand."""
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "analytics.sqlite3"
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.game_start_time = datetime(2026, 8, 13, 12, 0, 0)
+    tracker.game_state.opening_mulligan_prompt_seen = True
+    tracker.game_state._hand_before_mulligan = [
+        "Mountain", "Mountain", "Mountain", "Lightning Bolt",
+        "Monastery Swiftspear", "Play with Fire", "Kumano Faces Kakkazan",
+    ]
+    tracker.game_state._hand_before_mulligan_ids = [1, 1, 1, 2, 3, 4, 5]
+    tracker.game_state._hand_before_mulligan_events = []
+
+    tracker._persist_game_analytics("win", "opponent_conceded")
+    out = capsys.readouterr().out
+    assert "ghost game" not in out
+
+    conn = sqlite3.connect(tracker._console_db_path)
+    outcome = conn.execute("SELECT outcome FROM games").fetchone()
+    hand = conn.execute("SELECT COUNT(*) FROM game_opening_hand_cards").fetchone()[0]
+    conn.close()
+    assert outcome == ("win",)
+    assert hand == 7  # the visible 7 persisted as the opening hand
+
+
+def test_true_ghost_tail_is_still_skipped(tmp_path, capsys):
+    """A post-concede tail (no mulligan prompt, no hand, no turns) must keep
+    being skipped even when it carries a winner hint."""
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "analytics.sqlite3"
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.game_start_time = datetime(2026, 8, 13, 12, 0, 0)
+    tracker.game_state.opening_mulligan_prompt_seen = False
+
+    tracker._persist_game_analytics("win", "summary_tail")
+    assert "ghost game" in capsys.readouterr().out
+
+    conn = sqlite3.connect(tracker._console_db_path)
+    games = conn.execute("SELECT COUNT(*) FROM games").fetchone()[0]
+    conn.close()
+    assert games == 0
