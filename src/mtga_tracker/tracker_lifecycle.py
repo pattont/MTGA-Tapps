@@ -829,6 +829,10 @@ class TrackerLifecycleMixin:
                     "structured_game_over_json" if structured_match_complete else "json_winner_hint"
                 )
                 self._set_winner_seat(winner, reason=winner_reason, priority=winner_priority)
+            winloss_result = self._extract_latest_game_result(json_data)
+            if winloss_result is not None and winloss_result.get("reason"):
+                self.game_state.win_result_reason = str(winloss_result.get("reason"))
+            self._capture_loss_of_game_annotation(json_data)
             draw_result = self._extract_latest_draw_result(json_data)
             if draw_result is not None:
                 self.game_state.result_type = str(draw_result.get("result") or "ResultType_Draw")
@@ -837,6 +841,47 @@ class TrackerLifecycleMixin:
                 )
                 structured_match_complete = True
         return json_data, structured_match_complete
+
+    def _capture_loss_of_game_annotation(self, data: Optional[Dict[str, Any]]) -> None:
+        """Record the SBA reason from an AnnotationType_LossOfGame annotation.
+
+        At game over, Arena tags the losing seat with the state-based action
+        that killed it — SBA_LifeTotal, SBA_DrawEmptyLibrary (decked),
+        SBA_Poisoned — which is the only way to tell those endings apart,
+        since life totals stay positive for deckouts and poison.
+        """
+        if not isinstance(data, dict):
+            return
+        annotation_lists = []
+        for key in ("annotations", "persistentAnnotations"):
+            found = self._find_nested(data, key)
+            if isinstance(found, list):
+                annotation_lists.append(found)
+        for annotations in annotation_lists:
+            for annotation in annotations:
+                if not isinstance(annotation, dict):
+                    continue
+                types = annotation.get("type")
+                if not isinstance(types, list) or not any(
+                    "LossOfGame" in str(entry) for entry in types
+                ):
+                    continue
+                affected = annotation.get("affectedIds")
+                seat = (
+                    self._normalize_seat_id(affected[0])
+                    if isinstance(affected, list) and affected
+                    else None
+                )
+                reason = None
+                for detail in annotation.get("details") or []:
+                    if isinstance(detail, dict) and detail.get("key") == "reason":
+                        values = detail.get("valueString")
+                        if isinstance(values, list) and values:
+                            reason = str(values[0])
+                        break
+                if reason:
+                    self.game_state.loss_reason_code = reason
+                    self.game_state.loss_reason_seat = seat
 
     def _handle_concede_end_line(
         self, line: str, line_lower: str, json_data: Optional[Dict[str, Any]]
@@ -1013,15 +1058,28 @@ class TrackerLifecycleMixin:
             return "draw", self._draw_reason_text(getattr(self.game_state, "result_reason", None))
 
         pl, ol = self.game_state.player_life, self.game_state.opponent_life
+
+        # The LossOfGame annotation names the exact state-based action, which
+        # is the only way to distinguish deckouts and poison from concessions
+        # (life stays positive in all three).
+        sba_reason = self._loss_annotation_reason_text()
+        if sba_reason is not None:
+            return sba_reason
+
         if pl <= 0:
             return "loss", "You reached 0 life"
         if ol <= 0:
             return "win", "Opponent reached 0 life"
 
         if self.game_state.winner_seat is not None and self.game_state.player_seat_id in (1, 2):
+            win_reason = str(getattr(self.game_state, "win_result_reason", "") or "")
             if self.game_state.winner_seat == self.game_state.player_seat_id:
+                if "Timeout" in win_reason:
+                    return "win", "Opponent timed out"
                 return "win", "Opponent conceded/disconnected"
             if self.game_state.winner_seat == self.game_state.opponent_seat_id:
+                if "Timeout" in win_reason:
+                    return "loss", "You timed out"
                 return "loss", "You conceded/left the game"
             return "unknown", f"Winning seat: {self.game_state.winner_seat}"
 
@@ -1029,6 +1087,27 @@ class TrackerLifecycleMixin:
             return "unknown", f"Winning seat: {self.game_state.winner_seat}"
 
         return "unknown", f"Life totals: You {pl} - {ol} Opponent"
+
+    def _loss_annotation_reason_text(self) -> Optional[tuple]:
+        """Outcome + reason from the captured LossOfGame SBA, if any."""
+        code = str(getattr(self.game_state, "loss_reason_code", "") or "")
+        loser_seat = getattr(self.game_state, "loss_reason_seat", None)
+        if not code or loser_seat not in (1, 2):
+            return None
+        if self.game_state.player_seat_id not in (1, 2):
+            return None
+        player_lost = loser_seat == self.game_state.player_seat_id
+        outcome = "loss" if player_lost else "win"
+        subject = "You" if player_lost else "Opponent"
+        if "LifeTotal" in code:
+            return outcome, f"{subject} reached 0 life"
+        if "Library" in code or "Deck" in code or "Mill" in code:
+            return outcome, f"{subject} got decked (drew from an empty library)"
+        if "Poison" in code:
+            return outcome, f"{subject} got poisoned (10 counters)"
+        # Unknown SBA code: keep it visible rather than mislabeling as a concede.
+        humanized = code.replace("SBA_", "").replace("_", " ")
+        return outcome, f"{subject} lost to {humanized}"
 
     @staticmethod
     def _draw_reason_text(result_reason: Optional[str]) -> str:

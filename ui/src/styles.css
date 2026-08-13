@@ -446,6 +446,7 @@ a {
 
 /* Best Deck: slim full-width strip between the metric cards and the analytics panels. */
 .best-deck-bar {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -455,6 +456,20 @@ a {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel);
+  overflow: hidden;
+}
+
+/* Signature card art fading in from the right edge, mockup-style. */
+.best-deck-art {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: min(42%, 420px);
+  background-position: center 30%;
+  background-size: cover;
+  opacity: 0.5;
+  pointer-events: none;
+  mask-image: linear-gradient(to right, transparent, black 60%);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 60%);
 }
 
 .best-deck-label {
@@ -634,6 +649,43 @@ a.best-deck-name:focus-visible {
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
   line-height: 1.35;
+}
+
+.metric-card {
+  position: relative;
+}
+
+.metric-card-icon {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  color: var(--muted);
+  opacity: 0.75;
+}
+
+.metric-card-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.metric-card-win {
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+  background: color-mix(in srgb, var(--success) 7%, var(--panel));
+}
+
+.metric-card-win strong,
+.metric-card-win .metric-card-icon {
+  color: var(--success);
+}
+
+.metric-card-loss {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  background: var(--card-danger-bg);
+}
+
+.metric-card-loss strong,
+.metric-card-loss .metric-card-icon {
+  color: var(--danger);
 }
 
 .metric-card-danger {
@@ -2459,10 +2511,34 @@ tbody tr:hover {
   font-weight: 700;
 }
 
-/* How Games End: a real table so alignment matches every other table.
+/* How Games End: real tables so alignment matches every other table.
    Group rows are styled exactly like thead bars, tinted by result. */
+.outcome-reason-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0 6px;
+  align-items: start;
+}
+
 .outcome-reason-grid {
   min-width: 0;
+}
+
+.outcome-reason-pct {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.outcome-total-row td {
+  font-weight: 700;
+}
+
+.outcome-total-row-win td {
+  color: var(--success);
+}
+
+.outcome-total-row-loss td {
+  color: var(--danger);
 }
 
 .outcome-reason-grid .outcome-group-row th {
@@ -2470,11 +2546,11 @@ tbody tr:hover {
 }
 
 .outcome-reason-grid .outcome-group-row-win th {
-  color: var(--win, #4ade80);
+  color: var(--success);
 }
 
 .outcome-reason-grid .outcome-group-row-loss th {
-  color: var(--loss, #f87171);
+  color: var(--danger);
 }
 
 .mulligan-history-missing {

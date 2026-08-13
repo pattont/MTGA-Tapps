@@ -119,12 +119,17 @@ describe('metricCards', () => {
     } satisfies DashboardSnapshot;
 
     expect(metricCards(snapshot)).toEqual([
-      { label: 'Matches', value: '8' },
-      { label: 'Wins', value: '5' },
-      { label: 'Losses', value: '3' },
-      { label: 'Win Rate', value: '62.5%' },
-      { label: 'Longest Win Streak', value: '4' },
-      { label: 'Longest Loss Streak', value: '2' },
+      { label: 'Matches', value: '8', detail: 'a Bo3 counts once', iconName: 'matches' },
+      { label: 'Wins', value: '5', detail: '62.5% of total', tone: 'win', iconName: 'wins' },
+      { label: 'Losses', value: '3', detail: '37.5% of total', tone: 'loss', iconName: 'losses' },
+      { label: 'Win Rate', value: '62.5%', detail: 'of matches', iconName: 'winRate' },
+      { label: 'Longest Win Streak', value: '4', detail: 'matches in a row', iconName: 'winStreak' },
+      {
+        label: 'Longest Loss Streak',
+        value: '2',
+        detail: 'matches in a row',
+        iconName: 'lossStreak',
+      },
     ]);
   });
 

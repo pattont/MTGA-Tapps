@@ -1,3 +1,5 @@
+import { Flame, HeartCrack, Swords, Target, TrendingDown, Trophy } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { pageTitle } from './branding';
 import {
@@ -220,9 +222,32 @@ function SetupCard() {
   );
 }
 
-function BestDeckBar({ metric }: { metric: MetricDefinition }) {
+/** Maps metric icon keys to lucide icons; icons inherit the card's colors. */
+const METRIC_ICONS: Record<string, ReactNode> = {
+  matches: <Swords />,
+  wins: <Trophy />,
+  losses: <HeartCrack />,
+  winRate: <Target />,
+  winStreak: <Flame />,
+  lossStreak: <TrendingDown />,
+};
+
+function BestDeckBar({
+  metric,
+  visual,
+}: {
+  metric: MetricDefinition;
+  visual?: DeckRow['deck_visual'];
+}) {
   return (
     <section className="best-deck-bar" aria-label={metric.label}>
+      {visual?.image_url ? (
+        <div
+          className="best-deck-art"
+          style={{ backgroundImage: `url(${visual.image_url})` }}
+          aria-hidden="true"
+        />
+      ) : null}
       <span className="best-deck-label">{metric.label}</span>
       {metric.href ? (
         <a className="best-deck-name" href={metric.href}>
@@ -464,10 +489,17 @@ interface OutcomeReasonGroupRow {
   games: number;
 }
 
+/** Share of a side's total, e.g. 289 of 431 → "67.1%". */
+function formatShare(games: number, total: number): string {
+  return total > 0 ? `${((100 * games) / total).toFixed(1)}%` : '—';
+}
+
 /** Split outcome reasons into win-condition and loss-condition lists. */
 function groupOutcomeReasons(rows: OutcomeReasonRow[]): {
   wins: OutcomeReasonGroupRow[];
   losses: OutcomeReasonGroupRow[];
+  winTotal: number;
+  lossTotal: number;
 } {
   const wins = rows
     .filter((row) => row.wins > 0)
@@ -477,7 +509,12 @@ function groupOutcomeReasons(rows: OutcomeReasonRow[]): {
     .filter((row) => row.losses > 0)
     .map((row) => ({ reason: row.reason, games: row.losses }))
     .sort((a, b) => b.games - a.games);
-  return { wins, losses };
+  return {
+    wins,
+    losses,
+    winTotal: wins.reduce((sum, row) => sum + row.games, 0),
+    lossTotal: losses.reduce((sum, row) => sum + row.games, 0),
+  };
 }
 
 const openerLandColumns: Column<OpenerLandRow>[] = [
@@ -1024,12 +1061,21 @@ function Dashboard({
               key={metric.label}
               detail={metric.detail}
               href={metric.href}
+              icon={metric.iconName ? METRIC_ICONS[metric.iconName] : undefined}
               label={metric.label}
+              tone={metric.tone}
               value={metric.value}
             />
           ))}
         </section>
-        <BestDeckBar metric={bestDeckMetric(snapshot, filters)} />
+        <BestDeckBar
+          metric={bestDeckMetric(snapshot, filters)}
+          visual={
+            snapshot.decks.find(
+              (deck) => deck.deck_name === bestDeckMetric(snapshot, filters).value,
+            )?.deck_visual
+          }
+        />
         <div className="overview-analytics">
           <section className="overview-panel" aria-labelledby="overview-wvl-title">
             <div className="section-heading">
@@ -1086,41 +1132,63 @@ function Dashboard({
                 <h3 id="outcomes-reasons-title">How Games End</h3>
               </div>
             </div>
-            <div className="table-wrap" role="region" aria-label="How wins end" tabIndex={0}>
-              <table className="outcome-reason-grid">
-                <caption>How wins end</caption>
-                <tbody>
-                  <tr className="outcome-group-row outcome-group-row-win">
-                    <th colSpan={2} scope="colgroup">
-                      Wins
-                    </th>
-                  </tr>
-                  {outcomeGroups.wins.map((row) => (
-                    <tr key={`win-${row.reason}`}>
-                      <td>{row.reason.replaceAll('_', ' ')}</td>
-                      <td className="num">{formatNumber(row.games)}</td>
+            <div className="outcome-reason-pair">
+              <div className="table-wrap" role="region" aria-label="How wins end" tabIndex={0}>
+                <table className="outcome-reason-grid">
+                  <caption>How wins end</caption>
+                  <tbody>
+                    <tr className="outcome-group-row outcome-group-row-win">
+                      <th colSpan={2} scope="colgroup">
+                        Wins
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="table-wrap" role="region" aria-label="How losses end" tabIndex={0}>
-              <table className="outcome-reason-grid">
-                <caption>How losses end</caption>
-                <tbody>
-                  <tr className="outcome-group-row outcome-group-row-loss">
-                    <th colSpan={2} scope="colgroup">
-                      Losses
-                    </th>
-                  </tr>
-                  {outcomeGroups.losses.map((row) => (
-                    <tr key={`loss-${row.reason}`}>
-                      <td>{row.reason.replaceAll('_', ' ')}</td>
-                      <td className="num">{formatNumber(row.games)}</td>
+                    {outcomeGroups.wins.map((row) => (
+                      <tr key={`win-${row.reason}`}>
+                        <td>{row.reason.replaceAll('_', ' ')}</td>
+                        <td className="num">
+                          {formatNumber(row.games)}
+                          <span className="outcome-reason-pct">
+                            {' '}
+                            ({formatShare(row.games, outcomeGroups.winTotal)})
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="outcome-total-row outcome-total-row-win">
+                      <td>Total</td>
+                      <td className="num">{formatNumber(outcomeGroups.winTotal)}</td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </tbody>
+                </table>
+              </div>
+              <div className="table-wrap" role="region" aria-label="How losses end" tabIndex={0}>
+                <table className="outcome-reason-grid">
+                  <caption>How losses end</caption>
+                  <tbody>
+                    <tr className="outcome-group-row outcome-group-row-loss">
+                      <th colSpan={2} scope="colgroup">
+                        Losses
+                      </th>
+                    </tr>
+                    {outcomeGroups.losses.map((row) => (
+                      <tr key={`loss-${row.reason}`}>
+                        <td>{row.reason.replaceAll('_', ' ')}</td>
+                        <td className="num">
+                          {formatNumber(row.games)}
+                          <span className="outcome-reason-pct">
+                            {' '}
+                            ({formatShare(row.games, outcomeGroups.lossTotal)})
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="outcome-total-row outcome-total-row-loss">
+                      <td>Total</td>
+                      <td className="num">{formatNumber(outcomeGroups.lossTotal)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           </section>
           <section className="overview-panel" aria-labelledby="outcomes-opener-title">
@@ -1156,12 +1224,38 @@ function Dashboard({
       >
         {snapshot.ranked_summary && snapshot.ranked_summary.matches > 0 ? (
           <section className="metric-grid" aria-label="Ranked record">
-            <MetricCard label="Ranked Matches" value={formatNumber(snapshot.ranked_summary.matches)} />
-            <MetricCard label="Wins" value={formatNumber(snapshot.ranked_summary.wins)} />
-            <MetricCard label="Losses" value={formatNumber(snapshot.ranked_summary.losses)} />
-            <MetricCard label="Win Rate" value={formatPercent(snapshot.ranked_summary.win_rate)} />
-            <MetricCard label="Longest Win Streak" value={formatNumber(snapshot.ranked_summary.longest_win)} />
-            <MetricCard label="Longest Loss Streak" value={formatNumber(snapshot.ranked_summary.longest_loss)} />
+            <MetricCard
+              icon={METRIC_ICONS.matches}
+              label="Ranked Matches"
+              value={formatNumber(snapshot.ranked_summary.matches)}
+            />
+            <MetricCard
+              icon={METRIC_ICONS.wins}
+              label="Wins"
+              tone="win"
+              value={formatNumber(snapshot.ranked_summary.wins)}
+            />
+            <MetricCard
+              icon={METRIC_ICONS.losses}
+              label="Losses"
+              tone="loss"
+              value={formatNumber(snapshot.ranked_summary.losses)}
+            />
+            <MetricCard
+              icon={METRIC_ICONS.winRate}
+              label="Win Rate"
+              value={formatPercent(snapshot.ranked_summary.win_rate)}
+            />
+            <MetricCard
+              icon={METRIC_ICONS.winStreak}
+              label="Longest Win Streak"
+              value={formatNumber(snapshot.ranked_summary.longest_win)}
+            />
+            <MetricCard
+              icon={METRIC_ICONS.lossStreak}
+              label="Longest Loss Streak"
+              value={formatNumber(snapshot.ranked_summary.longest_loss)}
+            />
           </section>
         ) : null}
         {(snapshot.filter_options.rank_seasons ?? []).length > 1 ? (
