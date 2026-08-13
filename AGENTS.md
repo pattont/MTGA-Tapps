@@ -327,3 +327,23 @@ High-risk areas needing tests:
   `src/mtga_tracker/__init__.py` (the tag drives the release workflow).
 - Never commit generated or local-only files: `ui/dist/`, `data/*.sqlite3*`, `config.py`,
   `settings.json`, and `.claude/` are all gitignored on purpose.
+
+## Cursor Cloud specific instructions
+
+The update script keeps the Python venv (`.[dev,gui]`) and `ui/` node_modules current, so
+dependencies are already installed when a cloud agent boots. See the `## Commands` section for
+the canonical lint/test/build/run commands — this section only records non-obvious cloud caveats.
+
+- No Arena in the cloud: MTGA is not installed, so there is no live `Player.log` and the live
+  tail (`mtga-tracker`, `mtga-tracker-app`) has nothing to read. To exercise the full pipeline
+  (parse → analytics → dashboard) headlessly, replay log lines through a tracker with
+  `tests/replay_support.py:replay_lines` + `make_tracker` (see `tests/test_log_replay.py`) after
+  setting `tracker._console_db_path` to a SQLite file, then serve that file with
+  `python -m mtga_tracker.dashboard --db <file>`.
+- The dashboard serves the gitignored `ui/dist`, which the update script does NOT build. Run
+  `cd ui && npm run build` once before starting the dashboard, or the frontend won't load.
+- The dashboard is the runnable service here (`http://127.0.0.1:8765`). Its only analytics-write
+  endpoint is `POST /api/game/annotation` (notes/tags on the Game Detail page); everything else is
+  read-only GET.
+- GUI code (`menu_app.py`, PyQt6) needs a display; headless runs deselect it exactly as the
+  `## Commands` pytest invocation shows (`--ignore=tests/test_menu_app.py`).
