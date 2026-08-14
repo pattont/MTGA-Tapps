@@ -112,6 +112,10 @@ class TrackerStackMixin:
         stats = self._seat_stack_stats(seat_id)
         if stats is not None:
             stats[stat_key] += 1
+        if stat_key == "countered":
+            match_stats = self._seat_stats(seat_id)
+            if match_stats is not None:
+                match_stats["spells_countered"] += 1
         if status == "resolved" and not item.get("show_lifecycle"):
             return True
         turn_prefix = self._turn_prefix_for_number(self._event_turn_number(seat_id, item.get("turn")))
@@ -158,6 +162,8 @@ class TrackerStackMixin:
             stats["wipes_played"] += 1
         if "bounce" in roles:
             stats["bounces_played"] += 1
+        if "counter" in roles:
+            stats["counters_played"] += 1
 
     def _reconcile_deleted_stack_items(self, deleted_instance_ids: Any) -> None:
         """Infer unresolved stack exits after the payload's annotations have had a chance to resolve them."""

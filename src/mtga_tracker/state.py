@@ -53,6 +53,11 @@ class GameState:
             "wipes_played": 0,
             "bounces_drawn": 0,
             "bounces_played": 0,
+            "counters_drawn": 0,
+            "counters_played": 0,
+            # This seat's spells that GOT countered (the other seat's counters
+            # landing) — from stack lifecycle, not text classification.
+            "spells_countered": 0,
             # Lands this seat LOST to an enemy card, and how many of those
             # they answered with a land drop by the end of their next turn.
             "lands_lost": 0,

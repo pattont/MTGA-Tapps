@@ -433,6 +433,25 @@ export function GameDetailPage({
   };
   const playerView = buildStatsView(playerStats, false);
   const opponentView = buildStatsView(opponentStats, true);
+  // "Landed" counters are the OTHER side's spells that got countered; the
+  // rest were paid through (soft counters), countered themselves, or fizzled.
+  const attachCounterOutcomes = (
+    view: Record<string, number | string | null | undefined> | null,
+    otherStats: GameParticipantStatsRow | undefined,
+  ) => {
+    if (!view) {
+      return;
+    }
+    const landed = otherStats?.spells_countered;
+    view.counters_landed = landed ?? null;
+    const played = view.counters_played;
+    view.counters_paid_through =
+      typeof played === 'number' && typeof landed === 'number'
+        ? Math.max(0, played - landed)
+        : null;
+  };
+  attachCounterOutcomes(playerView, opponentStats);
+  attachCounterOutcomes(opponentView, playerStats);
   const combatGroups: { title: string; rows: [string, string][] }[] = [
     {
       title: 'Attack',
@@ -481,6 +500,16 @@ export function GameDetailPage({
         ['Lands lost to destruction', 'lands_lost'],
         ['Replaced with a land drop', 'lands_replaced'],
         ['Replacement rate', 'land_replacement_rate'],
+      ],
+    },
+    {
+      title: 'Counter Magic',
+      rows: [
+        ['Counter magic drawn', 'counters_drawn'],
+        ['Counter magic played', 'counters_played'],
+        ['Counters that landed', 'counters_landed'],
+        ['Paid through / missed', 'counters_paid_through'],
+        ['Own spells countered', 'spells_countered'],
       ],
     },
     {
