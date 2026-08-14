@@ -613,10 +613,10 @@ a.best-deck-name:focus-visible {
 
 .overview-analytics {
   display: grid;
-  gap: 14px;
-  margin-top: 12px;
+  gap: 10px;
+  margin-top: 8px;
   border-top: 1px solid var(--border);
-  padding-top: 12px;
+  padding-top: 8px;
 }
 
 /* Subgroups live inside the section box now — no nested boxes, rules only. */
@@ -638,7 +638,7 @@ a.best-deck-name:focus-visible {
     border-top: 0;
     padding-top: 0;
     border-left: 1px solid var(--border);
-    padding-left: 14px;
+    padding-left: 10px;
   }
 }
 
@@ -1127,10 +1127,17 @@ caption {
 
 th,
 td {
-  padding: 8px 9px;
+  padding: 6px 9px;
   border-bottom: 1px solid var(--border);
   text-align: left;
   vertical-align: middle;
+}
+
+/* Header bars run slimmer than data rows to save vertical room. */
+thead th,
+.outcome-reason-grid .outcome-group-row th {
+  padding-top: 4px;
+  padding-bottom: 4px;
 }
 
 th {
@@ -2648,18 +2655,6 @@ tbody tr:hover {
 .outcome-reason-pct {
   color: var(--muted);
   font-size: 0.8rem;
-}
-
-.outcome-total-row td {
-  font-weight: 700;
-}
-
-.outcome-total-row-win td {
-  color: var(--success);
-}
-
-.outcome-total-row-loss td {
-  color: var(--danger);
 }
 
 .result-label-win {
