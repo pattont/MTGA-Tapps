@@ -405,7 +405,17 @@ const momentumColumns: Column<MomentumRow>[] = [
 ];
 
 const combatSplitColumns: Column<CombatSplitRow>[] = [
-  { key: 'split', header: 'Result' },
+  {
+    key: 'split',
+    header: 'Result',
+    render: (row) => (
+      <span className={row.split === 'Wins' ? 'result-label-win' : 'result-label-loss'}>
+        {row.split}
+      </span>
+    ),
+    // Ascending puts Wins first, matching the tinted card order up top.
+    sortValue: (row) => (row.split === 'Wins' ? 0 : 1),
+  },
   { key: 'games', header: 'Games', numeric: true },
   {
     key: 'avg_damage_dealt',
@@ -1082,7 +1092,9 @@ function Dashboard({
               <div>
                 <h3 id="overview-wvl-title">Wins vs Losses</h3>
                 <p className="section-description">
-                  How your games look when you win compared to when you lose.
+                  How your games look when you win compared to when you lose. Per game, and only
+                  games with combat telemetry — early tracker versions didn&apos;t record it, so
+                  totals run below How Games End.
                 </p>
               </div>
             </div>
@@ -1130,6 +1142,10 @@ function Dashboard({
             <div className="section-heading">
               <div>
                 <h3 id="outcomes-reasons-title">How Games End</h3>
+                <p className="section-description">
+                  Individual games — a Bo3 contributes each of its games, so totals run above the
+                  match-level cards up top.
+                </p>
               </div>
             </div>
             <div className="outcome-reason-pair">
