@@ -7149,3 +7149,91 @@ def test_token_lifecycle_counting():
     # Non-token objects never touch token stats.
     tracker._count_token_loss({"instanceId": 702, "type": "GameObjectType_Card"}, 702, "Destroy", 1)
     assert tracker.game_state.match_stats[1]["tokens_destroyed"] == 0
+
+
+def test_permanent_removed_counting_and_dedupe():
+    tracker = _removal_tracker()
+
+    tracker._count_permanent_removed(801, ["CardType_Creature"], 1)
+    tracker._count_permanent_removed(801, ["CardType_Creature"], 1)  # dedupe
+    tracker._count_permanent_removed(802, ["CardType_Enchantment"], 1)
+    tracker._count_permanent_removed(803, ["CardType_Land"], 1)  # lands excluded
+
+    stats = tracker.game_state.match_stats[1]
+    assert stats["creatures_removed"] == 1
+    assert stats["noncreatures_removed"] == 1
+
+
+def test_sba_deaths_count_zero_toughness_but_never_lethal_damage(capsys):
+    tracker = _removal_tracker()
+    creature = {
+        "instanceId": 810,
+        "grpId": 900,
+        "cardTypes": ["CardType_Creature"],
+        "ownerSeatId": 1,
+        "controllerSeatId": 1,
+    }
+    # Lethal-damage deaths are unattributable (combat vs burn) -> never counted.
+    tracker._emit_state_based_zone_transfer(
+        category="SBA_Damage",
+        instance_id=810,
+        card_obj=creature,
+        annotation={},
+        game_objects_by_id={810: creature},
+        zones_by_id=None,
+        zone_src=None,
+        zone_dest=None,
+    )
+    assert tracker.game_state.match_stats[1]["creatures_removed"] == 0
+
+    # Zero toughness (-X/-X removal or wipe) counts.
+    shrunk = dict(creature, instanceId=811)
+    tracker._emit_state_based_zone_transfer(
+        category="SBA_ZeroToughness",
+        instance_id=811,
+        card_obj=shrunk,
+        annotation={},
+        game_objects_by_id={811: shrunk},
+        zones_by_id=None,
+        zone_src=None,
+        zone_dest=None,
+    )
+    assert tracker.game_state.match_stats[1]["creatures_removed"] == 1
+
+
+def test_permanent_bounced_counting_and_dedupe():
+    tracker = _removal_tracker()
+
+    tracker._count_permanent_bounced(820, ["CardType_Creature"], 2)
+    tracker._count_permanent_bounced(820, ["CardType_Creature"], 2)  # dedupe
+    tracker._count_permanent_bounced(821, ["CardType_Artifact"], 2)
+
+    stats = tracker.game_state.match_stats[2]
+    assert stats["creatures_bounced"] == 1
+    assert stats["noncreatures_bounced"] == 1
+
+
+def test_forced_sacrifice_counts_as_removal_but_own_sacrifice_does_not(capsys):
+    tracker = _removal_tracker()
+    edict = {"instanceId": 830, "controllerSeatId": 2}
+    victim = {
+        "instanceId": 831,
+        "grpId": 900,
+        "cardTypes": ["CardType_Creature"],
+        "ownerSeatId": 1,
+        "controllerSeatId": 1,
+    }
+    objects = {830: edict, 831: victim}
+    tracker._handle_removal_zone_transfer(
+        "Sacrifice", 831, 831, victim, {}, objects, None, None, None, None, 830
+    )
+    assert tracker.game_state.match_stats[1]["creatures_removed"] == 1
+
+    # Same shape but the sacrifice effect belongs to the owner (sac outlet).
+    own_outlet = {"instanceId": 832, "controllerSeatId": 1}
+    fodder = dict(victim, instanceId=833)
+    objects = {832: own_outlet, 833: fodder}
+    tracker._handle_removal_zone_transfer(
+        "Sacrifice", 833, 833, fodder, {}, objects, None, None, None, None, 832
+    )
+    assert tracker.game_state.match_stats[1]["creatures_removed"] == 1

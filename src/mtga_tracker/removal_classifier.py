@@ -8,8 +8,9 @@ removal count from the first game. Roles:
 - ``wipe``: clears the board — destroy/exile/sacrifice all creatures, damage
   to each creature, mass -X/-X. Mass exile counts (the board is cleared no
   matter which zone the creatures end up in).
-- ``bounce``: mass bounce — "return all/each creatures to their owners'
-  hands". Tracked separately from wipes.
+- ``bounce``: bounce — targeted ("return target creature to its owner's
+  hand") or mass ("return all/each creatures to their owners' hands").
+  Tracked separately from wipes and spot removal.
 - ``removal``: targeted elimination — destroy/exile target creature,
   damage to a target, targeted -X/-X, fight effects.
 
@@ -53,6 +54,10 @@ _BOUNCE_PATTERNS = tuple(
     for pattern in (
         rf"returns? all (?:other )?{_CREATUREISH} to their owners?['’]?s? hands?",
         rf"returns? each (?:other )?{_CREATUREISH} to (?:its|their) owners?['’]?s? hands?",
+        # Targeted bounce (Unsummon and friends). "(?!land)" keeps land-cycling
+        # tricks out; owner phrasing keeps "return ... from your graveyard to
+        # your hand" recursion from matching.
+        r"returns? (?:up to \w+ )?(?:another )?target (?!land)[^.]{0,60}to (?:its|their) owners?['’]?s? hands?",
     )
 )
 

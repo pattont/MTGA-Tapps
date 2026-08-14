@@ -103,3 +103,16 @@ def test_counter_magic_classification():
     ) == {ROLE_COUNTER}
     # "Counter" as in +1/+1 counters must NOT classify.
     assert classify_ability_texts(["Put a +1/+1 counter on target creature."]) == frozenset()
+
+def test_targeted_bounce_is_bounce():
+    assert classify_ability_texts(
+        ["Return target creature to its owner's hand."]
+    ) == {ROLE_BOUNCE}
+    assert classify_ability_texts(
+        ["Return up to two target nonland permanents to their owners' hands."]
+    ) == {ROLE_BOUNCE}
+    # Land bounce and graveyard recursion stay out.
+    assert classify_ability_texts(["Return target land to its owner's hand."]) == frozenset()
+    assert classify_ability_texts(
+        ["Return target creature card from your graveyard to your hand."]
+    ) == frozenset()

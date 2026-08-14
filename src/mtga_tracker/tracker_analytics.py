@@ -681,6 +681,10 @@ class TrackerAnalyticsMixin:
                 wipes_played,
                 bounces_drawn,
                 bounces_played,
+                creatures_removed,
+                noncreatures_removed,
+                creatures_bounced,
+                noncreatures_bounced,
                 counters_drawn,
                 counters_played,
                 spells_countered,
@@ -691,7 +695,7 @@ class TrackerAnalyticsMixin:
                 tokens_sacrificed,
                 tokens_exiled
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(game_id, participant_id) DO UPDATE SET
                 attack_steps = excluded.attack_steps,
                 attacking_creatures = excluded.attacking_creatures,
@@ -714,6 +718,10 @@ class TrackerAnalyticsMixin:
                 wipes_played = excluded.wipes_played,
                 bounces_drawn = excluded.bounces_drawn,
                 bounces_played = excluded.bounces_played,
+                creatures_removed = excluded.creatures_removed,
+                noncreatures_removed = excluded.noncreatures_removed,
+                creatures_bounced = excluded.creatures_bounced,
+                noncreatures_bounced = excluded.noncreatures_bounced,
                 counters_drawn = excluded.counters_drawn,
                 counters_played = excluded.counters_played,
                 spells_countered = excluded.spells_countered,
@@ -748,6 +756,10 @@ class TrackerAnalyticsMixin:
                 int(stats.get("wipes_played", 0)),
                 int(stats.get("bounces_drawn", 0)),
                 int(stats.get("bounces_played", 0)),
+                int(stats.get("creatures_removed", 0)),
+                int(stats.get("noncreatures_removed", 0)),
+                int(stats.get("creatures_bounced", 0)),
+                int(stats.get("noncreatures_bounced", 0)),
                 int(stats.get("counters_drawn", 0)),
                 int(stats.get("counters_played", 0)),
                 int(stats.get("spells_countered", 0)),
