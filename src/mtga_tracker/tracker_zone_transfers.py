@@ -70,6 +70,7 @@ class TrackerZoneTransferMixin:
                     elif instance_id in self.game_state.current_combat_blockers:
                         stats["blockers_lost"] += 1
                         self.game_state.combat_loss_events_counted.add(combat_loss_key)
+        self._count_token_loss(card_obj, instance_id, category, owner_seat)
         return True
 
     def _handle_countered_zone_transfer(
@@ -139,6 +140,15 @@ class TrackerZoneTransferMixin:
         stats = self._seat_stats(owner_seat)
         if stats is not None:
             stats["cards_drawn"] += 1
+            # Removal-in-hand stats: only the player's draws are visible.
+            if grp_id and owner_seat == self.game_state.player_seat_id:
+                roles = self._card_roles(grp_id)
+                if "removal" in roles:
+                    stats["removal_drawn"] += 1
+                if "wipe" in roles:
+                    stats["wipes_drawn"] += 1
+                if "bounce" in roles:
+                    stats["bounces_drawn"] += 1
         if grp_id:
             try:
                 seat_id = int(owner_seat)
@@ -310,6 +320,12 @@ class TrackerZoneTransferMixin:
                         stats["blockers_lost"] += 1
                         self.game_state.combat_loss_events_counted.add(combat_loss_key)
 
+        self._count_token_loss(card_obj, instance_id, category, owner_seat)
+        if category == "Destroy" and "CardType_Land" in card_types:
+            self._count_enemy_land_destruction(
+                owner_seat, affector_id, source_id, game_objects_by_id
+            )
+
         if category == "Exile":
             if owner_seat == self.game_state.player_seat_id:
                 self.game_state.player_cards_exiled += 1
@@ -344,6 +360,111 @@ class TrackerZoneTransferMixin:
             stats = self._seat_stats(owner_seat)
             if stats is not None:
                 stats["cards_discarded"] += 1
+
+    def _count_token_creations(
+        self,
+        affected_ids: List[Any],
+        game_objects_by_id: Dict[int, Dict[str, Any]],
+    ) -> None:
+        """Count new token instances for their controller (deduped per game)."""
+        for raw_id in affected_ids or []:
+            try:
+                instance_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if instance_id in self.game_state.counted_token_creations:
+                continue
+            token_obj = self._lookup_object(instance_id, game_objects_by_id)
+            if not isinstance(token_obj, dict) or not token_obj:
+                continue
+            controller_seat = token_obj.get("controllerSeatId") or token_obj.get("ownerSeatId")
+            stats = self._seat_stats(controller_seat)
+            if stats is None:
+                continue
+            self.game_state.counted_token_creations.add(instance_id)
+            stats["tokens_created"] += 1
+
+    def _count_token_loss(
+        self,
+        card_obj: Optional[Dict[str, Any]],
+        instance_id: int,
+        category: str,
+        owner_seat: Optional[int],
+    ) -> None:
+        """Bucket a token leaving the battlefield by how it left."""
+        if not isinstance(card_obj, dict) or card_obj.get("type") != "GameObjectType_Token":
+            return
+        key_by_category = {
+            "Destroy": "tokens_destroyed",
+            "SBA_Damage": "tokens_destroyed",
+            "SBA_ZeroToughness": "tokens_destroyed",
+            "Sacrifice": "tokens_sacrificed",
+            "Exile": "tokens_exiled",
+        }
+        stat_key = key_by_category.get(str(category))
+        if stat_key is None:
+            return
+        stats = self._seat_stats(owner_seat)
+        if stats is None:
+            return
+        loss_key = (int(instance_id), stat_key)
+        if loss_key in self.game_state.counted_token_losses:
+            return
+        self.game_state.counted_token_losses.add(loss_key)
+        stats[stat_key] += 1
+
+    def _count_enemy_land_destruction(
+        self,
+        owner_seat: Optional[int],
+        affector_id: Optional[int],
+        source_id: Optional[int],
+        game_objects_by_id: Dict[int, Dict[str, Any]],
+    ) -> None:
+        """Count a land destroyed by an enemy card, and arm the replacement watch.
+
+        The interesting question after land destruction is whether the victim
+        had a land to play again — so we watch for a land drop by the end of
+        the victim's next turn (≈ two global turns out).
+        """
+        if owner_seat not in (1, 2):
+            return
+        destroyer_seat = None
+        for candidate_id in (affector_id, source_id):
+            if candidate_id is None:
+                continue
+            candidate = self._lookup_object(candidate_id, game_objects_by_id)
+            destroyer_seat = candidate.get("controllerSeatId") or candidate.get("ownerSeatId")
+            if destroyer_seat is not None:
+                break
+        if destroyer_seat is None or int(destroyer_seat) == int(owner_seat):
+            return
+        stats = self._seat_stats(owner_seat)
+        if stats is None:
+            return
+        stats["lands_lost"] += 1
+        deadline = (self.game_state.turn_number or 0) + 2
+        self.game_state.pending_land_replacements.setdefault(int(owner_seat), []).append(deadline)
+
+    def _check_land_replacement(self, seat_id: Optional[int]) -> None:
+        """A land drop answers the oldest live destruction watch for this seat."""
+        if seat_id not in (1, 2):
+            return
+        pending = self.game_state.pending_land_replacements.get(int(seat_id))
+        if not pending:
+            return
+        current_turn = self.game_state.turn_number or 0
+        # Expire watches whose window has passed (unreplaced stays unreplaced).
+        live = [deadline for deadline in pending if deadline >= current_turn]
+        replaced = False
+        if live:
+            live.sort()
+            live.pop(0)
+            replaced = True
+        self.game_state.pending_land_replacements[int(seat_id)] = live
+        if replaced:
+            stats = self._seat_stats(seat_id)
+            if stats is not None:
+                stats["lands_replaced"] += 1
 
     def _handle_return_or_put_zone_transfer(
         self,
@@ -736,6 +857,7 @@ class TrackerZoneTransferMixin:
                 seat_id=determining_seat,
                 track_name=track_name,
                 card_types=card_types,
+                grp_id=card_obj.get("grpId"),
             )
             return True
 
@@ -758,6 +880,7 @@ class TrackerZoneTransferMixin:
         late_marker = ""
 
         if category == "PlayLand":
+            self._check_land_replacement(determining_seat)
             self._print_event(
                 self._format_actor_event(
                     "⛰️",

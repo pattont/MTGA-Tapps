@@ -212,6 +212,10 @@ class TrackerEventsMixin(
             self._record_object_id_change(orig_instance_id, new_instance_id)
             return
 
+        if "AnnotationType_TokenCreated" in ann_type:
+            self._count_token_creations(affected_ids, game_objects_by_id)
+            return
+
         if not target_ids:
             lookup_ids = []
             if affected_ids:

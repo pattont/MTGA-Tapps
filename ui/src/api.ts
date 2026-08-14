@@ -700,6 +700,19 @@ export interface GameParticipantStatsRow {
   cards_discarded: number;
   cards_milled: number;
   cards_exiled: number;
+  /* Removal/token tracking — null on games recorded before the feature. */
+  removal_drawn?: number | null;
+  removal_played?: number | null;
+  wipes_drawn?: number | null;
+  wipes_played?: number | null;
+  bounces_drawn?: number | null;
+  bounces_played?: number | null;
+  lands_lost?: number | null;
+  lands_replaced?: number | null;
+  tokens_created?: number | null;
+  tokens_destroyed?: number | null;
+  tokens_sacrificed?: number | null;
+  tokens_exiled?: number | null;
 }
 
 export interface GameAnnotation {

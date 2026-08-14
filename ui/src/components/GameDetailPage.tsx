@@ -6,6 +6,7 @@ import {
   type GameDetail,
   type GameDrawnCardRow,
   type GameOpeningHandRow,
+  type GameParticipantStatsRow,
   type OpponentVisibleCardRow,
   type GamePlayedCardRow,
 } from '../api';
@@ -115,6 +116,14 @@ const deckChangeColumns: Column<DeckChangeCard>[] = [
     numeric: true,
   },
 ];
+
+/** Combat-stat cell: numbers/strings pass through, null/undefined show a dash. */
+function formatStatCell(value: number | string | null | undefined): string {
+  if (value === null || value === undefined) {
+    return '—';
+  }
+  return String(value);
+}
 
 function formatTurnList(turns: number[] | undefined): string {
   if (!turns || turns.length === 0) {
@@ -400,7 +409,31 @@ export function GameDetailPage({
           : 'Normal';
   const playerStats = detail.participant_stats.find((row) => row.role === 'player');
   const opponentStats = detail.participant_stats.find((row) => row.role === 'opponent');
-  const combatGroups = [
+  /** Display view: hides hidden-information stats and derives the LD rate. */
+  const buildStatsView = (
+    stats: GameParticipantStatsRow | undefined,
+    hideDrawn: boolean,
+  ): Record<string, number | string | null | undefined> | null => {
+    if (!stats) {
+      return null;
+    }
+    const lost = stats.lands_lost;
+    const replaced = stats.lands_replaced;
+    return {
+      ...stats,
+      // Opponent draws are hidden information — never show a fake 0.
+      removal_drawn: hideDrawn ? null : stats.removal_drawn,
+      wipes_drawn: hideDrawn ? null : stats.wipes_drawn,
+      bounces_drawn: hideDrawn ? null : stats.bounces_drawn,
+      land_replacement_rate:
+        lost != null && replaced != null && lost > 0
+          ? `${((100 * replaced) / lost).toFixed(0)}%`
+          : null,
+    };
+  };
+  const playerView = buildStatsView(playerStats, false);
+  const opponentView = buildStatsView(opponentStats, true);
+  const combatGroups: { title: string; rows: [string, string][] }[] = [
     {
       title: 'Attack',
       rows: [
@@ -436,7 +469,30 @@ export function GameDetailPage({
         ['Exiled', 'cards_exiled'],
       ],
     },
-  ] as const;
+    {
+      title: 'Removal',
+      rows: [
+        ['Removal drawn', 'removal_drawn'],
+        ['Removal played', 'removal_played'],
+        ['Board wipes drawn', 'wipes_drawn'],
+        ['Board wipes played', 'wipes_played'],
+        ['Mass bounce drawn', 'bounces_drawn'],
+        ['Mass bounce played', 'bounces_played'],
+        ['Lands lost to destruction', 'lands_lost'],
+        ['Replaced with a land drop', 'lands_replaced'],
+        ['Replacement rate', 'land_replacement_rate'],
+      ],
+    },
+    {
+      title: 'Tokens',
+      rows: [
+        ['Created', 'tokens_created'],
+        ['Destroyed', 'tokens_destroyed'],
+        ['Sacrificed', 'tokens_sacrificed'],
+        ['Exiled', 'tokens_exiled'],
+      ],
+    },
+  ];
   const mulliganHands = detail.mulligan_hands ?? [];
   async function saveAnnotation() {
     setNoteStatus('saving');
@@ -704,8 +760,8 @@ export function GameDetailPage({
                     {group.rows.map(([label, key]) => (
                       <tr key={key}>
                         <td>{label}</td>
-                        <td className="numeric">{formatNumber(playerStats ? playerStats[key] : null)}</td>
-                        <td className="numeric">{formatNumber(opponentStats ? opponentStats[key] : null)}</td>
+                        <td className="numeric">{formatStatCell(playerView ? playerView[key] : null)}</td>
+                        <td className="numeric">{formatStatCell(opponentView ? opponentView[key] : null)}</td>
                       </tr>
                     ))}
                   </tbody>

@@ -344,6 +344,17 @@ class CardDatabase:
         self._color_index_by_name = index
         return index
 
+    def get_card_ability_texts(self, grp_id: int) -> List[str]:
+        """Return every localized ability text for a card (for role classification)."""
+        if grp_id is None:
+            return []
+        ability_texts = self._query_mtga_local_ability_texts(int(grp_id))
+        return [
+            text.strip()
+            for text in ability_texts.values()
+            if isinstance(text, str) and text.strip()
+        ]
+
     def get_card_ability_text(self, grp_id: int, ability_grp_id: int) -> Optional[str]:
         """Return localized ability text for one card's abilityGrpId when available."""
         if grp_id is None or ability_grp_id is None:

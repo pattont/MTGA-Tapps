@@ -126,6 +126,7 @@ class TrackerStackMixin:
         seat_id: Optional[int],
         track_name: str,
         card_types: List[str],
+        grp_id: Optional[int] = None,
     ) -> None:
         """Count a card as played/cast exactly once, even if it later fails to resolve."""
         if instance_id in self.game_state.seen_instance_ids or canonical_instance_id in self.game_state.seen_instance_ids:
@@ -141,6 +142,22 @@ class TrackerStackMixin:
             self.session_opponent_cards_played += 1
         self.game_state.seen_instance_ids.add(int(instance_id))
         self.game_state.seen_instance_ids.add(int(canonical_instance_id))
+        self._count_played_card_roles(seat_id, grp_id)
+
+    def _count_played_card_roles(self, seat_id: Optional[int], grp_id: Optional[int]) -> None:
+        """Bump removal/wipe/bounce played counters for a classified cast."""
+        if grp_id is None:
+            return
+        stats = self._seat_stats(seat_id)
+        if stats is None:
+            return
+        roles = self._card_roles(grp_id)
+        if "removal" in roles:
+            stats["removal_played"] += 1
+        if "wipe" in roles:
+            stats["wipes_played"] += 1
+        if "bounce" in roles:
+            stats["bounces_played"] += 1
 
     def _reconcile_deleted_stack_items(self, deleted_instance_ids: Any) -> None:
         """Infer unresolved stack exits after the payload's annotations have had a chance to resolve them."""
@@ -245,6 +262,7 @@ class TrackerStackMixin:
             seat_id=determining_seat,
             track_name=track_name,
             card_types=card_types,
+            grp_id=source_obj.get("grpId"),
         )
         self.game_state.pending_spell_roots.pop(canonical_source_id, None)
         return True

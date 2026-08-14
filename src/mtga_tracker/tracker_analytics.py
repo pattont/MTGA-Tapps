@@ -674,9 +674,21 @@ class TrackerAnalyticsMixin:
                 cards_drawn,
                 cards_discarded,
                 cards_milled,
-                cards_exiled
+                cards_exiled,
+                removal_drawn,
+                removal_played,
+                wipes_drawn,
+                wipes_played,
+                bounces_drawn,
+                bounces_played,
+                lands_lost,
+                lands_replaced,
+                tokens_created,
+                tokens_destroyed,
+                tokens_sacrificed,
+                tokens_exiled
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(game_id, participant_id) DO UPDATE SET
                 attack_steps = excluded.attack_steps,
                 attacking_creatures = excluded.attacking_creatures,
@@ -692,7 +704,19 @@ class TrackerAnalyticsMixin:
                 cards_drawn = excluded.cards_drawn,
                 cards_discarded = excluded.cards_discarded,
                 cards_milled = excluded.cards_milled,
-                cards_exiled = excluded.cards_exiled
+                cards_exiled = excluded.cards_exiled,
+                removal_drawn = excluded.removal_drawn,
+                removal_played = excluded.removal_played,
+                wipes_drawn = excluded.wipes_drawn,
+                wipes_played = excluded.wipes_played,
+                bounces_drawn = excluded.bounces_drawn,
+                bounces_played = excluded.bounces_played,
+                lands_lost = excluded.lands_lost,
+                lands_replaced = excluded.lands_replaced,
+                tokens_created = excluded.tokens_created,
+                tokens_destroyed = excluded.tokens_destroyed,
+                tokens_sacrificed = excluded.tokens_sacrificed,
+                tokens_exiled = excluded.tokens_exiled
             """,
             (
                 game_id,
@@ -712,6 +736,18 @@ class TrackerAnalyticsMixin:
                 int(stats.get("cards_discarded", 0)),
                 int(stats.get("cards_milled", 0)),
                 int(stats.get("cards_exiled", 0)),
+                int(stats.get("removal_drawn", 0)),
+                int(stats.get("removal_played", 0)),
+                int(stats.get("wipes_drawn", 0)),
+                int(stats.get("wipes_played", 0)),
+                int(stats.get("bounces_drawn", 0)),
+                int(stats.get("bounces_played", 0)),
+                int(stats.get("lands_lost", 0)),
+                int(stats.get("lands_replaced", 0)),
+                int(stats.get("tokens_created", 0)),
+                int(stats.get("tokens_destroyed", 0)),
+                int(stats.get("tokens_sacrificed", 0)),
+                int(stats.get("tokens_exiled", 0)),
             ),
         )
 

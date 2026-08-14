@@ -295,6 +295,18 @@ class AnalyticsStore:
                 cards_discarded INTEGER NOT NULL DEFAULT 0,
                 cards_milled INTEGER NOT NULL DEFAULT 0,
                 cards_exiled INTEGER NOT NULL DEFAULT 0,
+                removal_drawn INTEGER,
+                removal_played INTEGER,
+                wipes_drawn INTEGER,
+                wipes_played INTEGER,
+                bounces_drawn INTEGER,
+                bounces_played INTEGER,
+                lands_lost INTEGER,
+                lands_replaced INTEGER,
+                tokens_created INTEGER,
+                tokens_destroyed INTEGER,
+                tokens_sacrificed INTEGER,
+                tokens_exiled INTEGER,
                 UNIQUE(game_id, participant_id),
                 FOREIGN KEY(game_id) REFERENCES games(id),
                 FOREIGN KEY(participant_id) REFERENCES participants(id)
@@ -552,6 +564,7 @@ class AnalyticsStore:
             (13, AnalyticsStore._migrate_v13_merge_split_bo3_matches),
             (14, AnalyticsStore._migrate_v14_purge_untracked_modes),
             (15, AnalyticsStore._migrate_v15_purge_welcome_deck_duels),
+            (16, AnalyticsStore._migrate_v16_removal_and_token_stats),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -931,6 +944,36 @@ class AnalyticsStore:
                     session_id,
                 ),
             )
+
+    @staticmethod
+    def _migrate_v16_removal_and_token_stats(conn: sqlite3.Connection) -> None:
+        """Add removal/board-wipe/land-destruction/token columns to stats.
+
+        Nullable on purpose: games recorded before this feature stay NULL so
+        the dashboard can distinguish "not tracked yet" from a real zero.
+        """
+        existing = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(game_participant_stats)")
+        }
+        for column in (
+            "removal_drawn",
+            "removal_played",
+            "wipes_drawn",
+            "wipes_played",
+            "bounces_drawn",
+            "bounces_played",
+            "lands_lost",
+            "lands_replaced",
+            "tokens_created",
+            "tokens_destroyed",
+            "tokens_sacrificed",
+            "tokens_exiled",
+        ):
+            if column not in existing:
+                conn.execute(
+                    f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER"
+                )
 
     @staticmethod
     def _migrate_v15_purge_welcome_deck_duels(conn: sqlite3.Connection) -> None:
