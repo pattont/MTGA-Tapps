@@ -37,14 +37,11 @@ describe('TrendChart', () => {
     expect(svg).toHaveAttribute('aria-label', 'Rolling win rate across 5 games, currently 60%');
   });
 
-  it('renders a data table fallback inside a collapsed details element', () => {
+  it('renders no data-table fallback (removed to keep the section lean)', () => {
     const { container } = render(<TrendChart rows={rows} />);
 
-    const details = container.querySelector('details.chart-data-details');
-    expect(details).not.toBeNull();
-    expect(details).not.toHaveAttribute('open');
-    expect(screen.getByText('View as table')).toBeInTheDocument();
-    expect(details?.querySelectorAll('tbody tr')).toHaveLength(5);
+    expect(container.querySelector('details.chart-data-details')).toBeNull();
+    expect(screen.queryByText('View as table')).not.toBeInTheDocument();
   });
 
   it('renders a right-edge current-value label', () => {

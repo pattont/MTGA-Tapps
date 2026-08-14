@@ -2119,6 +2119,62 @@ def test_dashboard_snapshot_counts_bo3_matches_once_and_splits_ranked(tmp_path):
     }
 
 
+def test_dashboard_snapshot_splits_ranked_stats_by_season(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "insert into matches (id, session_id, format, queue, event_name, best_of) "
+            "values ('match-l1', 'session-1', 'Ladder', 'Ladder', 'Ladder', 1)"
+        )
+        games = [
+            # Season 92: one win (fixture itself carries seasons 90/91).
+            ("game-s5", "2026-07-10T10:00:00", "win"),
+            # Season 93: a win and a loss.
+            ("game-s6a", "2026-08-10T10:00:00", "win"),
+            ("game-s6b", "2026-08-11T10:00:00", "loss"),
+        ]
+        for game_id, started, outcome in games:
+            conn.execute(
+                """
+                insert into games (id, session_id, match_id, game_number, started_at, outcome,
+                                   duration_seconds, total_turns, player_turns, opponent_turns)
+                values (?, 'session-1', 'match-l1', 1, ?, ?, 300, 10, 5, 5)
+                """,
+                (game_id, started, outcome),
+            )
+            conn.execute(
+                """
+                insert into participants (id, game_id, seat_id, role, display_name, deck_name,
+                                          went_first, mulligans, opening_hand_size, starting_life, ending_life)
+                values (?, ?, 1, 'player', 'Tapps', 'Boros Mouse', 1, 0, 7, 20, 12)
+                """,
+                (f"p-{game_id}", game_id),
+            )
+        conn.executemany(
+            """
+            insert into rank_snapshots (session_id, game_id, captured_at, season_ordinal,
+                                        rank_format, rank_class, rank_level, rank_step, rank_steps)
+            values ('session-1', ?, ?, ?, 'constructed', 'Gold', 4, 2, 6)
+            """,
+            [
+                ("game-s5", "2026-07-10T10:05:00", 92),
+                ("game-s6a", "2026-08-10T10:05:00", 93),
+                ("game-s6b", "2026-08-11T10:05:00", 93),
+            ],
+        )
+
+    latest = dashboard_snapshot(db_path)
+    # Lifetime spans both seasons; the season row defaults to the latest (93).
+    assert latest["ranked_summary"]["matches"] == 3
+    season6 = latest["ranked_season_summary"]
+    assert season6["season_ordinal"] == 93
+    assert (season6["wins"], season6["losses"]) == (1, 1)
+
+    season5 = dashboard_snapshot(db_path, season=92)["ranked_season_summary"]
+    assert season5["season_ordinal"] == 92
+    assert (season5["wins"], season5["losses"]) == (1, 0)
+
+
 def test_card_detail_reports_multiplicity(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
     with sqlite3.connect(db_path) as conn:

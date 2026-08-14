@@ -10,10 +10,10 @@ import {
   type DeckRow,
   type FatigueRow,
   type OpenerLandRow,
-  type OpponentThreatRow,
   type OutcomeReasonRow,
   type ScheduleRow,
   type DrawQualityRow,
+  type MatchLevelSummary,
   type MomentumRow,
   type PlayDrawRow,
   type RecentGameRow,
@@ -22,7 +22,6 @@ import {
 } from './api';
 import { Badge } from './components/Badge';
 import { CardDetailPage } from './components/CardDetailPage';
-import { CardLink } from './components/CardLink';
 import { ColorPips } from './components/ColorPips';
 import { makeCommanderColumns } from './commanderColumns';
 import { makeOpponentColorColumns } from './opponentColorColumns';
@@ -39,7 +38,6 @@ import { OpponentDetailPage } from './components/OpponentDetailPage';
 import { RankProgressChart } from './components/RankProgressChart';
 import { SortableTable, type Column } from './components/SortableTable';
 import { TrendChart } from './components/TrendChart';
-import { TypeChip } from './components/TypeChip';
 import { WinRateBar } from './components/WinRateBar';
 import { AppShell } from './components/AppShell';
 import { Section } from './components/Section';
@@ -231,6 +229,38 @@ const METRIC_ICONS: Record<string, ReactNode> = {
   winStreak: <Flame />,
   lossStreak: <TrendingDown />,
 };
+
+/** Six ranked stat cards — shared by the lifetime and per-season rows. */
+function rankedMetricCards(summary: MatchLevelSummary, matchesLabel: string): ReactNode {
+  return (
+    <>
+      <MetricCard
+        icon={METRIC_ICONS.matches}
+        label={matchesLabel}
+        value={formatNumber(summary.matches)}
+      />
+      <MetricCard icon={METRIC_ICONS.wins} label="Wins" tone="win" value={formatNumber(summary.wins)} />
+      <MetricCard
+        icon={METRIC_ICONS.losses}
+        label="Losses"
+        tone="loss"
+        value={formatNumber(summary.losses)}
+      />
+      <MetricCard icon={METRIC_ICONS.winRate} label="Win Rate" value={formatPercent(summary.win_rate)} />
+      <MetricCard
+        icon={METRIC_ICONS.winStreak}
+        label="Longest Win Streak"
+        value={formatNumber(summary.longest_win)}
+      />
+      <MetricCard
+        icon={METRIC_ICONS.lossStreak}
+        label="Longest Loss Streak"
+        value={formatNumber(summary.longest_loss)}
+      />
+    </>
+  );
+}
+
 
 function BestDeckBar({
   metric,
@@ -554,31 +584,6 @@ const homeOpponentColorColumns = makeOpponentColorColumns((row) =>
 
 const yourCommanderColumns = makeCommanderColumns('Your Commander');
 const facedCommanderColumns = makeCommanderColumns('Opponent Commander');
-
-const opponentThreatColumns: Column<OpponentThreatRow>[] = [
-  {
-    key: 'display_name',
-    header: 'Card',
-    render: (row) => <CardLink cardName={row.display_name} />,
-    sortValue: (row) => row.display_name,
-  },
-  {
-    key: 'type_category',
-    header: 'Type',
-    render: (row) => <TypeChip type={row.type_category} />,
-    sortValue: (row) => row.type_category,
-  },
-  { key: 'games', header: 'Games Seen', numeric: true },
-  { key: 'plays', header: 'Times Played', numeric: true },
-  { key: 'losses', header: 'Your Losses', numeric: true },
-  {
-    key: 'loss_rate',
-    header: 'Loss Rate',
-    render: (row) => formatPercent(row.loss_rate),
-    sortValue: (row) => row.loss_rate,
-    numeric: true,
-  },
-];
 
 const recentColumns: Column<RecentGameWithDrawQuality>[] = [
   {
@@ -1224,7 +1229,7 @@ function Dashboard({
       <Section
         id="trend"
         title="Win Rate Trend"
-        description="Rolling win rate across your most recent finished games."
+        description="Rolling win rate across your most recent 30 finished games."
       >
         <div className="trend-wrap">
           <TrendChart rows={snapshot.trend} />
@@ -1233,49 +1238,25 @@ function Dashboard({
 
       <Section
         id="rank-progress"
-        title="Ranked Progress"
-        description="Constructed ladder progress by season. Ranked Standard Best-of-1 and Best-of-3 share this rank. Record below counts constructed ranked queues only, match-level (a Bo3 counts once)."
+        title="Constructed Ranked"
+        description="Constructed ranked queues only, match-level (a Bo3 counts once). Ranked Standard Best-of-1 and Best-of-3 share the ladder rank charted below."
       >
         {snapshot.ranked_summary && snapshot.ranked_summary.matches > 0 ? (
-          <section className="metric-grid" aria-label="Ranked record">
-            <MetricCard
-              icon={METRIC_ICONS.matches}
-              label="Ranked Matches"
-              value={formatNumber(snapshot.ranked_summary.matches)}
-            />
-            <MetricCard
-              icon={METRIC_ICONS.wins}
-              label="Wins"
-              tone="win"
-              value={formatNumber(snapshot.ranked_summary.wins)}
-            />
-            <MetricCard
-              icon={METRIC_ICONS.losses}
-              label="Losses"
-              tone="loss"
-              value={formatNumber(snapshot.ranked_summary.losses)}
-            />
-            <MetricCard
-              icon={METRIC_ICONS.winRate}
-              label="Win Rate"
-              value={formatPercent(snapshot.ranked_summary.win_rate)}
-            />
-            <MetricCard
-              icon={METRIC_ICONS.winStreak}
-              label="Longest Win Streak"
-              value={formatNumber(snapshot.ranked_summary.longest_win)}
-            />
-            <MetricCard
-              icon={METRIC_ICONS.lossStreak}
-              label="Longest Loss Streak"
-              value={formatNumber(snapshot.ranked_summary.longest_loss)}
-            />
-          </section>
+          <>
+            <div className="section-heading">
+              <div>
+                <h3>Lifetime Ranked Stats</h3>
+              </div>
+            </div>
+            <section className="metric-grid ranked-metric-grid" aria-label="Lifetime ranked record">
+              {rankedMetricCards(snapshot.ranked_summary, 'Ranked Matches')}
+            </section>
+          </>
         ) : null}
-        {(snapshot.filter_options.rank_seasons ?? []).length > 1 ? (
+        {(snapshot.filter_options.rank_seasons ?? []).length > 0 ? (
           <div className="table-filter">
-            <label>
-              <span>Season</span>
+            <label className="filter-field">
+              <span className="filter-field-label">Season</span>
               <select
                 value={filters.season ?? ''}
                 onChange={(event) =>
@@ -1294,6 +1275,26 @@ function Dashboard({
               </select>
             </label>
           </div>
+        ) : null}
+        {snapshot.ranked_season_summary ? (
+          <>
+            <div className="section-heading">
+              <div>
+                <h3>
+                  {filters.season
+                    ? `Season ${snapshot.ranked_season_summary.season_ordinal} Stats`
+                    : 'Current Season Stats'}
+                </h3>
+                <p className="section-description">
+                  Resets every seasonal rollover; the dropdown swaps both these boxes and the
+                  chart to that season.
+                </p>
+              </div>
+            </div>
+            <section className="metric-grid ranked-metric-grid" aria-label="Season ranked record">
+              {rankedMetricCards(snapshot.ranked_season_summary, 'Season Matches')}
+            </section>
+          </>
         ) : null}
         <div className="trend-wrap">
           <RankProgressChart rows={snapshot.rank_progress ?? []} />
@@ -1504,39 +1505,14 @@ function Dashboard({
       <Section
         id="opponent-meta"
         title="Opponent Meta"
-        description="What the ladder is beating you with."
+        description="Your record by opponent color combination, inferred from every card each opponent revealed. Games with no identified colored cards show as Unknown."
       >
-        <div className="section-heading">
-          <div>
-            <h3>Opponent Colors</h3>
-            <p className="section-description">
-              Color combinations inferred from every card each opponent revealed. Games with no
-              identified colored cards show as Unknown.
-            </p>
-          </div>
-        </div>
         <SortableTable
           caption="Record by opponent color combination"
           columns={homeOpponentColorColumns}
           getRowKey={(row) => row.color_label}
           initialSort={{ key: 'games', direction: 'desc' }}
           rows={(snapshot.opponent_colors ?? []).slice(0, 15)}
-        />
-        <div className="section-heading">
-          <div>
-            <h3>Cards That Beat You</h3>
-            <p className="section-description">
-              Opponent-played cards ranked by how often their games end in your losses (minimum 2 games).
-            </p>
-          </div>
-        </div>
-        <SortableTable
-          caption="Opponent threat leaderboard"
-          columns={opponentThreatColumns}
-          getRowKey={(row) => row.display_name}
-          initialSort={{ key: 'loss_rate', direction: 'desc' }}
-          pageSize={15}
-          rows={snapshot.opponent_threats ?? []}
         />
       </Section>
 

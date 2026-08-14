@@ -1158,6 +1158,48 @@ def _is_constructed_ranked_format(raw_format: Any) -> bool:
     return "(Ranked)" in normalized.label and not normalized.is_brawl
 
 
+def _constructed_season_window(
+    conn: sqlite3.Connection, season: Optional[int]
+) -> Optional[Tuple[int, Optional[str], Optional[str]]]:
+    """(season_ordinal, window_start, window_end) for one constructed season.
+
+    Seasons are bounded by rank-snapshot data: a season's window runs from
+    the previous season's last capture (exclusive) to the start time of the
+    next season's first ranked game (exclusive) — the game's own start, not
+    its snapshot, since a game always starts before its rank update lands.
+    None boundaries mean unbounded. Returns None with no rank data.
+    """
+    rows = conn.execute(
+        """
+        SELECT
+          r.season_ordinal,
+          MAX(r.captured_at) AS last_capture,
+          (
+            SELECT COALESCE(g.started_at, r2.captured_at)
+            FROM rank_snapshots r2
+            LEFT JOIN games g ON g.id = r2.game_id
+            WHERE r2.rank_format = 'constructed'
+              AND r2.season_ordinal = r.season_ordinal
+            ORDER BY r2.captured_at
+            LIMIT 1
+          ) AS first_game_start
+        FROM rank_snapshots r
+        WHERE r.rank_format = 'constructed'
+        GROUP BY r.season_ordinal
+        ORDER BY r.season_ordinal
+        """
+    ).fetchall()
+    if not rows:
+        return None
+    target = int(season) if season is not None else int(rows[-1][0])
+    for index, (ordinal, _last_capture, _first_game_start) in enumerate(rows):
+        if int(ordinal) == target:
+            start = str(rows[index - 1][1]) if index > 0 else None
+            end = str(rows[index + 1][2]) if index + 1 < len(rows) else None
+            return target, start, end
+    return None
+
+
 # Older tracker versions stored longer concede labels; fold them into the
 # current wording so history and new games group as one reason.
 _LEGACY_OUTCOME_REASONS = {
@@ -2164,13 +2206,24 @@ def dashboard_snapshot(
         streaks = _streak_summary(conn, where, params)
         match_results = _match_level_results(conn, where, params)
         match_summary = _summarize_match_results(match_results)
-        ranked_summary = _summarize_match_results(
-            [
+        ranked_results = [
+            result
+            for result in match_results
+            if _is_constructed_ranked_format(result.get("raw_format"))
+        ]
+        ranked_summary = _summarize_match_results(ranked_results)
+        ranked_season_summary = None
+        season_window = _constructed_season_window(conn, season)
+        if season_window is not None:
+            season_ordinal, window_start, window_end = season_window
+            seasonal_results = [
                 result
-                for result in match_results
-                if _is_constructed_ranked_format(result.get("raw_format"))
+                for result in ranked_results
+                if (window_start is None or str(result.get("started_at") or "") > window_start)
+                and (window_end is None or str(result.get("started_at") or "") < window_end)
             ]
-        )
+            ranked_season_summary = _summarize_match_results(seasonal_results)
+            ranked_season_summary["season_ordinal"] = season_ordinal
         outcome_reason_rows = _outcome_reason_rows(conn, where, params)
         opener_land_rows = _opener_land_rows(conn, where, params)
         opponent_threat_rows = _opponent_threat_rows(conn, where, params)
@@ -2261,6 +2314,7 @@ def dashboard_snapshot(
         "streaks": streaks,
         "match_summary": match_summary,
         "ranked_summary": ranked_summary,
+        "ranked_season_summary": ranked_season_summary,
         "outcome_reasons": outcome_reason_rows,
         "opener_lands": opener_land_rows,
         "opponent_threats": opponent_threat_rows,
