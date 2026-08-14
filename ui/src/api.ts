@@ -524,28 +524,37 @@ export interface DeckLandProfile {
   classified_games: number;
 }
 
-/** Per-game interaction averages; null fields = never tracked for this deck. */
+/** One seat's per-game interaction averages; null = never tracked. */
+export interface DeckInteractionSide {
+  removal_played: number | null;
+  removal_drawn: number | null;
+  wipes_played: number | null;
+  wipes_drawn: number | null;
+  bounces_played: number | null;
+  bounces_drawn: number | null;
+  counters_played: number | null;
+  counters_drawn: number | null;
+  counters_landed: number | null;
+  counters_failed: number | null;
+  creatures_removed: number | null;
+  noncreatures_removed: number | null;
+  creatures_bounced: number | null;
+  noncreatures_bounced: number | null;
+  lands_lost: number | null;
+  lands_replaced: number | null;
+  lands_unreplaced: number | null;
+  land_replacement_pct: number | null;
+  tokens_created: number | null;
+  tokens_destroyed: number | null;
+  tokens_sacrificed: number | null;
+  tokens_exiled: number | null;
+}
+
+/** Per-game interaction averages for both seats, mirroring the game page. */
 export interface DeckInteractionProfile {
   games_tracked: number;
-  avg_removal_played: number | null;
-  avg_removal_drawn: number | null;
-  avg_wipes_played: number | null;
-  avg_wipes_drawn: number | null;
-  avg_bounces_played: number | null;
-  avg_bounces_drawn: number | null;
-  avg_counters_played: number | null;
-  avg_counters_drawn: number | null;
-  avg_counters_landed: number | null;
-  avg_counters_failed: number | null;
-  avg_creatures_removed: number | null;
-  avg_noncreatures_removed: number | null;
-  avg_creatures_bounced: number | null;
-  avg_noncreatures_bounced: number | null;
-  avg_lands_lost: number | null;
-  avg_lands_replaced: number | null;
-  land_replacement_pct: number | null;
-  avg_tokens_created: number | null;
-  avg_tokens_lost: number | null;
+  player: DeckInteractionSide;
+  opponent: DeckInteractionSide;
 }
 
 /** Match-level records by queue. Only splits with matches are present. */
