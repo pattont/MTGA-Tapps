@@ -409,7 +409,8 @@ export function GameDetailPage({
           : 'Normal';
   const playerStats = detail.participant_stats.find((row) => row.role === 'player');
   const opponentStats = detail.participant_stats.find((row) => row.role === 'opponent');
-  /** Display view: hides hidden-information stats and derives the LD rate. */
+  /** Display view: folds drawn counts into played cells and derives rates.
+      Opponent drawn counts are hidden information, so their cells stay plain. */
   const buildStatsView = (
     stats: GameParticipantStatsRow | undefined,
     hideDrawn: boolean,
@@ -417,14 +418,19 @@ export function GameDetailPage({
     if (!stats) {
       return null;
     }
+    const withDrawn = (
+      played: number | null | undefined,
+      drawn: number | null | undefined,
+    ): number | string | null | undefined =>
+      !hideDrawn && drawn != null ? `${played ?? 0} (${drawn} drawn)` : played;
     const lost = stats.lands_lost;
     const replaced = stats.lands_replaced;
     return {
       ...stats,
-      // Opponent draws are hidden information — never show a fake 0.
-      removal_drawn: hideDrawn ? null : stats.removal_drawn,
-      wipes_drawn: hideDrawn ? null : stats.wipes_drawn,
-      bounces_drawn: hideDrawn ? null : stats.bounces_drawn,
+      removal_played: withDrawn(stats.removal_played, stats.removal_drawn),
+      wipes_played: withDrawn(stats.wipes_played, stats.wipes_drawn),
+      bounces_played: withDrawn(stats.bounces_played, stats.bounces_drawn),
+      counters_played: withDrawn(stats.counters_played, stats.counters_drawn),
       land_replacement_rate:
         lost != null && replaced != null && lost > 0
           ? `${((100 * replaced) / lost).toFixed(0)}%`
@@ -433,25 +439,27 @@ export function GameDetailPage({
   };
   const playerView = buildStatsView(playerStats, false);
   const opponentView = buildStatsView(opponentStats, true);
-  // "Landed" counters are the OTHER side's spells that got countered; the
-  // rest were paid through (soft counters), countered themselves, or fizzled.
+  // Successful counters BY a side are the OTHER side's spells that got
+  // countered; failed = played minus successful (paid-through soft counters,
+  // counter battles, fizzles — the outcome is all that matters).
   const attachCounterOutcomes = (
     view: Record<string, number | string | null | undefined> | null,
+    ownStats: GameParticipantStatsRow | undefined,
     otherStats: GameParticipantStatsRow | undefined,
   ) => {
     if (!view) {
       return;
     }
-    const landed = otherStats?.spells_countered;
-    view.counters_landed = landed ?? null;
-    const played = view.counters_played;
-    view.counters_paid_through =
-      typeof played === 'number' && typeof landed === 'number'
-        ? Math.max(0, played - landed)
+    const successful = otherStats?.spells_countered;
+    view.counters_successful = successful ?? null;
+    const played = ownStats?.counters_played;
+    view.counters_failed =
+      typeof played === 'number' && typeof successful === 'number'
+        ? Math.max(0, played - successful)
         : null;
   };
-  attachCounterOutcomes(playerView, opponentStats);
-  attachCounterOutcomes(opponentView, playerStats);
+  attachCounterOutcomes(playerView, playerStats, opponentStats);
+  attachCounterOutcomes(opponentView, opponentStats, playerStats);
   const combatGroups: { title: string; rows: [string, string][] }[] = [
     {
       title: 'Attack',
@@ -491,25 +499,20 @@ export function GameDetailPage({
     {
       title: 'Removal',
       rows: [
-        ['Removal drawn', 'removal_drawn'],
         ['Removal played', 'removal_played'],
-        ['Board wipes drawn', 'wipes_drawn'],
         ['Board wipes played', 'wipes_played'],
-        ['Mass bounce drawn', 'bounces_drawn'],
         ['Mass bounce played', 'bounces_played'],
         ['Lands lost to destruction', 'lands_lost'],
-        ['Replaced with a land drop', 'lands_replaced'],
-        ['Replacement rate', 'land_replacement_rate'],
+        ['Lands replaced', 'lands_replaced'],
+        ['Land Replacement Rate', 'land_replacement_rate'],
       ],
     },
     {
       title: 'Counter Magic',
       rows: [
-        ['Counter magic drawn', 'counters_drawn'],
-        ['Counter magic played', 'counters_played'],
-        ['Counters that landed', 'counters_landed'],
-        ['Paid through / missed', 'counters_paid_through'],
-        ['Own spells countered', 'spells_countered'],
+        ['Counters played', 'counters_played'],
+        ['Counters successful', 'counters_successful'],
+        ['Counters failed', 'counters_failed'],
       ],
     },
     {
