@@ -1111,6 +1111,9 @@ function Dashboard({
             <div className="section-heading">
               <div>
                 <h3 id="overview-play-draw-title">Play / Draw</h3>
+                <p className="section-description">
+                  Your record when you started on the play versus on the draw.
+                </p>
               </div>
             </div>
             <SortableTable
@@ -1170,10 +1173,6 @@ function Dashboard({
                         </td>
                       </tr>
                     ))}
-                    <tr className="outcome-total-row outcome-total-row-win">
-                      <td>Total</td>
-                      <td className="num">{formatNumber(outcomeGroups.winTotal)}</td>
-                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -1198,10 +1197,6 @@ function Dashboard({
                         </td>
                       </tr>
                     ))}
-                    <tr className="outcome-total-row outcome-total-row-loss">
-                      <td>Total</td>
-                      <td className="num">{formatNumber(outcomeGroups.lossTotal)}</td>
-                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -1211,6 +1206,9 @@ function Dashboard({
             <div className="section-heading">
               <div>
                 <h3 id="outcomes-opener-title">Kept Opener Lands</h3>
+                <p className="section-description">
+                  Results by how many lands were in the opening hand you kept.
+                </p>
               </div>
             </div>
             <SortableTable

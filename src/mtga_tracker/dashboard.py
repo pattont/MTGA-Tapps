@@ -1158,11 +1158,24 @@ def _is_constructed_ranked_format(raw_format: Any) -> bool:
     return "(Ranked)" in normalized.label and not normalized.is_brawl
 
 
+# Older tracker versions stored longer concede labels; fold them into the
+# current wording so history and new games group as one reason.
+_LEGACY_OUTCOME_REASONS = {
+    "Opponent conceded/disconnected": "Opponent conceded",
+    "You conceded/left the game": "You conceded",
+}
+
+
+def _normalize_outcome_reason(reason: Any) -> str:
+    text = str(reason or "").strip() or "unknown"
+    return _LEGACY_OUTCOME_REASONS.get(text, text)
+
+
 def _outcome_reason_rows(
     conn: sqlite3.Connection, where: str, params: List[Any]
 ) -> List[Dict[str, Any]]:
     """How wins and losses actually end (concession, damage, timeout...)."""
-    return _dict_rows(
+    raw_rows = _dict_rows(
         conn.execute(
             f"""
             SELECT
@@ -1178,6 +1191,14 @@ def _outcome_reason_rows(
             params,
         )
     )
+    merged: Dict[str, Dict[str, Any]] = {}
+    for row in raw_rows:
+        reason = _normalize_outcome_reason(row.get("reason"))
+        entry = merged.setdefault(reason, {"reason": reason, "wins": 0, "losses": 0, "games": 0})
+        entry["wins"] += int(row.get("wins") or 0)
+        entry["losses"] += int(row.get("losses") or 0)
+        entry["games"] += int(row.get("games") or 0)
+    return sorted(merged.values(), key=lambda entry: -entry["games"])
 
 
 def _opener_land_rows(
@@ -2825,6 +2846,8 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         game["format_label"] = format_label(
             game.get("raw_format"), default_best_of=int(game.get("best_of") or 1)
         )
+        if game.get("outcome_reason"):
+            game["outcome_reason"] = _normalize_outcome_reason(game["outcome_reason"])
 
         participant_rows = _dict_rows(
             conn.execute(

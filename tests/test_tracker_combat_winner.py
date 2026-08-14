@@ -7040,4 +7040,4 @@ def test_outcome_concede_still_default_without_annotation():
         )
     )
 
-    assert tracker._resolve_game_outcome() == ("win", "Opponent conceded/disconnected")
+    assert tracker._resolve_game_outcome() == ("win", "Opponent conceded")

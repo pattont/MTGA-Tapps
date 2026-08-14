@@ -1076,11 +1076,11 @@ class TrackerLifecycleMixin:
             if self.game_state.winner_seat == self.game_state.player_seat_id:
                 if "Timeout" in win_reason:
                     return "win", "Opponent timed out"
-                return "win", "Opponent conceded/disconnected"
+                return "win", "Opponent conceded"
             if self.game_state.winner_seat == self.game_state.opponent_seat_id:
                 if "Timeout" in win_reason:
                     return "loss", "You timed out"
-                return "loss", "You conceded/left the game"
+                return "loss", "You conceded"
             return "unknown", f"Winning seat: {self.game_state.winner_seat}"
 
         if self.game_state.winner_seat is not None:
