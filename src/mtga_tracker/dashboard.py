@@ -1438,46 +1438,69 @@ def _combat_deck_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -
     return rows
 
 
+#: Interaction stat columns averaged per side on the deck page.
+_INTERACTION_STAT_COLUMNS = (
+    "removal_played",
+    "removal_drawn",
+    "wipes_played",
+    "wipes_drawn",
+    "bounces_played",
+    "bounces_drawn",
+    "counters_played",
+    "counters_drawn",
+    "creatures_removed",
+    "noncreatures_removed",
+    "creatures_bounced",
+    "noncreatures_bounced",
+    "lands_lost",
+    "lands_replaced",
+    "tokens_created",
+    "tokens_destroyed",
+    "tokens_sacrificed",
+    "tokens_exiled",
+)
+
+
 def _interaction_deck_profile(
     conn: sqlite3.Connection, where: str, params: List[Any]
 ) -> Optional[Dict[str, Any]]:
-    """Per-game interaction averages (removal/counters/bounce/lands/tokens).
+    """Per-game interaction averages for both seats, mirroring the game page.
 
     SQLite's AVG ignores NULLs, so games recorded before each stat existed
-    simply don't dilute the averages. "Counters landed" is the opponent's
-    spells_countered (their spells that YOUR counters stopped).
+    simply don't dilute the averages. A side's "counters landed" is the OTHER
+    side's spells_countered (their spells that this side's counters stopped);
+    opponent drawn columns stay NULL — their draws are hidden information.
     """
+    select_parts = ["COUNT(s.removal_played) AS games_tracked"]
+    for prefix, alias in (("p", "s"), ("o", "os")):
+        for column in _INTERACTION_STAT_COLUMNS:
+            select_parts.append(
+                f"ROUND(AVG({alias}.{column}), 2) AS {prefix}_{column}"
+            )
+        other = "os" if alias == "s" else "s"
+        select_parts.append(
+            f"ROUND(AVG({other}.spells_countered), 2) AS {prefix}_counters_landed"
+        )
+        select_parts.append(
+            f"""ROUND(AVG(CASE
+              WHEN {alias}.counters_played IS NOT NULL
+               AND {other}.spells_countered IS NOT NULL
+              THEN MAX(0, {alias}.counters_played - {other}.spells_countered)
+            END), 2) AS {prefix}_counters_failed"""
+        )
+        select_parts.append(
+            f"""ROUND(AVG(CASE WHEN {alias}.lands_lost IS NOT NULL
+              THEN MAX(0, {alias}.lands_lost - COALESCE({alias}.lands_replaced, 0))
+            END), 2) AS {prefix}_lands_unreplaced"""
+        )
+        select_parts.append(
+            f"ROUND(100.0 * SUM({alias}.lands_replaced) / NULLIF(SUM({alias}.lands_lost), 0), 0)"
+            f" AS {prefix}_land_replacement_pct"
+        )
     rows = _dict_rows(
         conn.execute(
             f"""
-            SELECT
-              COUNT(s.removal_played) AS games_tracked,
-              ROUND(AVG(s.removal_played), 2) AS avg_removal_played,
-              ROUND(AVG(s.removal_drawn), 2) AS avg_removal_drawn,
-              ROUND(AVG(s.wipes_played), 2) AS avg_wipes_played,
-              ROUND(AVG(s.wipes_drawn), 2) AS avg_wipes_drawn,
-              ROUND(AVG(s.bounces_played), 2) AS avg_bounces_played,
-              ROUND(AVG(s.bounces_drawn), 2) AS avg_bounces_drawn,
-              ROUND(AVG(s.counters_played), 2) AS avg_counters_played,
-              ROUND(AVG(s.counters_drawn), 2) AS avg_counters_drawn,
-              ROUND(AVG(os.spells_countered), 2) AS avg_counters_landed,
-              ROUND(AVG(CASE
-                WHEN s.counters_played IS NOT NULL AND os.spells_countered IS NOT NULL
-                THEN MAX(0, s.counters_played - os.spells_countered)
-              END), 2) AS avg_counters_failed,
-              ROUND(AVG(s.creatures_removed), 2) AS avg_creatures_removed,
-              ROUND(AVG(s.noncreatures_removed), 2) AS avg_noncreatures_removed,
-              ROUND(AVG(s.creatures_bounced), 2) AS avg_creatures_bounced,
-              ROUND(AVG(s.noncreatures_bounced), 2) AS avg_noncreatures_bounced,
-              ROUND(AVG(s.lands_lost), 2) AS avg_lands_lost,
-              ROUND(AVG(s.lands_replaced), 2) AS avg_lands_replaced,
-              ROUND(100.0 * SUM(s.lands_replaced) / NULLIF(SUM(s.lands_lost), 0), 0)
-                AS land_replacement_pct,
-              ROUND(AVG(s.tokens_created), 2) AS avg_tokens_created,
-              ROUND(AVG(CASE WHEN s.tokens_destroyed IS NOT NULL
-                THEN s.tokens_destroyed + COALESCE(s.tokens_sacrificed, 0)
-                     + COALESCE(s.tokens_exiled, 0)
-              END), 2) AS avg_tokens_lost
+            SELECT {', '.join(select_parts)}
             FROM game_participant_stats s
             JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
             JOIN games g ON g.id = s.game_id
@@ -1491,7 +1514,18 @@ def _interaction_deck_profile(
     )
     if not rows or not int(rows[0].get("games_tracked") or 0):
         return None
-    return rows[0]
+    row = rows[0]
+    side_keys = list(_INTERACTION_STAT_COLUMNS) + [
+        "counters_landed",
+        "counters_failed",
+        "lands_unreplaced",
+        "land_replacement_pct",
+    ]
+    return {
+        "games_tracked": row["games_tracked"],
+        "player": {key: row.get(f"p_{key}") for key in side_keys},
+        "opponent": {key: row.get(f"o_{key}") for key in side_keys},
+    }
 
 
 def _deck_mode_splits(match_rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

@@ -2717,14 +2717,20 @@ def test_deck_detail_interaction_profile_and_mode_splits(tmp_path):
     interaction = detail["interaction_profile"]
     # Only game-1 carries telemetry; game-2's NULLs never dilute the averages.
     assert interaction["games_tracked"] == 1
-    assert interaction["avg_removal_played"] == 4
-    assert interaction["avg_removal_drawn"] == 6
-    assert interaction["avg_counters_landed"] == 2  # opponent's spells_countered
-    assert interaction["avg_counters_failed"] == 1  # 3 played - 2 landed
-    assert interaction["avg_creatures_removed"] == 2
-    assert interaction["land_replacement_pct"] == 50
-    assert interaction["avg_tokens_created"] == 5
-    assert interaction["avg_tokens_lost"] == 3  # destroyed + sacrificed + exiled
+    you = interaction["player"]
+    assert you["removal_played"] == 4
+    assert you["removal_drawn"] == 6
+    assert you["counters_landed"] == 2  # opponent's spells_countered
+    assert you["counters_failed"] == 1  # 3 played - 2 landed
+    assert you["creatures_removed"] == 2
+    assert you["lands_lost"] == 2
+    assert you["lands_unreplaced"] == 1  # 2 destroyed - 1 replaced
+    assert you["land_replacement_pct"] == 50
+    assert you["tokens_created"] == 5
+    assert you["tokens_destroyed"] == 2
+    opp = interaction["opponent"]
+    assert opp["removal_played"] is None  # opponent row never got the columns
+    assert opp["counters_landed"] is None  # player spells_countered is NULL
 
     splits = detail["mode_splits"]
     standard = splits["standard"]

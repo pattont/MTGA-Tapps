@@ -6,6 +6,7 @@ import {
   type DeckCompositionRow,
   type DeckDetail,
   type DeckGameRow,
+  type DeckInteractionSide,
   type DeckVersionRow,
   type MatchLevelSummary,
   type MulliganRow,
@@ -612,15 +613,72 @@ export function DeckDetailPage({
   ];
 
   const interaction = detail.interaction_profile ?? null;
-  const drawnDetail = (drawn: number | null | undefined): string | undefined =>
-    drawn != null ? `${drawn} drawn / game` : undefined;
-  const sumNullable = (
-    first: number | null | undefined,
-    second: number | null | undefined,
-  ): number | null =>
-    first != null || second != null
-      ? Math.round(((first ?? 0) + (second ?? 0)) * 100) / 100
-      : null;
+  /** Average cell: folds the drawn average into the played cell like the
+      game page ("1.2 (2.3 drawn)"); opponent drawn averages are always
+      null (hidden information) so their cells stay plain. */
+  const interactionCell = (
+    side: DeckInteractionSide | undefined,
+    key: keyof DeckInteractionSide,
+    drawnKey?: keyof DeckInteractionSide,
+  ): string => {
+    const value = side?.[key];
+    if (value == null) {
+      return '—';
+    }
+    if (key === 'land_replacement_pct') {
+      return `${value}%`;
+    }
+    const drawn = drawnKey ? side?.[drawnKey] : null;
+    return drawn != null ? `${value} (${drawn} drawn)` : String(value);
+  };
+  const interactionGroups: {
+    title: string;
+    rows: [string, keyof DeckInteractionSide, (keyof DeckInteractionSide)?][];
+  }[] = [
+    {
+      title: 'Removal',
+      rows: [
+        ['Removal played', 'removal_played', 'removal_drawn'],
+        ['Board wipes played', 'wipes_played', 'wipes_drawn'],
+        ['Creatures lost to removal', 'creatures_removed'],
+        ['Non-creatures lost to removal', 'noncreatures_removed'],
+      ],
+    },
+    {
+      title: 'Bounce',
+      rows: [
+        ['Bounce cards played', 'bounces_played', 'bounces_drawn'],
+        ['Creatures bounced to hand', 'creatures_bounced'],
+        ['Non-creatures bounced to hand', 'noncreatures_bounced'],
+      ],
+    },
+    {
+      title: 'Land Destruction',
+      rows: [
+        ['Lands Destroyed', 'lands_lost'],
+        ['Lands Successfully Replaced', 'lands_replaced'],
+        ['Lands Lost To Destruction', 'lands_unreplaced'],
+        ['Land Replacement Rate', 'land_replacement_pct'],
+      ],
+    },
+    {
+      title: 'Counter Magic',
+      rows: [
+        ['Counters played', 'counters_played', 'counters_drawn'],
+        ['Counters successful', 'counters_landed'],
+        ['Counters failed', 'counters_failed'],
+      ],
+    },
+    {
+      title: 'Tokens',
+      rows: [
+        ['Created', 'tokens_created'],
+        ['Destroyed', 'tokens_destroyed'],
+        ['Sacrificed', 'tokens_sacrificed'],
+        ['Exiled', 'tokens_exiled'],
+      ],
+    },
+  ];
   const modeSplitCards: { label: string; summary: MatchLevelSummary }[] = [];
   const standardSplits = detail.mode_splits?.standard;
   if (standardSplits) {
@@ -793,73 +851,42 @@ export function DeckDetailPage({
         }
       >
         {interaction ? (
-          <section className="metric-grid metric-grid-deck" aria-label="Deck interaction metrics">
-            <MetricCard
-              label="Removal / Game"
-              value={formatNumber(interaction.avg_removal_played)}
-              detail={drawnDetail(interaction.avg_removal_drawn)}
-            />
-            <MetricCard
-              label="Board Wipes / Game"
-              value={formatNumber(interaction.avg_wipes_played)}
-              detail={drawnDetail(interaction.avg_wipes_drawn)}
-            />
-            <MetricCard
-              label="Bounce / Game"
-              value={formatNumber(interaction.avg_bounces_played)}
-              detail={drawnDetail(interaction.avg_bounces_drawn)}
-            />
-            <MetricCard
-              label="Counters / Game"
-              value={formatNumber(interaction.avg_counters_played)}
-              detail={drawnDetail(interaction.avg_counters_drawn)}
-            />
-            <MetricCard
-              label="Counters Landed / Game"
-              value={formatNumber(interaction.avg_counters_landed)}
-              detail={
-                interaction.avg_counters_failed != null
-                  ? `${interaction.avg_counters_failed} failed / game`
-                  : undefined
-              }
-            />
-            <MetricCard
-              label="Creatures Lost / Game"
-              value={formatNumber(interaction.avg_creatures_removed)}
-              detail={
-                interaction.avg_noncreatures_removed != null
-                  ? `+${interaction.avg_noncreatures_removed} non-creatures`
-                  : undefined
-              }
-            />
-            <MetricCard
-              label="Bounced Away / Game"
-              value={formatNumber(sumNullable(interaction.avg_creatures_bounced, interaction.avg_noncreatures_bounced))}
-              detail={
-                interaction.avg_creatures_bounced != null
-                  ? `${interaction.avg_creatures_bounced} creatures`
-                  : undefined
-              }
-            />
-            <MetricCard
-              label="Lands Lost / Game"
-              value={formatNumber(interaction.avg_lands_lost)}
-              detail={
-                interaction.land_replacement_pct != null
-                  ? `${interaction.land_replacement_pct}% replaced`
-                  : undefined
-              }
-            />
-            <MetricCard
-              label="Tokens Created / Game"
-              value={formatNumber(interaction.avg_tokens_created)}
-              detail={
-                interaction.avg_tokens_lost != null
-                  ? `${interaction.avg_tokens_lost} lost / game`
-                  : undefined
-              }
-            />
-          </section>
+          <div className="combat-groups">
+            {interactionGroups.map((group) => (
+              <div key={group.title} className="combat-group">
+                <table className="combat-group-table">
+                  <caption className="visually-hidden">
+                    {group.title} per-game averages by seat
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">{group.title}</th>
+                      <th scope="col" className="numeric">
+                        You
+                      </th>
+                      <th scope="col" className="numeric">
+                        Opp
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {group.rows.map(([label, key, drawnKey]) => (
+                      <tr key={label}>
+                        <td>{label}</td>
+                        <td className="numeric">
+                          {interactionCell(interaction.player, key, drawnKey)}
+                        </td>
+                        {/* Opponent draws are hidden information — no drawn suffix. */}
+                        <td className="numeric">
+                          {interactionCell(interaction.opponent, key)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
         ) : (
           <p className="empty-state">No interaction telemetry recorded for this deck yet.</p>
         )}
