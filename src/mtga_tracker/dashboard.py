@@ -1438,6 +1438,107 @@ def _combat_deck_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -
     return rows
 
 
+def _interaction_deck_profile(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> Optional[Dict[str, Any]]:
+    """Per-game interaction averages (removal/counters/bounce/lands/tokens).
+
+    SQLite's AVG ignores NULLs, so games recorded before each stat existed
+    simply don't dilute the averages. "Counters landed" is the opponent's
+    spells_countered (their spells that YOUR counters stopped).
+    """
+    rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              COUNT(s.removal_played) AS games_tracked,
+              ROUND(AVG(s.removal_played), 2) AS avg_removal_played,
+              ROUND(AVG(s.removal_drawn), 2) AS avg_removal_drawn,
+              ROUND(AVG(s.wipes_played), 2) AS avg_wipes_played,
+              ROUND(AVG(s.wipes_drawn), 2) AS avg_wipes_drawn,
+              ROUND(AVG(s.bounces_played), 2) AS avg_bounces_played,
+              ROUND(AVG(s.bounces_drawn), 2) AS avg_bounces_drawn,
+              ROUND(AVG(s.counters_played), 2) AS avg_counters_played,
+              ROUND(AVG(s.counters_drawn), 2) AS avg_counters_drawn,
+              ROUND(AVG(os.spells_countered), 2) AS avg_counters_landed,
+              ROUND(AVG(CASE
+                WHEN s.counters_played IS NOT NULL AND os.spells_countered IS NOT NULL
+                THEN MAX(0, s.counters_played - os.spells_countered)
+              END), 2) AS avg_counters_failed,
+              ROUND(AVG(s.creatures_removed), 2) AS avg_creatures_removed,
+              ROUND(AVG(s.noncreatures_removed), 2) AS avg_noncreatures_removed,
+              ROUND(AVG(s.creatures_bounced), 2) AS avg_creatures_bounced,
+              ROUND(AVG(s.noncreatures_bounced), 2) AS avg_noncreatures_bounced,
+              ROUND(AVG(s.lands_lost), 2) AS avg_lands_lost,
+              ROUND(AVG(s.lands_replaced), 2) AS avg_lands_replaced,
+              ROUND(100.0 * SUM(s.lands_replaced) / NULLIF(SUM(s.lands_lost), 0), 0)
+                AS land_replacement_pct,
+              ROUND(AVG(s.tokens_created), 2) AS avg_tokens_created,
+              ROUND(AVG(CASE WHEN s.tokens_destroyed IS NOT NULL
+                THEN s.tokens_destroyed + COALESCE(s.tokens_sacrificed, 0)
+                     + COALESCE(s.tokens_exiled, 0)
+              END), 2) AS avg_tokens_lost
+            FROM game_participant_stats s
+            JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
+            JOIN games g ON g.id = s.game_id
+            LEFT JOIN participants op ON op.game_id = g.id AND op.role = 'opponent'
+            LEFT JOIN game_participant_stats os
+              ON os.game_id = g.id AND os.participant_id = op.id
+            WHERE {where}
+            """,
+            params,
+        )
+    )
+    if not rows or not int(rows[0].get("games_tracked") or 0):
+        return None
+    return rows[0]
+
+
+def _deck_mode_splits(match_rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Match-level records split by queue for a deck's matches.
+
+    Standard constructed decks get Ranked/Unranked and Best-of-1/Best-of-3
+    splits. Brawl decks get Competitive Brawl (the ranked Brawl queue) vs
+    casual Brawl. Every other family — Historic, Explorer, Timeless, Alchemy,
+    Draft, Sealed, events — contributes nothing, per design.
+    """
+    buckets: Dict[str, List[Dict[str, Any]]] = {
+        "ranked": [],
+        "unranked": [],
+        "bo1": [],
+        "bo3": [],
+        "brawl_competitive": [],
+        "brawl_casual": [],
+    }
+    for row in match_rows:
+        normalized = normalize_match_format(
+            str(row.get("raw_format") or ""), default_best_of=int(row.get("best_of") or 1)
+        )
+        if normalized.is_brawl:
+            key = "brawl_competitive" if "(Ranked)" in normalized.label else "brawl_casual"
+            buckets[key].append(row)
+            continue
+        if normalized.family != "standard":
+            continue
+        buckets["ranked" if "(Ranked)" in normalized.label else "unranked"].append(row)
+        buckets["bo3" if int(normalized.best_of or 1) >= 3 else "bo1"].append(row)
+
+    def summarize(key: str) -> Optional[Dict[str, Any]]:
+        return _summarize_match_results(buckets[key]) if buckets[key] else None
+
+    standard = {key: summarize(key) for key in ("ranked", "unranked", "bo1", "bo3")}
+    brawl = {
+        "competitive": summarize("brawl_competitive"),
+        "casual": summarize("brawl_casual"),
+    }
+    splits: Dict[str, Any] = {}
+    if any(standard.values()):
+        splits["standard"] = standard
+    if any(brawl.values()):
+        splits["brawl"] = brawl
+    return splits or None
+
+
 def _combat_split_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> List[Dict[str, Any]]:
     """Aggression aggregates split by game outcome (wins vs losses)."""
     return _dict_rows(
@@ -2393,6 +2494,8 @@ def deck_detail(
         ).fetchone()
         combat_rows = _combat_deck_rows(conn, where, params)
         combat_profile = combat_rows[0] if combat_rows else None
+        interaction_profile = _interaction_deck_profile(conn, where, params)
+        mode_splits = _deck_mode_splits(_match_level_results(conn, where, params))
         streaks = _streak_summary(conn, where, params)
         composition_rows, version_rows, sideboard_summary = _deck_decklist_analysis(
             conn, where, params
@@ -2728,6 +2831,8 @@ def deck_detail(
             "on_play_pct": profile[3],
         },
         "combat_profile": combat_profile,
+        "interaction_profile": interaction_profile,
+        "mode_splits": mode_splits,
         "streaks": streaks,
         "composition": composition_rows,
         "versions": version_rows,

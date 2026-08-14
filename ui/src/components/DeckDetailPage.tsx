@@ -7,6 +7,7 @@ import {
   type DeckDetail,
   type DeckGameRow,
   type DeckVersionRow,
+  type MatchLevelSummary,
   type MulliganRow,
   type SideboardSwapRow,
   type SnapshotFilters,
@@ -610,6 +611,42 @@ export function DeckDetailPage({
     { label: 'Avg Duration', value: formatDuration(detail.profile.avg_duration_seconds) },
   ];
 
+  const interaction = detail.interaction_profile ?? null;
+  const drawnDetail = (drawn: number | null | undefined): string | undefined =>
+    drawn != null ? `${drawn} drawn / game` : undefined;
+  const sumNullable = (
+    first: number | null | undefined,
+    second: number | null | undefined,
+  ): number | null =>
+    first != null || second != null
+      ? Math.round(((first ?? 0) + (second ?? 0)) * 100) / 100
+      : null;
+  const modeSplitCards: { label: string; summary: MatchLevelSummary }[] = [];
+  const standardSplits = detail.mode_splits?.standard;
+  if (standardSplits) {
+    for (const [label, summary] of [
+      ['Ranked', standardSplits.ranked],
+      ['Unranked', standardSplits.unranked],
+      ['Best-of-1', standardSplits.bo1],
+      ['Best-of-3', standardSplits.bo3],
+    ] as const) {
+      if (summary) {
+        modeSplitCards.push({ label, summary });
+      }
+    }
+  }
+  const brawlSplits = detail.mode_splits?.brawl;
+  if (brawlSplits) {
+    for (const [label, summary] of [
+      ['Competitive Brawl', brawlSplits.competitive],
+      ['Casual Brawl', brawlSplits.casual],
+    ] as const) {
+      if (summary) {
+        modeSplitCards.push({ label, summary });
+      }
+    }
+  }
+
   return (
     <>
       {refreshError ? (
@@ -743,6 +780,111 @@ export function DeckDetailPage({
           <p className="empty-state">No combat telemetry recorded for this deck yet.</p>
         )}
       </Section>
+
+      <Section
+        id="deck-interaction"
+        title="Interaction Profile"
+        description={
+          interaction
+            ? `Per-game averages over the ${interaction.games_tracked} game${
+                interaction.games_tracked === 1 ? '' : 's'
+              } with interaction telemetry. Games recorded before a stat existed are excluded from its average.`
+            : 'Per-game removal, counter magic, bounce, land destruction, and token averages.'
+        }
+      >
+        {interaction ? (
+          <section className="metric-grid metric-grid-deck" aria-label="Deck interaction metrics">
+            <MetricCard
+              label="Removal / Game"
+              value={formatNumber(interaction.avg_removal_played)}
+              detail={drawnDetail(interaction.avg_removal_drawn)}
+            />
+            <MetricCard
+              label="Board Wipes / Game"
+              value={formatNumber(interaction.avg_wipes_played)}
+              detail={drawnDetail(interaction.avg_wipes_drawn)}
+            />
+            <MetricCard
+              label="Bounce / Game"
+              value={formatNumber(interaction.avg_bounces_played)}
+              detail={drawnDetail(interaction.avg_bounces_drawn)}
+            />
+            <MetricCard
+              label="Counters / Game"
+              value={formatNumber(interaction.avg_counters_played)}
+              detail={drawnDetail(interaction.avg_counters_drawn)}
+            />
+            <MetricCard
+              label="Counters Landed / Game"
+              value={formatNumber(interaction.avg_counters_landed)}
+              detail={
+                interaction.avg_counters_failed != null
+                  ? `${interaction.avg_counters_failed} failed / game`
+                  : undefined
+              }
+            />
+            <MetricCard
+              label="Creatures Lost / Game"
+              value={formatNumber(interaction.avg_creatures_removed)}
+              detail={
+                interaction.avg_noncreatures_removed != null
+                  ? `+${interaction.avg_noncreatures_removed} non-creatures`
+                  : undefined
+              }
+            />
+            <MetricCard
+              label="Bounced Away / Game"
+              value={formatNumber(sumNullable(interaction.avg_creatures_bounced, interaction.avg_noncreatures_bounced))}
+              detail={
+                interaction.avg_creatures_bounced != null
+                  ? `${interaction.avg_creatures_bounced} creatures`
+                  : undefined
+              }
+            />
+            <MetricCard
+              label="Lands Lost / Game"
+              value={formatNumber(interaction.avg_lands_lost)}
+              detail={
+                interaction.land_replacement_pct != null
+                  ? `${interaction.land_replacement_pct}% replaced`
+                  : undefined
+              }
+            />
+            <MetricCard
+              label="Tokens Created / Game"
+              value={formatNumber(interaction.avg_tokens_created)}
+              detail={
+                interaction.avg_tokens_lost != null
+                  ? `${interaction.avg_tokens_lost} lost / game`
+                  : undefined
+              }
+            />
+          </section>
+        ) : (
+          <p className="empty-state">No interaction telemetry recorded for this deck yet.</p>
+        )}
+      </Section>
+
+      {modeSplitCards.length > 0 ? (
+        <Section
+          id="deck-modes"
+          title="Mode Performance"
+          description="Match-level records by queue: a Best-of-3 counts once, only the match result matters."
+        >
+          <section className="metric-grid metric-grid-deck" aria-label="Deck mode performance">
+            {modeSplitCards.map((card) => (
+              <MetricCard
+                key={card.label}
+                label={card.label}
+                value={card.summary.win_rate != null ? `${card.summary.win_rate}%` : '—'}
+                detail={`${card.summary.wins}-${card.summary.losses} · ${card.summary.matches} match${
+                  card.summary.matches === 1 ? '' : 'es'
+                }`}
+              />
+            ))}
+          </section>
+        </Section>
+      ) : null}
 
       <Section id="deck-trend" title="Win Rate Trend" description="Rolling win rate across this deck's finished games.">
         <div className="trend-wrap">
