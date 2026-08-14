@@ -301,6 +301,9 @@ class AnalyticsStore:
                 wipes_played INTEGER,
                 bounces_drawn INTEGER,
                 bounces_played INTEGER,
+                counters_drawn INTEGER,
+                counters_played INTEGER,
+                spells_countered INTEGER,
                 lands_lost INTEGER,
                 lands_replaced INTEGER,
                 tokens_created INTEGER,
@@ -565,6 +568,7 @@ class AnalyticsStore:
             (14, AnalyticsStore._migrate_v14_purge_untracked_modes),
             (15, AnalyticsStore._migrate_v15_purge_welcome_deck_duels),
             (16, AnalyticsStore._migrate_v16_removal_and_token_stats),
+            (17, AnalyticsStore._migrate_v17_counter_magic_stats),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -970,6 +974,19 @@ class AnalyticsStore:
             "tokens_sacrificed",
             "tokens_exiled",
         ):
+            if column not in existing:
+                conn.execute(
+                    f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER"
+                )
+
+    @staticmethod
+    def _migrate_v17_counter_magic_stats(conn: sqlite3.Connection) -> None:
+        """Add counter-magic columns (nullable, like the v16 removal set)."""
+        existing = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(game_participant_stats)")
+        }
+        for column in ("counters_drawn", "counters_played", "spells_countered"):
             if column not in existing:
                 conn.execute(
                     f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER"

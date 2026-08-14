@@ -84,3 +84,22 @@ def test_classifier_caches_per_grp():
     assert classifier.roles_for(7) == {ROLE_REMOVAL}
     assert db.calls == 1
     assert classifier.roles_for(None) == frozenset()
+
+
+def test_counter_magic_classification():
+    from mtga_tracker.removal_classifier import ROLE_COUNTER
+
+    # Hard counter.
+    assert classify_ability_texts(["Counter target spell."]) == {ROLE_COUNTER}
+    # Soft counter — still counter magic; landing is tracked from game events.
+    assert classify_ability_texts(
+        ["Counter target spell unless its controller pays {2}."]
+    ) == {ROLE_COUNTER}
+    assert classify_ability_texts(["Counter target noncreature spell."]) == {ROLE_COUNTER}
+    assert classify_ability_texts(["Counter target activated ability."]) == {ROLE_COUNTER}
+    # Counters-the-counters wording.
+    assert classify_ability_texts(
+        ["When you cast this spell, counter it unless you pay {1}."]
+    ) == {ROLE_COUNTER}
+    # "Counter" as in +1/+1 counters must NOT classify.
+    assert classify_ability_texts(["Put a +1/+1 counter on target creature."]) == frozenset()

@@ -707,6 +707,9 @@ export interface GameParticipantStatsRow {
   wipes_played?: number | null;
   bounces_drawn?: number | null;
   bounces_played?: number | null;
+  counters_drawn?: number | null;
+  counters_played?: number | null;
+  spells_countered?: number | null;
   lands_lost?: number | null;
   lands_replaced?: number | null;
   tokens_created?: number | null;

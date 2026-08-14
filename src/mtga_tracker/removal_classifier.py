@@ -25,6 +25,7 @@ from typing import Dict, FrozenSet, Iterable
 ROLE_REMOVAL = "removal"
 ROLE_WIPE = "wipe"
 ROLE_BOUNCE = "bounce"
+ROLE_COUNTER = "counter"
 
 _CREATUREISH = r"(?:creatures?|permanents?|nonland permanents?|other permanents?|artifacts? and creatures?|creatures? and planeswalkers?)"
 
@@ -52,6 +53,18 @@ _BOUNCE_PATTERNS = tuple(
     for pattern in (
         rf"returns? all (?:other )?{_CREATUREISH} to their owners?['’]?s? hands?",
         rf"returns? each (?:other )?{_CREATUREISH} to (?:its|their) owners?['’]?s? hands?",
+    )
+)
+
+# Counter magic: hard counters and soft "unless its controller pays" ones
+# both classify — whether it lands is tracked separately from game events.
+_COUNTER_PATTERNS = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"counters? target .{0,60}spell",
+        r"counters? target (?:activated |triggered )?abilit",
+        r"counters? that spell",
+        r"counters? it unless",
     )
 )
 
@@ -90,6 +103,8 @@ def classify_ability_texts(texts: Iterable[str]) -> FrozenSet[str]:
             roles.add(ROLE_BOUNCE)
         if any(pattern.search(lowered) for pattern in _REMOVAL_PATTERNS):
             roles.add(ROLE_REMOVAL)
+        if any(pattern.search(lowered) for pattern in _COUNTER_PATTERNS):
+            roles.add(ROLE_COUNTER)
     # A sweeper is a sweeper; don't double-count it as spot removal
     # (modal cards that do both keep the wipe classification).
     if ROLE_WIPE in roles:

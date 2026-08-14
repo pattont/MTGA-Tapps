@@ -149,6 +149,8 @@ class TrackerZoneTransferMixin:
                     stats["wipes_drawn"] += 1
                 if "bounce" in roles:
                     stats["bounces_drawn"] += 1
+                if "counter" in roles:
+                    stats["counters_drawn"] += 1
         if grp_id:
             try:
                 seat_id = int(owner_seat)

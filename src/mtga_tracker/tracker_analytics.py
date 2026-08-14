@@ -681,6 +681,9 @@ class TrackerAnalyticsMixin:
                 wipes_played,
                 bounces_drawn,
                 bounces_played,
+                counters_drawn,
+                counters_played,
+                spells_countered,
                 lands_lost,
                 lands_replaced,
                 tokens_created,
@@ -688,7 +691,7 @@ class TrackerAnalyticsMixin:
                 tokens_sacrificed,
                 tokens_exiled
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(game_id, participant_id) DO UPDATE SET
                 attack_steps = excluded.attack_steps,
                 attacking_creatures = excluded.attacking_creatures,
@@ -711,6 +714,9 @@ class TrackerAnalyticsMixin:
                 wipes_played = excluded.wipes_played,
                 bounces_drawn = excluded.bounces_drawn,
                 bounces_played = excluded.bounces_played,
+                counters_drawn = excluded.counters_drawn,
+                counters_played = excluded.counters_played,
+                spells_countered = excluded.spells_countered,
                 lands_lost = excluded.lands_lost,
                 lands_replaced = excluded.lands_replaced,
                 tokens_created = excluded.tokens_created,
@@ -742,6 +748,9 @@ class TrackerAnalyticsMixin:
                 int(stats.get("wipes_played", 0)),
                 int(stats.get("bounces_drawn", 0)),
                 int(stats.get("bounces_played", 0)),
+                int(stats.get("counters_drawn", 0)),
+                int(stats.get("counters_played", 0)),
+                int(stats.get("spells_countered", 0)),
                 int(stats.get("lands_lost", 0)),
                 int(stats.get("lands_replaced", 0)),
                 int(stats.get("tokens_created", 0)),
