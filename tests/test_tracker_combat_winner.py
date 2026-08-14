@@ -7041,3 +7041,111 @@ def test_outcome_concede_still_default_without_annotation():
     )
 
     assert tracker._resolve_game_outcome() == ("win", "Opponent conceded")
+
+
+def _removal_tracker():
+    """Tracker with seats set and a card DB that classifies grp 900 as removal,
+    901 as a board wipe, and 902 as mass bounce."""
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.turn_number = 5
+
+    class RoleCardDb:
+        @staticmethod
+        def get_card_name(grp_id):
+            return f"Card #{grp_id}"
+
+        @staticmethod
+        def get_card_type_category(grp_id):
+            return "Instant"
+
+        @staticmethod
+        def get_card_ability_texts(grp_id):
+            return {
+                900: ["Destroy target creature."],
+                901: ["Destroy all creatures."],
+                902: ["Return all creatures to their owners' hands."],
+            }.get(grp_id, [])
+
+    tracker.card_db = RoleCardDb()
+    tracker._removal_classifier = None  # force rebuild against the fake DB
+    return tracker
+
+
+def test_cast_counts_removal_roles_once():
+    tracker = _removal_tracker()
+    for instance_id, grp in ((501, 900), (502, 901), (503, 902)):
+        tracker._record_played_card_once(
+            instance_id=instance_id,
+            canonical_instance_id=instance_id,
+            seat_id=1,
+            track_name=f"Card #{grp} (Instant)",
+            card_types=["CardType_Instant"],
+            grp_id=grp,
+        )
+    # Replaying the same instance must not double count.
+    tracker._record_played_card_once(
+        instance_id=501,
+        canonical_instance_id=501,
+        seat_id=1,
+        track_name="Card #900 (Instant)",
+        card_types=["CardType_Instant"],
+        grp_id=900,
+    )
+
+    stats = tracker.game_state.match_stats[1]
+    assert stats["removal_played"] == 1
+    assert stats["wipes_played"] == 1
+    assert stats["bounces_played"] == 1
+
+
+def test_land_destruction_and_replacement_tracking():
+    tracker = _removal_tracker()
+    objects = {
+        601: {"instanceId": 601, "controllerSeatId": 1},  # player's LD spell
+    }
+    # Player destroys an opponent land on turn 5.
+    tracker._count_enemy_land_destruction(2, 601, None, objects)
+    assert tracker.game_state.match_stats[2]["lands_lost"] == 1
+
+    # Opponent drops a land on their next turn -> replaced.
+    tracker.game_state.turn_number = 6
+    tracker._check_land_replacement(2)
+    assert tracker.game_state.match_stats[2]["lands_replaced"] == 1
+
+    # A second destruction that is never answered stays unreplaced.
+    tracker.game_state.turn_number = 7
+    tracker._count_enemy_land_destruction(2, 601, None, objects)
+    tracker.game_state.turn_number = 12  # window long gone
+    tracker._check_land_replacement(2)
+    assert tracker.game_state.match_stats[2]["lands_replaced"] == 1
+
+    # Sacrificing your own land (same controller) never counts.
+    tracker._count_enemy_land_destruction(1, 601, None, objects)
+    assert tracker.game_state.match_stats[1]["lands_lost"] == 0
+
+
+def test_token_lifecycle_counting():
+    tracker = _removal_tracker()
+    token = {"instanceId": 700, "type": "GameObjectType_Token", "controllerSeatId": 1}
+    objects = {700: token}
+
+    tracker._count_token_creations([700], objects)
+    tracker._count_token_creations([700], objects)  # dedupe
+    assert tracker.game_state.match_stats[1]["tokens_created"] == 1
+
+    tracker._count_token_loss(token, 700, "Sacrifice", 1)
+    tracker._count_token_loss(token, 700, "Sacrifice", 1)  # dedupe
+    assert tracker.game_state.match_stats[1]["tokens_sacrificed"] == 1
+
+    other = {"instanceId": 701, "type": "GameObjectType_Token", "controllerSeatId": 2}
+    tracker._count_token_loss(other, 701, "SBA_Damage", 2)
+    tracker._count_token_loss(other, 701, "Exile", 2)
+    assert tracker.game_state.match_stats[2]["tokens_destroyed"] == 1
+    assert tracker.game_state.match_stats[2]["tokens_exiled"] == 1
+
+    # Non-token objects never touch token stats.
+    tracker._count_token_loss({"instanceId": 702, "type": "GameObjectType_Card"}, 702, "Destroy", 1)
+    assert tracker.game_state.match_stats[1]["tokens_destroyed"] == 0

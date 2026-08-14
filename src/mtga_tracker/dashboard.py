@@ -3196,7 +3196,19 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                   s.cards_drawn,
                   s.cards_discarded,
                   s.cards_milled,
-                  s.cards_exiled
+                  s.cards_exiled,
+                  s.removal_drawn,
+                  s.removal_played,
+                  s.wipes_drawn,
+                  s.wipes_played,
+                  s.bounces_drawn,
+                  s.bounces_played,
+                  s.lands_lost,
+                  s.lands_replaced,
+                  s.tokens_created,
+                  s.tokens_destroyed,
+                  s.tokens_sacrificed,
+                  s.tokens_exiled
                 FROM game_participant_stats s
                 JOIN participants p ON p.id = s.participant_id
                 WHERE s.game_id = ?

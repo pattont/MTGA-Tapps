@@ -323,6 +323,16 @@ class TrackerStateLookupMixin:
             return None
         return self.game_state.match_stats[int(seat_id)]
 
+    def _card_roles(self, grp_id):
+        """Removal/wipe/bounce roles for a card, classified from rules text."""
+        classifier = getattr(self, "_removal_classifier", None)
+        if classifier is None:
+            from .removal_classifier import RemovalClassifier
+
+            classifier = RemovalClassifier(self.card_db)
+            self._removal_classifier = classifier
+        return classifier.roles_for(grp_id)
+
     @staticmethod
     def _zone_index(data: Dict[str, Any]) -> Dict[int, Dict[str, Any]]:
         """Map zone id to zone payload for the current update."""

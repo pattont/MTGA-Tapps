@@ -44,6 +44,24 @@ class GameState:
             "cards_discarded": 0,
             "cards_milled": 0,
             "cards_exiled": 0,
+            # Removal tracking (classification is text-based; see
+            # removal_classifier.py). Drawn counts only fill for the player —
+            # opponent draws are hidden.
+            "removal_drawn": 0,
+            "removal_played": 0,
+            "wipes_drawn": 0,
+            "wipes_played": 0,
+            "bounces_drawn": 0,
+            "bounces_played": 0,
+            # Lands this seat LOST to an enemy card, and how many of those
+            # they answered with a land drop by the end of their next turn.
+            "lands_lost": 0,
+            "lands_replaced": 0,
+            # Token lifecycle for this seat's tokens.
+            "tokens_created": 0,
+            "tokens_destroyed": 0,
+            "tokens_sacrificed": 0,
+            "tokens_exiled": 0,
         }
         return {1: base.copy(), 2: base.copy()}
 
@@ -132,6 +150,14 @@ class GameState:
         self.combat_loss_events_counted: Set[tuple] = set()
         self.match_stats = self._new_match_stats()
         self.stack_stats = self._new_stack_stats()
+        #: Pending land-replacement watches per seat: global turn deadlines by
+        #: which the seat must drop a land for the destruction to count as
+        #: "replaced" (victim's next turn ≈ destruction turn + 2).
+        self.pending_land_replacements: Dict[int, List[int]] = {1: [], 2: []}
+        #: Token instance ids already counted as created (dedupe across diffs).
+        self.counted_token_creations: Set[int] = set()
+        #: (instance_id, category) pairs already counted as token losses.
+        self.counted_token_losses: Set[tuple] = set()
         self.drawn_card_events: Dict[int, List[CardEvent]] = {1: [], 2: []}
 
         self.game_start_time: Optional[datetime] = None
