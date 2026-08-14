@@ -1253,6 +1253,19 @@ function Dashboard({
             </section>
           </>
         ) : null}
+        <div className="section-heading">
+          <div>
+            <h3>
+              {filters.season && snapshot.ranked_season_summary
+                ? `Season ${snapshot.ranked_season_summary.season_ordinal} Stats`
+                : 'Current Season Stats'}
+            </h3>
+            <p className="section-description">
+              Resets every seasonal rollover; the dropdown swaps the chart and the boxes below it
+              to that season.
+            </p>
+          </div>
+        </div>
         {(snapshot.filter_options.rank_seasons ?? []).length > 0 ? (
           <div className="table-filter">
             <label className="filter-field">
@@ -1276,29 +1289,14 @@ function Dashboard({
             </label>
           </div>
         ) : null}
-        {snapshot.ranked_season_summary ? (
-          <>
-            <div className="section-heading">
-              <div>
-                <h3>
-                  {filters.season
-                    ? `Season ${snapshot.ranked_season_summary.season_ordinal} Stats`
-                    : 'Current Season Stats'}
-                </h3>
-                <p className="section-description">
-                  Resets every seasonal rollover; the dropdown swaps both these boxes and the
-                  chart to that season.
-                </p>
-              </div>
-            </div>
-            <section className="metric-grid ranked-metric-grid" aria-label="Season ranked record">
-              {rankedMetricCards(snapshot.ranked_season_summary, 'Season Matches')}
-            </section>
-          </>
-        ) : null}
         <div className="trend-wrap">
           <RankProgressChart rows={snapshot.rank_progress ?? []} />
         </div>
+        {snapshot.ranked_season_summary ? (
+          <section className="metric-grid ranked-metric-grid" aria-label="Season ranked record">
+            {rankedMetricCards(snapshot.ranked_season_summary, 'Season Matches')}
+          </section>
+        ) : null}
       </Section>
 
       <Section
