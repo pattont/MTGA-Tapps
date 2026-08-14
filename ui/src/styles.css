@@ -2500,6 +2500,11 @@ tbody tr:hover {
   font-size: 0.88rem;
 }
 
+/* "3 (4 drawn)" style values stay on one line. */
+.combat-group-table td.numeric {
+  white-space: nowrap;
+}
+
 .combat-group-table thead th {
   text-align: left;
   font-size: 0.7rem;
