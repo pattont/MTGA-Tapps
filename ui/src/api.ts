@@ -369,6 +369,7 @@ export interface DashboardSnapshot {
   streaks: StreakSummary;
   match_summary?: MatchLevelSummary;
   ranked_summary?: MatchLevelSummary;
+  ranked_season_summary?: (MatchLevelSummary & { season_ordinal: number }) | null;
   outcome_reasons: OutcomeReasonRow[];
   opener_lands: OpenerLandRow[];
   opponent_threats: OpponentThreatRow[];

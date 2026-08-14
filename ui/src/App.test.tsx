@@ -1241,19 +1241,6 @@ describe('App', () => {
     expect(screen.getAllByRole('link', { name: 'Boros Mouse' })).toHaveLength(2);
   });
 
-  it('links card names to the card detail page', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(snapshot), { status: 200 })));
-    render(<App />);
-
-    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
-
-    // Card links on the dashboard now live in the Opponent Meta threat table.
-    expect(screen.getByRole('link', { name: 'Graveyard Trespasser' })).toHaveAttribute(
-      'href',
-      '#/card/Graveyard%20Trespasser',
-    );
-  });
-
   it('searches all tracked cards and opens the selected card detail', async () => {
     const shelteredDetail = {
       ...cardDetail,

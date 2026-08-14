@@ -1,6 +1,6 @@
 import type { TrendRow } from './api';
 
-export const TREND_WINDOW = 15;
+export const TREND_WINDOW = 30;
 
 export interface TrendPoint {
   rate: number;
