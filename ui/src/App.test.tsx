@@ -1412,7 +1412,10 @@ describe('App', () => {
     expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot', expect.anything());
 
-    await user.selectOptions(screen.getByLabelText('Deck'), 'Boros Mouse');
+    // The deck filter is a searchable dropdown: open, type, pick.
+    await user.click(screen.getByRole('button', { name: 'Deck filter' }));
+    await user.type(screen.getByLabelText('Search decks in filter'), 'boros');
+    await user.click(screen.getByRole('option', { name: 'Boros Mouse' }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?deck=Boros+Mouse', expect.anything()),
     );

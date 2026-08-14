@@ -371,40 +371,38 @@ a {
   color: var(--danger);
 }
 
+/* Compact, box-less filter row: labels sit left of their controls. */
 .filter-bar {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
-  margin-bottom: 18px;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel);
+  gap: 8px 16px;
+  margin-bottom: 12px;
 }
 
-/* Inside a section box (All Games), inset the filter panel from the edges. */
+/* Inside a section box (All Games), inset the filter row from the edges. */
 .dashboard-section .filter-bar {
-  margin: 8px 16px 14px;
+  margin: 10px 16px 12px;
 }
 
-.filter-bar label {
-  display: grid;
-  gap: 5px;
-  min-width: 170px;
+.filter-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
-.filter-bar label span {
+.filter-field-label {
   color: var(--muted);
-  font-size: 0.74rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .filter-bar select,
-.filter-bar input[type="date"] {
-  min-height: 36px;
+.filter-bar input[type="date"],
+.deck-select-trigger {
+  min-height: 34px;
   max-width: 260px;
   padding: 0 10px;
   border: 1px solid var(--border);
@@ -416,8 +414,102 @@ a {
 .filter-bar select:hover,
 .filter-bar select:focus-visible,
 .filter-bar input[type="date"]:hover,
-.filter-bar input[type="date"]:focus-visible {
+.filter-bar input[type="date"]:focus-visible,
+.deck-select-trigger:hover,
+.deck-select-trigger:focus-visible {
   border-color: var(--accent);
+}
+
+/* Searchable deck dropdown. */
+.deck-select {
+  position: relative;
+}
+
+.deck-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 160px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.deck-select-value {
+  overflow: hidden;
+  max-width: 210px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deck-select-caret {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.deck-select-popup {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  display: grid;
+  gap: 6px;
+  min-width: 250px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  box-shadow: var(--preview-shadow);
+}
+
+.deck-select-popup input {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.deck-select-popup input:focus-visible {
+  border-color: var(--accent);
+}
+
+.deck-select-popup ul {
+  overflow-y: auto;
+  max-height: 300px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.deck-select-option {
+  display: block;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.deck-select-option:hover,
+.deck-select-option:focus-visible {
+  background: var(--hover-tint);
+}
+
+.deck-select-option-active {
+  background: var(--nav-active-bg);
+  font-weight: 600;
+}
+
+.deck-select-empty {
+  padding: 8px 9px;
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 .filter-clear {
@@ -2568,6 +2660,16 @@ tbody tr:hover {
 
 .outcome-total-row-loss td {
   color: var(--danger);
+}
+
+.result-label-win {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.result-label-loss {
+  color: var(--danger);
+  font-weight: 600;
 }
 
 .outcome-reason-grid .outcome-group-row th {
