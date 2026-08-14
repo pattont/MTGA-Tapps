@@ -859,3 +859,130 @@ def test_snapshot_brawl_summary_counts_all_brawl_queues(tmp_path):
         ("Historic Brawl", 2, 1),
         ("Brawl (Ranked)", 1, 1),
     ]
+
+
+def _seed_events_backfill_db(conn):
+    """Minimal game with a timeline that exercises every backfilled stat."""
+    conn.execute(
+        "INSERT INTO tracker_sessions (id, started_at) VALUES ('s1', '2026-01-01T00:00:00')"
+    )
+    conn.execute(
+        "INSERT INTO matches (id, session_id) VALUES ('m1', 's1')"
+    )
+    conn.execute(
+        "INSERT INTO games (id, match_id, session_id, game_number) VALUES ('g1', 'm1', 's1', 1)"
+    )
+    conn.execute(
+        "INSERT INTO participants (id, game_id, role) VALUES ('p1', 'g1', 'player')"
+    )
+    conn.execute(
+        "INSERT INTO participants (id, game_id, role) VALUES ('p2', 'g1', 'opponent')"
+    )
+    for participant in ("p1", "p2"):
+        conn.execute(
+            "INSERT INTO game_participant_stats (game_id, participant_id) VALUES ('g1', ?)",
+            (participant,),
+        )
+    for name, primary_type in (
+        ("Bear", "Creature"),
+        ("Shrine", "Enchantment"),
+        ("Forest", "Land"),
+        ("Bolt", "Instant"),
+        ("Ox", "Creature"),
+    ):
+        conn.execute(
+            "INSERT INTO cards (name, primary_type, first_seen_at) VALUES (?, ?, '2026-01-01')",
+            (name, primary_type),
+        )
+    events = [
+        # (turn, actor_role, event_type, text)
+        (1, "player", "cast", "[0:10] You: cast [Bear (Creature 2/2)]"),
+        (1, "player", "cast", "[0:11] You: cast [Shrine (Enchantment)]"),
+        (2, "opponent", "cast", "[0:20] Opponent: cast [Ox (Creature 4/4)]"),
+        (3, "player", "cast", "[0:30] You: cast [Bolt (Instant)] -> [Ox (4/4)]"),
+        # Player's creature and enchantment are removed.
+        (4, "player", "zone", "[0:40] You: [Bear] was destroyed"),
+        (4, "player", "zone", "[0:41] You: [Shrine] was exiled"),
+        # A lethal-damage death must NOT count (combat vs burn is unknowable).
+        (4, "opponent", "zone", "[0:42] Opponent: [Ox] was put into graveyard (lethal damage)"),
+        # Opponent's land is destroyed on turn 5, replaced on turn 6.
+        (5, "opponent", "zone", "[0:50] Opponent: [Forest] was destroyed"),
+        (6, "opponent", "land", "[0:60] Opponent: played [Forest (Land)]"),
+        # Opponent recasts the Ox, then it gets bounced back to hand.
+        (6, "opponent", "cast", "[0:61] Opponent: cast [Ox (Creature 4/4)]"),
+        (7, "opponent", "zone", "[0:70] Opponent: returned [Ox] to hand"),
+        # An exile of something never seen on the battlefield is ignored.
+        (7, "player", "zone", "[0:71] You: [Bolt] was exiled"),
+        # Player's spell gets countered.
+        (8, "player", "cast", "[0:80] You: cast [Bear (Creature 2/2)]"),
+        (8, None, "stack_fail", "\t[0:81] Stack: [Bear (Creature 2/2)] [countered]"),
+    ]
+    for index, (turn, actor, event_type, text) in enumerate(events):
+        conn.execute(
+            "INSERT INTO game_events (session_id, game_id, event_time, turn_number, actor_role, event_type, text) "
+            "VALUES ('s1', 'g1', ?, ?, ?, ?, ?)",
+            (f"2026-01-01T00:00:{index:02d}", turn, actor, event_type, text),
+        )
+
+
+def test_events_backfill_fills_null_stats_only(tmp_path):
+    from mtga_tracker.events_backfill import backfill_game_stats_from_events
+
+    store = AnalyticsStore(tmp_path / "backfill.sqlite3")
+    conn = store.connect()
+    _seed_events_backfill_db(conn)
+    # Pretend one column was live-tracked: it must survive the backfill.
+    conn.execute(
+        "UPDATE game_participant_stats SET creatures_removed = 9 "
+        "WHERE participant_id = 'p1'"
+    )
+
+    updated = backfill_game_stats_from_events(conn)
+    assert updated == 2
+
+    player = dict(
+        zip(
+            (
+                "creatures_removed",
+                "noncreatures_removed",
+                "creatures_bounced",
+                "noncreatures_bounced",
+                "lands_lost",
+                "lands_replaced",
+                "spells_countered",
+            ),
+            conn.execute(
+                "SELECT creatures_removed, noncreatures_removed, creatures_bounced, "
+                "noncreatures_bounced, lands_lost, lands_replaced, spells_countered "
+                "FROM game_participant_stats WHERE participant_id = 'p1'"
+            ).fetchone(),
+        )
+    )
+    opponent = dict(
+        zip(
+            (
+                "creatures_removed",
+                "noncreatures_removed",
+                "creatures_bounced",
+                "noncreatures_bounced",
+                "lands_lost",
+                "lands_replaced",
+                "spells_countered",
+            ),
+            conn.execute(
+                "SELECT creatures_removed, noncreatures_removed, creatures_bounced, "
+                "noncreatures_bounced, lands_lost, lands_replaced, spells_countered "
+                "FROM game_participant_stats WHERE participant_id = 'p2'"
+            ).fetchone(),
+        )
+    )
+
+    assert player["creatures_removed"] == 9  # live value preserved
+    assert player["noncreatures_removed"] == 1  # Shrine exiled from battlefield
+    assert player["spells_countered"] == 1  # second Bear countered
+    assert player["creatures_bounced"] == 0
+    assert opponent["creatures_removed"] == 0  # lethal damage skipped
+    assert opponent["lands_lost"] == 1
+    assert opponent["lands_replaced"] == 1
+    assert opponent["creatures_bounced"] == 1  # Ox returned to hand
+    assert opponent["spells_countered"] == 0

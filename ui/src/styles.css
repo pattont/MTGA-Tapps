@@ -2496,13 +2496,18 @@ tbody tr:hover {
 
 .combat-group-table th,
 .combat-group-table td {
-  padding: 7px 12px;
+  padding: 7px 9px;
   font-size: 0.88rem;
 }
 
-/* "3 (4 drawn)" style values stay on one line. */
-.combat-group-table td.numeric {
-  white-space: nowrap;
+.combat-group-table th:first-child,
+.combat-group-table td:first-child {
+  padding-left: 12px;
+}
+
+.combat-group-table th:last-child,
+.combat-group-table td:last-child {
+  padding-right: 12px;
 }
 
 .combat-group-table thead th {
@@ -2513,6 +2518,9 @@ tbody tr:hover {
   color: var(--muted);
   background: var(--panel-strong);
   border-bottom: 1px solid var(--border);
+  /* Group titles may wrap: nowrap headers force the whole table wider than
+     the masonry column and the overflow gets clipped by the card. */
+  white-space: normal;
 }
 
 .combat-group-table thead th:first-child {
@@ -2533,7 +2541,6 @@ tbody tr:hover {
 .combat-group-table th.numeric,
 .combat-group-table td.numeric {
   text-align: right;
-  width: 58px;
   font-variant-numeric: tabular-nums;
 }
 

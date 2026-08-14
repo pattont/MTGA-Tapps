@@ -70,6 +70,17 @@ class TrackerZoneTransferMixin:
                     elif instance_id in self.game_state.current_combat_blockers:
                         stats["blockers_lost"] += 1
                         self.game_state.combat_loss_events_counted.add(combat_loss_key)
+        # Zero-toughness deaths (-X/-X removal and wipes) are removal-style
+        # losses. Lethal-damage deaths are deliberately NOT counted: Arena's
+        # SBA annotations reference instance ids that never match the declared
+        # attacker/blocker ids (verified against real logs), so a burn kill
+        # cannot be told apart from a combat death — counting them all would
+        # turn every combat trade into "removal".
+        if str(category) == "SBA_ZeroToughness" and not (
+            instance_id in self.game_state.current_combat_attackers
+            or instance_id in self.game_state.current_combat_blockers
+        ):
+            self._count_permanent_removed(instance_id, card_types, owner_seat)
         self._count_token_loss(card_obj, instance_id, category, owner_seat)
         return True
 
@@ -328,6 +339,40 @@ class TrackerZoneTransferMixin:
                 owner_seat, affector_id, source_id, game_objects_by_id
             )
 
+        # Removal losses: destroyed permanents always count; exiled ones only
+        # when leaving the battlefield (Exile also fires for impulse draws,
+        # graveyard hate, foretell, ...); sacrifices only when forced by the
+        # other seat's effect (edicts) — your own sac outlet is not removal.
+        if not is_stack_cost and "CardType_Land" not in card_types:
+            if category == "Destroy":
+                self._count_permanent_removed(instance_id, card_types, owner_seat)
+            elif category == "Exile":
+                source_zone = (
+                    (zones_by_id or {}).get(int(zone_src)) if zone_src is not None else None
+                )
+                source_type = (
+                    source_zone.get("type") if isinstance(source_zone, dict) else None
+                )
+                if source_type == "ZoneType_Battlefield":
+                    self._count_permanent_removed(instance_id, card_types, owner_seat)
+            elif category == "Sacrifice":
+                forcer_seat = None
+                for candidate_id in (affector_id, source_id):
+                    if candidate_id is None:
+                        continue
+                    candidate = self._lookup_object(candidate_id, game_objects_by_id)
+                    forcer_seat = candidate.get("controllerSeatId") or candidate.get(
+                        "ownerSeatId"
+                    )
+                    if forcer_seat is not None:
+                        break
+                if (
+                    forcer_seat is not None
+                    and owner_seat is not None
+                    and int(forcer_seat) != int(owner_seat)
+                ):
+                    self._count_permanent_removed(instance_id, card_types, owner_seat)
+
         if category == "Exile":
             if owner_seat == self.game_state.player_seat_id:
                 self.game_state.player_cards_exiled += 1
@@ -414,6 +459,52 @@ class TrackerZoneTransferMixin:
             return
         self.game_state.counted_token_losses.add(loss_key)
         stats[stat_key] += 1
+
+    def _count_permanent_removed(
+        self,
+        instance_id: int,
+        card_types: List[str],
+        owner_seat: Optional[int],
+    ) -> None:
+        """Count a nonland permanent lost to removal (wipes included)."""
+        if "CardType_Land" in (card_types or []):
+            return
+        stats = self._seat_stats(owner_seat)
+        if stats is None:
+            return
+        try:
+            key = int(instance_id)
+        except (TypeError, ValueError):
+            return
+        if key in self.game_state.counted_removal_losses:
+            return
+        self.game_state.counted_removal_losses.add(key)
+        if "CardType_Creature" in (card_types or []):
+            stats["creatures_removed"] += 1
+        else:
+            stats["noncreatures_removed"] += 1
+
+    def _count_permanent_bounced(
+        self,
+        instance_id: Optional[int],
+        card_types: List[str],
+        owner_seat: Optional[int],
+    ) -> None:
+        """Count a permanent returned from the battlefield to a hand."""
+        stats = self._seat_stats(owner_seat)
+        if stats is None:
+            return
+        try:
+            key = int(instance_id)
+        except (TypeError, ValueError):
+            return
+        if key in self.game_state.counted_bounce_returns:
+            return
+        self.game_state.counted_bounce_returns.add(key)
+        if "CardType_Creature" in (card_types or []):
+            stats["creatures_bounced"] += 1
+        else:
+            stats["noncreatures_bounced"] += 1
 
     def _count_enemy_land_destruction(
         self,
@@ -515,6 +606,31 @@ class TrackerZoneTransferMixin:
                 if source_obj
                 else None
             )
+            # Bounce stats: only battlefield → hand returns count (Return also
+            # fires for graveyard recursion); self-bounce paid as a cost of a
+            # spell still on the stack is excluded below.
+            return_src_zone = (
+                (zones_by_id or {}).get(int(zone_src)) if zone_src is not None else None
+            )
+            return_src_type = (
+                return_src_zone.get("type") if isinstance(return_src_zone, dict) else None
+            )
+            bounce_is_cost = False
+            if (
+                source_obj
+                and source_seat
+                in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
+            ):
+                cost_stack_key = self._stack_key(source_obj.get("instanceId") or affector_id)
+                bounce_is_cost = source_seat == determining_seat and isinstance(
+                    self.game_state.stack_items.get(cost_stack_key), dict
+                )
+            if return_src_type == "ZoneType_Battlefield" and not bounce_is_cost:
+                self._count_permanent_bounced(
+                    card_obj.get("instanceId") or canonical_instance_id,
+                    card_obj.get("cardTypes") or [],
+                    determining_seat,
+                )
             if (
                 source_obj
                 and source_name

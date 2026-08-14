@@ -422,7 +422,9 @@ export function GameDetailPage({
       played: number | null | undefined,
       drawn: number | null | undefined,
     ): number | string | null | undefined =>
-      !hideDrawn && drawn != null ? `${played ?? 0} (${drawn} drawn)` : played;
+      // NBSP keeps "(4 drawn)" together; the cell may wrap after the number
+      // in narrow columns instead of overflowing the card.
+      !hideDrawn && drawn != null ? `${played ?? 0} (${drawn}\u00A0drawn)` : played;
     const lost = stats.lands_lost;
     const replaced = stats.lands_replaced;
     return {
@@ -431,10 +433,8 @@ export function GameDetailPage({
       wipes_played: withDrawn(stats.wipes_played, stats.wipes_drawn),
       bounces_played: withDrawn(stats.bounces_played, stats.bounces_drawn),
       counters_played: withDrawn(stats.counters_played, stats.counters_drawn),
-      land_replacement_rate:
-        lost != null && replaced != null && lost > 0
-          ? `${((100 * replaced) / lost).toFixed(0)}%`
-          : null,
+      lands_unreplaced:
+        lost != null && replaced != null ? Math.max(0, lost - replaced) : null,
     };
   };
   const playerView = buildStatsView(playerStats, false);
@@ -501,10 +501,24 @@ export function GameDetailPage({
       rows: [
         ['Removal played', 'removal_played'],
         ['Board wipes played', 'wipes_played'],
-        ['Mass bounce played', 'bounces_played'],
-        ['Lands lost to destruction', 'lands_lost'],
-        ['Lands replaced', 'lands_replaced'],
-        ['Land Replacement Rate', 'land_replacement_rate'],
+        ['Creatures lost to removal', 'creatures_removed'],
+        ['Non-creatures lost to removal', 'noncreatures_removed'],
+      ],
+    },
+    {
+      title: 'Bounce',
+      rows: [
+        ['Bounce cards played', 'bounces_played'],
+        ['Creatures bounced to hand', 'creatures_bounced'],
+        ['Non-creatures bounced to hand', 'noncreatures_bounced'],
+      ],
+    },
+    {
+      title: 'Land Destruction',
+      rows: [
+        ['Lands Destroyed', 'lands_lost'],
+        ['Lands Successfully Replaced', 'lands_replaced'],
+        ['Lands Lost To Destruction', 'lands_unreplaced'],
       ],
     },
     {

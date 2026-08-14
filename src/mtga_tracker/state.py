@@ -58,6 +58,16 @@ class GameState:
             # This seat's spells that GOT countered (the other seat's counters
             # landing) — from stack lifecycle, not text classification.
             "spells_countered": 0,
+            # This seat's permanents removed from the battlefield by destroy,
+            # exile, or non-combat lethal damage / zero toughness (board wipes
+            # included), split creature vs non-creature (lands excluded — they
+            # get their own category below).
+            "creatures_removed": 0,
+            "noncreatures_removed": 0,
+            # This seat's permanents returned from the battlefield to hand
+            # (self-bounce paid as a cost excluded).
+            "creatures_bounced": 0,
+            "noncreatures_bounced": 0,
             # Lands this seat LOST to an enemy card, and how many of those
             # they answered with a land drop by the end of their next turn.
             "lands_lost": 0,
@@ -159,6 +169,10 @@ class GameState:
         #: which the seat must drop a land for the destruction to count as
         #: "replaced" (victim's next turn ≈ destruction turn + 2).
         self.pending_land_replacements: Dict[int, List[int]] = {1: [], 2: []}
+        #: Battlefield instance ids already counted as lost to removal /
+        #: bounced to hand (dedupe across repeated annotations for one leave).
+        self.counted_removal_losses: Set[int] = set()
+        self.counted_bounce_returns: Set[int] = set()
         #: Token instance ids already counted as created (dedupe across diffs).
         self.counted_token_creations: Set[int] = set()
         #: (instance_id, category) pairs already counted as token losses.

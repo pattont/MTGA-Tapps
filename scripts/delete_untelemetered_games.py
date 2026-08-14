@@ -79,7 +79,9 @@ def main() -> int:
             conn, [str(row[0]) for row in rows]
         )
         conn.commit()
-        print(f"\nDeleted {len(rows)} game(s); emptied matches dropped and session totals recomputed.")
+        # Return the freed pages to the OS (payload rows can be large).
+        conn.execute("VACUUM")
+        print(f"\nDeleted {len(rows)} game(s); emptied matches dropped, session totals recomputed, file compacted.")
         return 0
     finally:
         conn.close()

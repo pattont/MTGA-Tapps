@@ -301,6 +301,10 @@ class AnalyticsStore:
                 wipes_played INTEGER,
                 bounces_drawn INTEGER,
                 bounces_played INTEGER,
+                creatures_removed INTEGER,
+                noncreatures_removed INTEGER,
+                creatures_bounced INTEGER,
+                noncreatures_bounced INTEGER,
                 counters_drawn INTEGER,
                 counters_played INTEGER,
                 spells_countered INTEGER,
@@ -436,6 +440,12 @@ class AnalyticsStore:
             CREATE INDEX IF NOT EXISTS idx_game_events_session_time
             ON game_events(session_id, event_time);
 
+            CREATE INDEX IF NOT EXISTS idx_game_events_game_time
+            ON game_events(game_id, event_time);
+
+            CREATE INDEX IF NOT EXISTS idx_raw_game_payloads_game
+            ON raw_game_payloads(game_id);
+
             CREATE INDEX IF NOT EXISTS idx_console_logs_session_created
             ON console_logs(session_id, created_at);
 
@@ -569,6 +579,8 @@ class AnalyticsStore:
             (15, AnalyticsStore._migrate_v15_purge_welcome_deck_duels),
             (16, AnalyticsStore._migrate_v16_removal_and_token_stats),
             (17, AnalyticsStore._migrate_v17_counter_magic_stats),
+            (18, AnalyticsStore._migrate_v18_removal_loss_and_bounce_stats),
+            (19, AnalyticsStore._migrate_v19_backfill_stats_from_events),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -588,6 +600,12 @@ class AnalyticsStore:
             print("🗜️  Reclaiming disk space from the payload archive (VACUUM)…")
             conn.execute("VACUUM")
             print("🗜️  Done — database file compacted.")
+        # Cheap per-launch maintenance: refreshes stale query-planner stats
+        # for whichever indexes need it (no-op most launches).
+        try:
+            conn.execute("PRAGMA optimize")
+        except sqlite3.Error:
+            pass
 
     @staticmethod
     def _migrate_v2_backfill_card_arena_ids(conn: sqlite3.Connection) -> None:
@@ -991,6 +1009,43 @@ class AnalyticsStore:
                 conn.execute(
                     f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER"
                 )
+
+    @staticmethod
+    def _migrate_v18_removal_loss_and_bounce_stats(conn: sqlite3.Connection) -> None:
+        """Add creature/non-creature removal-loss and bounce columns (nullable)."""
+        existing = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(game_participant_stats)")
+        }
+        for column in (
+            "creatures_removed",
+            "noncreatures_removed",
+            "creatures_bounced",
+            "noncreatures_bounced",
+        ):
+            if column not in existing:
+                conn.execute(
+                    f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER"
+                )
+
+    @staticmethod
+    def _migrate_v19_backfill_stats_from_events(conn: sqlite3.Connection) -> None:
+        """One-time backfill of behavioral stats from the game_events timeline.
+
+        Every game's structured timeline already records destroys, exiles,
+        bounces, land drops, and countered spells, so historical games can be
+        given real values for the stats that need no card-text classification:
+        creatures/non-creatures removed and bounced, lands lost/replaced, and
+        spells countered. Only NULL columns are filled — games tracked live by
+        a version that already counts these are never overwritten. Games with
+        no timeline rows stay NULL ("not tracked"), and known limitations are
+        deliberate undercounts: lethal-damage deaths are skipped (burn kills
+        cannot be split from combat deaths after the fact) and forced
+        sacrifices are skipped (the forcing player is not in the timeline).
+        """
+        from .events_backfill import backfill_game_stats_from_events
+
+        backfill_game_stats_from_events(conn)
 
     @staticmethod
     def _migrate_v15_purge_welcome_deck_duels(conn: sqlite3.Connection) -> None:
