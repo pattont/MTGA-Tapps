@@ -2665,3 +2665,90 @@ def test_game_detail_deck_changes_compare_against_match_original(tmp_path):
     assert changes["removed"] == []
     # Game 1 itself has no changes section.
     assert game_detail(db_path, "game-1")["deck_changes"] is None
+
+
+def test_deck_detail_interaction_profile_and_mode_splits(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        # game-1 has full interaction telemetry; game-2 predates it (all NULL).
+        conn.execute(
+            """
+            update game_participant_stats set
+              removal_played = 4, removal_drawn = 6, wipes_played = 1, wipes_drawn = 1,
+              bounces_played = 2, bounces_drawn = 3, counters_played = 3, counters_drawn = 4,
+              creatures_removed = 2, noncreatures_removed = 1,
+              creatures_bounced = 1, noncreatures_bounced = 0,
+              lands_lost = 2, lands_replaced = 1,
+              tokens_created = 5, tokens_destroyed = 2, tokens_sacrificed = 1, tokens_exiled = 0
+            where game_id = 'game-1' and participant_id = 'player-1'
+            """
+        )
+        conn.execute(
+            "update game_participant_stats set spells_countered = 2 "
+            "where game_id = 'game-1' and participant_id = 'opponent-1'"
+        )
+        # A ranked Bo1 match, a Bo3 match, a Competitive Brawl match, and a
+        # draft match (excluded from every split) for the same deck.
+        extra = [
+            ("match-l", "Ladder", 1, "game-l", "win"),
+            ("match-b3", "Constructed_BestOf3", 3, "game-b3", "loss"),
+            ("match-cb", "Brawl_Ladder", 1, "game-cb", "win"),
+            ("match-d", "PremierDraft_MSH_20260623", 1, "game-d", "win"),
+        ]
+        for match_id, fmt, best_of, game_id, outcome in extra:
+            conn.execute(
+                "insert into matches (id, session_id, format, queue, event_name, best_of) "
+                "values (?, 'session-1', ?, ?, ?, ?)",
+                (match_id, fmt, fmt, fmt, best_of),
+            )
+            conn.execute(
+                "insert into games (id, session_id, match_id, game_number, started_at, outcome) "
+                "values (?, 'session-1', ?, 1, '2026-06-05T00:01:00', ?)",
+                (game_id, match_id, outcome),
+            )
+            conn.execute(
+                "insert into participants (id, game_id, seat_id, role, deck_name) "
+                "values (?, ?, 1, 'player', 'Boros Mouse')",
+                (f"{game_id}-p", game_id),
+            )
+
+    detail = deck_detail(db_path, "Boros Mouse")
+
+    interaction = detail["interaction_profile"]
+    # Only game-1 carries telemetry; game-2's NULLs never dilute the averages.
+    assert interaction["games_tracked"] == 1
+    assert interaction["avg_removal_played"] == 4
+    assert interaction["avg_removal_drawn"] == 6
+    assert interaction["avg_counters_landed"] == 2  # opponent's spells_countered
+    assert interaction["avg_counters_failed"] == 1  # 3 played - 2 landed
+    assert interaction["avg_creatures_removed"] == 2
+    assert interaction["land_replacement_pct"] == 50
+    assert interaction["avg_tokens_created"] == 5
+    assert interaction["avg_tokens_lost"] == 3  # destroyed + sacrificed + exiled
+
+    splits = detail["mode_splits"]
+    standard = splits["standard"]
+    # Fixture Play games: 1-1 unranked Bo1; Ladder adds a ranked Bo1 win;
+    # Constructed_BestOf3 adds an unranked Bo3 loss. Draft contributes nothing.
+    assert standard["ranked"]["matches"] == 1 and standard["ranked"]["wins"] == 1
+    assert standard["unranked"]["matches"] == 3
+    assert standard["unranked"]["wins"] == 1 and standard["unranked"]["losses"] == 2
+    assert standard["bo1"]["matches"] == 3 and standard["bo1"]["wins"] == 2
+    assert standard["bo3"]["matches"] == 1 and standard["bo3"]["losses"] == 1
+    brawl = splits["brawl"]
+    assert brawl["competitive"]["matches"] == 1 and brawl["competitive"]["wins"] == 1
+    assert brawl["casual"] is None
+
+
+def test_deck_detail_mode_splits_absent_for_nonstandard_decks(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        # Re-point the deck's only matches at a draft queue.
+        conn.execute(
+            "update matches set format = 'PremierDraft_MSH_20260623', "
+            "queue = 'PremierDraft_MSH_20260623' where id = 'match-1'"
+        )
+
+    detail = deck_detail(db_path, "Boros Mouse")
+    assert detail["mode_splits"] is None
+    assert detail["interaction_profile"] is None  # fixture rows have NULL interaction stats

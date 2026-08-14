@@ -524,6 +524,44 @@ export interface DeckLandProfile {
   classified_games: number;
 }
 
+/** Per-game interaction averages; null fields = never tracked for this deck. */
+export interface DeckInteractionProfile {
+  games_tracked: number;
+  avg_removal_played: number | null;
+  avg_removal_drawn: number | null;
+  avg_wipes_played: number | null;
+  avg_wipes_drawn: number | null;
+  avg_bounces_played: number | null;
+  avg_bounces_drawn: number | null;
+  avg_counters_played: number | null;
+  avg_counters_drawn: number | null;
+  avg_counters_landed: number | null;
+  avg_counters_failed: number | null;
+  avg_creatures_removed: number | null;
+  avg_noncreatures_removed: number | null;
+  avg_creatures_bounced: number | null;
+  avg_noncreatures_bounced: number | null;
+  avg_lands_lost: number | null;
+  avg_lands_replaced: number | null;
+  land_replacement_pct: number | null;
+  avg_tokens_created: number | null;
+  avg_tokens_lost: number | null;
+}
+
+/** Match-level records by queue. Only splits with matches are present. */
+export interface DeckModeSplits {
+  standard?: {
+    ranked: MatchLevelSummary | null;
+    unranked: MatchLevelSummary | null;
+    bo1: MatchLevelSummary | null;
+    bo3: MatchLevelSummary | null;
+  };
+  brawl?: {
+    competitive: MatchLevelSummary | null;
+    casual: MatchLevelSummary | null;
+  };
+}
+
 export interface DeckDetail {
   deck_name: string;
   deck_visual: DeckVisual;
@@ -531,6 +569,8 @@ export interface DeckDetail {
   summary: Summary;
   profile: DeckProfile;
   combat_profile: CombatDeckRow | null;
+  interaction_profile?: DeckInteractionProfile | null;
+  mode_splits?: DeckModeSplits | null;
   streaks?: StreakSummary | null;
   composition: DeckCompositionRow[];
   versions: DeckVersionRow[];
