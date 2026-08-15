@@ -13,7 +13,7 @@ import {
 import { saveGameAnnotation } from '../api';
 import { pageTitle } from '../branding';
 import { formatPercent } from '../dashboardData';
-import { formatDateTime, formatDuration, formatNumber, formatTurnDuration, outcomeLabel, outcomeTone } from '../format';
+import { boFormatLabel, formatDateTime, formatDuration, formatNumber, formatTurnDuration, outcomeLabel, outcomeTone } from '../format';
 import { gameRouteHash } from '../routes';
 import { DeckLink } from './DeckLink';
 import { Badge } from './Badge';
@@ -650,9 +650,9 @@ export function GameDetailPage({
             </div>
             <p>
               {detail.player.deck_name ? <DeckLink deckName={detail.player.deck_name} /> : 'Unknown deck'} ·{' '}
-              {detail.game.format_label}
+              {boFormatLabel(detail.game.format_label)}
               {detail.game.best_of && !detail.game.format_label.includes('Best-of')
-                ? ` · Best-of-${detail.game.best_of}`
+                ? ` · BO${detail.game.best_of}`
                 : ''}
               {(detail.game.game_number ?? 1) > 1 ? ` · Game ${detail.game.game_number}` : ''}
             </p>
@@ -681,7 +681,7 @@ export function GameDetailPage({
       </div>
 
       {matchGames.length > 0 ? (
-        <div className="match-strip" aria-label="Best-of-3 match overview">
+        <div className="match-strip" aria-label="BO3 match overview">
           <div className="match-strip-head">
             <Badge tone={matchOutcome === 'win' ? 'win' : matchOutcome === 'loss' ? 'loss' : 'draw'}>
               Match {matchOutcome === 'win' ? 'Win' : matchOutcome === 'loss' ? 'Loss' : 'Split'}
@@ -690,7 +690,7 @@ export function GameDetailPage({
               {matchWins}–{matchLosses}
             </span>
             <span className="match-strip-desc">
-              Best-of-{detail.game.best_of ?? 3}
+              BO{detail.game.best_of ?? 3}
               {detail.opponent.display_name ? (
                 <>
                   {' '}

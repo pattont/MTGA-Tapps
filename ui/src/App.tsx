@@ -1239,7 +1239,7 @@ function Dashboard({
       <Section
         id="rank-progress"
         title="Constructed Ranked"
-        description="Constructed ranked queues only, match-level (a Bo3 counts once). Ranked Standard Best-of-1 and Best-of-3 share the ladder rank charted below."
+        description="Constructed ranked queues only, match-level (a Bo3 counts once). Ranked Standard BO1 and BO3 share the ladder rank charted below."
       >
         {snapshot.ranked_summary && snapshot.ranked_summary.matches > 0 ? (
           <>

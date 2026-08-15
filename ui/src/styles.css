@@ -2475,6 +2475,34 @@ tbody tr:hover {
   padding: 12px 16px 16px;
 }
 
+/* Ambient deck-page backdrop from the signature card's art. */
+.deck-art-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-size: cover;
+  background-position: center 20%;
+  filter: blur(64px) saturate(1.2);
+  opacity: 0.22;
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.95),
+    rgba(0, 0, 0, 0.45) 45%,
+    transparent 80%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.95),
+    rgba(0, 0, 0, 0.45) 45%,
+    transparent 80%
+  );
+}
+
+:root[data-theme="light"] .deck-art-backdrop {
+  opacity: 0.16;
+}
+
 /* Best / worst opponent-color highlight cards. */
 .vs-color-highlights {
   display: grid;

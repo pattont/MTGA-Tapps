@@ -1,4 +1,5 @@
 import type { FormatRow } from '../api';
+import { boFormatLabel } from '../format';
 import { showInFormatAnalytics } from '../formatVisibility';
 import { SortableTable, type Column } from './SortableTable';
 import { WinRateBar } from './WinRateBar';
@@ -10,7 +11,7 @@ const formatColumns: Column<FormatRow>[] = [
     // Raw queue identifiers stay out of the UI but remain inspectable in the DOM.
     render: (row) => (
       <span className="format-label" data-raw-queues={row.raw_formats} title={`Raw queues: ${row.raw_formats}`}>
-        {row.format_label}
+        {boFormatLabel(row.format_label)}
       </span>
     ),
     sortValue: (row) => row.format_label,
