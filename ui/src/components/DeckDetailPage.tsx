@@ -890,10 +890,6 @@ export function DeckDetailPage({
         )}
       </Section>
 
-      <Section id="deck-formats" title="Formats">
-        <FormatsTable caption="Format performance for this deck" rows={detail.formats} />
-      </Section>
-
       <Section
         id="deck-turn-timing"
         title="Turn Timing"
@@ -1008,6 +1004,10 @@ export function DeckDetailPage({
           </section>
         </Section>
       ) : null}
+
+      <Section id="deck-formats" title="Formats">
+        <FormatsTable caption="Format performance for this deck" rows={detail.formats} />
+      </Section>
 
       <Section id="deck-trend" title="Win Rate Trend" description="Rolling win rate across this deck's finished games.">
         <div className="trend-wrap">

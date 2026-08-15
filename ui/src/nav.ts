@@ -35,10 +35,11 @@ export const auditNavItems: AppNavItem[] = [
 export const deckNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
   { id: 'deck-combat', label: 'Combat Profile' },
-  { id: 'deck-formats', label: 'Formats' },
   { id: 'deck-turn-timing', label: 'Turn Timing' },
   { id: 'deck-draw-quality', label: 'Draw Quality' },
   { id: 'deck-interaction', label: 'Combat & Resources' },
+  { id: 'deck-modes', label: 'Mode Performance' },
+  { id: 'deck-formats', label: 'Formats' },
   { id: 'deck-trend', label: 'Win Rate Trend' },
   { id: 'deck-cards', label: 'Deck List & Card Performance' },
   { id: 'deck-mulligans', label: 'Mulligans' },
