@@ -7259,3 +7259,59 @@ def test_poison_counters_tracked_from_player_state():
     # Alternate field spellings and junk entries are tolerated.
     tracker._observe_player_poison([{"systemSeatNumber": 2, "poisonCount": 4}, "junk", None])
     assert tracker.game_state.match_stats[2]["poison_added"] == 4
+
+
+def test_submitted_decklist_arbitrates_deck_identity():
+    """A stale course candidate must lose to the deck actually submitted.
+
+    Regression: tracker launched mid-queue after a deck switch stamped the
+    game with the previously-played deck's name while recording the new
+    deck's decklist (Mono Black Skellies vs Orzhov Lifegain, 2026-08-04).
+    """
+    tracker = make_tracker()
+    tracker.game_state.format_str = "Ladder"
+    skellies_ids = set(range(100, 160))
+    orzhov_ids = set(range(500, 560))
+    tracker._deck_candidates = {
+        "event::Skellies": {
+            "deck_name": "Mono Black Skellies (Reddit)",
+            "deck_id": "skellies-id",
+            "internal_event_name": "Ladder",
+            "current_module": "CreateMatch",
+            "main_deck_ids": skellies_ids,
+        },
+        "event::Orzhov": {
+            "deck_name": "Orzhov Lifegain",
+            "deck_id": "orzhov-id",
+            "internal_event_name": "Ladder",
+            "current_module": "CreateMatch",
+            "main_deck_ids": orzhov_ids,
+        },
+    }
+    # The game's submitted 60 is the Orzhov list.
+    tracker.game_state.submitted_deck_cards = list(orzhov_ids)
+
+    # Even with the stale deck locked in, resolution must switch.
+    tracker._active_deck_candidate_key = "event::Skellies"
+    tracker._resolve_player_deck_from_candidates()
+    assert tracker.game_state.player_deck_name == "Orzhov Lifegain"
+    assert tracker.game_state.player_deck_id == "orzhov-id"
+
+
+def test_contradicted_identity_stays_unresolved_without_matching_candidate():
+    tracker = make_tracker()
+    tracker.game_state.format_str = "Ladder"
+    tracker._deck_candidates = {
+        "event::Skellies": {
+            "deck_name": "Mono Black Skellies (Reddit)",
+            "deck_id": "skellies-id",
+            "internal_event_name": "Ladder",
+            "current_module": "CreateMatch",
+            "main_deck_ids": set(range(100, 160)),
+        },
+    }
+    # Submitted deck shares nothing with the only candidate: better to leave
+    # the deck unknown than to misattribute the game.
+    tracker.game_state.submitted_deck_cards = list(range(500, 560))
+    tracker._resolve_player_deck_from_candidates()
+    assert tracker.game_state.player_deck_name is None

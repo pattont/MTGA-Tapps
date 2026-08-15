@@ -10,6 +10,7 @@ import {
   type DeckVersionRow,
   type MatchLevelSummary,
   type MulliganRow,
+  type OpponentColorRow,
   type SideboardSwapRow,
   type SnapshotFilters,
 } from '../api';
@@ -613,6 +614,33 @@ export function DeckDetailPage({
     { label: 'Avg Duration', value: formatDuration(detail.profile.avg_duration_seconds) },
   ];
 
+  // Best / worst opponent color: highest and lowest win rate; ties go to the
+  // matchup with more games played (a bigger sample is the better trophy).
+  const ratedColorRows = (detail.opponent_colors ?? []).filter(
+    (row) => row.win_rate != null && row.games > 0,
+  );
+  const pickColorRow = (better: (a: OpponentColorRow, b: OpponentColorRow) => boolean) =>
+    ratedColorRows.reduce<OpponentColorRow | null>(
+      (winner, row) => (winner === null || better(row, winner) ? row : winner),
+      null,
+    );
+  const bestVsColor =
+    ratedColorRows.length >= 2
+      ? pickColorRow(
+          (a, b) =>
+            (a.win_rate ?? 0) > (b.win_rate ?? 0) ||
+            ((a.win_rate ?? 0) === (b.win_rate ?? 0) && a.games > b.games),
+        )
+      : null;
+  const worstVsColor =
+    ratedColorRows.length >= 2
+      ? pickColorRow(
+          (a, b) =>
+            (a.win_rate ?? 0) < (b.win_rate ?? 0) ||
+            ((a.win_rate ?? 0) === (b.win_rate ?? 0) && a.games > b.games),
+        )
+      : null;
+
   const interaction = detail.interaction_profile ?? null;
   /** Average cell: folds the drawn average into the played cell like the
       game page ("1.2 (2.3 drawn)"); opponent drawn averages are always
@@ -813,54 +841,60 @@ export function DeckDetailPage({
         </p>
       ) : null}
 
-      <Section
-        id="deck-combat"
-        title="Combat Profile"
-        description="Per-game combat and resource telemetry for this deck."
-      >
-        {detail.combat_profile || (detail.streaks?.games ?? 0) > 0 ? (
-          <section className="metric-grid metric-grid-deck" aria-label="Deck combat metrics">
-            {detail.streaks ? (
-              <>
-                <MetricCard
-                  label="Win Streak"
-                  value={formatNumber(detail.streaks.longest_win)}
-                  detail={
-                    detail.streaks.current?.kind === 'win'
-                      ? `current: ${detail.streaks.current.length} in a row`
-                      : 'longest'
-                  }
-                />
-                <MetricCard
-                  label="Losing Streak"
-                  value={formatNumber(detail.streaks.longest_loss)}
-                  detail={
-                    detail.streaks.current?.kind === 'loss'
-                      ? `current: ${detail.streaks.current.length} in a row`
-                      : 'longest'
-                  }
-                />
-              </>
-            ) : null}
-            {detail.combat_profile ? (
-              <>
-                {/* Raw per-game averages live in Combat & Resources below;
-                    this box keeps the deck-level identity and derived ratios. */}
-                <MetricCard
-                  label="Profile"
-                  value={detail.combat_profile.aggression_profile ?? '—'}
-                />
-                <MetricCard
-                  label="Attackers / Attack"
-                  value={formatNumber(detail.combat_profile.attackers_per_attack)}
-                />
-              </>
-            ) : null}
-          </section>
-        ) : (
-          <p className="empty-state">No combat telemetry recorded for this deck yet.</p>
-        )}
-      </Section>
+      <div className="section-pair">
+        <Section
+          id="deck-combat"
+          title="Combat Profile"
+          description="Per-game combat and resource telemetry for this deck."
+        >
+          {detail.combat_profile || (detail.streaks?.games ?? 0) > 0 ? (
+            <section className="metric-grid metric-grid-deck" aria-label="Deck combat metrics">
+              {detail.streaks ? (
+                <>
+                  <MetricCard
+                    label="Win Streak"
+                    value={formatNumber(detail.streaks.longest_win)}
+                    detail={
+                      detail.streaks.current?.kind === 'win'
+                        ? `current: ${detail.streaks.current.length} in a row`
+                        : 'longest'
+                    }
+                  />
+                  <MetricCard
+                    label="Losing Streak"
+                    value={formatNumber(detail.streaks.longest_loss)}
+                    detail={
+                      detail.streaks.current?.kind === 'loss'
+                        ? `current: ${detail.streaks.current.length} in a row`
+                        : 'longest'
+                    }
+                  />
+                </>
+              ) : null}
+              {detail.combat_profile ? (
+                <>
+                  {/* Raw per-game averages live in Combat & Resources below;
+                      this box keeps the deck-level identity and derived ratios. */}
+                  <MetricCard
+                    label="Profile"
+                    value={detail.combat_profile.aggression_profile ?? '—'}
+                  />
+                  <MetricCard
+                    label="Attackers / Attack"
+                    value={formatNumber(detail.combat_profile.attackers_per_attack)}
+                  />
+                </>
+              ) : null}
+            </section>
+          ) : (
+            <p className="empty-state">No combat telemetry recorded for this deck yet.</p>
+          )}
+        </Section>
+
+        <Section id="deck-formats" title="Formats">
+          <FormatsTable caption="Format performance for this deck" rows={detail.formats} />
+        </Section>
+      </div>
 
       <Section
         id="deck-turn-timing"
@@ -1184,6 +1218,32 @@ export function DeckDetailPage({
         title="Vs Opponent Colors"
         description="This deck's record against each opponent color combination, inferred from every card they revealed."
       >
+        {bestVsColor && worstVsColor ? (
+          <div className="vs-color-highlights">
+            <div className="vs-color-card vs-color-card-best">
+              <span className="vs-color-card-label">Best Against</span>
+              <span className="vs-color-card-value">
+                <ColorPips colors={bestVsColor.colors} />
+                <span className="vs-color-card-rate">{bestVsColor.win_rate}%</span>
+              </span>
+              <span className="vs-color-card-detail">
+                {bestVsColor.color_label} · {bestVsColor.wins}-{bestVsColor.losses} in{' '}
+                {bestVsColor.games} games
+              </span>
+            </div>
+            <div className="vs-color-card vs-color-card-worst">
+              <span className="vs-color-card-label">Worst Against</span>
+              <span className="vs-color-card-value">
+                <ColorPips colors={worstVsColor.colors} />
+                <span className="vs-color-card-rate">{worstVsColor.win_rate}%</span>
+              </span>
+              <span className="vs-color-card-detail">
+                {worstVsColor.color_label} · {worstVsColor.wins}-{worstVsColor.losses} in{' '}
+                {worstVsColor.games} games
+              </span>
+            </div>
+          </div>
+        ) : null}
         <SortableTable
           caption="Record by opponent color combination"
           columns={deckOpponentColorColumns}
@@ -1193,10 +1253,6 @@ export function DeckDetailPage({
           paginationKey={deckName}
           rows={detail.opponent_colors ?? []}
         />
-      </Section>
-
-      <Section id="deck-formats" title="Formats">
-        <FormatsTable caption="Format performance for this deck" rows={detail.formats} />
       </Section>
 
       <Section id="deck-games" title="Recent Games" description="Game length and average turn pace for both players.">
