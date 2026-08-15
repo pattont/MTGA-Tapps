@@ -8,7 +8,6 @@ import {
   type DeckGameRow,
   type DeckInteractionSide,
   type DeckVersionRow,
-  type MatchLevelSummary,
   type MulliganRow,
   type OpponentColorRow,
   type SideboardSwapRow,
@@ -34,7 +33,6 @@ import { CardLink } from './CardLink';
 import { DeckVisual } from './DeckVisual';
 import { FilterBar } from './FilterBar';
 import { Section } from './Section';
-import { FormatsTable } from './FormatsTable';
 import { ManaReadinessTable } from './ManaReadinessTable';
 import { MetricCard } from './MetricCard';
 import { SortableTable, type Column } from './SortableTable';
@@ -744,31 +742,9 @@ export function DeckDetailPage({
       ],
     },
   ];
-  const modeSplitCards: { label: string; summary: MatchLevelSummary }[] = [];
-  const standardSplits = detail.mode_splits?.standard;
-  if (standardSplits) {
-    for (const [label, summary] of [
-      ['Ranked', standardSplits.ranked],
-      ['Unranked', standardSplits.unranked],
-      ['Best-of-1', standardSplits.bo1],
-      ['Best-of-3', standardSplits.bo3],
-    ] as const) {
-      if (summary) {
-        modeSplitCards.push({ label, summary });
-      }
-    }
-  }
-  const brawlSplits = detail.mode_splits?.brawl;
-  if (brawlSplits) {
-    for (const [label, summary] of [
-      ['Competitive Brawl', brawlSplits.competitive],
-      ['Casual Brawl', brawlSplits.casual],
-    ] as const) {
-      if (summary) {
-        modeSplitCards.push({ label, summary });
-      }
-    }
-  }
+  // Format rectangles: labels already carry the queue split (Ranked vs
+  // Unranked, Best-of-1 vs Best-of-3, Competitive vs Casual Brawl).
+  const formatCards = [...detail.formats].sort((a, b) => b.games - a.games);
 
   return (
     <>
@@ -984,29 +960,27 @@ export function DeckDetailPage({
         )}
       </Section>
 
-      {modeSplitCards.length > 0 ? (
-        <Section
-          id="deck-modes"
-          title="Mode Performance"
-          description="Match-level records by queue: a Best-of-3 counts once, only the match result matters."
-        >
-          <section className="metric-grid metric-grid-deck" aria-label="Deck mode performance">
-            {modeSplitCards.map((card) => (
+      <Section
+        id="deck-formats"
+        title="Formats"
+        description="This deck's record in every queue it has been played in."
+      >
+        {formatCards.length > 0 ? (
+          <section className="metric-grid metric-grid-deck" aria-label="Deck format performance">
+            {formatCards.map((row) => (
               <MetricCard
-                key={card.label}
-                label={card.label}
-                value={card.summary.win_rate != null ? `${card.summary.win_rate}%` : '—'}
-                detail={`${card.summary.wins}-${card.summary.losses} · ${card.summary.matches} match${
-                  card.summary.matches === 1 ? '' : 'es'
+                key={row.format_label}
+                label={row.format_label}
+                value={row.win_rate != null ? `${row.win_rate}%` : '—'}
+                detail={`${row.wins}-${row.losses} · ${row.games} game${
+                  row.games === 1 ? '' : 's'
                 }`}
               />
             ))}
           </section>
-        </Section>
-      ) : null}
-
-      <Section id="deck-formats" title="Formats">
-        <FormatsTable caption="Format performance for this deck" rows={detail.formats} />
+        ) : (
+          <p className="empty-state">No format data recorded for this deck yet.</p>
+        )}
       </Section>
 
       <Section id="deck-trend" title="Win Rate Trend" description="Rolling win rate across this deck's finished games.">
