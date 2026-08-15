@@ -522,6 +522,20 @@ export interface DeckLandProfile {
   screw_games: number;
   normal_games: number;
   classified_games: number;
+  /** Deck-level draw-quality averages across the classified games. */
+  avg_cards_seen?: number | null;
+  lands_seen_pct?: number | null;
+  avg_cards_drawn?: number | null;
+  lands_drawn_pct?: number | null;
+  expected_land_pct?: number | null;
+}
+
+/** One seat's average turn-time telemetry across a deck's games. */
+export interface DeckTurnTimingSide {
+  avg_total_seconds: number | null;
+  avg_turn_seconds: number | null;
+  turns_timed: number;
+  games: number;
 }
 
 /** One seat's per-game averages; null = never tracked. */
@@ -595,6 +609,10 @@ export interface DeckDetail {
   profile: DeckProfile;
   combat_profile: CombatDeckRow | null;
   interaction_profile?: DeckInteractionProfile | null;
+  turn_timing?: {
+    player?: DeckTurnTimingSide;
+    opponent?: DeckTurnTimingSide;
+  } | null;
   mode_splits?: DeckModeSplits | null;
   streaks?: StreakSummary | null;
   composition: DeckCompositionRow[];

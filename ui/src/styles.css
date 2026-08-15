@@ -2475,6 +2475,28 @@ tbody tr:hover {
   padding: 12px 16px 16px;
 }
 
+/* Deterministic Combat & Resources layout: explicit columns (shared between
+   the game and deck pages) instead of height-balanced CSS masonry. */
+.combat-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 12px 16px 16px;
+  align-items: flex-start;
+}
+
+.combat-column {
+  flex: 1 1 250px;
+  min-width: 250px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.combat-column .combat-group {
+  margin-bottom: 0;
+}
+
 .combat-group {
   break-inside: avoid;
   margin-bottom: 14px;

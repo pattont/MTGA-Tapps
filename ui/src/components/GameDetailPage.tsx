@@ -17,6 +17,7 @@ import { formatDateTime, formatDuration, formatNumber, formatTurnDuration, outco
 import { gameRouteHash } from '../routes';
 import { DeckLink } from './DeckLink';
 import { Badge } from './Badge';
+import { bucketCombatGroups, CombatGroupColumns } from './CombatGroupColumns';
 import { CardLink } from './CardLink';
 import { ColorPips } from './ColorPips';
 import { Section } from './Section';
@@ -435,6 +436,10 @@ export function GameDetailPage({
       counters_played: withDrawn(stats.counters_played, stats.counters_drawn),
       lands_unreplaced:
         lost != null && replaced != null ? Math.max(0, lost - replaced) : null,
+      land_replacement_rate:
+        lost != null && replaced != null && lost > 0
+          ? `${Math.round((100 * replaced) / lost)}%`
+          : null,
     };
   };
   const playerView = buildStatsView(playerStats, false);
@@ -520,6 +525,7 @@ export function GameDetailPage({
         ['Lands Destroyed', 'lands_lost'],
         ['Lands Successfully Replaced', 'lands_replaced'],
         ['Lands Lost To Destruction', 'lands_unreplaced'],
+        ['Land Replacement Rate', 'land_replacement_rate'],
       ],
     },
     {
@@ -791,31 +797,18 @@ export function GameDetailPage({
         description="Per-seat combat, damage, and resource totals recorded for this game."
       >
         {detail.participant_stats.length > 0 ? (
-          <div className="combat-groups">
-            {combatGroups.map((group) => (
-              <div key={group.title} className="combat-group">
-                <table className="combat-group-table">
-                  <caption className="visually-hidden">{group.title} stats by seat</caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">{group.title}</th>
-                      <th scope="col" className="numeric">You</th>
-                      <th scope="col" className="numeric">Opp</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {group.rows.map(([label, key]) => (
-                      <tr key={key}>
-                        <td>{label}</td>
-                        <td className="numeric">{formatStatCell(playerView ? playerView[key] : null)}</td>
-                        <td className="numeric">{formatStatCell(opponentView ? opponentView[key] : null)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ))}
-          </div>
+          <CombatGroupColumns
+            columns={bucketCombatGroups(
+              combatGroups.map((group) => ({
+                title: group.title,
+                rows: group.rows.map(([label, key]): [string, string, string] => [
+                  label,
+                  formatStatCell(playerView ? playerView[key] : null),
+                  formatStatCell(opponentView ? opponentView[key] : null),
+                ]),
+              })),
+            )}
+          />
         ) : (
           <p className="empty-state">No combat telemetry recorded for this game.</p>
         )}
