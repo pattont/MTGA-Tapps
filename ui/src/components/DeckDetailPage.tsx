@@ -864,7 +864,7 @@ export function DeckDetailPage({
       <Section
         id="deck-interaction"
         title="Combat & Resources"
-        description="Per-seat, per-game averages for this deck — the same categories as the game page. Stats added in later tracker versions only average the games where they were tracked."
+        description="Per-seat, per-game averages for this deck."
       >
         {interaction ? (
           <div className="combat-groups">
