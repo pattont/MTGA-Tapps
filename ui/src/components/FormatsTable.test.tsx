@@ -50,7 +50,7 @@ describe('FormatsTable', () => {
         .getAllByRole('row')
         .slice(1)
         .map((row) => within(row).getAllByRole('cell')[0].textContent),
-    ).toEqual(['Alchemy Best-of-1', 'Historic Best-of-3', 'Standard Best-of-1']);
+    ).toEqual(['Alchemy BO1', 'Historic BO3', 'Standard BO1']);
     expect(within(table).queryByText(/Midweek Magic/i)).not.toBeInTheDocument();
     expect(within(table).getByRole('columnheader', { name: /format/i })).toHaveAttribute(
       'aria-sort',

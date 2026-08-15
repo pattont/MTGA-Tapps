@@ -1,5 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Copy } from 'lucide-react';
+import {
+  ChartNoAxesCombined,
+  Check,
+  Clock,
+  Copy,
+  Crosshair,
+  Flame,
+  Gauge,
+  Hourglass,
+  Play,
+  RefreshCw,
+  Repeat,
+  Swords,
+  Timer,
+  TrendingDown,
+  Trophy,
+} from 'lucide-react';
 import {
   fetchDeckDetail,
   type CardPerformanceRow,
@@ -15,6 +31,7 @@ import {
 } from '../api';
 import { formatPercent } from '../dashboardData';
 import {
+  boFormatLabel,
   formatCardName,
   formatDateTime,
   formatDuration,
@@ -603,13 +620,13 @@ export function DeckDetailPage({
   }
 
   const metrics = [
-    { label: 'Games', value: String(detail.summary.games) },
-    { label: 'Record', value: `${detail.summary.wins}–${detail.summary.losses}` },
-    { label: 'Win Rate', value: formatPercent(detail.summary.win_rate) },
-    { label: 'On Play', value: formatPercent(detail.profile.on_play_pct) },
-    { label: 'Avg Mulligans', value: formatNumber(detail.profile.avg_mulligans) },
-    { label: 'Avg Turns', value: formatNumber(detail.profile.avg_turns) },
-    { label: 'Avg Duration', value: formatDuration(detail.profile.avg_duration_seconds) },
+    { label: 'Games', value: String(detail.summary.games), icon: <Swords /> },
+    { label: 'Record', value: `${detail.summary.wins}–${detail.summary.losses}`, icon: <Trophy /> },
+    { label: 'Win Rate', value: formatPercent(detail.summary.win_rate), icon: <ChartNoAxesCombined /> },
+    { label: 'On Play', value: formatPercent(detail.profile.on_play_pct), icon: <Play /> },
+    { label: 'Avg Mulligans', value: formatNumber(detail.profile.avg_mulligans), icon: <RefreshCw /> },
+    { label: 'Avg Turns', value: formatNumber(detail.profile.avg_turns), icon: <Repeat /> },
+    { label: 'Avg Duration', value: formatDuration(detail.profile.avg_duration_seconds), icon: <Timer /> },
   ];
 
   // Best / worst opponent color: highest and lowest win rate; ties go to the
@@ -748,6 +765,15 @@ export function DeckDetailPage({
 
   return (
     <>
+      {detail.deck_visual.image_url ? (
+        // Ambient backdrop from the signature card's art: heavily blurred and
+        // faded so it tints the page without fighting the content.
+        <div
+          aria-hidden="true"
+          className="deck-art-backdrop"
+          style={{ backgroundImage: `url(${detail.deck_visual.image_url})` }}
+        />
+      ) : null}
       {refreshError ? (
         <p className="refresh-status refresh-status-error" role="alert">
           Refresh failed: {refreshError} — showing the last loaded data.
@@ -806,7 +832,7 @@ export function DeckDetailPage({
 
       <section className="metric-grid metric-grid-deck" aria-label="Deck metrics">
         {metrics.map((metric) => (
-          <MetricCard key={metric.label} label={metric.label} value={metric.value} />
+          <MetricCard key={metric.label} icon={metric.icon} label={metric.label} value={metric.value} />
         ))}
       </section>
 
@@ -827,6 +853,7 @@ export function DeckDetailPage({
             {detail.streaks ? (
               <>
                 <MetricCard
+                  icon={<Flame />}
                   label="Win Streak"
                   value={formatNumber(detail.streaks.longest_win)}
                   detail={
@@ -836,6 +863,7 @@ export function DeckDetailPage({
                   }
                 />
                 <MetricCard
+                  icon={<TrendingDown />}
                   label="Losing Streak"
                   value={formatNumber(detail.streaks.longest_loss)}
                   detail={
@@ -851,10 +879,12 @@ export function DeckDetailPage({
                 {/* Raw per-game averages live in Combat & Resources below;
                     this box keeps the deck-level identity and derived ratios. */}
                 <MetricCard
+                  icon={<Gauge />}
                   label="Profile"
                   value={detail.combat_profile.aggression_profile ?? '—'}
                 />
                 <MetricCard
+                  icon={<Crosshair />}
                   label="Attackers / Attack"
                   value={formatNumber(detail.combat_profile.attackers_per_attack)}
                 />
@@ -874,18 +904,22 @@ export function DeckDetailPage({
         {detail.turn_timing ? (
           <section className="metric-grid metric-grid-deck" aria-label="Deck turn timing">
             <MetricCard
+              icon={<Timer />}
               label="Your Turn Time / Game"
               value={formatDuration(detail.turn_timing.player?.avg_total_seconds ?? null)}
             />
             <MetricCard
+              icon={<Clock />}
               label="Your Avg Turn"
               value={formatTurnDuration(detail.turn_timing.player?.avg_turn_seconds ?? null)}
             />
             <MetricCard
+              icon={<Hourglass />}
               label="Opponent Turn Time / Game"
               value={formatDuration(detail.turn_timing.opponent?.avg_total_seconds ?? null)}
             />
             <MetricCard
+              icon={<Clock />}
               label="Opponent Avg Turn"
               value={formatTurnDuration(detail.turn_timing.opponent?.avg_turn_seconds ?? null)}
             />
@@ -970,7 +1004,8 @@ export function DeckDetailPage({
             {formatCards.map((row) => (
               <MetricCard
                 key={row.format_label}
-                label={row.format_label}
+                icon={<Trophy />}
+                label={boFormatLabel(row.format_label)}
                 value={row.win_rate != null ? `${row.win_rate}%` : '—'}
                 detail={`${row.wins}-${row.losses} · ${row.games} game${
                   row.games === 1 ? '' : 's'
