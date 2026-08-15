@@ -636,6 +636,42 @@ export function DeckDetailPage({
     rows: [string, keyof DeckInteractionSide, (keyof DeckInteractionSide)?][];
   }[] = [
     {
+      title: 'Attack',
+      rows: [
+        ['Attack steps', 'attack_steps'],
+        ['Attacking creatures', 'attacking_creatures'],
+        ['Attackers lost', 'attackers_lost'],
+      ],
+    },
+    {
+      title: 'Block',
+      rows: [
+        ['Blocking creatures', 'blocking_creatures'],
+        ['Blockers lost', 'blockers_lost'],
+      ],
+    },
+    {
+      title: 'Life',
+      rows: [
+        ['Damage dealt', 'damage_dealt'],
+        ['Damage taken', 'damage_taken'],
+        ['Life lost', 'life_lost'],
+        ['Self damage', 'self_damage'],
+        ['Life gained', 'life_gained'],
+        ['Poison counters added', 'poison_added'],
+      ],
+    },
+    {
+      title: 'Cards',
+      rows: [
+        ['Played', 'cards_played'],
+        ['Drawn', 'cards_drawn'],
+        ['Discarded', 'cards_discarded'],
+        ['Milled', 'cards_milled'],
+        ['Exiled', 'cards_exiled'],
+      ],
+    },
+    {
       title: 'Removal',
       rows: [
         ['Removal played', 'removal_played', 'removal_drawn'],
@@ -807,30 +843,16 @@ export function DeckDetailPage({
             ) : null}
             {detail.combat_profile ? (
               <>
-            <MetricCard
-              label="Profile"
-              value={detail.combat_profile.aggression_profile ?? '—'}
-            />
-            <MetricCard
-              label="Dmg Dealt / Game"
-              value={formatNumber(detail.combat_profile.avg_damage_dealt)}
-            />
-            <MetricCard
-              label="Dmg Taken / Game"
-              value={formatNumber(detail.combat_profile.avg_damage_taken)}
-            />
-            <MetricCard
-              label="Attacks / Game"
-              value={formatNumber(detail.combat_profile.avg_attack_steps)}
-            />
-            <MetricCard
-              label="Attackers / Attack"
-              value={formatNumber(detail.combat_profile.attackers_per_attack)}
-            />
-            <MetricCard
-              label="Life Gained / Game"
-              value={formatNumber(detail.combat_profile.avg_life_gained)}
-            />
+                {/* Raw per-game averages live in Combat & Resources below;
+                    this box keeps the deck-level identity and derived ratios. */}
+                <MetricCard
+                  label="Profile"
+                  value={detail.combat_profile.aggression_profile ?? '—'}
+                />
+                <MetricCard
+                  label="Attackers / Attack"
+                  value={formatNumber(detail.combat_profile.attackers_per_attack)}
+                />
               </>
             ) : null}
           </section>
@@ -841,14 +863,8 @@ export function DeckDetailPage({
 
       <Section
         id="deck-interaction"
-        title="Interaction Profile"
-        description={
-          interaction
-            ? `Per-game averages over the ${interaction.games_tracked} game${
-                interaction.games_tracked === 1 ? '' : 's'
-              } with interaction telemetry. Games recorded before a stat existed are excluded from its average.`
-            : 'Per-game removal, counter magic, bounce, land destruction, and token averages.'
-        }
+        title="Combat & Resources"
+        description="Per-seat, per-game averages for this deck — the same categories as the game page. Stats added in later tracker versions only average the games where they were tracked."
       >
         {interaction ? (
           <div className="combat-groups">

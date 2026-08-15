@@ -103,6 +103,8 @@ class TrackerEventsMixin(
             if isinstance(obj, dict) and obj.get("instanceId") is not None
         }
         zones_by_id = self._zone_index(data)
+        raw_players = data.get("players", [])
+        self._observe_player_poison(raw_players if isinstance(raw_players, list) else [])
 
         # Newer MTGA logs often represent attackers via gameObjects.attackState
         # instead of AnnotationType_AttackerDeclared.

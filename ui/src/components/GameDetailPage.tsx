@@ -484,6 +484,7 @@ export function GameDetailPage({
         ['Life lost', 'life_lost'],
         ['Self damage', 'self_damage'],
         ['Life gained', 'life_gained'],
+        ['Poison counters added', 'poison_added'],
       ],
     },
     {
