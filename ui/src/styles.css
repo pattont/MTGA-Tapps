@@ -2475,25 +2475,6 @@ tbody tr:hover {
   padding: 12px 16px 16px;
 }
 
-/* Two sections sharing one row (deck page: Combat Profile + Formats). */
-.section-pair {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  align-items: start;
-}
-
-@media (max-width: 1100px) {
-  .section-pair {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* Tables inside a half-width section must shrink to their column. */
-.section-pair table {
-  min-width: 0;
-}
-
 /* Best / worst opponent-color highlight cards. */
 .vs-color-highlights {
   display: grid;
