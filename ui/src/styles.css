@@ -2475,6 +2475,84 @@ tbody tr:hover {
   padding: 12px 16px 16px;
 }
 
+/* Two sections sharing one row (deck page: Combat Profile + Formats). */
+.section-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .section-pair {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Tables inside a half-width section must shrink to their column. */
+.section-pair table {
+  min-width: 0;
+}
+
+/* Best / worst opponent-color highlight cards. */
+.vs-color-highlights {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  padding: 12px 16px 4px;
+}
+
+.vs-color-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+}
+
+.vs-color-card-best {
+  border-left-color: var(--success);
+}
+
+.vs-color-card-worst {
+  border-left-color: var(--danger);
+}
+
+.vs-color-card-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.vs-color-card-value {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vs-color-card-rate {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.vs-color-card-best .vs-color-card-rate {
+  color: var(--success);
+}
+
+.vs-color-card-worst .vs-color-card-rate {
+  color: var(--danger);
+}
+
+.vs-color-card-detail {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
 /* Deterministic Combat & Resources layout: explicit columns (shared between
    the game and deck pages) instead of height-balanced CSS masonry. */
 .combat-columns {
