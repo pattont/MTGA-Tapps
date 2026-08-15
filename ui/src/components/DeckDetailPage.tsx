@@ -841,60 +841,58 @@ export function DeckDetailPage({
         </p>
       ) : null}
 
-      <div className="section-pair">
-        <Section
-          id="deck-combat"
-          title="Combat Profile"
-          description="Per-game combat and resource telemetry for this deck."
-        >
-          {detail.combat_profile || (detail.streaks?.games ?? 0) > 0 ? (
-            <section className="metric-grid metric-grid-deck" aria-label="Deck combat metrics">
-              {detail.streaks ? (
-                <>
-                  <MetricCard
-                    label="Win Streak"
-                    value={formatNumber(detail.streaks.longest_win)}
-                    detail={
-                      detail.streaks.current?.kind === 'win'
-                        ? `current: ${detail.streaks.current.length} in a row`
-                        : 'longest'
-                    }
-                  />
-                  <MetricCard
-                    label="Losing Streak"
-                    value={formatNumber(detail.streaks.longest_loss)}
-                    detail={
-                      detail.streaks.current?.kind === 'loss'
-                        ? `current: ${detail.streaks.current.length} in a row`
-                        : 'longest'
-                    }
-                  />
-                </>
-              ) : null}
-              {detail.combat_profile ? (
-                <>
-                  {/* Raw per-game averages live in Combat & Resources below;
-                      this box keeps the deck-level identity and derived ratios. */}
-                  <MetricCard
-                    label="Profile"
-                    value={detail.combat_profile.aggression_profile ?? '—'}
-                  />
-                  <MetricCard
-                    label="Attackers / Attack"
-                    value={formatNumber(detail.combat_profile.attackers_per_attack)}
-                  />
-                </>
-              ) : null}
-            </section>
-          ) : (
-            <p className="empty-state">No combat telemetry recorded for this deck yet.</p>
-          )}
-        </Section>
+      <Section
+        id="deck-combat"
+        title="Combat Profile"
+        description="Per-game combat and resource telemetry for this deck."
+      >
+        {detail.combat_profile || (detail.streaks?.games ?? 0) > 0 ? (
+          <section className="metric-grid metric-grid-deck" aria-label="Deck combat metrics">
+            {detail.streaks ? (
+              <>
+                <MetricCard
+                  label="Win Streak"
+                  value={formatNumber(detail.streaks.longest_win)}
+                  detail={
+                    detail.streaks.current?.kind === 'win'
+                      ? `current: ${detail.streaks.current.length} in a row`
+                      : 'longest'
+                  }
+                />
+                <MetricCard
+                  label="Losing Streak"
+                  value={formatNumber(detail.streaks.longest_loss)}
+                  detail={
+                    detail.streaks.current?.kind === 'loss'
+                      ? `current: ${detail.streaks.current.length} in a row`
+                      : 'longest'
+                  }
+                />
+              </>
+            ) : null}
+            {detail.combat_profile ? (
+              <>
+                {/* Raw per-game averages live in Combat & Resources below;
+                    this box keeps the deck-level identity and derived ratios. */}
+                <MetricCard
+                  label="Profile"
+                  value={detail.combat_profile.aggression_profile ?? '—'}
+                />
+                <MetricCard
+                  label="Attackers / Attack"
+                  value={formatNumber(detail.combat_profile.attackers_per_attack)}
+                />
+              </>
+            ) : null}
+          </section>
+        ) : (
+          <p className="empty-state">No combat telemetry recorded for this deck yet.</p>
+        )}
+      </Section>
 
-        <Section id="deck-formats" title="Formats">
-          <FormatsTable caption="Format performance for this deck" rows={detail.formats} />
-        </Section>
-      </div>
+      <Section id="deck-formats" title="Formats">
+        <FormatsTable caption="Format performance for this deck" rows={detail.formats} />
+      </Section>
 
       <Section
         id="deck-turn-timing"
