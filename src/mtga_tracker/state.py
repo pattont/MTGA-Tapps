@@ -58,6 +58,9 @@ class GameState:
             # This seat's spells that GOT countered (the other seat's counters
             # landing) — from stack lifecycle, not text classification.
             "spells_countered": 0,
+            # Poison counters accumulated by this seat (highest total observed
+            # in the GRE player state; poison only ever goes up in practice).
+            "poison_added": 0,
             # This seat's permanents removed from the battlefield by destroy,
             # exile, or non-combat lethal damage / zero toughness (board wipes
             # included), split creature vs non-creature (lands excluded — they

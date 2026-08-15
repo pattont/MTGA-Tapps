@@ -305,6 +305,7 @@ class AnalyticsStore:
                 noncreatures_removed INTEGER,
                 creatures_bounced INTEGER,
                 noncreatures_bounced INTEGER,
+                poison_added INTEGER,
                 counters_drawn INTEGER,
                 counters_played INTEGER,
                 spells_countered INTEGER,
@@ -581,6 +582,7 @@ class AnalyticsStore:
             (17, AnalyticsStore._migrate_v17_counter_magic_stats),
             (18, AnalyticsStore._migrate_v18_removal_loss_and_bounce_stats),
             (19, AnalyticsStore._migrate_v19_backfill_stats_from_events),
+            (20, AnalyticsStore._migrate_v20_poison_stat),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -1027,6 +1029,18 @@ class AnalyticsStore:
                 conn.execute(
                     f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER"
                 )
+
+    @staticmethod
+    def _migrate_v20_poison_stat(conn: sqlite3.Connection) -> None:
+        """Add the poison_added column (nullable — not reconstructable)."""
+        existing = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(game_participant_stats)")
+        }
+        if "poison_added" not in existing:
+            conn.execute(
+                "ALTER TABLE game_participant_stats ADD COLUMN poison_added INTEGER"
+            )
 
     @staticmethod
     def _migrate_v19_backfill_stats_from_events(conn: sqlite3.Connection) -> None:

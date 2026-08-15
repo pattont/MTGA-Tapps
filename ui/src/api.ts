@@ -524,8 +524,24 @@ export interface DeckLandProfile {
   classified_games: number;
 }
 
-/** One seat's per-game interaction averages; null = never tracked. */
+/** One seat's per-game averages; null = never tracked. */
 export interface DeckInteractionSide {
+  attack_steps: number | null;
+  attacking_creatures: number | null;
+  attackers_lost: number | null;
+  blocking_creatures: number | null;
+  blockers_lost: number | null;
+  damage_dealt: number | null;
+  damage_taken: number | null;
+  life_lost: number | null;
+  self_damage: number | null;
+  life_gained: number | null;
+  poison_added: number | null;
+  cards_played: number | null;
+  cards_drawn: number | null;
+  cards_discarded: number | null;
+  cards_milled: number | null;
+  cards_exiled: number | null;
   removal_played: number | null;
   removal_drawn: number | null;
   wipes_played: number | null;
@@ -760,6 +776,7 @@ export interface GameParticipantStatsRow {
   noncreatures_removed?: number | null;
   creatures_bounced?: number | null;
   noncreatures_bounced?: number | null;
+  poison_added?: number | null;
   counters_drawn?: number | null;
   counters_played?: number | null;
   spells_countered?: number | null;

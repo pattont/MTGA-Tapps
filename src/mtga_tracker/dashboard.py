@@ -1438,8 +1438,25 @@ def _combat_deck_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -
     return rows
 
 
-#: Interaction stat columns averaged per side on the deck page.
+#: Interaction stat columns averaged per side on the deck page. Mirrors every
+#: row of the game page's Combat & Resources section.
 _INTERACTION_STAT_COLUMNS = (
+    "attack_steps",
+    "attacking_creatures",
+    "attackers_lost",
+    "blocking_creatures",
+    "blockers_lost",
+    "damage_dealt",
+    "damage_taken",
+    "life_lost",
+    "self_damage",
+    "life_gained",
+    "poison_added",
+    "cards_played",
+    "cards_drawn",
+    "cards_discarded",
+    "cards_milled",
+    "cards_exiled",
     "removal_played",
     "removal_drawn",
     "wipes_played",
@@ -3346,6 +3363,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                   s.noncreatures_removed,
                   s.creatures_bounced,
                   s.noncreatures_bounced,
+                  s.poison_added,
                   s.counters_drawn,
                   s.counters_played,
                   s.spells_countered,

@@ -7237,3 +7237,25 @@ def test_forced_sacrifice_counts_as_removal_but_own_sacrifice_does_not(capsys):
         "Sacrifice", 833, 833, fodder, {}, objects, None, None, None, None, 832
     )
     assert tracker.game_state.match_stats[1]["creatures_removed"] == 1
+
+
+def test_poison_counters_tracked_from_player_state():
+    tracker = _removal_tracker()
+    tracker._observe_player_poison(
+        [
+            {"systemSeatNumber": 1, "lifeTotal": 18, "poisonCounters": 2},
+            {"systemSeatNumber": 2, "lifeTotal": 20},
+        ]
+    )
+    assert tracker.game_state.match_stats[1]["poison_added"] == 2
+    assert tracker.game_state.match_stats[2]["poison_added"] == 0
+
+    # Poison only ratchets up: a repeated lower/equal snapshot never rewinds.
+    tracker._observe_player_poison([{"systemSeatNumber": 1, "poisonCounters": 5}])
+    tracker._observe_player_poison([{"systemSeatNumber": 1, "poisonCounters": 5}])
+    tracker._observe_player_poison([{"systemSeatNumber": 1, "poisonCounters": 3}])
+    assert tracker.game_state.match_stats[1]["poison_added"] == 5
+
+    # Alternate field spellings and junk entries are tolerated.
+    tracker._observe_player_poison([{"systemSeatNumber": 2, "poisonCount": 4}, "junk", None])
+    assert tracker.game_state.match_stats[2]["poison_added"] == 4

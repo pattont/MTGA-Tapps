@@ -35,6 +35,7 @@ export const auditNavItems: AppNavItem[] = [
 export const deckNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
   { id: 'deck-combat', label: 'Combat Profile' },
+  { id: 'deck-interaction', label: 'Combat & Resources' },
   { id: 'deck-trend', label: 'Win Rate Trend' },
   { id: 'deck-cards', label: 'Deck List & Card Performance' },
   { id: 'deck-mulligans', label: 'Mulligans' },
