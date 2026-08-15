@@ -2546,6 +2546,7 @@ def deck_detail(
         combat_rows = _combat_deck_rows(conn, where, params)
         combat_profile = combat_rows[0] if combat_rows else None
         interaction_profile = _interaction_deck_profile(conn, where, params)
+        turn_timing = _deck_turn_timing(conn, where, params)
         mode_splits = _deck_mode_splits(_match_level_results(conn, where, params))
         streaks = _streak_summary(conn, where, params)
         composition_rows, version_rows, sideboard_summary = _deck_decklist_analysis(
@@ -2883,6 +2884,7 @@ def deck_detail(
         },
         "combat_profile": combat_profile,
         "interaction_profile": interaction_profile,
+        "turn_timing": turn_timing,
         "mode_splits": mode_splits,
         "streaks": streaks,
         "composition": composition_rows,
@@ -2988,6 +2990,8 @@ def _deck_land_profile(
     deck_size: Optional[int] = None
     lands: Optional[int] = None
     flood = screw = normal = 0
+    sum_cards_seen = sum_lands_seen = sum_draws = sum_land_draws = 0
+    expected_land_pct: Optional[float] = None
     for game_id, participant_id, row_deck_size in game_rows:
         if deck_size is None:
             decklist = deck_land_stats(conn, str(game_id), participant_id)
@@ -2998,6 +3002,12 @@ def _deck_land_profile(
         )
         if not quality.get("total_cards_seen"):
             continue
+        sum_cards_seen += int(quality.get("total_cards_seen") or 0)
+        sum_lands_seen += int(quality.get("lands_seen") or 0)
+        sum_draws += int(quality.get("total_draws") or 0)
+        sum_land_draws += int(quality.get("land_draws") or 0)
+        if expected_land_pct is None or quality.get("land_rate_source") == "decklist":
+            expected_land_pct = quality.get("expected_land_rate")
         if quality.get("is_flood"):
             flood += 1
         elif quality.get("is_screw"):
@@ -3012,7 +3022,56 @@ def _deck_land_profile(
         "screw_games": screw,
         "normal_games": normal,
         "classified_games": classified,
+        # Deck-level draw-quality averages across the classified games.
+        "avg_cards_seen": round(sum_cards_seen / classified, 1) if classified else None,
+        "lands_seen_pct": (
+            round(100.0 * sum_lands_seen / sum_cards_seen, 1) if sum_cards_seen else None
+        ),
+        "avg_cards_drawn": round(sum_draws / classified, 1) if classified else None,
+        "lands_drawn_pct": (
+            round(100.0 * sum_land_draws / sum_draws, 1) if sum_draws else None
+        ),
+        "expected_land_pct": expected_land_pct,
     }
+
+
+def _deck_turn_timing(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> Optional[Dict[str, Any]]:
+    """Average turn-time telemetry per seat across a deck's games."""
+    rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              pt.role AS role,
+              COUNT(*) AS turns,
+              SUM(t.duration_seconds) AS total_seconds,
+              COUNT(DISTINCT t.game_id) AS games
+            FROM games g
+            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            JOIN game_turns t ON t.game_id = g.id
+            JOIN participants pt ON pt.game_id = g.id AND pt.seat_id = t.seat_id
+            WHERE {where} AND t.duration_seconds IS NOT NULL
+            GROUP BY pt.role
+            """,
+            params,
+        )
+    )
+    summary: Dict[str, Any] = {}
+    for row in rows:
+        role = str(row.get("role") or "")
+        if role not in ("player", "opponent"):
+            continue
+        turns = int(row.get("turns") or 0)
+        total = int(row.get("total_seconds") or 0)
+        games = int(row.get("games") or 0)
+        summary[role] = {
+            "avg_total_seconds": round(total / games, 1) if games else None,
+            "avg_turn_seconds": round(total / turns, 1) if turns else None,
+            "turns_timed": turns,
+            "games": games,
+        }
+    return summary or None
 
 
 def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str, Any]:

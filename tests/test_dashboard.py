@@ -2758,3 +2758,20 @@ def test_deck_detail_mode_splits_absent_for_nonstandard_decks(tmp_path):
     detail = deck_detail(db_path, "Boros Mouse")
     assert detail["mode_splits"] is None
     assert detail["interaction_profile"] is None  # fixture rows have NULL interaction stats
+
+
+def test_deck_detail_turn_timing_and_draw_quality_averages(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    detail = deck_detail(db_path, "Boros Mouse")
+
+    timing = detail["turn_timing"]
+    # Fixture turns: player seat 1 -> 40+20 (game-1) + 25 (game-2) = 85 over 3
+    # turns in 2 games; opponent seat 2 -> 30 + 45+35 = 110 over 3 turns.
+    assert timing["player"]["turns_timed"] == 3
+    assert timing["player"]["avg_total_seconds"] == 42.5
+    assert timing["player"]["avg_turn_seconds"] == 28.3
+    assert timing["opponent"]["avg_total_seconds"] == 55.0
+
+    profile = detail["land_profile"]
+    assert profile["avg_cards_seen"] is not None
+    assert profile["classified_games"] >= 1

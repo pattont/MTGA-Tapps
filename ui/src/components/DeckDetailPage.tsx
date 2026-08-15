@@ -27,6 +27,7 @@ import {
 import { gameRouteHash, gamesRouteHash } from '../routes';
 import { makeOpponentColorColumns } from '../opponentColorColumns';
 import { Badge } from './Badge';
+import { bucketCombatGroups, CombatGroupColumns } from './CombatGroupColumns';
 import { ColorPips } from './ColorPips';
 import { CardLink } from './CardLink';
 import { DeckVisual } from './DeckVisual';
@@ -862,47 +863,94 @@ export function DeckDetailPage({
       </Section>
 
       <Section
+        id="deck-turn-timing"
+        title="Turn Timing"
+        description="Average pace across this deck's games."
+      >
+        {detail.turn_timing ? (
+          <section className="metric-grid metric-grid-deck" aria-label="Deck turn timing">
+            <MetricCard
+              label="Your Turn Time / Game"
+              value={formatDuration(detail.turn_timing.player?.avg_total_seconds ?? null)}
+            />
+            <MetricCard
+              label="Your Avg Turn"
+              value={formatTurnDuration(detail.turn_timing.player?.avg_turn_seconds ?? null)}
+            />
+            <MetricCard
+              label="Opponent Turn Time / Game"
+              value={formatDuration(detail.turn_timing.opponent?.avg_total_seconds ?? null)}
+            />
+            <MetricCard
+              label="Opponent Avg Turn"
+              value={formatTurnDuration(detail.turn_timing.opponent?.avg_turn_seconds ?? null)}
+            />
+          </section>
+        ) : (
+          <p className="empty-state">No turn timing recorded for this deck yet.</p>
+        )}
+      </Section>
+
+      <Section
+        id="deck-draw-quality"
+        title="Draw Quality"
+        description="Average cards and lands seen per game. The flood / screw / normal split lives in Land Statistics below."
+      >
+        {landProfile && landProfile.avg_cards_seen != null ? (
+          <section className="metric-grid metric-grid-deck" aria-label="Deck draw quality">
+            <MetricCard
+              label="Cards Seen / Game"
+              value={formatNumber(landProfile.avg_cards_seen)}
+            />
+            <MetricCard
+              label="Lands Seen"
+              value={
+                landProfile.lands_seen_pct != null ? `${landProfile.lands_seen_pct}%` : '—'
+              }
+            />
+            <MetricCard
+              label="Cards Drawn / Game"
+              value={formatNumber(landProfile.avg_cards_drawn)}
+            />
+            <MetricCard
+              label="Lands Drawn"
+              value={
+                landProfile.lands_drawn_pct != null ? `${landProfile.lands_drawn_pct}%` : '—'
+              }
+            />
+            <MetricCard
+              label="Expected Lands"
+              value={
+                landProfile.expected_land_pct != null && landProfile.expected_land_pct > 0
+                  ? `${landProfile.expected_land_pct}%`
+                  : '—'
+              }
+            />
+          </section>
+        ) : (
+          <p className="empty-state">No classified games for this deck yet.</p>
+        )}
+      </Section>
+
+      <Section
         id="deck-interaction"
         title="Combat & Resources"
         description="Per-seat, per-game averages for this deck."
       >
         {interaction ? (
-          <div className="combat-groups">
-            {interactionGroups.map((group) => (
-              <div key={group.title} className="combat-group">
-                <table className="combat-group-table">
-                  <caption className="visually-hidden">
-                    {group.title} per-game averages by seat
-                  </caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">{group.title}</th>
-                      <th scope="col" className="numeric">
-                        You
-                      </th>
-                      <th scope="col" className="numeric">
-                        Opp
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {group.rows.map(([label, key, drawnKey]) => (
-                      <tr key={label}>
-                        <td>{label}</td>
-                        <td className="numeric">
-                          {interactionCell(interaction.player, key, drawnKey)}
-                        </td>
-                        {/* Opponent draws are hidden information — no drawn suffix. */}
-                        <td className="numeric">
-                          {interactionCell(interaction.opponent, key)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ))}
-          </div>
+          <CombatGroupColumns
+            columns={bucketCombatGroups(
+              interactionGroups.map((group) => ({
+                title: group.title,
+                rows: group.rows.map(([label, key, drawnKey]): [string, string, string] => [
+                  label,
+                  interactionCell(interaction.player, key, drawnKey),
+                  // Opponent draws are hidden information — no drawn suffix.
+                  interactionCell(interaction.opponent, key),
+                ]),
+              })),
+            )}
+          />
         ) : (
           <p className="empty-state">No interaction telemetry recorded for this deck yet.</p>
         )}
