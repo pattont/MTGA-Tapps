@@ -737,7 +737,8 @@ a.best-deck-name:focus-visible {
 
 .metric-card strong {
   display: block;
-  overflow-wrap: anywhere;
+  /* Wrap between words when cramped, but never split a word ("Flo od"). */
+  overflow-wrap: break-word;
   color: var(--text);
   font-size: 1.35rem;
   line-height: 1.15;
@@ -788,6 +789,7 @@ a.best-deck-name:focus-visible {
   width: 32px;
   height: 32px;
 }
+
 
 .metric-card-win {
   border-color: color-mix(in srgb, var(--success) 45%, var(--border));
