@@ -1,4 +1,18 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Heart,
+  Hourglass,
+  Layers,
+  Mountain,
+  Play,
+  RefreshCw,
+  Repeat,
+  Shield,
+  Target,
+  Timer,
+} from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   fetchGameDetail,
@@ -620,12 +634,16 @@ export function GameDetailPage({
     0,
   );
   const metricCards = [
-    { label: 'Play / Draw', value: playDraw },
-    { label: 'Opponent Deck Type', value: opponentDeckType },
-    { label: 'Mulligans', value: formatNumber(detail.player.mulligans) },
-    { label: 'Turns', value: formatNumber(detail.game.total_turns) },
-    { label: 'Duration', value: formatDuration(detail.game.duration_seconds) },
-    { label: 'Final Life', value: `${formatNumber(detail.player.ending_life)} / ${formatNumber(detail.opponent.ending_life)}` },
+    { label: 'Play / Draw', value: playDraw, icon: <Play /> },
+    { label: 'Opponent Deck Type', value: opponentDeckType, icon: <Shield /> },
+    { label: 'Mulligans', value: formatNumber(detail.player.mulligans), icon: <RefreshCw /> },
+    { label: 'Turns', value: formatNumber(detail.game.total_turns), icon: <Repeat /> },
+    { label: 'Duration', value: formatDuration(detail.game.duration_seconds), icon: <Timer /> },
+    {
+      label: 'Final Life',
+      value: `${formatNumber(detail.player.ending_life)} / ${formatNumber(detail.opponent.ending_life)}`,
+      icon: <Heart />,
+    },
   ];
   return (
     <>
@@ -731,7 +749,7 @@ export function GameDetailPage({
 
       <section className="metric-grid metric-grid-deck" aria-label="Game metrics">
         {metricCards.map((metric) => (
-          <MetricCard key={metric.label} label={metric.label} value={metric.value} />
+          <MetricCard key={metric.label} icon={metric.icon} label={metric.label} value={metric.value} />
         ))}
       </section>
 
@@ -741,10 +759,10 @@ export function GameDetailPage({
         description="Average pace stays here. Individual turn durations are shown with each turn in the Timeline; estimated values come from historical turn headers."
       >
         <section className="metric-grid metric-grid-deck" aria-label="Turn timing summary">
-          <MetricCard label="Your Turn Time" value={formatTurnDuration(detail.turn_timing.player.total_seconds)} />
-          <MetricCard label="Your Avg Turn" value={formatTurnDuration(detail.turn_timing.player.avg_seconds)} />
-          <MetricCard label="Opponent Turn Time" value={formatTurnDuration(detail.turn_timing.opponent.total_seconds)} />
-          <MetricCard label="Opponent Avg Turn" value={formatTurnDuration(detail.turn_timing.opponent.avg_seconds)} />
+          <MetricCard icon={<Timer />} label="Your Turn Time" value={formatTurnDuration(detail.turn_timing.player.total_seconds)} />
+          <MetricCard icon={<Clock />} label="Your Avg Turn" value={formatTurnDuration(detail.turn_timing.player.avg_seconds)} />
+          <MetricCard icon={<Hourglass />} label="Opponent Turn Time" value={formatTurnDuration(detail.turn_timing.opponent.total_seconds)} />
+          <MetricCard icon={<Clock />} label="Opponent Avg Turn" value={formatTurnDuration(detail.turn_timing.opponent.avg_seconds)} />
         </section>
       </Section>
 
@@ -754,6 +772,7 @@ export function GameDetailPage({
         description="Flood tracks excess lands and concentrated land streaks. Mana screw tracks statistically low land access and three or more known nonland draws while stuck on one or two lands."
       >
         <section className="metric-grid metric-grid-deck" aria-label="Game draw quality">
+          {/* No icons here: nine cards per row leave no room — values would wrap. */}
           <MetricCard label="Total Cards Seen" value={formatNumber(totalCardsSeen)} />
           <MetricCard label="Lands Seen" value={`${landsSeen} (${formatWholePercent(landSeenPct)})`} />
           <MetricCard label="Total Cards Drawn" value={formatNumber(detail.draw_quality.total_draws)} />
@@ -830,6 +849,7 @@ export function GameDetailPage({
         >
           <section className="metric-grid metric-grid-deck" aria-label="Sideboarded deck numbers">
             <MetricCard
+              icon={<Layers />}
               label="Deck Total"
               value={`${detail.deck_changes.deck_total}`}
               detail={
@@ -839,6 +859,7 @@ export function GameDetailPage({
               }
             />
             <MetricCard
+              icon={<Mountain />}
               label="Lands"
               value={`${detail.deck_changes.lands}`}
               detail={
@@ -848,6 +869,7 @@ export function GameDetailPage({
               }
             />
             <MetricCard
+              icon={<Target />}
               label="Land Density"
               value={
                 detail.deck_changes.deck_total
