@@ -44,6 +44,18 @@ def is_midweek_format(value: Optional[str]) -> bool:
     return normalized.startswith("mwm") or "midweekmagic" in normalized
 
 
+def is_welcome_deck_format(value: Optional[str]) -> bool:
+    """Return True when Arena metadata identifies a Welcome Deck event.
+
+    Welcome Deck Duels (e.g. "Welcome Deck Duels HOB" / Welcome_Deck_...)
+    pit one pre-made deck against another — no deck building, no ladder
+    relevance — so they stay out of saved analytics. Matching the
+    "welcomedeck" stem keeps ordinary event names containing "welcome"
+    alone from being swept up.
+    """
+    return "welcomedeck" in normalize_match_text(value)
+
+
 def is_jump_in_format(value: Optional[str]) -> bool:
     """Return True when Arena metadata identifies a Jump In! event.
 
@@ -158,9 +170,21 @@ def _normalize_match_format_inner(
             family="sealed",
             best_of=1,
         )
-    if "historicbrawl" in normalized:
+    # Arena's Brawl queues (verified against a real log):
+    #   Play_Brawl_Historic → the unranked 100-card play queue → "Historic Brawl"
+    #   Brawl_Ladder        → the ranked Brawl queue          → "Brawl (Ranked)"
+    #   Play_Brawl          → the unranked Standard Brawl queue → "Standard Brawl"
+    if "historicbrawl" in normalized or "brawlhistoric" in normalized:
         return NormalizedFormat(
             raw=raw, label="Historic Brawl", family="historic_brawl", best_of=1, is_brawl=True
+        )
+    if "brawlladder" in normalized or ("brawl" in normalized and "ranked" in normalized):
+        return NormalizedFormat(
+            raw=raw, label="Brawl (Ranked)", family="brawl", best_of=1, is_brawl=True
+        )
+    if "standardbrawl" in normalized or "playbrawl" in normalized:
+        return NormalizedFormat(
+            raw=raw, label="Standard Brawl", family="standard_brawl", best_of=1, is_brawl=True
         )
     if "brawl" in normalized:
         return NormalizedFormat(raw=raw, label="Brawl", family="brawl", best_of=1, is_brawl=True)

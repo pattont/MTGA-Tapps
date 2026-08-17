@@ -33,16 +33,30 @@ scripts/build_macos_installer.sh
 
 The app lives in the menu bar: it starts tracking, opens the Live Tracker Log window,
 serves the dashboard locally, and opens it in your browser. Menu items: **Open
-Dashboard**, **Show Live Tracker Log**, **Start/Stop Tracking**, **Open Data Folder**,
-**Quit**. Installed builds keep their database under
+Dashboard**, **Deck Finder**, **Show Live Tracker Log**, **Open Data Folder**,
+**Settings…** (AI deck identification), **Start/Stop Tracking**, **Quit**. Installed builds keep their database under
 `~/Library/Application Support/MTGA Tracker` (macOS) or
 `%LOCALAPPDATA%\MTGA Tracker` (Windows).
 
-Unsigned alpha builds: macOS Gatekeeper will balk the first time — right-click the app
-→ **Open** → **Open**. The first Deck Finder launch from a downloaded build may prompt
-separately (it's its own executable inside the app); allow it via **System Settings →
-Privacy & Security → Open Anyway** if so. On Windows, use SmartScreen's
-**More info → Run anyway** on the setup.exe or zip.
+Unsigned alpha builds: macOS Gatekeeper will balk the first time. On **macOS 15
+(Sequoia) and newer** the dialog only offers "Move to Trash" or "Done" — do this instead:
+
+1. Click **Done** (NOT "Move to Trash").
+2. Open **System Settings → Privacy & Security**, scroll down to the Security section —
+   you'll see *"MTGA Tracker.app was blocked to protect your Mac"*.
+3. Click **Open Anyway** and confirm. This entry only appears for a while after an
+   open attempt, so do step 2 right after step 1.
+
+On older macOS, right-click the app → **Open** → **Open** still works. If the
+Open Anyway entry never appears, the Terminal fallback always works:
+
+```bash
+xattr -cr "/Applications/MTGA Tracker.app"
+```
+
+The first Deck Finder launch from a downloaded build may prompt separately (it's its
+own executable inside the app) — same Open Anyway dance if so. On Windows, use
+SmartScreen's **More info → Run anyway** on the setup.exe or zip.
 
 ## Option 2 — Run from source (development)
 

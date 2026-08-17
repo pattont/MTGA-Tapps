@@ -295,6 +295,26 @@ class AnalyticsStore:
                 cards_discarded INTEGER NOT NULL DEFAULT 0,
                 cards_milled INTEGER NOT NULL DEFAULT 0,
                 cards_exiled INTEGER NOT NULL DEFAULT 0,
+                removal_drawn INTEGER,
+                removal_played INTEGER,
+                wipes_drawn INTEGER,
+                wipes_played INTEGER,
+                bounces_drawn INTEGER,
+                bounces_played INTEGER,
+                creatures_removed INTEGER,
+                noncreatures_removed INTEGER,
+                creatures_bounced INTEGER,
+                noncreatures_bounced INTEGER,
+                poison_added INTEGER,
+                counters_drawn INTEGER,
+                counters_played INTEGER,
+                spells_countered INTEGER,
+                lands_lost INTEGER,
+                lands_replaced INTEGER,
+                tokens_created INTEGER,
+                tokens_destroyed INTEGER,
+                tokens_sacrificed INTEGER,
+                tokens_exiled INTEGER,
                 UNIQUE(game_id, participant_id),
                 FOREIGN KEY(game_id) REFERENCES games(id),
                 FOREIGN KEY(participant_id) REFERENCES participants(id)
@@ -385,6 +405,9 @@ class AnalyticsStore:
             CREATE INDEX IF NOT EXISTS idx_games_session_match
             ON games(session_id, match_id);
 
+            CREATE INDEX IF NOT EXISTS idx_games_session_window
+            ON games(session_id, started_at, ended_at);
+
             CREATE INDEX IF NOT EXISTS idx_participants_game_role
             ON participants(game_id, role);
 
@@ -417,6 +440,12 @@ class AnalyticsStore:
 
             CREATE INDEX IF NOT EXISTS idx_game_events_session_time
             ON game_events(session_id, event_time);
+
+            CREATE INDEX IF NOT EXISTS idx_game_events_game_time
+            ON game_events(game_id, event_time);
+
+            CREATE INDEX IF NOT EXISTS idx_raw_game_payloads_game
+            ON raw_game_payloads(game_id);
 
             CREATE INDEX IF NOT EXISTS idx_console_logs_session_created
             ON console_logs(session_id, created_at);
@@ -548,6 +577,12 @@ class AnalyticsStore:
             (12, AnalyticsStore._migrate_v12_delete_orphan_ghost_events),
             (13, AnalyticsStore._migrate_v13_merge_split_bo3_matches),
             (14, AnalyticsStore._migrate_v14_purge_untracked_modes),
+            (15, AnalyticsStore._migrate_v15_purge_welcome_deck_duels),
+            (16, AnalyticsStore._migrate_v16_removal_and_token_stats),
+            (17, AnalyticsStore._migrate_v17_counter_magic_stats),
+            (18, AnalyticsStore._migrate_v18_removal_loss_and_bounce_stats),
+            (19, AnalyticsStore._migrate_v19_backfill_stats_from_events),
+            (20, AnalyticsStore._migrate_v20_poison_stat),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -567,6 +602,12 @@ class AnalyticsStore:
             print("🗜️  Reclaiming disk space from the payload archive (VACUUM)…")
             conn.execute("VACUUM")
             print("🗜️  Done — database file compacted.")
+        # Cheap per-launch maintenance: refreshes stale query-planner stats
+        # for whichever indexes need it (no-op most launches).
+        try:
+            conn.execute("PRAGMA optimize")
+        except sqlite3.Error:
+            pass
 
     @staticmethod
     def _migrate_v2_backfill_card_arena_ids(conn: sqlite3.Connection) -> None:
@@ -865,6 +906,189 @@ class AnalyticsStore:
             )
 
     @staticmethod
+    def _delete_games_and_recompute_sessions(conn: sqlite3.Connection, doomed_games) -> None:
+        """Delete games (and all their child rows), drop emptied matches, and
+        recompute the aggregates of every session that lost games. Shared by
+        the untracked-mode purge migrations (v14 Jump In/MWM/Momir/Sparky,
+        v15 Welcome Deck Duels)."""
+        affected_sessions = {
+            str(row[0])
+            for game_id in doomed_games
+            for row in conn.execute("SELECT session_id FROM games WHERE id = ?", (game_id,))
+        }
+        for game_id in doomed_games:
+            conn.execute(
+                "DELETE FROM participant_commanders WHERE participant_id IN "
+                "(SELECT id FROM participants WHERE game_id = ?)",
+                (game_id,),
+            )
+            for table_name in (
+                "game_card_summary",
+                "game_deck_cards",
+                "game_opening_hand_cards",
+                "game_mulligan_hands",
+                "game_drawn_cards",
+                "game_events",
+                "game_turns",
+                "game_participant_stats",
+                "game_annotations",
+                "participants",
+            ):
+                conn.execute(f"DELETE FROM {table_name} WHERE game_id = ?", (game_id,))
+            conn.execute("DELETE FROM games WHERE id = ?", (game_id,))
+        conn.execute(
+            "DELETE FROM matches WHERE NOT EXISTS (SELECT 1 FROM games g WHERE g.match_id = matches.id)"
+        )
+
+        # Recompute the aggregates of sessions that lost games.
+        for session_id in affected_sessions:
+            counts = conn.execute(
+                """
+                SELECT COUNT(*),
+                       SUM(outcome = 'win'),
+                       SUM(outcome = 'loss'),
+                       SUM(outcome = 'draw'),
+                       SUM(outcome NOT IN ('win', 'loss', 'draw'))
+                FROM games WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+            if not counts or not counts[0]:
+                conn.execute("DELETE FROM tracker_sessions WHERE id = ?", (session_id,))
+                continue
+            conn.execute(
+                "UPDATE tracker_sessions SET games_played = ?, wins = ?, losses = ?, "
+                "draws = ?, unknown_results = ? WHERE id = ?",
+                (
+                    int(counts[0]),
+                    int(counts[1] or 0),
+                    int(counts[2] or 0),
+                    int(counts[3] or 0),
+                    int(counts[4] or 0),
+                    session_id,
+                ),
+            )
+
+    @staticmethod
+    def _migrate_v16_removal_and_token_stats(conn: sqlite3.Connection) -> None:
+        """Add removal/board-wipe/land-destruction/token columns to stats.
+
+        Nullable on purpose: games recorded before this feature stay NULL so
+        the dashboard can distinguish "not tracked yet" from a real zero.
+        """
+        existing = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(game_participant_stats)")
+        }
+        for column in (
+            "removal_drawn",
+            "removal_played",
+            "wipes_drawn",
+            "wipes_played",
+            "bounces_drawn",
+            "bounces_played",
+            "lands_lost",
+            "lands_replaced",
+            "tokens_created",
+            "tokens_destroyed",
+            "tokens_sacrificed",
+            "tokens_exiled",
+        ):
+            if column not in existing:
+                conn.execute(
+                    f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER"
+                )
+
+    @staticmethod
+    def _migrate_v17_counter_magic_stats(conn: sqlite3.Connection) -> None:
+        """Add counter-magic columns (nullable, like the v16 removal set)."""
+        existing = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(game_participant_stats)")
+        }
+        for column in ("counters_drawn", "counters_played", "spells_countered"):
+            if column not in existing:
+                conn.execute(
+                    f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER"
+                )
+
+    @staticmethod
+    def _migrate_v18_removal_loss_and_bounce_stats(conn: sqlite3.Connection) -> None:
+        """Add creature/non-creature removal-loss and bounce columns (nullable)."""
+        existing = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(game_participant_stats)")
+        }
+        for column in (
+            "creatures_removed",
+            "noncreatures_removed",
+            "creatures_bounced",
+            "noncreatures_bounced",
+        ):
+            if column not in existing:
+                conn.execute(
+                    f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER"
+                )
+
+    @staticmethod
+    def _migrate_v20_poison_stat(conn: sqlite3.Connection) -> None:
+        """Add the poison_added column (nullable — not reconstructable)."""
+        existing = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(game_participant_stats)")
+        }
+        if "poison_added" not in existing:
+            conn.execute(
+                "ALTER TABLE game_participant_stats ADD COLUMN poison_added INTEGER"
+            )
+
+    @staticmethod
+    def _migrate_v19_backfill_stats_from_events(conn: sqlite3.Connection) -> None:
+        """One-time backfill of behavioral stats from the game_events timeline.
+
+        Every game's structured timeline already records destroys, exiles,
+        bounces, land drops, and countered spells, so historical games can be
+        given real values for the stats that need no card-text classification:
+        creatures/non-creatures removed and bounced, lands lost/replaced, and
+        spells countered. Only NULL columns are filled — games tracked live by
+        a version that already counts these are never overwritten. Games with
+        no timeline rows stay NULL ("not tracked"), and known limitations are
+        deliberate undercounts: lethal-damage deaths are skipped (burn kills
+        cannot be split from combat deaths after the fact) and forced
+        sacrifices are skipped (the forcing player is not in the timeline).
+        """
+        from .events_backfill import backfill_game_stats_from_events
+
+        backfill_game_stats_from_events(conn)
+
+    @staticmethod
+    def _migrate_v15_purge_welcome_deck_duels(conn: sqlite3.Connection) -> None:
+        """Delete Welcome Deck Duels games (pre-made deck vs pre-made deck).
+
+        The mode joined the untracked list after some games had already
+        persisted (e.g. format "Welcome Deck Duels HOB"); like the other
+        novelty modes, it would skew constructed win rates and draw math.
+        """
+        from .format_normalizer import is_welcome_deck_format
+
+        doomed_matches = [
+            str(row[0])
+            for row in conn.execute("SELECT id, format, queue, event_name FROM matches")
+            if any(is_welcome_deck_format(value) for value in row[1:])
+        ]
+        doomed_games = set()
+        for match_id in doomed_matches:
+            for row in conn.execute("SELECT id FROM games WHERE match_id = ?", (match_id,)):
+                doomed_games.add(str(row[0]))
+        if not doomed_games:
+            return
+        AnalyticsStore._delete_games_and_recompute_sessions(conn, doomed_games)
+        print(
+            f"🚫 Removed {len(doomed_games)} Welcome Deck Duels game(s) "
+            "(pre-made deck mode; not tracked)."
+        )
+
+    @staticmethod
     def _migrate_v14_purge_untracked_modes(conn: sqlite3.Connection) -> None:
         """Delete games from modes the tracker intentionally does not track.
 
@@ -896,61 +1120,7 @@ class AnalyticsStore:
             for row in conn.execute("SELECT id FROM games WHERE match_id = ?", (match_id,)):
                 doomed_games.add(str(row[0]))
 
-        affected_sessions = {
-            str(row[0])
-            for game_id in doomed_games
-            for row in conn.execute("SELECT session_id FROM games WHERE id = ?", (game_id,))
-        }
-        for game_id in doomed_games:
-            conn.execute(
-                "DELETE FROM participant_commanders WHERE participant_id IN "
-                "(SELECT id FROM participants WHERE game_id = ?)",
-                (game_id,),
-            )
-            for table_name in (
-                "game_card_summary",
-                "game_deck_cards",
-                "game_opening_hand_cards",
-                "game_mulligan_hands",
-                "game_drawn_cards",
-                "game_events",
-                "game_turns",
-                "game_participant_stats",
-                "game_annotations",
-                "participants",
-            ):
-                conn.execute(f"DELETE FROM {table_name} WHERE game_id = ?", (game_id,))
-            conn.execute("DELETE FROM games WHERE id = ?", (game_id,))
-        conn.execute("DELETE FROM matches WHERE NOT EXISTS (SELECT 1 FROM games g WHERE g.match_id = matches.id)")
-
-        # Recompute the aggregates of sessions that lost games.
-        for session_id in affected_sessions:
-            counts = conn.execute(
-                """
-                SELECT COUNT(*),
-                       SUM(outcome = 'win'),
-                       SUM(outcome = 'loss'),
-                       SUM(outcome = 'draw'),
-                       SUM(outcome NOT IN ('win', 'loss', 'draw'))
-                FROM games WHERE session_id = ?
-                """,
-                (session_id,),
-            ).fetchone()
-            if not counts or not counts[0]:
-                conn.execute("DELETE FROM tracker_sessions WHERE id = ?", (session_id,))
-                continue
-            conn.execute(
-                "UPDATE tracker_sessions SET games_played = ?, wins = ?, losses = ?, "
-                "draws = ?, unknown_results = ? WHERE id = ?",
-                (
-                    int(counts[0]),
-                    int(counts[1] or 0),
-                    int(counts[2] or 0),
-                    int(counts[3] or 0),
-                    int(counts[4] or 0),
-                    session_id,
-                ),
-            )
+        AnalyticsStore._delete_games_and_recompute_sessions(conn, doomed_games)
 
         # Only labels in games older than a week are truly dead: a brand-new
         # set's card can resolve once Arena updates its local card database,

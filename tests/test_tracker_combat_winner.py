@@ -6756,3 +6756,562 @@ def test_double_block_reports_both_blockers(capsys):
     assert "blocking [Card404] with [Card305 (1/1)]" in out
     assert tracker2.game_state.blockers[30] == [40]
     assert tracker2.game_state.blockers[31] == [40]
+
+
+def test_startup_reassigns_cross_game_events_automatically(tmp_path, capsys):
+    """The GAME_EVENT_ASSIGNMENT_MISMATCH repair runs at startup so users
+    never need to run db_audit --repair by hand."""
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "analytics.sqlite3"
+
+    store = AnalyticsStore(tracker._console_db_path)
+    conn = store.connect()
+    with conn:
+        conn.execute(
+            "INSERT INTO tracker_sessions (id, started_at) VALUES ('s1', '2026-07-01T12:00:00')"
+        )
+        conn.executemany(
+            "INSERT INTO matches (id, session_id) VALUES (?, 's1')",
+            (("m1",), ("m2",)),
+        )
+        conn.executemany(
+            "INSERT INTO games (id, session_id, match_id, started_at, ended_at, outcome) "
+            "VALUES (?, 's1', ?, ?, ?, 'win')",
+            (
+                ("g1", "m1", "2026-07-01T12:00:00", "2026-07-01T12:05:00"),
+                ("g2", "m2", "2026-07-01T12:10:00", "2026-07-01T12:15:00"),
+            ),
+        )
+        # Attached to g1 but timestamped inside g2's window: truly misassigned.
+        conn.execute(
+            "INSERT INTO game_events (session_id, match_id, game_id, event_time, text) "
+            "VALUES ('s1', 'm1', 'g1', '2026-07-01T12:11:00', 'You: cast [Opt]')"
+        )
+    store.close()
+    tracker.analytics = None
+
+    tracker._reassign_misattributed_game_events()
+
+    conn = sqlite3.connect(tracker._console_db_path)
+    row = conn.execute("SELECT match_id, game_id FROM game_events").fetchone()
+    conn.close()
+    assert row == ("m2", "g2")
+    assert "Reassigned 1 game event(s)" in capsys.readouterr().out
+
+
+def test_cbrawl_match_is_not_downgraded_by_ranked_deck_attribute():
+    """A Brawl_Ladder (cBrawl) match kept its queue until the command zone
+    appeared — then _best_brawl_format_label scanned deck candidates and the
+    'HistoricBrawlRanked' format attribute substring-matched 'historicbrawl',
+    rewriting the match to 'Historic Brawl'. Reported from a real 17-match
+    cBrawl session where one match flipped."""
+    tracker = make_tracker()
+    tracker.game_state.format_str = "Brawl_Ladder"
+    tracker._deck_candidates = {
+        "Brawl_Ladder::Demonic Tutelage": {
+            "deck_name": "Demonic Tutelage",
+            "format_attr": "HistoricBrawlRanked",
+            "internal_event_name": "Brawl_Ladder",
+        }
+    }
+    assert tracker._best_brawl_format_label() == "Brawl_Ladder"
+
+    # With NO queue known, the ranked deck attribute should guess ranked —
+    # not fall through the historicbrawl substring to "Historic Brawl".
+    tracker.game_state.format_str = ""
+    assert tracker._best_brawl_format_label() == "Brawl (Ranked)"
+
+    # And a plain unranked attribute still guesses Historic Brawl.
+    tracker._deck_candidates = {
+        "Play_Brawl_Historic::Emperor Unrank": {
+            "deck_name": "Emperor Unrank",
+            "format_attr": "HistoricBrawl",
+            "internal_event_name": "Play_Brawl_Historic",
+        }
+    }
+    assert tracker._best_brawl_format_label() == "Historic Brawl"
+
+
+def test_pregame_concede_is_a_real_game_not_a_ghost(tmp_path, capsys):
+    """Opponent concedes while you're looking at your opening 7: no turns, no
+    kept hand, no draws — but a mulligan prompt was seen and Arena scored a
+    winner. That's a real win, not a ghost, and the visible hand becomes the
+    opening hand."""
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "analytics.sqlite3"
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.game_start_time = datetime(2026, 8, 13, 12, 0, 0)
+    tracker.game_state.opening_mulligan_prompt_seen = True
+    tracker.game_state._hand_before_mulligan = [
+        "Mountain", "Mountain", "Mountain", "Lightning Bolt",
+        "Monastery Swiftspear", "Play with Fire", "Kumano Faces Kakkazan",
+    ]
+    tracker.game_state._hand_before_mulligan_ids = [1, 1, 1, 2, 3, 4, 5]
+    tracker.game_state._hand_before_mulligan_events = []
+
+    tracker._persist_game_analytics("win", "opponent_conceded")
+    out = capsys.readouterr().out
+    assert "ghost game" not in out
+
+    conn = sqlite3.connect(tracker._console_db_path)
+    outcome = conn.execute("SELECT outcome FROM games").fetchone()
+    hand = conn.execute("SELECT COUNT(*) FROM game_opening_hand_cards").fetchone()[0]
+    conn.close()
+    assert outcome == ("win",)
+    assert hand == 7  # the visible 7 persisted as the opening hand
+
+
+def test_true_ghost_tail_is_still_skipped(tmp_path, capsys):
+    """A post-concede tail (no mulligan prompt, no hand, no turns) must keep
+    being skipped even when it carries a winner hint."""
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "analytics.sqlite3"
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.game_start_time = datetime(2026, 8, 13, 12, 0, 0)
+    tracker.game_state.opening_mulligan_prompt_seen = False
+
+    tracker._persist_game_analytics("win", "summary_tail")
+    assert "ghost game" in capsys.readouterr().out
+
+    conn = sqlite3.connect(tracker._console_db_path)
+    games = conn.execute("SELECT COUNT(*) FROM games").fetchone()[0]
+    conn.close()
+    assert games == 0
+
+
+def _game_over_line(results, persistent_annotations=None):
+    message = {
+        "gameInfo": {
+            "stage": "GameStage_GameOver",
+            "matchState": "MatchState_GameComplete",
+            "results": results,
+        }
+    }
+    if persistent_annotations is not None:
+        message["persistentAnnotations"] = persistent_annotations
+    return json.dumps(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {"type": "GREMessageType_GameStateMessage", "gameStateMessage": message}
+                ]
+            }
+        }
+    )
+
+
+def _loss_annotation(seat, reason):
+    return {
+        "id": 999,
+        "affectedIds": [seat],
+        "type": ["AnnotationType_LossOfGame"],
+        "details": [
+            {"key": "reason", "type": "KeyValuePairValueType_string", "valueString": [reason]}
+        ],
+    }
+
+
+def test_outcome_decked_opponent_from_loss_annotation():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.player_life = 12
+    tracker.game_state.opponent_life = 25
+
+    tracker._check_game_end(
+        _game_over_line(
+            [
+                {
+                    "scope": "MatchScope_Game",
+                    "result": "ResultType_WinLoss",
+                    "winningTeamId": 1,
+                    "reason": "ResultReason_Game",
+                }
+            ],
+            persistent_annotations=[_loss_annotation(2, "SBA_DrawEmptyLibrary")],
+        )
+    )
+
+    assert tracker.game_state.winner_seat == 1
+    assert tracker.game_state.loss_reason_code == "SBA_DrawEmptyLibrary"
+    assert tracker._resolve_game_outcome() == (
+        "win",
+        "Opponent got decked (drew from an empty library)",
+    )
+
+
+def test_outcome_poisoned_player_from_loss_annotation():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.player_life = 15
+    tracker.game_state.opponent_life = 3
+
+    tracker._check_game_end(
+        _game_over_line(
+            [
+                {
+                    "scope": "MatchScope_Game",
+                    "result": "ResultType_WinLoss",
+                    "winningTeamId": 2,
+                    "reason": "ResultReason_Game",
+                }
+            ],
+            persistent_annotations=[_loss_annotation(1, "SBA_Poisoned")],
+        )
+    )
+
+    assert tracker._resolve_game_outcome() == ("loss", "You got poisoned (10 counters)")
+
+
+def test_outcome_life_total_annotation_matches_legacy_wording():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 2
+    tracker.game_state.opponent_seat_id = 1
+    tracker.game_state.player_life = 8
+    tracker.game_state.opponent_life = -3
+
+    tracker._check_game_end(
+        _game_over_line(
+            [
+                {
+                    "scope": "MatchScope_Game",
+                    "result": "ResultType_WinLoss",
+                    "winningTeamId": 2,
+                    "reason": "ResultReason_Game",
+                }
+            ],
+            persistent_annotations=[_loss_annotation(1, "SBA_LifeTotal")],
+        )
+    )
+
+    assert tracker._resolve_game_outcome() == ("win", "Opponent reached 0 life")
+
+
+def test_outcome_timeout_reason():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.player_life = 14
+    tracker.game_state.opponent_life = 9
+
+    tracker._check_game_end(
+        _game_over_line(
+            [
+                {
+                    "scope": "MatchScope_Game",
+                    "result": "ResultType_WinLoss",
+                    "winningTeamId": 1,
+                    "reason": "ResultReason_Timeout",
+                }
+            ]
+        )
+    )
+
+    assert tracker._resolve_game_outcome() == ("win", "Opponent timed out")
+
+
+def test_outcome_concede_still_default_without_annotation():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.player_life = 20
+    tracker.game_state.opponent_life = 4
+
+    tracker._check_game_end(
+        _game_over_line(
+            [
+                {
+                    "scope": "MatchScope_Game",
+                    "result": "ResultType_WinLoss",
+                    "winningTeamId": 1,
+                    "reason": "ResultReason_Concede",
+                }
+            ]
+        )
+    )
+
+    assert tracker._resolve_game_outcome() == ("win", "Opponent conceded")
+
+
+def _removal_tracker():
+    """Tracker with seats set and a card DB that classifies grp 900 as removal,
+    901 as a board wipe, and 902 as mass bounce."""
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.turn_number = 5
+
+    class RoleCardDb:
+        @staticmethod
+        def get_card_name(grp_id):
+            return f"Card #{grp_id}"
+
+        @staticmethod
+        def get_card_type_category(grp_id):
+            return "Instant"
+
+        @staticmethod
+        def get_card_ability_texts(grp_id):
+            return {
+                900: ["Destroy target creature."],
+                901: ["Destroy all creatures."],
+                902: ["Return all creatures to their owners' hands."],
+            }.get(grp_id, [])
+
+    tracker.card_db = RoleCardDb()
+    tracker._removal_classifier = None  # force rebuild against the fake DB
+    return tracker
+
+
+def test_cast_counts_removal_roles_once():
+    tracker = _removal_tracker()
+    for instance_id, grp in ((501, 900), (502, 901), (503, 902)):
+        tracker._record_played_card_once(
+            instance_id=instance_id,
+            canonical_instance_id=instance_id,
+            seat_id=1,
+            track_name=f"Card #{grp} (Instant)",
+            card_types=["CardType_Instant"],
+            grp_id=grp,
+        )
+    # Replaying the same instance must not double count.
+    tracker._record_played_card_once(
+        instance_id=501,
+        canonical_instance_id=501,
+        seat_id=1,
+        track_name="Card #900 (Instant)",
+        card_types=["CardType_Instant"],
+        grp_id=900,
+    )
+
+    stats = tracker.game_state.match_stats[1]
+    assert stats["removal_played"] == 1
+    assert stats["wipes_played"] == 1
+    assert stats["bounces_played"] == 1
+
+
+def test_land_destruction_and_replacement_tracking():
+    tracker = _removal_tracker()
+    objects = {
+        601: {"instanceId": 601, "controllerSeatId": 1},  # player's LD spell
+    }
+    # Player destroys an opponent land on turn 5.
+    tracker._count_enemy_land_destruction(2, 601, None, objects)
+    assert tracker.game_state.match_stats[2]["lands_lost"] == 1
+
+    # Opponent drops a land on their next turn -> replaced.
+    tracker.game_state.turn_number = 6
+    tracker._check_land_replacement(2)
+    assert tracker.game_state.match_stats[2]["lands_replaced"] == 1
+
+    # A second destruction that is never answered stays unreplaced.
+    tracker.game_state.turn_number = 7
+    tracker._count_enemy_land_destruction(2, 601, None, objects)
+    tracker.game_state.turn_number = 12  # window long gone
+    tracker._check_land_replacement(2)
+    assert tracker.game_state.match_stats[2]["lands_replaced"] == 1
+
+    # Sacrificing your own land (same controller) never counts.
+    tracker._count_enemy_land_destruction(1, 601, None, objects)
+    assert tracker.game_state.match_stats[1]["lands_lost"] == 0
+
+
+def test_token_lifecycle_counting():
+    tracker = _removal_tracker()
+    token = {"instanceId": 700, "type": "GameObjectType_Token", "controllerSeatId": 1}
+    objects = {700: token}
+
+    tracker._count_token_creations([700], objects)
+    tracker._count_token_creations([700], objects)  # dedupe
+    assert tracker.game_state.match_stats[1]["tokens_created"] == 1
+
+    tracker._count_token_loss(token, 700, "Sacrifice", 1)
+    tracker._count_token_loss(token, 700, "Sacrifice", 1)  # dedupe
+    assert tracker.game_state.match_stats[1]["tokens_sacrificed"] == 1
+
+    other = {"instanceId": 701, "type": "GameObjectType_Token", "controllerSeatId": 2}
+    tracker._count_token_loss(other, 701, "SBA_Damage", 2)
+    tracker._count_token_loss(other, 701, "Exile", 2)
+    assert tracker.game_state.match_stats[2]["tokens_destroyed"] == 1
+    assert tracker.game_state.match_stats[2]["tokens_exiled"] == 1
+
+    # Non-token objects never touch token stats.
+    tracker._count_token_loss({"instanceId": 702, "type": "GameObjectType_Card"}, 702, "Destroy", 1)
+    assert tracker.game_state.match_stats[1]["tokens_destroyed"] == 0
+
+
+def test_permanent_removed_counting_and_dedupe():
+    tracker = _removal_tracker()
+
+    tracker._count_permanent_removed(801, ["CardType_Creature"], 1)
+    tracker._count_permanent_removed(801, ["CardType_Creature"], 1)  # dedupe
+    tracker._count_permanent_removed(802, ["CardType_Enchantment"], 1)
+    tracker._count_permanent_removed(803, ["CardType_Land"], 1)  # lands excluded
+
+    stats = tracker.game_state.match_stats[1]
+    assert stats["creatures_removed"] == 1
+    assert stats["noncreatures_removed"] == 1
+
+
+def test_sba_deaths_count_zero_toughness_but_never_lethal_damage(capsys):
+    tracker = _removal_tracker()
+    creature = {
+        "instanceId": 810,
+        "grpId": 900,
+        "cardTypes": ["CardType_Creature"],
+        "ownerSeatId": 1,
+        "controllerSeatId": 1,
+    }
+    # Lethal-damage deaths are unattributable (combat vs burn) -> never counted.
+    tracker._emit_state_based_zone_transfer(
+        category="SBA_Damage",
+        instance_id=810,
+        card_obj=creature,
+        annotation={},
+        game_objects_by_id={810: creature},
+        zones_by_id=None,
+        zone_src=None,
+        zone_dest=None,
+    )
+    assert tracker.game_state.match_stats[1]["creatures_removed"] == 0
+
+    # Zero toughness (-X/-X removal or wipe) counts.
+    shrunk = dict(creature, instanceId=811)
+    tracker._emit_state_based_zone_transfer(
+        category="SBA_ZeroToughness",
+        instance_id=811,
+        card_obj=shrunk,
+        annotation={},
+        game_objects_by_id={811: shrunk},
+        zones_by_id=None,
+        zone_src=None,
+        zone_dest=None,
+    )
+    assert tracker.game_state.match_stats[1]["creatures_removed"] == 1
+
+
+def test_permanent_bounced_counting_and_dedupe():
+    tracker = _removal_tracker()
+
+    tracker._count_permanent_bounced(820, ["CardType_Creature"], 2)
+    tracker._count_permanent_bounced(820, ["CardType_Creature"], 2)  # dedupe
+    tracker._count_permanent_bounced(821, ["CardType_Artifact"], 2)
+
+    stats = tracker.game_state.match_stats[2]
+    assert stats["creatures_bounced"] == 1
+    assert stats["noncreatures_bounced"] == 1
+
+
+def test_forced_sacrifice_counts_as_removal_but_own_sacrifice_does_not(capsys):
+    tracker = _removal_tracker()
+    edict = {"instanceId": 830, "controllerSeatId": 2}
+    victim = {
+        "instanceId": 831,
+        "grpId": 900,
+        "cardTypes": ["CardType_Creature"],
+        "ownerSeatId": 1,
+        "controllerSeatId": 1,
+    }
+    objects = {830: edict, 831: victim}
+    tracker._handle_removal_zone_transfer(
+        "Sacrifice", 831, 831, victim, {}, objects, None, None, None, None, 830
+    )
+    assert tracker.game_state.match_stats[1]["creatures_removed"] == 1
+
+    # Same shape but the sacrifice effect belongs to the owner (sac outlet).
+    own_outlet = {"instanceId": 832, "controllerSeatId": 1}
+    fodder = dict(victim, instanceId=833)
+    objects = {832: own_outlet, 833: fodder}
+    tracker._handle_removal_zone_transfer(
+        "Sacrifice", 833, 833, fodder, {}, objects, None, None, None, None, 832
+    )
+    assert tracker.game_state.match_stats[1]["creatures_removed"] == 1
+
+
+def test_poison_counters_tracked_from_player_state():
+    tracker = _removal_tracker()
+    tracker._observe_player_poison(
+        [
+            {"systemSeatNumber": 1, "lifeTotal": 18, "poisonCounters": 2},
+            {"systemSeatNumber": 2, "lifeTotal": 20},
+        ]
+    )
+    assert tracker.game_state.match_stats[1]["poison_added"] == 2
+    assert tracker.game_state.match_stats[2]["poison_added"] == 0
+
+    # Poison only ratchets up: a repeated lower/equal snapshot never rewinds.
+    tracker._observe_player_poison([{"systemSeatNumber": 1, "poisonCounters": 5}])
+    tracker._observe_player_poison([{"systemSeatNumber": 1, "poisonCounters": 5}])
+    tracker._observe_player_poison([{"systemSeatNumber": 1, "poisonCounters": 3}])
+    assert tracker.game_state.match_stats[1]["poison_added"] == 5
+
+    # Alternate field spellings and junk entries are tolerated.
+    tracker._observe_player_poison([{"systemSeatNumber": 2, "poisonCount": 4}, "junk", None])
+    assert tracker.game_state.match_stats[2]["poison_added"] == 4
+
+
+def test_submitted_decklist_arbitrates_deck_identity():
+    """A stale course candidate must lose to the deck actually submitted.
+
+    Regression: tracker launched mid-queue after a deck switch stamped the
+    game with the previously-played deck's name while recording the new
+    deck's decklist (Mono Black Skellies vs Orzhov Lifegain, 2026-08-04).
+    """
+    tracker = make_tracker()
+    tracker.game_state.format_str = "Ladder"
+    skellies_ids = set(range(100, 160))
+    orzhov_ids = set(range(500, 560))
+    tracker._deck_candidates = {
+        "event::Skellies": {
+            "deck_name": "Mono Black Skellies (Reddit)",
+            "deck_id": "skellies-id",
+            "internal_event_name": "Ladder",
+            "current_module": "CreateMatch",
+            "main_deck_ids": skellies_ids,
+        },
+        "event::Orzhov": {
+            "deck_name": "Orzhov Lifegain",
+            "deck_id": "orzhov-id",
+            "internal_event_name": "Ladder",
+            "current_module": "CreateMatch",
+            "main_deck_ids": orzhov_ids,
+        },
+    }
+    # The game's submitted 60 is the Orzhov list.
+    tracker.game_state.submitted_deck_cards = list(orzhov_ids)
+
+    # Even with the stale deck locked in, resolution must switch.
+    tracker._active_deck_candidate_key = "event::Skellies"
+    tracker._resolve_player_deck_from_candidates()
+    assert tracker.game_state.player_deck_name == "Orzhov Lifegain"
+    assert tracker.game_state.player_deck_id == "orzhov-id"
+
+
+def test_contradicted_identity_stays_unresolved_without_matching_candidate():
+    tracker = make_tracker()
+    tracker.game_state.format_str = "Ladder"
+    tracker._deck_candidates = {
+        "event::Skellies": {
+            "deck_name": "Mono Black Skellies (Reddit)",
+            "deck_id": "skellies-id",
+            "internal_event_name": "Ladder",
+            "current_module": "CreateMatch",
+            "main_deck_ids": set(range(100, 160)),
+        },
+    }
+    # Submitted deck shares nothing with the only candidate: better to leave
+    # the deck unknown than to misattribute the game.
+    tracker.game_state.submitted_deck_cards = list(range(500, 560))
+    tracker._resolve_player_deck_from_candidates()
+    assert tracker.game_state.player_deck_name is None

@@ -104,6 +104,35 @@ describe('metricCards', () => {
     });
   });
 
+  it('prefers the match-level summary with streaks when present', () => {
+    const snapshot = {
+      ...snapshotWithDecks([]),
+      summary: { games: 10, wins: 6, losses: 4, draws: 0, win_rate: 60.0 },
+      match_summary: {
+        matches: 8,
+        wins: 5,
+        losses: 3,
+        win_rate: 62.5,
+        longest_win: 4,
+        longest_loss: 2,
+      },
+    } satisfies DashboardSnapshot;
+
+    expect(metricCards(snapshot)).toEqual([
+      { label: 'Matches', value: '8', detail: 'a Bo3 counts once', iconName: 'matches' },
+      { label: 'Wins', value: '5', detail: '62.5% of total', tone: 'win', iconName: 'wins' },
+      { label: 'Losses', value: '3', detail: '37.5% of total', tone: 'loss', iconName: 'losses' },
+      { label: 'Win Rate', value: '62.5%', detail: 'of matches', iconName: 'winRate' },
+      { label: 'Longest Win Streak', value: '4', detail: 'matches in a row', iconName: 'winStreak' },
+      {
+        label: 'Longest Loss Streak',
+        value: '2',
+        detail: 'matches in a row',
+        iconName: 'lossStreak',
+      },
+    ]);
+  });
+
   it('favors a proven winning record over a one-game perfect record', () => {
     const snapshot = snapshotWithDecks([
       {

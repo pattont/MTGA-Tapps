@@ -323,6 +323,36 @@ class TrackerStateLookupMixin:
             return None
         return self.game_state.match_stats[int(seat_id)]
 
+    def _observe_player_poison(self, players: Optional[List[Dict[str, Any]]]) -> None:
+        """Track each seat's poison total from the GRE player state.
+
+        Arena omits zero-default fields, so the poison field only appears once
+        a player actually has counters. Poison effectively never decreases
+        (proliferate only adds), so the highest observed value IS the number
+        of counters added. Field-name candidates cover protocol drift.
+        """
+        for player in players or []:
+            if not isinstance(player, dict):
+                continue
+            stats = self._seat_stats(self._normalize_seat_id(player.get("systemSeatNumber")))
+            if stats is None:
+                continue
+            for key in ("poisonCounters", "poisonCount", "poison"):
+                value = player.get(key)
+                if isinstance(value, int) and value > stats.get("poison_added", 0):
+                    stats["poison_added"] = value
+                    break
+
+    def _card_roles(self, grp_id):
+        """Removal/wipe/bounce roles for a card, classified from rules text."""
+        classifier = getattr(self, "_removal_classifier", None)
+        if classifier is None:
+            from .removal_classifier import RemovalClassifier
+
+            classifier = RemovalClassifier(self.card_db)
+            self._removal_classifier = classifier
+        return classifier.roles_for(grp_id)
+
     @staticmethod
     def _zone_index(data: Dict[str, Any]) -> Dict[int, Dict[str, Any]]:
         """Map zone id to zone payload for the current update."""

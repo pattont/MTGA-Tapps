@@ -114,6 +114,7 @@ class TrackerRuntimeMixin:
         # (resolved card labels, recovered timings) sit with the banner
         # instead of dangling after "Now ready to track".
         self._recover_missing_turn_timings()
+        self._reassign_misattributed_game_events()
         self._backfill_card_colors()
         self._backfill_unresolved_card_labels()
         self._backfill_recent_match_metadata()

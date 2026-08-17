@@ -681,7 +681,6 @@ describe('App', () => {
       'decks',
       'land-drops',
       'habits',
-      'outcomes',
       'opponent-meta',
       'formats',
       'sessions',
@@ -718,9 +717,9 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
-    // Decks table, Best Deck metric, Recent Games, and Matchups.
+    // Decks table, Best Deck metric, and Recent Games.
     const deckLinks = screen.getAllByRole('link', { name: 'Boros Mouse' });
-    expect(deckLinks.length).toBe(4);
+    expect(deckLinks.length).toBe(3);
     deckLinks.forEach((link) => {
       expect(link).toHaveAttribute('href', '#/deck/Boros%20Mouse');
     });
@@ -1242,19 +1241,6 @@ describe('App', () => {
     expect(screen.getAllByRole('link', { name: 'Boros Mouse' })).toHaveLength(2);
   });
 
-  it('links card names to the card detail page', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(snapshot), { status: 200 })));
-    render(<App />);
-
-    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
-
-    // Card links on the dashboard now live in the Opponent Meta threat table.
-    expect(screen.getByRole('link', { name: 'Graveyard Trespasser' })).toHaveAttribute(
-      'href',
-      '#/card/Graveyard%20Trespasser',
-    );
-  });
-
   it('searches all tracked cards and opens the selected card detail', async () => {
     const shelteredDetail = {
       ...cardDetail,
@@ -1413,7 +1399,10 @@ describe('App', () => {
     expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot', expect.anything());
 
-    await user.selectOptions(screen.getByLabelText('Deck'), 'Boros Mouse');
+    // The deck filter is a searchable dropdown: open, type, pick.
+    await user.click(screen.getByRole('button', { name: 'Deck filter' }));
+    await user.type(screen.getByLabelText('Search decks in filter'), 'boros');
+    await user.click(screen.getByRole('option', { name: 'Boros Mouse' }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?deck=Boros+Mouse', expect.anything()),
     );

@@ -34,6 +34,15 @@ history so you can see which matchups actually beat you. Optionally, bring your
 own AI key (OpenAI, Anthropic, or Gemini) and the tracker names the opponent's
 actual archetype — "Jeskai Control", "Gruul Aggro" — after each game.
 
+**Brawl, done properly.** Commanders are tracked from the opening hand of every
+Brawl game — yours and your opponent's. A dedicated Brawl section on the
+Overview shows your overall and per-queue record (Historic Brawl, Brawl
+(Ranked), Standard Brawl) plus **Your Commanders** and **Faced Commanders**
+win-rate tables, because Brawl players think in commanders, not deck names.
+Brawl rows in Recent Games expand to show the commander-vs-commander matchup
+with colors. Starting life, 100-card decks, and command-zone recasts are all
+handled.
+
 **Deck Finder.** A bundled companion tool that browses current decklists from
 creators and sites (Moxfield, AetherHub, TCGplayer, magic.gg, MTGO, Untapped)
 and copies any list straight to your clipboard in Arena import format. Launch
@@ -166,6 +175,7 @@ mixing them into constructed analytics would skew win rates and draw math:
 - **Jump In!** (`Jump_In_*` events)
 - **Midweek Magic** (`MWM_*` events)
 - **Momir** and similar novelty modes
+- **Welcome Deck Duels** (pre-made deck vs pre-made deck)
 - **Practice games against Sparky** (the Arena bot) — this includes bot
   Color Challenges; Starter Deck Duels against human opponents ARE tracked
 - Games the tracker joined mid-way (no reliable opener/draw data)

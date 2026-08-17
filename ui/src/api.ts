@@ -41,6 +41,7 @@ export interface PlayDrawRow {
   wins: number;
   losses: number;
   win_rate: number | null;
+  avg_mulligans?: number | null;
 }
 
 export interface DeckPlayDrawRow {
@@ -121,6 +122,16 @@ export interface FatigueRow {
   win_rate: number | null;
 }
 
+export interface MatchLevelSummary {
+  /** Decided matches: a Bo3 counts once (2-1 = one win); Bo1 game = one match. */
+  matches: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  longest_win: number;
+  longest_loss: number;
+}
+
 export interface StreakSummary {
   games: number;
   current: { kind: string; length: number } | null;
@@ -142,6 +153,7 @@ export interface OpenerLandRow {
   wins: number;
   losses: number;
   win_rate: number | null;
+  avg_mulligans?: number | null;
 }
 
 export interface OpponentColorRow {
@@ -152,6 +164,31 @@ export interface OpponentColorRow {
   losses: number;
   win_rate: number | null;
   pct_of_games?: number | null;
+}
+
+export interface BrawlQueueRow {
+  format_label: string;
+  games: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+}
+
+export interface BrawlSummary {
+  games: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  queues: BrawlQueueRow[];
+}
+
+export interface CommanderRow {
+  commander: string;
+  colors: string;
+  games: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
 }
 
 export interface OpponentThreatRow {
@@ -214,6 +251,11 @@ export interface RecentGameRow {
   is_screw?: boolean;
   /** Opponent's revealed WUBRG colors (e.g. "UR"); empty when nothing colored was seen. */
   opp_colors?: string;
+  /** Brawl: commander names (partners joined with " & "); null outside Brawl. */
+  player_commander?: string | null;
+  opponent_commander?: string | null;
+  player_commander_colors?: string | null;
+  opponent_commander_colors?: string | null;
 }
 
 export interface AllGamesRow extends RecentGameRow {
@@ -325,10 +367,16 @@ export interface DashboardSnapshot {
   schedule: { by_weekday: ScheduleRow[]; by_time_of_day: ScheduleRow[] };
   fatigue: FatigueRow[];
   streaks: StreakSummary;
+  match_summary?: MatchLevelSummary;
+  ranked_summary?: MatchLevelSummary;
+  ranked_season_summary?: (MatchLevelSummary & { season_ordinal: number }) | null;
   outcome_reasons: OutcomeReasonRow[];
   opener_lands: OpenerLandRow[];
   opponent_threats: OpponentThreatRow[];
   opponent_colors?: OpponentColorRow[];
+  brawl?: BrawlSummary;
+  your_commanders?: CommanderRow[];
+  faced_commanders?: CommanderRow[];
   matchups: MatchupRow[];
   recent: RecentGameRow[];
   matches: MatchRow[];
@@ -474,6 +522,83 @@ export interface DeckLandProfile {
   screw_games: number;
   normal_games: number;
   classified_games: number;
+  /** Deck-level draw-quality averages across the classified games. */
+  avg_cards_seen?: number | null;
+  lands_seen_pct?: number | null;
+  avg_cards_drawn?: number | null;
+  lands_drawn_pct?: number | null;
+  expected_land_pct?: number | null;
+}
+
+/** One seat's average turn-time telemetry across a deck's games. */
+export interface DeckTurnTimingSide {
+  avg_total_seconds: number | null;
+  avg_turn_seconds: number | null;
+  turns_timed: number;
+  games: number;
+}
+
+/** One seat's per-game averages; null = never tracked. */
+export interface DeckInteractionSide {
+  attack_steps: number | null;
+  attacking_creatures: number | null;
+  attackers_lost: number | null;
+  blocking_creatures: number | null;
+  blockers_lost: number | null;
+  damage_dealt: number | null;
+  damage_taken: number | null;
+  life_lost: number | null;
+  self_damage: number | null;
+  life_gained: number | null;
+  poison_added: number | null;
+  cards_played: number | null;
+  cards_drawn: number | null;
+  cards_discarded: number | null;
+  cards_milled: number | null;
+  cards_exiled: number | null;
+  removal_played: number | null;
+  removal_drawn: number | null;
+  wipes_played: number | null;
+  wipes_drawn: number | null;
+  bounces_played: number | null;
+  bounces_drawn: number | null;
+  counters_played: number | null;
+  counters_drawn: number | null;
+  counters_landed: number | null;
+  counters_failed: number | null;
+  creatures_removed: number | null;
+  noncreatures_removed: number | null;
+  creatures_bounced: number | null;
+  noncreatures_bounced: number | null;
+  lands_lost: number | null;
+  lands_replaced: number | null;
+  lands_unreplaced: number | null;
+  land_replacement_pct: number | null;
+  tokens_created: number | null;
+  tokens_destroyed: number | null;
+  tokens_sacrificed: number | null;
+  tokens_exiled: number | null;
+}
+
+/** Per-game interaction averages for both seats, mirroring the game page. */
+export interface DeckInteractionProfile {
+  games_tracked: number;
+  player: DeckInteractionSide;
+  opponent: DeckInteractionSide;
+}
+
+/** Match-level records by queue. Only splits with matches are present. */
+export interface DeckModeSplits {
+  standard?: {
+    ranked: MatchLevelSummary | null;
+    unranked: MatchLevelSummary | null;
+    bo1: MatchLevelSummary | null;
+    bo3: MatchLevelSummary | null;
+  };
+  brawl?: {
+    competitive: MatchLevelSummary | null;
+    casual: MatchLevelSummary | null;
+  };
 }
 
 export interface DeckDetail {
@@ -483,6 +608,12 @@ export interface DeckDetail {
   summary: Summary;
   profile: DeckProfile;
   combat_profile: CombatDeckRow | null;
+  interaction_profile?: DeckInteractionProfile | null;
+  turn_timing?: {
+    player?: DeckTurnTimingSide;
+    opponent?: DeckTurnTimingSide;
+  } | null;
+  mode_splits?: DeckModeSplits | null;
   streaks?: StreakSummary | null;
   composition: DeckCompositionRow[];
   versions: DeckVersionRow[];
@@ -561,6 +692,8 @@ export interface GameDrawnCardRow extends GameCardRow {
 
 export interface GamePlayedCardRow extends GameCardRow {
   played_count: number;
+  /** Turn of every cast/play from the timeline (recasts repeat); absent on old games. */
+  turns_played?: number[];
 }
 
 export interface OpponentVisibleCardRow extends GamePlayedCardRow {
@@ -568,6 +701,8 @@ export interface OpponentVisibleCardRow extends GamePlayedCardRow {
   discarded_count: number;
   milled_count: number;
   exiled_count: number;
+  /** First turn this card surfaced (cast, land, zone change, revealed draw). */
+  first_seen_turn?: number | null;
 }
 
 export type TimelineTextSegment =
@@ -648,6 +783,27 @@ export interface GameParticipantStatsRow {
   cards_discarded: number;
   cards_milled: number;
   cards_exiled: number;
+  /* Removal/token tracking — null on games recorded before the feature. */
+  removal_drawn?: number | null;
+  removal_played?: number | null;
+  wipes_drawn?: number | null;
+  wipes_played?: number | null;
+  bounces_drawn?: number | null;
+  bounces_played?: number | null;
+  creatures_removed?: number | null;
+  noncreatures_removed?: number | null;
+  creatures_bounced?: number | null;
+  noncreatures_bounced?: number | null;
+  poison_added?: number | null;
+  counters_drawn?: number | null;
+  counters_played?: number | null;
+  spells_countered?: number | null;
+  lands_lost?: number | null;
+  lands_replaced?: number | null;
+  tokens_created?: number | null;
+  tokens_destroyed?: number | null;
+  tokens_sacrificed?: number | null;
+  tokens_exiled?: number | null;
 }
 
 export interface GameAnnotation {
@@ -832,6 +988,7 @@ export interface CardDetail {
   opponent_impact?: CardOpponentImpact;
   by_deck: CardByDeckRow[];
   multiplicity?: CardMultiplicity;
+  opponent_multiplicity?: CardMultiplicity;
   opener_impact: CardOpenerImpact;
 }
 

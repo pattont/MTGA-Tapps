@@ -44,6 +44,42 @@ class GameState:
             "cards_discarded": 0,
             "cards_milled": 0,
             "cards_exiled": 0,
+            # Removal tracking (classification is text-based; see
+            # removal_classifier.py). Drawn counts only fill for the player —
+            # opponent draws are hidden.
+            "removal_drawn": 0,
+            "removal_played": 0,
+            "wipes_drawn": 0,
+            "wipes_played": 0,
+            "bounces_drawn": 0,
+            "bounces_played": 0,
+            "counters_drawn": 0,
+            "counters_played": 0,
+            # This seat's spells that GOT countered (the other seat's counters
+            # landing) — from stack lifecycle, not text classification.
+            "spells_countered": 0,
+            # Poison counters accumulated by this seat (highest total observed
+            # in the GRE player state; poison only ever goes up in practice).
+            "poison_added": 0,
+            # This seat's permanents removed from the battlefield by destroy,
+            # exile, or non-combat lethal damage / zero toughness (board wipes
+            # included), split creature vs non-creature (lands excluded — they
+            # get their own category below).
+            "creatures_removed": 0,
+            "noncreatures_removed": 0,
+            # This seat's permanents returned from the battlefield to hand
+            # (self-bounce paid as a cost excluded).
+            "creatures_bounced": 0,
+            "noncreatures_bounced": 0,
+            # Lands this seat LOST to an enemy card, and how many of those
+            # they answered with a land drop by the end of their next turn.
+            "lands_lost": 0,
+            "lands_replaced": 0,
+            # Token lifecycle for this seat's tokens.
+            "tokens_created": 0,
+            "tokens_destroyed": 0,
+            "tokens_sacrificed": 0,
+            "tokens_exiled": 0,
         }
         return {1: base.copy(), 2: base.copy()}
 
@@ -132,6 +168,18 @@ class GameState:
         self.combat_loss_events_counted: Set[tuple] = set()
         self.match_stats = self._new_match_stats()
         self.stack_stats = self._new_stack_stats()
+        #: Pending land-replacement watches per seat: global turn deadlines by
+        #: which the seat must drop a land for the destruction to count as
+        #: "replaced" (victim's next turn ≈ destruction turn + 2).
+        self.pending_land_replacements: Dict[int, List[int]] = {1: [], 2: []}
+        #: Battlefield instance ids already counted as lost to removal /
+        #: bounced to hand (dedupe across repeated annotations for one leave).
+        self.counted_removal_losses: Set[int] = set()
+        self.counted_bounce_returns: Set[int] = set()
+        #: Token instance ids already counted as created (dedupe across diffs).
+        self.counted_token_creations: Set[int] = set()
+        #: (instance_id, category) pairs already counted as token losses.
+        self.counted_token_losses: Set[tuple] = set()
         self.drawn_card_events: Dict[int, List[CardEvent]] = {1: [], 2: []}
 
         self.game_start_time: Optional[datetime] = None
@@ -141,6 +189,12 @@ class GameState:
         self.winner_reason = ""
         self.result_type: Optional[str] = None
         self.result_reason: Optional[str] = None
+        #: ResultReason_* from the structured WinLoss result (Concede/Game/Timeout).
+        self.win_result_reason: Optional[str] = None
+        #: SBA_* code from AnnotationType_LossOfGame (LifeTotal/DrawEmptyLibrary/
+        #: Poisoned...) plus the seat it hit — the precise "how the game ended".
+        self.loss_reason_code: Optional[str] = None
+        self.loss_reason_seat: Optional[int] = None
         self.first_player_seat: Optional[int] = None
         self.pending_player_turn_header: Optional[tuple] = None
         self.pending_opponent_turn_header: Optional[tuple] = None
