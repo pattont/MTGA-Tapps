@@ -2,6 +2,72 @@
 
 ## 0.5.5
 
+### Brawl
+
+- **Brawl is now a first-class format**: commander win-rate tables on the Overview
+  (your commanders and the ones you faced), an overall and per-queue record strip,
+  Brawl queue labels plus commander matchup rows in Recent Games, and the commander
+  tables page at 8 rows. The Competitive Brawl queue keeps its label even when
+  Arena's deck attributes disagree, and Standard/Historic/ranked Brawl stay distinct
+  everywhere.
+
+### Per-game combat & resource stats
+
+- **New tracked categories on the game page** — Removal (spot removal and board
+  wipes played, with your drawn counts folded in, plus creatures/non-creatures lost
+  to removal), Bounce (bounce cards played, permanents bounced to hand), Land
+  Destruction (lands destroyed, successfully replaced by a land drop, lost for
+  good, and the replacement rate), Counter Magic (counters played, and — from the
+  actual stack outcome — how many landed vs failed), Tokens (created / destroyed /
+  sacrificed / exiled per seat), and Poison counters. Card roles are classified
+  from Arena rules text, so removal counts from the first game a card is drawn.
+- **Historical games are backfilled automatically**: a one-time migration recomputes
+  the behavioral stats (removed/bounced permanents, lands, countered spells) for
+  every old game from its recorded timeline, and `scripts/backfill_card_role_stats.py`
+  fills the classification-based columns using the local Arena card database.
+  Stats that genuinely cannot be reconstructed (tokens, poison, opponents' draws)
+  show a dash rather than a fake zero.
+- Outcome reasons now detect **decked, poisoned, and timeout** endings that were
+  previously labeled as concessions, and concede labels are short ("Opponent
+  conceded" / "You conceded").
+
+### Deck page
+
+- **Combat & Resources on the deck page**: every game-page category as per-seat,
+  per-game averages, in the identical column layout (the game and deck pages now
+  share one deterministic arrangement instead of height-balanced masonry).
+- New **Turn Timing** (average your/opponent turn time per game and per turn) and
+  **Draw Quality** (average cards and lands seen/drawn, expected land rate)
+  sections; **Formats** became win-rate rectangles per queue with BO1/BO3 labels;
+  **Vs Opponent Colors** opens with Best Against / Worst Against highlight cards.
+- The page picks up an ambient background tinted from the signature card's art,
+  and metric cards across the deck and game pages gained icons.
+- **Deck identity can no longer be misattributed**: the decklist actually submitted
+  to a game now arbitrates which deck the game belongs to, fixing games recorded
+  under a previously-played deck's name when the tracker launched mid-queue.
+
+### Overview
+
+- **Match-level records everywhere**: a Bo3 counts once — top row shows Matches /
+  Wins / Losses / Win Rate / longest streaks with icons, Wins vs Losses splits are
+  colored and Wins-first, and How Games End presents per-reason percentages in
+  side-by-side Wins and Losses tables.
+- **Constructed Ranked** section with lifetime match stats, a season dropdown,
+  the rank chart, and per-season stats (constructed queues only — ranked Brawl
+  tracks separately). New BO1-Ranked / BO3-Ranked quick filters, a searchable
+  Deck filter, and the win-rate trend now covers the last 30 games.
+- **Log timestamps are locale-safe**: day/month order is learned from unambiguous
+  entries (with a system-locale fallback), fixing "today's games" sorting between
+  older dates for day-first locales, and dates render in the viewer's locale.
+
+### Game page
+
+- Cards Played shows the turn(s) each card was played, Opponent Revealed Cards
+  shows the reveal turn, Drawn Cards pages at 10 turns, and the Repeat Draws card
+  view always shows the 3 and 4+ buckets — including the opponent's repeat draws.
+
+### Fixes & maintenance
+
 - **Fixed DB Health falsely reporting `GAME_EVENT_ASSIGNMENT_MISMATCH`** for post-game tail
   events (Bo3 sideboarding gaps, rank updates, summary lines) — on a real database every
   flagged row was a tail and none were misassigned. The old repair also *detached* those
@@ -17,6 +83,11 @@
   one re-scan for a newer `Raw_CardDatabase`, so set-release day no longer needs a restart
   when Arena drops the new DB alongside the old one. Arena's card DB is now always opened
   strictly read-only, so the tracker can never create or modify files in Arena's folder.
+- A concede during the opening mulligan decision is recorded as a real game instead of
+  being skipped as a ghost.
+- Database hygiene: new indexes on the game-events timeline and payload archive,
+  `PRAGMA optimize` each launch, and `scripts/delete_untelemetered_games.py` (which now
+  VACUUMs after deleting) to drop early games recorded without combat telemetry.
 
 ## 0.5.4
 
