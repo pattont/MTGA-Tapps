@@ -9,6 +9,16 @@ export const FORMAT_QUICK_FILTERS: QuickFilter[] = [
   { id: 'bo1', label: 'BO1', matches: (label) => label.includes('best-of-1') },
   { id: 'bo3', label: 'BO3', matches: (label) => label.includes('best-of-3') },
   {
+    id: 'bo1-ranked',
+    label: 'BO1 - Ranked',
+    matches: (label) => label.includes('best-of-1') && label.includes('(ranked)'),
+  },
+  {
+    id: 'bo3-ranked',
+    label: 'BO3 - Ranked',
+    matches: (label) => label.includes('best-of-3') && label.includes('(ranked)'),
+  },
+  {
     id: 'premier-draft',
     label: 'Premier Draft',
     matches: (label) =>

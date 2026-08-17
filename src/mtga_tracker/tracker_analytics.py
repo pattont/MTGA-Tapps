@@ -24,6 +24,7 @@ from .format_normalizer import (
     is_jump_in_format,
     is_midweek_format,
     is_momir_format,
+    is_welcome_deck_format,
     normalize_match_format,
 )
 from .deck_llm import identify_deck, is_deck_llm_enabled
@@ -66,6 +67,8 @@ class TrackerAnalyticsMixin:
                 return "Midweek Magic"
             if is_momir_format(value):
                 return "Momir"
+            if is_welcome_deck_format(value):
+                return "Welcome Deck Duels"
         return None
 
     def _session_snapshot(self) -> SessionSnapshot:
@@ -365,6 +368,35 @@ class TrackerAnalyticsMixin:
         if remaining == 0:
             conn.execute("DELETE FROM cards WHERE id = ?", (stale_id,))
 
+    def _reassign_misattributed_game_events(self) -> None:
+        """Startup repair: move events that fall inside a DIFFERENT game's window.
+
+        Same operation as db_audit --repair's event reassignment, run
+        automatically so non-technical users never need the CLI. Costs one
+        indexed pass over game_events (~150ms on an 80k-event database);
+        events outside every game window are deliberately left where they
+        are (post-game tails belong to their game).
+        """
+        conn = self._analytics_connect()
+        if conn is None:
+            return
+        try:
+            from .db_audit import _repair_game_event_assignments
+
+            repaired = 0
+
+            def _run() -> None:
+                nonlocal repaired
+                repaired = _repair_game_event_assignments(conn)
+
+            self._run_analytics_write(conn, _run)
+        except (ImportError, sqlite3.Error, OSError):
+            return
+        if repaired:
+            self._print_line(
+                f"🧭 Reassigned {repaired} game event(s) to the game matching their timestamps."
+            )
+
     def _recover_missing_turn_timings(self) -> None:
         """Recover persisted turn durations from durable console headers at startup."""
         conn = self._analytics_connect()
@@ -642,9 +674,29 @@ class TrackerAnalyticsMixin:
                 cards_drawn,
                 cards_discarded,
                 cards_milled,
-                cards_exiled
+                cards_exiled,
+                removal_drawn,
+                removal_played,
+                wipes_drawn,
+                wipes_played,
+                bounces_drawn,
+                bounces_played,
+                creatures_removed,
+                noncreatures_removed,
+                creatures_bounced,
+                noncreatures_bounced,
+                poison_added,
+                counters_drawn,
+                counters_played,
+                spells_countered,
+                lands_lost,
+                lands_replaced,
+                tokens_created,
+                tokens_destroyed,
+                tokens_sacrificed,
+                tokens_exiled
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(game_id, participant_id) DO UPDATE SET
                 attack_steps = excluded.attack_steps,
                 attacking_creatures = excluded.attacking_creatures,
@@ -660,7 +712,27 @@ class TrackerAnalyticsMixin:
                 cards_drawn = excluded.cards_drawn,
                 cards_discarded = excluded.cards_discarded,
                 cards_milled = excluded.cards_milled,
-                cards_exiled = excluded.cards_exiled
+                cards_exiled = excluded.cards_exiled,
+                removal_drawn = excluded.removal_drawn,
+                removal_played = excluded.removal_played,
+                wipes_drawn = excluded.wipes_drawn,
+                wipes_played = excluded.wipes_played,
+                bounces_drawn = excluded.bounces_drawn,
+                bounces_played = excluded.bounces_played,
+                creatures_removed = excluded.creatures_removed,
+                noncreatures_removed = excluded.noncreatures_removed,
+                creatures_bounced = excluded.creatures_bounced,
+                noncreatures_bounced = excluded.noncreatures_bounced,
+                poison_added = excluded.poison_added,
+                counters_drawn = excluded.counters_drawn,
+                counters_played = excluded.counters_played,
+                spells_countered = excluded.spells_countered,
+                lands_lost = excluded.lands_lost,
+                lands_replaced = excluded.lands_replaced,
+                tokens_created = excluded.tokens_created,
+                tokens_destroyed = excluded.tokens_destroyed,
+                tokens_sacrificed = excluded.tokens_sacrificed,
+                tokens_exiled = excluded.tokens_exiled
             """,
             (
                 game_id,
@@ -680,6 +752,26 @@ class TrackerAnalyticsMixin:
                 int(stats.get("cards_discarded", 0)),
                 int(stats.get("cards_milled", 0)),
                 int(stats.get("cards_exiled", 0)),
+                int(stats.get("removal_drawn", 0)),
+                int(stats.get("removal_played", 0)),
+                int(stats.get("wipes_drawn", 0)),
+                int(stats.get("wipes_played", 0)),
+                int(stats.get("bounces_drawn", 0)),
+                int(stats.get("bounces_played", 0)),
+                int(stats.get("creatures_removed", 0)),
+                int(stats.get("noncreatures_removed", 0)),
+                int(stats.get("creatures_bounced", 0)),
+                int(stats.get("noncreatures_bounced", 0)),
+                int(stats.get("poison_added", 0)),
+                int(stats.get("counters_drawn", 0)),
+                int(stats.get("counters_played", 0)),
+                int(stats.get("spells_countered", 0)),
+                int(stats.get("lands_lost", 0)),
+                int(stats.get("lands_replaced", 0)),
+                int(stats.get("tokens_created", 0)),
+                int(stats.get("tokens_destroyed", 0)),
+                int(stats.get("tokens_sacrificed", 0)),
+                int(stats.get("tokens_exiled", 0)),
             ),
         )
 
@@ -1088,6 +1180,12 @@ class TrackerAnalyticsMixin:
                 AnalyticsStore.backfill_card_colors(conn, color_index)
         except (AttributeError, sqlite3.Error, OSError, TypeError, ValueError):
             pass
+        try:
+            # Game boundary: allow one re-scan for a newer Arena card DB
+            # (set-release day drops a new Raw_CardDatabase mid-session).
+            self.card_db.allow_db_recheck()
+        except AttributeError:
+            pass
         self._refresh_session_participant_stats(conn)
 
     def _persist_turn_timings(self, conn: sqlite3.Connection, game_id: str) -> None:
@@ -1170,16 +1268,33 @@ class TrackerAnalyticsMixin:
         if self._is_untracked_match():
             return
         # A "game" with no turns, no opening hand, and no draws is a ghost:
-        # typically a post-concede message tail misread as a new game.
+        # typically a post-concede message tail misread as a new game. BUT a
+        # concede during the mulligan decision is a REAL game with a real
+        # result (an opponent scooping to your opener is a win Arena scores)
+        # — the opening mulligan prompt is the tell, because re-sent final
+        # states never carry one.
         took_any_turn = any(self.game_state.turns_taken_by_seat.get(seat) for seat in (1, 2))
+        pregame_concede = (
+            self.game_state.opening_mulligan_prompt_seen
+            or bool(self.game_state._hand_before_mulligan)
+        ) and outcome in ("win", "loss")
         if (
             not took_any_turn
             and not self.game_state.starting_hand
             and not self.game_state.drawn_card_events.get(self.game_state.player_seat_id)
+            and not pregame_concede
         ):
             self._print_line("👻 Skipping ghost game record (no turns or cards observed).")
             self._purge_ghost_game_breadcrumbs()
             return
+        # Pre-keep concede: the hand shown during the mulligan decision IS
+        # the opening hand — adopt it so the game record shows those cards.
+        if not self.game_state.starting_hand and self.game_state._hand_before_mulligan:
+            self._finalize_starting_hand(
+                list(self.game_state._hand_before_mulligan),
+                list(self.game_state._hand_before_mulligan_ids),
+                list(self.game_state._hand_before_mulligan_events),
+            )
         conn = self._analytics_connect()
         if conn is None:
             return

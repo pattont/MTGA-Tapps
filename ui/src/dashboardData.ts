@@ -6,6 +6,9 @@ export interface MetricDefinition {
   value: string;
   detail?: string;
   href?: string;
+  tone?: 'default' | 'win' | 'loss';
+  /** Icon key the App maps to a lucide icon (keeps this module JSX-free). */
+  iconName?: 'matches' | 'wins' | 'losses' | 'winRate' | 'winStreak' | 'lossStreak';
 }
 
 export function formatPercent(value: number | null | undefined): string {
@@ -51,6 +54,55 @@ function bestDeckFrom(decks: DeckRow[]): DeckRow | undefined {
 }
 
 export function metricCards(snapshot: DashboardSnapshot): MetricDefinition[] {
+  const matches = snapshot.match_summary;
+  if (matches) {
+    // Match-level: a Bo3 counts once (a 2-1 is one win) — only the match
+    // result matters on the ladder, ranked or not.
+    const winsPct = matches.matches ? formatPercent((100 * matches.wins) / matches.matches) : null;
+    const lossesPct = matches.matches
+      ? formatPercent((100 * matches.losses) / matches.matches)
+      : null;
+    return [
+      {
+        label: 'Matches',
+        value: String(matches.matches),
+        detail: 'a Bo3 counts once',
+        iconName: 'matches',
+      },
+      {
+        label: 'Wins',
+        value: String(matches.wins),
+        detail: winsPct ? `${winsPct} of total` : undefined,
+        tone: 'win',
+        iconName: 'wins',
+      },
+      {
+        label: 'Losses',
+        value: String(matches.losses),
+        detail: lossesPct ? `${lossesPct} of total` : undefined,
+        tone: 'loss',
+        iconName: 'losses',
+      },
+      {
+        label: 'Win Rate',
+        value: formatPercent(matches.win_rate),
+        detail: 'of matches',
+        iconName: 'winRate',
+      },
+      {
+        label: 'Longest Win Streak',
+        value: String(matches.longest_win),
+        detail: 'matches in a row',
+        iconName: 'winStreak',
+      },
+      {
+        label: 'Longest Loss Streak',
+        value: String(matches.longest_loss),
+        detail: 'matches in a row',
+        iconName: 'lossStreak',
+      },
+    ];
+  }
   return [
     { label: 'Games', value: String(snapshot.summary.games) },
     { label: 'Wins', value: String(snapshot.summary.wins) },

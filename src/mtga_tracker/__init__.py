@@ -1,3 +1,3 @@
 """MTGA Tracker - Track cards played in Magic: The Gathering Arena."""
 
-__version__ = "0.5.4"
+__version__ = "0.5.5"

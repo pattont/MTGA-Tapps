@@ -1,3 +1,5 @@
+import { ChartNoAxesCombined, Flame, HeartCrack, Swords, TrendingDown, Trophy } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { pageTitle } from './branding';
 import {
@@ -7,12 +9,11 @@ import {
   type DashboardSnapshot,
   type DeckRow,
   type FatigueRow,
-  type MatchupRow,
   type OpenerLandRow,
-  type OpponentThreatRow,
   type OutcomeReasonRow,
   type ScheduleRow,
   type DrawQualityRow,
+  type MatchLevelSummary,
   type MomentumRow,
   type PlayDrawRow,
   type RecentGameRow,
@@ -21,8 +22,8 @@ import {
 } from './api';
 import { Badge } from './components/Badge';
 import { CardDetailPage } from './components/CardDetailPage';
-import { CardLink } from './components/CardLink';
 import { ColorPips } from './components/ColorPips';
+import { makeCommanderColumns } from './commanderColumns';
 import { makeOpponentColorColumns } from './opponentColorColumns';
 import { DeckDetailPage } from './components/DeckDetailPage';
 import { DeckLink } from './components/DeckLink';
@@ -37,7 +38,6 @@ import { OpponentDetailPage } from './components/OpponentDetailPage';
 import { RankProgressChart } from './components/RankProgressChart';
 import { SortableTable, type Column } from './components/SortableTable';
 import { TrendChart } from './components/TrendChart';
-import { TypeChip } from './components/TypeChip';
 import { WinRateBar } from './components/WinRateBar';
 import { AppShell } from './components/AppShell';
 import { Section } from './components/Section';
@@ -220,9 +220,64 @@ function SetupCard() {
   );
 }
 
-function BestDeckBar({ metric }: { metric: MetricDefinition }) {
+/** Maps metric icon keys to lucide icons; icons inherit the card's colors. */
+const METRIC_ICONS: Record<string, ReactNode> = {
+  matches: <Swords />,
+  wins: <Trophy />,
+  losses: <HeartCrack />,
+  winRate: <ChartNoAxesCombined />,
+  winStreak: <Flame />,
+  lossStreak: <TrendingDown />,
+};
+
+/** Six ranked stat cards — shared by the lifetime and per-season rows. */
+function rankedMetricCards(summary: MatchLevelSummary, matchesLabel: string): ReactNode {
+  return (
+    <>
+      <MetricCard
+        icon={METRIC_ICONS.matches}
+        label={matchesLabel}
+        value={formatNumber(summary.matches)}
+      />
+      <MetricCard icon={METRIC_ICONS.wins} label="Wins" tone="win" value={formatNumber(summary.wins)} />
+      <MetricCard
+        icon={METRIC_ICONS.losses}
+        label="Losses"
+        tone="loss"
+        value={formatNumber(summary.losses)}
+      />
+      <MetricCard icon={METRIC_ICONS.winRate} label="Win Rate" value={formatPercent(summary.win_rate)} />
+      <MetricCard
+        icon={METRIC_ICONS.winStreak}
+        label="Longest Win Streak"
+        value={formatNumber(summary.longest_win)}
+      />
+      <MetricCard
+        icon={METRIC_ICONS.lossStreak}
+        label="Longest Loss Streak"
+        value={formatNumber(summary.longest_loss)}
+      />
+    </>
+  );
+}
+
+
+function BestDeckBar({
+  metric,
+  visual,
+}: {
+  metric: MetricDefinition;
+  visual?: DeckRow['deck_visual'];
+}) {
   return (
     <section className="best-deck-bar" aria-label={metric.label}>
+      {visual?.image_url ? (
+        <div
+          className="best-deck-art"
+          style={{ backgroundImage: `url(${visual.image_url})` }}
+          aria-hidden="true"
+        />
+      ) : null}
       <span className="best-deck-label">{metric.label}</span>
       {metric.href ? (
         <a className="best-deck-name" href={metric.href}>
@@ -327,13 +382,21 @@ const deckColumns: Column<DeckWithCombatRow>[] = [
 const playDrawColumns: Column<PlayDrawRow>[] = [
   {
     key: 'play_draw',
-    header: 'Play / Draw',
+    // The panel heading already says "Play / Draw" — no need to repeat it.
+    header: '',
+    sortable: false,
     render: (row) => row.play_draw ?? 'Unknown',
-    sortValue: (row) => row.play_draw,
   },
   { key: 'games', header: 'Games', numeric: true },
   { key: 'wins', header: 'Wins', numeric: true },
   { key: 'losses', header: 'Losses', numeric: true },
+  {
+    key: 'avg_mulligans',
+    header: 'Avg Mulligans',
+    render: (row) => formatNumber(row.avg_mulligans),
+    sortValue: (row) => row.avg_mulligans,
+    numeric: true,
+  },
   {
     key: 'win_rate',
     header: 'Win Rate',
@@ -349,13 +412,6 @@ const momentumColumns: Column<MomentumRow>[] = [
   { key: 'wins', header: 'Wins', numeric: true },
   { key: 'losses', header: 'Losses', numeric: true },
   {
-    key: 'win_rate',
-    header: 'Win Rate',
-    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
-    sortValue: (row) => row.win_rate,
-    numeric: true,
-  },
-  {
     key: 'avg_mulligans',
     header: 'Avg Mulligans',
     render: (row) => formatNumber(row.avg_mulligans),
@@ -369,10 +425,27 @@ const momentumColumns: Column<MomentumRow>[] = [
     sortValue: (row) => row.on_play_pct,
     numeric: true,
   },
+  {
+    key: 'win_rate',
+    header: 'Win Rate',
+    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
+    sortValue: (row) => row.win_rate,
+    numeric: true,
+  },
 ];
 
 const combatSplitColumns: Column<CombatSplitRow>[] = [
-  { key: 'split', header: 'Result' },
+  {
+    key: 'split',
+    header: 'Result',
+    render: (row) => (
+      <span className={row.split === 'Wins' ? 'result-label-win' : 'result-label-loss'}>
+        {row.split}
+      </span>
+    ),
+    // Ascending puts Wins first, matching the tinted card order up top.
+    sortValue: (row) => (row.split === 'Wins' ? 0 : 1),
+  },
   { key: 'games', header: 'Games', numeric: true },
   {
     key: 'avg_damage_dealt',
@@ -451,23 +524,51 @@ const fatigueColumns: Column<FatigueRow>[] = [
   },
 ];
 
-const outcomeReasonColumns: Column<OutcomeReasonRow>[] = [
-  {
-    key: 'reason',
-    header: 'How It Ended',
-    render: (row) => row.reason.replaceAll('_', ' '),
-    sortValue: (row) => row.reason,
-  },
-  { key: 'games', header: 'Games', numeric: true },
-  { key: 'wins', header: 'Your Wins', numeric: true },
-  { key: 'losses', header: 'Your Losses', numeric: true },
-];
+interface OutcomeReasonGroupRow {
+  reason: string;
+  games: number;
+}
+
+/** Share of a side's total, e.g. 289 of 431 → "67.1%". */
+function formatShare(games: number, total: number): string {
+  return total > 0 ? `${((100 * games) / total).toFixed(1)}%` : '—';
+}
+
+/** Split outcome reasons into win-condition and loss-condition lists. */
+function groupOutcomeReasons(rows: OutcomeReasonRow[]): {
+  wins: OutcomeReasonGroupRow[];
+  losses: OutcomeReasonGroupRow[];
+  winTotal: number;
+  lossTotal: number;
+} {
+  const wins = rows
+    .filter((row) => row.wins > 0)
+    .map((row) => ({ reason: row.reason, games: row.wins }))
+    .sort((a, b) => b.games - a.games);
+  const losses = rows
+    .filter((row) => row.losses > 0)
+    .map((row) => ({ reason: row.reason, games: row.losses }))
+    .sort((a, b) => b.games - a.games);
+  return {
+    wins,
+    losses,
+    winTotal: wins.reduce((sum, row) => sum + row.games, 0),
+    lossTotal: losses.reduce((sum, row) => sum + row.games, 0),
+  };
+}
 
 const openerLandColumns: Column<OpenerLandRow>[] = [
   { key: 'label', header: 'Kept Opener' },
   { key: 'games', header: 'Games', numeric: true },
   { key: 'wins', header: 'Wins', numeric: true },
   { key: 'losses', header: 'Losses', numeric: true },
+  {
+    key: 'avg_mulligans',
+    header: 'Avg Mulligans',
+    render: (row) => formatNumber(row.avg_mulligans),
+    sortValue: (row) => row.avg_mulligans,
+    numeric: true,
+  },
   {
     key: 'win_rate',
     header: 'Win Rate',
@@ -481,52 +582,8 @@ const homeOpponentColorColumns = makeOpponentColorColumns((row) =>
   gamesRouteHash({ colors: row.colors }),
 );
 
-const opponentThreatColumns: Column<OpponentThreatRow>[] = [
-  {
-    key: 'display_name',
-    header: 'Card',
-    render: (row) => <CardLink cardName={row.display_name} />,
-    sortValue: (row) => row.display_name,
-  },
-  {
-    key: 'type_category',
-    header: 'Type',
-    render: (row) => <TypeChip type={row.type_category} />,
-    sortValue: (row) => row.type_category,
-  },
-  { key: 'games', header: 'Games Seen', numeric: true },
-  { key: 'plays', header: 'Times Played', numeric: true },
-  { key: 'losses', header: 'Your Losses', numeric: true },
-  {
-    key: 'loss_rate',
-    header: 'Loss Rate',
-    render: (row) => formatPercent(row.loss_rate),
-    sortValue: (row) => row.loss_rate,
-    numeric: true,
-  },
-];
-
-const matchupColumns: Column<MatchupRow>[] = [
-  {
-    key: 'deck_name',
-    header: 'Your Deck',
-    render: (row) => (
-      <DeckLink deckName={row.deck_name}>
-        <strong>{row.deck_name}</strong>
-      </DeckLink>
-    ),
-    sortValue: (row) => row.deck_name,
-  },
-  { key: 'opponent_archetype', header: 'Opponent Archetype' },
-  { key: 'games', header: 'Games', numeric: true },
-  {
-    key: 'win_rate',
-    header: 'Win Rate',
-    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
-    sortValue: (row) => row.win_rate,
-    numeric: true,
-  },
-];
+const yourCommanderColumns = makeCommanderColumns('Your Commander');
+const facedCommanderColumns = makeCommanderColumns('Opponent Commander');
 
 const recentColumns: Column<RecentGameWithDrawQuality>[] = [
   {
@@ -984,6 +1041,11 @@ function Dashboard({
     });
   }, [snapshot.draw_quality, snapshot.recent]);
 
+  const outcomeGroups = useMemo(
+    () => groupOutcomeReasons(snapshot.outcome_reasons ?? []),
+    [snapshot.outcome_reasons],
+  );
+
   const filteredRecentGames = useMemo(() => {
     const active = FORMAT_QUICK_FILTERS.find((filter) => filter.id === recentQuickFilter);
     const base =
@@ -1014,17 +1076,49 @@ function Dashboard({
               key={metric.label}
               detail={metric.detail}
               href={metric.href}
+              icon={metric.iconName ? METRIC_ICONS[metric.iconName] : undefined}
               label={metric.label}
+              tone={metric.tone}
               value={metric.value}
             />
           ))}
         </section>
-        <BestDeckBar metric={bestDeckMetric(snapshot, filters)} />
+        <BestDeckBar
+          metric={bestDeckMetric(snapshot, filters)}
+          visual={
+            snapshot.decks.find(
+              (deck) => deck.deck_name === bestDeckMetric(snapshot, filters).value,
+            )?.deck_visual
+          }
+        />
+        <div className="overview-analytics">
+          <section className="overview-panel" aria-labelledby="overview-wvl-title">
+            <div className="section-heading">
+              <div>
+                <h3 id="overview-wvl-title">Wins vs Losses</h3>
+                <p className="section-description">
+                  How your games look when you win compared to when you lose. Per game, and only
+                  games with combat telemetry — early tracker versions didn&apos;t record it, so
+                  totals run below How Games End.
+                </p>
+              </div>
+            </div>
+            <SortableTable
+              caption="Combat splits by result"
+              columns={combatSplitColumns}
+              getRowKey={(row) => row.split}
+              rows={snapshot.combat_split ?? []}
+            />
+          </section>
+        </div>
         <div className="overview-analytics">
           <section className="overview-panel" aria-labelledby="overview-play-draw-title">
             <div className="section-heading">
               <div>
                 <h3 id="overview-play-draw-title">Play / Draw</h3>
+                <p className="section-description">
+                  Your record when you started on the play versus on the draw.
+                </p>
               </div>
             </div>
             <SortableTable
@@ -1051,12 +1145,91 @@ function Dashboard({
             />
           </section>
         </div>
+        <div className="overview-analytics">
+          <section className="overview-panel" aria-labelledby="outcomes-reasons-title">
+            <div className="section-heading">
+              <div>
+                <h3 id="outcomes-reasons-title">How Games End</h3>
+                <p className="section-description">
+                  Individual games — a Bo3 contributes each of its games, so totals run above the
+                  match-level cards up top.
+                </p>
+              </div>
+            </div>
+            <div className="outcome-reason-pair">
+              <div className="table-wrap" role="region" aria-label="How wins end" tabIndex={0}>
+                <table className="outcome-reason-grid">
+                  <caption>How wins end</caption>
+                  <tbody>
+                    <tr className="outcome-group-row outcome-group-row-win">
+                      <th colSpan={2} scope="colgroup">
+                        Wins
+                      </th>
+                    </tr>
+                    {outcomeGroups.wins.map((row) => (
+                      <tr key={`win-${row.reason}`}>
+                        <td>{row.reason.replaceAll('_', ' ')}</td>
+                        <td className="num">
+                          {formatNumber(row.games)}
+                          <span className="outcome-reason-pct">
+                            {' '}
+                            ({formatShare(row.games, outcomeGroups.winTotal)})
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="table-wrap" role="region" aria-label="How losses end" tabIndex={0}>
+                <table className="outcome-reason-grid">
+                  <caption>How losses end</caption>
+                  <tbody>
+                    <tr className="outcome-group-row outcome-group-row-loss">
+                      <th colSpan={2} scope="colgroup">
+                        Losses
+                      </th>
+                    </tr>
+                    {outcomeGroups.losses.map((row) => (
+                      <tr key={`loss-${row.reason}`}>
+                        <td>{row.reason.replaceAll('_', ' ')}</td>
+                        <td className="num">
+                          {formatNumber(row.games)}
+                          <span className="outcome-reason-pct">
+                            {' '}
+                            ({formatShare(row.games, outcomeGroups.lossTotal)})
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+          <section className="overview-panel" aria-labelledby="outcomes-opener-title">
+            <div className="section-heading">
+              <div>
+                <h3 id="outcomes-opener-title">Kept Opener Lands</h3>
+                <p className="section-description">
+                  Results by how many lands were in the opening hand you kept.
+                </p>
+              </div>
+            </div>
+            <SortableTable
+              caption="Win rate by lands in kept opening hand"
+              columns={openerLandColumns}
+              getRowKey={(row) => row.label}
+              rows={snapshot.opener_lands ?? []}
+            />
+          </section>
+        </div>
       </section>
 
       <Section
         id="trend"
         title="Win Rate Trend"
-        description="Rolling win rate across your most recent finished games."
+        description="Rolling win rate across your most recent 30 finished games."
       >
         <div className="trend-wrap">
           <TrendChart rows={snapshot.trend} />
@@ -1065,13 +1238,38 @@ function Dashboard({
 
       <Section
         id="rank-progress"
-        title="Ranked Progress"
-        description="Constructed ladder progress by season. Ranked Standard Best-of-1 and Best-of-3 share this rank."
+        title="Constructed Ranked"
+        description="Constructed ranked queues only, match-level (a Bo3 counts once). Ranked Standard BO1 and BO3 share the ladder rank charted below."
       >
-        {(snapshot.filter_options.rank_seasons ?? []).length > 1 ? (
+        {snapshot.ranked_summary && snapshot.ranked_summary.matches > 0 ? (
+          <>
+            <div className="section-heading">
+              <div>
+                <h3>Lifetime Ranked Stats</h3>
+              </div>
+            </div>
+            <section className="metric-grid ranked-metric-grid" aria-label="Lifetime ranked record">
+              {rankedMetricCards(snapshot.ranked_summary, 'Ranked Matches')}
+            </section>
+          </>
+        ) : null}
+        <div className="section-heading">
+          <div>
+            <h3>
+              {filters.season && snapshot.ranked_season_summary
+                ? `Season ${snapshot.ranked_season_summary.season_ordinal} Stats`
+                : 'Current Season Stats'}
+            </h3>
+            <p className="section-description">
+              Resets every seasonal rollover; the dropdown swaps the chart and the boxes below it
+              to that season.
+            </p>
+          </div>
+        </div>
+        {(snapshot.filter_options.rank_seasons ?? []).length > 0 ? (
           <div className="table-filter">
-            <label>
-              <span>Season</span>
+            <label className="filter-field">
+              <span className="filter-field-label">Season</span>
               <select
                 value={filters.season ?? ''}
                 onChange={(event) =>
@@ -1094,6 +1292,11 @@ function Dashboard({
         <div className="trend-wrap">
           <RankProgressChart rows={snapshot.rank_progress ?? []} />
         </div>
+        {snapshot.ranked_season_summary ? (
+          <section className="metric-grid ranked-metric-grid" aria-label="Season ranked record">
+            {rankedMetricCards(snapshot.ranked_season_summary, 'Season Matches')}
+          </section>
+        ) : null}
       </Section>
 
       <Section
@@ -1121,6 +1324,25 @@ function Dashboard({
           paginationKey={recentQuickFilter}
           getRowKey={(row) => (row.match_row ? `match:${row.match_id}` : row.game_id)}
           getSubRows={(row) => row.sub_games}
+          renderDetailRow={(row) =>
+            !row.match_row && (row.player_commander || row.opponent_commander) ? (
+              <div className="commander-matchup">
+                <span className="color-combo">
+                  {row.player_commander_colors ? (
+                    <ColorPips colors={row.player_commander_colors} />
+                  ) : null}
+                  {row.player_commander ?? 'Unknown commander'}
+                </span>
+                <span className="commander-matchup-vs">vs</span>
+                <span className="color-combo">
+                  {row.opponent_commander_colors ? (
+                    <ColorPips colors={row.opponent_commander_colors} />
+                  ) : null}
+                  {row.opponent_commander ?? 'Unknown commander'}
+                </span>
+              </div>
+            ) : null
+          }
           initialSort={{ key: 'started_at', direction: 'desc' }}
           rows={filteredRecentGames}
         />
@@ -1137,15 +1359,13 @@ function Dashboard({
         description="Record plus combat telemetry per deck: damage pace, attacks, and lifegain. Profile is judged by damage dealt per turn."
       >
         <div className="table-filter">
-          <label>
-            <span>Search decks</span>
-            <input
-              type="search"
-              value={deckSearch}
-              onChange={(event) => setDeckSearch(event.target.value)}
-              placeholder="Deck name"
-            />
-          </label>
+          <input
+            type="search"
+            aria-label="Search decks"
+            value={deckSearch}
+            onChange={(event) => setDeckSearch(event.target.value)}
+            placeholder="Search decks"
+          />
         </div>
         <SortableTable
           caption="Deck performance"
@@ -1155,20 +1375,6 @@ function Dashboard({
           pageSize={10}
           paginationKey={deckSearch.trim().toLocaleLowerCase()}
           rows={filteredDecks}
-        />
-        <div className="section-heading">
-          <div>
-            <h3>Wins vs Losses</h3>
-            <p className="section-description">
-              How your games look when you win compared to when you lose.
-            </p>
-          </div>
-        </div>
-        <SortableTable
-          caption="Combat splits by result"
-          columns={combatSplitColumns}
-          getRowKey={(row) => row.split}
-          rows={snapshot.combat_split ?? []}
         />
       </Section>
 
@@ -1232,69 +1438,73 @@ function Dashboard({
         />
       </Section>
 
-      <Section
-        id="outcomes"
-        title="Streaks & Outcomes"
-        description="Run lengths, how games actually end, and what your kept opening hands cost you."
-      >
-        <section className="metric-grid" aria-label="Streaks">
-          <MetricCard
-            label="Current Streak"
-            value={
-              snapshot.streaks?.current
-                ? `${snapshot.streaks.current.length} ${snapshot.streaks.current.kind === 'win' ? 'W' : 'L'}`
-                : '—'
-            }
+      {(snapshot.brawl?.games ?? 0) > 0 ||
+      (snapshot.your_commanders ?? []).length > 0 ||
+      (snapshot.faced_commanders ?? []).length > 0 ? (
+        <Section
+          id="brawl"
+          title="Brawl"
+          description="Commander win rates from your Brawl games — the commander is visible from the opening hand, so every tracked Brawl game counts."
+        >
+          {snapshot.brawl && snapshot.brawl.games > 0 ? (
+            <section className="metric-grid" aria-label="Brawl record">
+              <MetricCard label="Brawl Games" value={formatNumber(snapshot.brawl.games)} />
+              <MetricCard
+                label="Brawl Record"
+                value={`${formatNumber(snapshot.brawl.wins)} – ${formatNumber(snapshot.brawl.losses)}`}
+              />
+              <MetricCard label="Brawl Win Rate" value={formatPercent(snapshot.brawl.win_rate)} />
+              {snapshot.brawl.queues.map((queue) => (
+                <MetricCard
+                  key={queue.format_label}
+                  label={queue.format_label}
+                  value={`${formatNumber(queue.wins)} – ${formatNumber(queue.losses)}`}
+                  detail={formatPercent(queue.win_rate)}
+                />
+              ))}
+            </section>
+          ) : null}
+          <div className="section-heading">
+            <div>
+              <h3>Your Commanders</h3>
+              <p className="section-description">
+                Record with each commander you brought to the ladder. Partner commanders count
+                under each partner.
+              </p>
+            </div>
+          </div>
+          <SortableTable
+            caption="Record by your commander"
+            columns={yourCommanderColumns}
+            getRowKey={(row) => row.commander}
+            initialSort={{ key: 'games', direction: 'desc' }}
+            pageSize={8}
+            rows={snapshot.your_commanders ?? []}
           />
-          <MetricCard label="Longest Win Streak" value={formatNumber(snapshot.streaks?.longest_win)} />
-          <MetricCard label="Longest Loss Streak" value={formatNumber(snapshot.streaks?.longest_loss)} />
-          <MetricCard label="Decided Games" value={formatNumber(snapshot.streaks?.games)} />
-        </section>
-        <div className="overview-analytics">
-          <section className="overview-panel" aria-labelledby="outcomes-reasons-title">
-            <div className="section-heading">
-              <div>
-                <h3 id="outcomes-reasons-title">How Games End</h3>
-              </div>
+          <div className="section-heading">
+            <div>
+              <h3>Faced Commanders</h3>
+              <p className="section-description">
+                The commanders your opponents brought, and your record against each.
+              </p>
             </div>
-            <SortableTable
-              caption="Outcome reasons"
-              columns={outcomeReasonColumns}
-              getRowKey={(row) => row.reason}
-              initialSort={{ key: 'games', direction: 'desc' }}
-              rows={snapshot.outcome_reasons ?? []}
-            />
-          </section>
-          <section className="overview-panel" aria-labelledby="outcomes-opener-title">
-            <div className="section-heading">
-              <div>
-                <h3 id="outcomes-opener-title">Kept Opener Lands</h3>
-              </div>
-            </div>
-            <SortableTable
-              caption="Win rate by lands in kept opening hand"
-              columns={openerLandColumns}
-              getRowKey={(row) => row.label}
-              rows={snapshot.opener_lands ?? []}
-            />
-          </section>
-        </div>
-      </Section>
+          </div>
+          <SortableTable
+            caption="Record against opponent commanders"
+            columns={facedCommanderColumns}
+            getRowKey={(row) => row.commander}
+            initialSort={{ key: 'games', direction: 'desc' }}
+            pageSize={8}
+            rows={snapshot.faced_commanders ?? []}
+          />
+        </Section>
+      ) : null}
 
       <Section
         id="opponent-meta"
         title="Opponent Meta"
-        description="What the ladder is beating you with, and matchup records when opponent archetypes are identified."
+        description="Your record by opponent color combination, inferred from every card each opponent revealed. Games with no identified colored cards show as Unknown."
       >
-        <div className="section-heading">
-          <div>
-            <h3>Opponent Colors</h3>
-            <p className="section-description">
-              Color combinations inferred from every card each opponent revealed. Games with no
-              identified colored cards show as Unknown.
-            </p>
-          </div>
-        </div>
         <SortableTable
           caption="Record by opponent color combination"
           columns={homeOpponentColorColumns}
@@ -1302,43 +1512,6 @@ function Dashboard({
           initialSort={{ key: 'games', direction: 'desc' }}
           rows={(snapshot.opponent_colors ?? []).slice(0, 15)}
         />
-        <div className="section-heading">
-          <div>
-            <h3>Cards That Beat You</h3>
-            <p className="section-description">
-              Opponent-played cards ranked by how often their games end in your losses (minimum 2 games).
-            </p>
-          </div>
-        </div>
-        <SortableTable
-          caption="Opponent threat leaderboard"
-          columns={opponentThreatColumns}
-          getRowKey={(row) => row.display_name}
-          initialSort={{ key: 'loss_rate', direction: 'desc' }}
-          pageSize={15}
-          rows={snapshot.opponent_threats ?? []}
-        />
-        <div className="section-heading">
-          <div>
-            <h3>Matchups</h3>
-            <p className="section-description">
-              Your decks against identified opponent archetypes. Archetype identification is optional — enable
-              the deck LLM in config.py (DECK_LLM_ENABLED plus an API key) and future games will be tagged.
-            </p>
-          </div>
-        </div>
-        {(snapshot.matchups ?? []).length > 0 ? (
-          <SortableTable
-            caption="Matchup records"
-            columns={matchupColumns}
-            getRowKey={(row) => `${row.deck_name}|${row.opponent_archetype}`}
-            initialSort={{ key: 'games', direction: 'desc' }}
-            pageSize={15}
-            rows={snapshot.matchups ?? []}
-          />
-        ) : (
-          <p className="empty-state">No identified opponent archetypes yet.</p>
-        )}
       </Section>
 
       <Section id="formats" title="Formats">

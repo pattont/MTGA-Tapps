@@ -125,6 +125,50 @@ def _timeline_text_segments(
     return segments or [{"kind": "text", "text": text}]
 
 
+_EVENT_TIMESTAMP_RE = re.compile(r"\d+:\d{2}")
+
+
+def _timeline_card_turns(
+    timeline: List[Dict[str, Any]],
+) -> Tuple[Dict[Tuple[str, str], List[int]], Dict[str, List[int]]]:
+    """Extract per-card turn numbers from a game's timeline events.
+
+    Returns (played_turns, opponent_seen_turns). played_turns maps
+    (actor_role, clean card name) -> the turn of every cast/land event, one
+    entry per cast so recasts list each turn. opponent_seen_turns maps clean
+    card name -> every turn an opponent card surfaced in a cast, land play,
+    zone change, or transform, for first-revealed-turn display. Only the
+    event's primary card (the first bracketed name after the timestamp) is
+    attributed, so removal targets aren't credited to the wrong side.
+    """
+    played: Dict[Tuple[str, str], List[int]] = {}
+    opponent_seen: Dict[str, List[int]] = {}
+    for event in timeline:
+        turn = event.get("turn_number")
+        role = event.get("actor_role")
+        event_type = event.get("event_type")
+        if turn is None or role not in ("player", "opponent"):
+            continue
+        if event_type not in ("cast", "land", "zone", "ability"):
+            continue
+        text = str(event.get("text") or "")
+        name: Optional[str] = None
+        for match in _BRACKET_CONTENT_RE.finditer(text):
+            candidate = match.group(1).strip()
+            if _EVENT_TIMESTAMP_RE.fullmatch(candidate):
+                continue
+            name = _clean_card_name(candidate)
+            break
+        if not name:
+            continue
+        turn_value = int(turn)
+        if event_type in ("cast", "land"):
+            played.setdefault((str(role), name), []).append(turn_value)
+        if role == "opponent":
+            opponent_seen.setdefault(name, []).append(turn_value)
+    return played, opponent_seen
+
+
 def _is_land_row(row: Dict[str, Any]) -> bool:
     return is_land_row(row)
 
@@ -785,6 +829,114 @@ def _opponent_color_rows(
     return result
 
 
+def _brawl_summary(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> Dict[str, Any]:
+    """Overall Brawl record plus a per-queue split.
+
+    Brawl-only players should get a headline record, not just commander
+    tables. Games are classified through the format normalizer so every
+    Brawl queue (Historic, Ranked, Standard) counts regardless of the raw
+    identifier Arena used.
+    """
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT m.format, g.outcome
+            FROM games g
+            JOIN matches m ON m.id = g.match_id
+            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            WHERE {where}
+            """,
+            params,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {"games": 0, "wins": 0, "losses": 0, "win_rate": None, "queues": []}
+    total = {"games": 0, "wins": 0, "losses": 0}
+    queues: Dict[str, Dict[str, Any]] = {}
+    for raw_format, outcome in rows:
+        normalized = normalize_match_format(str(raw_format or ""))
+        if not normalized.is_brawl:
+            continue
+        total["games"] += 1
+        entry = queues.setdefault(
+            normalized.label, {"format_label": normalized.label, "games": 0, "wins": 0, "losses": 0}
+        )
+        entry["games"] += 1
+        if outcome == "win":
+            total["wins"] += 1
+            entry["wins"] += 1
+        elif outcome == "loss":
+            total["losses"] += 1
+            entry["losses"] += 1
+    queue_rows = list(queues.values())
+    for entry in queue_rows:
+        entry["win_rate"] = _win_rate(entry["wins"], entry["losses"])
+    queue_rows.sort(key=lambda item: (-item["games"], item["format_label"]))
+    return {
+        "games": total["games"],
+        "wins": total["wins"],
+        "losses": total["losses"],
+        "win_rate": _win_rate(total["wins"], total["losses"]),
+        "queues": queue_rows,
+    }
+
+
+def _commander_rows(
+    conn: sqlite3.Connection, where: str, params: List[Any], role: str
+) -> List[Dict[str, Any]]:
+    """Win/loss record grouped by commander (Brawl games).
+
+    role='player' → the user's commanders; role='opponent' → commanders
+    faced. A game with partner commanders counts under each partner. Colors
+    come from the commander card's color identity when the cards table
+    knows it.
+    """
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT
+              g.outcome,
+              pc.card_name,
+              (
+                SELECT c.color_identity FROM cards c WHERE c.name = pc.card_name
+              ) AS colors
+            FROM games g
+            JOIN participants p ON p.game_id = g.id AND p.role = ?
+            JOIN participant_commanders pc ON pc.participant_id = p.id
+            WHERE {where}
+            """,
+            [role, *params],
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    buckets: Dict[str, Dict[str, Any]] = {}
+    for outcome, card_name, colors in rows:
+        name = str(card_name or "").strip()
+        if not name:
+            continue
+        entry = buckets.setdefault(
+            name,
+            {
+                "commander": name,
+                "colors": normalize_colors(str(colors or "")),
+                "games": 0,
+                "wins": 0,
+                "losses": 0,
+            },
+        )
+        entry["games"] += 1
+        if outcome == "win":
+            entry["wins"] += 1
+        elif outcome == "loss":
+            entry["losses"] += 1
+    result = list(buckets.values())
+    for entry in result:
+        entry["win_rate"] = _win_rate(entry["wins"], entry["losses"])
+    result.sort(key=lambda item: (-item["games"], item["commander"]))
+    return result
+
+
 def _schedule_rows(
     conn: sqlite3.Connection, where: str, params: List[Any]
 ) -> Dict[str, List[Dict[str, Any]]]:
@@ -928,11 +1080,144 @@ def _streak_summary(conn: sqlite3.Connection, where: str, params: List[Any]) -> 
     }
 
 
+def _match_level_results(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> List[Dict[str, Any]]:
+    """One row per match (Bo1 games are their own match), ordered by start.
+
+    A Bo3 that went 2-1 is a single result here — only the match outcome
+    matters on the ladder, so Bo3 games are never counted individually.
+    Matches with no decided games (or tied abandoned ones) get outcome None.
+    """
+    rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              CASE
+                WHEN COALESCE(m.best_of, 1) >= 3 THEN COALESCE(g.match_id, g.id)
+                ELSE g.id
+              END AS match_key,
+              MIN(COALESCE(m.format, '(unknown)')) AS raw_format,
+              MAX(COALESCE(m.best_of, 1)) AS best_of,
+              MIN(COALESCE(g.started_at, g.ended_at)) AS started_at,
+              SUM(g.outcome = 'win') AS wins,
+              SUM(g.outcome = 'loss') AS losses
+            FROM games g
+            LEFT JOIN matches m ON m.id = g.match_id
+            WHERE {where}
+            GROUP BY match_key
+            ORDER BY MIN(COALESCE(g.started_at, g.ended_at)), match_key
+            """,
+            params,
+        )
+    )
+    for row in rows:
+        wins = int(row.get("wins") or 0)
+        losses = int(row.get("losses") or 0)
+        row["outcome"] = "win" if wins > losses else "loss" if losses > wins else None
+    return rows
+
+
+def _summarize_match_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Match-level record and streaks over pre-ordered match results."""
+    wins = losses = 0
+    longest_win = longest_loss = 0
+    current_run = 0
+    current_kind: Optional[str] = None
+    for result in results:
+        outcome = result.get("outcome")
+        if outcome not in ("win", "loss"):
+            continue
+        if outcome == "win":
+            wins += 1
+        else:
+            losses += 1
+        if outcome == current_kind:
+            current_run += 1
+        else:
+            current_kind = outcome
+            current_run = 1
+        if outcome == "win":
+            longest_win = max(longest_win, current_run)
+        else:
+            longest_loss = max(longest_loss, current_run)
+    decided = wins + losses
+    return {
+        "matches": decided,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": round(100.0 * wins / decided, 1) if decided else None,
+        "longest_win": longest_win,
+        "longest_loss": longest_loss,
+    }
+
+
+def _is_constructed_ranked_format(raw_format: Any) -> bool:
+    """True for ladder queues that move the constructed rank (Brawl excluded)."""
+    normalized = normalize_match_format(str(raw_format or ""))
+    return "(Ranked)" in normalized.label and not normalized.is_brawl
+
+
+def _constructed_season_window(
+    conn: sqlite3.Connection, season: Optional[int]
+) -> Optional[Tuple[int, Optional[str], Optional[str]]]:
+    """(season_ordinal, window_start, window_end) for one constructed season.
+
+    Seasons are bounded by rank-snapshot data: a season's window runs from
+    the previous season's last capture (exclusive) to the start time of the
+    next season's first ranked game (exclusive) — the game's own start, not
+    its snapshot, since a game always starts before its rank update lands.
+    None boundaries mean unbounded. Returns None with no rank data.
+    """
+    rows = conn.execute(
+        """
+        SELECT
+          r.season_ordinal,
+          MAX(r.captured_at) AS last_capture,
+          (
+            SELECT COALESCE(g.started_at, r2.captured_at)
+            FROM rank_snapshots r2
+            LEFT JOIN games g ON g.id = r2.game_id
+            WHERE r2.rank_format = 'constructed'
+              AND r2.season_ordinal = r.season_ordinal
+            ORDER BY r2.captured_at
+            LIMIT 1
+          ) AS first_game_start
+        FROM rank_snapshots r
+        WHERE r.rank_format = 'constructed'
+        GROUP BY r.season_ordinal
+        ORDER BY r.season_ordinal
+        """
+    ).fetchall()
+    if not rows:
+        return None
+    target = int(season) if season is not None else int(rows[-1][0])
+    for index, (ordinal, _last_capture, _first_game_start) in enumerate(rows):
+        if int(ordinal) == target:
+            start = str(rows[index - 1][1]) if index > 0 else None
+            end = str(rows[index + 1][2]) if index + 1 < len(rows) else None
+            return target, start, end
+    return None
+
+
+# Older tracker versions stored longer concede labels; fold them into the
+# current wording so history and new games group as one reason.
+_LEGACY_OUTCOME_REASONS = {
+    "Opponent conceded/disconnected": "Opponent conceded",
+    "You conceded/left the game": "You conceded",
+}
+
+
+def _normalize_outcome_reason(reason: Any) -> str:
+    text = str(reason or "").strip() or "unknown"
+    return _LEGACY_OUTCOME_REASONS.get(text, text)
+
+
 def _outcome_reason_rows(
     conn: sqlite3.Connection, where: str, params: List[Any]
 ) -> List[Dict[str, Any]]:
     """How wins and losses actually end (concession, damage, timeout...)."""
-    return _dict_rows(
+    raw_rows = _dict_rows(
         conn.execute(
             f"""
             SELECT
@@ -948,6 +1233,14 @@ def _outcome_reason_rows(
             params,
         )
     )
+    merged: Dict[str, Dict[str, Any]] = {}
+    for row in raw_rows:
+        reason = _normalize_outcome_reason(row.get("reason"))
+        entry = merged.setdefault(reason, {"reason": reason, "wins": 0, "losses": 0, "games": 0})
+        entry["wins"] += int(row.get("wins") or 0)
+        entry["losses"] += int(row.get("losses") or 0)
+        entry["games"] += int(row.get("games") or 0)
+    return sorted(merged.values(), key=lambda entry: -entry["games"])
 
 
 def _opener_land_rows(
@@ -958,14 +1251,16 @@ def _opener_land_rows(
         conn.execute(
             f"""
             SELECT
-              MIN(opener_lands, 5) AS lands,
+              MIN(opener_lands, 4) AS lands,
               COUNT(*) AS games,
               SUM(outcome = 'win') AS wins,
               SUM(outcome = 'loss') AS losses,
-              ROUND(100.0 * SUM(outcome = 'win') / NULLIF(SUM(outcome IN ('win', 'loss')), 0), 1) AS win_rate
+              ROUND(100.0 * SUM(outcome = 'win') / NULLIF(SUM(outcome IN ('win', 'loss')), 0), 1) AS win_rate,
+              ROUND(AVG(mulligans), 2) AS avg_mulligans
             FROM (
               SELECT
                 g.outcome,
+                COALESCE(p.mulligans, 0) AS mulligans,
                 (
                   SELECT COUNT(*) FROM game_opening_hand_cards oh
                   WHERE oh.participant_id = p.id
@@ -980,7 +1275,7 @@ def _opener_land_rows(
               WHERE {where} AND g.outcome IN ('win', 'loss')
             )
             WHERE opener_cards > 0
-            GROUP BY MIN(opener_lands, 5)
+            GROUP BY MIN(opener_lands, 4)
             ORDER BY lands
             """,
             params,
@@ -988,7 +1283,7 @@ def _opener_land_rows(
     )
     for row in rows:
         lands = int(row.get("lands") or 0)
-        row["label"] = "5+ lands" if lands >= 5 else f"{lands} {'land' if lands == 1 else 'lands'}"
+        row["label"] = "4+ lands" if lands >= 4 else f"{lands} {'land' if lands == 1 else 'lands'}"
     return rows
 
 
@@ -1141,6 +1436,158 @@ def _combat_deck_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -
             round(blockers_lost / attackers_lost, 2) if attackers_lost else None
         )
     return rows
+
+
+#: Interaction stat columns averaged per side on the deck page. Mirrors every
+#: row of the game page's Combat & Resources section.
+_INTERACTION_STAT_COLUMNS = (
+    "attack_steps",
+    "attacking_creatures",
+    "attackers_lost",
+    "blocking_creatures",
+    "blockers_lost",
+    "damage_dealt",
+    "damage_taken",
+    "life_lost",
+    "self_damage",
+    "life_gained",
+    "poison_added",
+    "cards_played",
+    "cards_drawn",
+    "cards_discarded",
+    "cards_milled",
+    "cards_exiled",
+    "removal_played",
+    "removal_drawn",
+    "wipes_played",
+    "wipes_drawn",
+    "bounces_played",
+    "bounces_drawn",
+    "counters_played",
+    "counters_drawn",
+    "creatures_removed",
+    "noncreatures_removed",
+    "creatures_bounced",
+    "noncreatures_bounced",
+    "lands_lost",
+    "lands_replaced",
+    "tokens_created",
+    "tokens_destroyed",
+    "tokens_sacrificed",
+    "tokens_exiled",
+)
+
+
+def _interaction_deck_profile(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> Optional[Dict[str, Any]]:
+    """Per-game interaction averages for both seats, mirroring the game page.
+
+    SQLite's AVG ignores NULLs, so games recorded before each stat existed
+    simply don't dilute the averages. A side's "counters landed" is the OTHER
+    side's spells_countered (their spells that this side's counters stopped);
+    opponent drawn columns stay NULL — their draws are hidden information.
+    """
+    select_parts = ["COUNT(s.removal_played) AS games_tracked"]
+    for prefix, alias in (("p", "s"), ("o", "os")):
+        for column in _INTERACTION_STAT_COLUMNS:
+            select_parts.append(
+                f"ROUND(AVG({alias}.{column}), 2) AS {prefix}_{column}"
+            )
+        other = "os" if alias == "s" else "s"
+        select_parts.append(
+            f"ROUND(AVG({other}.spells_countered), 2) AS {prefix}_counters_landed"
+        )
+        select_parts.append(
+            f"""ROUND(AVG(CASE
+              WHEN {alias}.counters_played IS NOT NULL
+               AND {other}.spells_countered IS NOT NULL
+              THEN MAX(0, {alias}.counters_played - {other}.spells_countered)
+            END), 2) AS {prefix}_counters_failed"""
+        )
+        select_parts.append(
+            f"""ROUND(AVG(CASE WHEN {alias}.lands_lost IS NOT NULL
+              THEN MAX(0, {alias}.lands_lost - COALESCE({alias}.lands_replaced, 0))
+            END), 2) AS {prefix}_lands_unreplaced"""
+        )
+        select_parts.append(
+            f"ROUND(100.0 * SUM({alias}.lands_replaced) / NULLIF(SUM({alias}.lands_lost), 0), 0)"
+            f" AS {prefix}_land_replacement_pct"
+        )
+    rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT {', '.join(select_parts)}
+            FROM game_participant_stats s
+            JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
+            JOIN games g ON g.id = s.game_id
+            LEFT JOIN participants op ON op.game_id = g.id AND op.role = 'opponent'
+            LEFT JOIN game_participant_stats os
+              ON os.game_id = g.id AND os.participant_id = op.id
+            WHERE {where}
+            """,
+            params,
+        )
+    )
+    if not rows or not int(rows[0].get("games_tracked") or 0):
+        return None
+    row = rows[0]
+    side_keys = list(_INTERACTION_STAT_COLUMNS) + [
+        "counters_landed",
+        "counters_failed",
+        "lands_unreplaced",
+        "land_replacement_pct",
+    ]
+    return {
+        "games_tracked": row["games_tracked"],
+        "player": {key: row.get(f"p_{key}") for key in side_keys},
+        "opponent": {key: row.get(f"o_{key}") for key in side_keys},
+    }
+
+
+def _deck_mode_splits(match_rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Match-level records split by queue for a deck's matches.
+
+    Standard constructed decks get Ranked/Unranked and Best-of-1/Best-of-3
+    splits. Brawl decks get Competitive Brawl (the ranked Brawl queue) vs
+    casual Brawl. Every other family — Historic, Explorer, Timeless, Alchemy,
+    Draft, Sealed, events — contributes nothing, per design.
+    """
+    buckets: Dict[str, List[Dict[str, Any]]] = {
+        "ranked": [],
+        "unranked": [],
+        "bo1": [],
+        "bo3": [],
+        "brawl_competitive": [],
+        "brawl_casual": [],
+    }
+    for row in match_rows:
+        normalized = normalize_match_format(
+            str(row.get("raw_format") or ""), default_best_of=int(row.get("best_of") or 1)
+        )
+        if normalized.is_brawl:
+            key = "brawl_competitive" if "(Ranked)" in normalized.label else "brawl_casual"
+            buckets[key].append(row)
+            continue
+        if normalized.family != "standard":
+            continue
+        buckets["ranked" if "(Ranked)" in normalized.label else "unranked"].append(row)
+        buckets["bo3" if int(normalized.best_of or 1) >= 3 else "bo1"].append(row)
+
+    def summarize(key: str) -> Optional[Dict[str, Any]]:
+        return _summarize_match_results(buckets[key]) if buckets[key] else None
+
+    standard = {key: summarize(key) for key in ("ranked", "unranked", "bo1", "bo3")}
+    brawl = {
+        "competitive": summarize("brawl_competitive"),
+        "casual": summarize("brawl_casual"),
+    }
+    splits: Dict[str, Any] = {}
+    if any(standard.values()):
+        splits["standard"] = standard
+    if any(brawl.values()):
+        splits["brawl"] = brawl
+    return splits or None
 
 
 def _combat_split_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> List[Dict[str, Any]]:
@@ -1569,7 +2016,8 @@ def dashboard_snapshot(
                   COUNT(*) AS games,
                   SUM(g.outcome = 'win') AS wins,
                   SUM(g.outcome = 'loss') AS losses,
-                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
+                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate,
+                  ROUND(AVG(COALESCE(p.mulligans, 0)), 2) AS avg_mulligans
                 FROM games g
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
                 WHERE {where}
@@ -1720,7 +2168,31 @@ def dashboard_snapshot(
                     JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
                     JOIN cards c ON c.id = s.card_id
                     WHERE s.game_id = g.id AND po.game_id = g.id
-                  ) AS opp_color_letters
+                  ) AS opp_color_letters,
+                  (
+                    SELECT GROUP_CONCAT(pc.card_name, ' & ')
+                    FROM participant_commanders pc
+                    WHERE pc.participant_id = p.id
+                  ) AS player_commander,
+                  (
+                    SELECT GROUP_CONCAT(pc.card_name, ' & ')
+                    FROM participant_commanders pc
+                    JOIN participants po ON po.id = pc.participant_id
+                    WHERE po.game_id = g.id AND po.role = 'opponent'
+                  ) AS opponent_commander,
+                  (
+                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    FROM participant_commanders pc
+                    JOIN cards c ON c.name = pc.card_name
+                    WHERE pc.participant_id = p.id
+                  ) AS player_commander_colors,
+                  (
+                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    FROM participant_commanders pc
+                    JOIN participants po ON po.id = pc.participant_id
+                    JOIN cards c ON c.name = pc.card_name
+                    WHERE po.game_id = g.id AND po.role = 'opponent'
+                  ) AS opponent_commander_colors
                 FROM games g
                 JOIN matches m ON m.id = g.match_id
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
@@ -1884,11 +2356,34 @@ def dashboard_snapshot(
         schedule = _schedule_rows(conn, where, params)
         fatigue_rows = _fatigue_rows(conn, where, params)
         streaks = _streak_summary(conn, where, params)
+        match_results = _match_level_results(conn, where, params)
+        match_summary = _summarize_match_results(match_results)
+        ranked_results = [
+            result
+            for result in match_results
+            if _is_constructed_ranked_format(result.get("raw_format"))
+        ]
+        ranked_summary = _summarize_match_results(ranked_results)
+        ranked_season_summary = None
+        season_window = _constructed_season_window(conn, season)
+        if season_window is not None:
+            season_ordinal, window_start, window_end = season_window
+            seasonal_results = [
+                result
+                for result in ranked_results
+                if (window_start is None or str(result.get("started_at") or "") > window_start)
+                and (window_end is None or str(result.get("started_at") or "") < window_end)
+            ]
+            ranked_season_summary = _summarize_match_results(seasonal_results)
+            ranked_season_summary["season_ordinal"] = season_ordinal
         outcome_reason_rows = _outcome_reason_rows(conn, where, params)
         opener_land_rows = _opener_land_rows(conn, where, params)
         opponent_threat_rows = _opponent_threat_rows(conn, where, params)
         matchup_rows = _matchup_rows(conn, where, params)
         opponent_color_rows = _opponent_color_rows(conn, where, params)
+        your_commander_rows = _commander_rows(conn, where, params, "player")
+        brawl_summary = _brawl_summary(conn, where, params)
+        faced_commander_rows = _commander_rows(conn, where, params, "opponent")
         deck_visuals = _deck_visuals(conn)
         for row in deck_rows:
             deck_name = row["deck_name"]
@@ -1922,6 +2417,14 @@ def dashboard_snapshot(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )
         row["opp_colors"] = normalize_colors(str(row.pop("opp_color_letters", "") or ""))
+        if "player_commander_colors" in row:
+            row["player_commander_colors"] = normalize_colors(
+                str(row.get("player_commander_colors") or "")
+            )
+        if "opponent_commander_colors" in row:
+            row["opponent_commander_colors"] = normalize_colors(
+                str(row.get("opponent_commander_colors") or "")
+            )
     for row in match_rows:
         row["format_label"] = format_label(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
@@ -1961,10 +2464,16 @@ def dashboard_snapshot(
         "schedule": schedule,
         "fatigue": fatigue_rows,
         "streaks": streaks,
+        "match_summary": match_summary,
+        "ranked_summary": ranked_summary,
+        "ranked_season_summary": ranked_season_summary,
         "outcome_reasons": outcome_reason_rows,
         "opener_lands": opener_land_rows,
         "opponent_threats": opponent_threat_rows,
         "opponent_colors": opponent_color_rows,
+        "brawl": brawl_summary,
+        "your_commanders": your_commander_rows,
+        "faced_commanders": faced_commander_rows,
         "matchups": matchup_rows,
         "recent": recent_rows,
         "trend": trend_rows,
@@ -2036,6 +2545,9 @@ def deck_detail(
         ).fetchone()
         combat_rows = _combat_deck_rows(conn, where, params)
         combat_profile = combat_rows[0] if combat_rows else None
+        interaction_profile = _interaction_deck_profile(conn, where, params)
+        turn_timing = _deck_turn_timing(conn, where, params)
+        mode_splits = _deck_mode_splits(_match_level_results(conn, where, params))
         streaks = _streak_summary(conn, where, params)
         composition_rows, version_rows, sideboard_summary = _deck_decklist_analysis(
             conn, where, params
@@ -2259,7 +2771,31 @@ def deck_detail(
                     JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
                     JOIN cards c ON c.id = s.card_id
                     WHERE s.game_id = g.id AND po.game_id = g.id
-                  ) AS opp_color_letters
+                  ) AS opp_color_letters,
+                  (
+                    SELECT GROUP_CONCAT(pc.card_name, ' & ')
+                    FROM participant_commanders pc
+                    WHERE pc.participant_id = p.id
+                  ) AS player_commander,
+                  (
+                    SELECT GROUP_CONCAT(pc.card_name, ' & ')
+                    FROM participant_commanders pc
+                    JOIN participants po ON po.id = pc.participant_id
+                    WHERE po.game_id = g.id AND po.role = 'opponent'
+                  ) AS opponent_commander,
+                  (
+                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    FROM participant_commanders pc
+                    JOIN cards c ON c.name = pc.card_name
+                    WHERE pc.participant_id = p.id
+                  ) AS player_commander_colors,
+                  (
+                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    FROM participant_commanders pc
+                    JOIN participants po ON po.id = pc.participant_id
+                    JOIN cards c ON c.name = pc.card_name
+                    WHERE po.game_id = g.id AND po.role = 'opponent'
+                  ) AS opponent_commander_colors
                 FROM games g
                 JOIN matches m ON m.id = g.match_id
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
@@ -2319,6 +2855,14 @@ def deck_detail(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )
         row["opp_colors"] = normalize_colors(str(row.pop("opp_color_letters", "") or ""))
+        if "player_commander_colors" in row:
+            row["player_commander_colors"] = normalize_colors(
+                str(row.get("player_commander_colors") or "")
+            )
+        if "opponent_commander_colors" in row:
+            row["opponent_commander_colors"] = normalize_colors(
+                str(row.get("opponent_commander_colors") or "")
+            )
     for row in opener_rows:
         row["display_name"] = _clean_card_name(row.get("display_name"))
     return {
@@ -2339,6 +2883,9 @@ def deck_detail(
             "on_play_pct": profile[3],
         },
         "combat_profile": combat_profile,
+        "interaction_profile": interaction_profile,
+        "turn_timing": turn_timing,
+        "mode_splits": mode_splits,
         "streaks": streaks,
         "composition": composition_rows,
         "versions": version_rows,
@@ -2443,6 +2990,8 @@ def _deck_land_profile(
     deck_size: Optional[int] = None
     lands: Optional[int] = None
     flood = screw = normal = 0
+    sum_cards_seen = sum_lands_seen = sum_draws = sum_land_draws = 0
+    expected_land_pct: Optional[float] = None
     for game_id, participant_id, row_deck_size in game_rows:
         if deck_size is None:
             decklist = deck_land_stats(conn, str(game_id), participant_id)
@@ -2453,6 +3002,12 @@ def _deck_land_profile(
         )
         if not quality.get("total_cards_seen"):
             continue
+        sum_cards_seen += int(quality.get("total_cards_seen") or 0)
+        sum_lands_seen += int(quality.get("lands_seen") or 0)
+        sum_draws += int(quality.get("total_draws") or 0)
+        sum_land_draws += int(quality.get("land_draws") or 0)
+        if expected_land_pct is None or quality.get("land_rate_source") == "decklist":
+            expected_land_pct = quality.get("expected_land_rate")
         if quality.get("is_flood"):
             flood += 1
         elif quality.get("is_screw"):
@@ -2467,7 +3022,56 @@ def _deck_land_profile(
         "screw_games": screw,
         "normal_games": normal,
         "classified_games": classified,
+        # Deck-level draw-quality averages across the classified games.
+        "avg_cards_seen": round(sum_cards_seen / classified, 1) if classified else None,
+        "lands_seen_pct": (
+            round(100.0 * sum_lands_seen / sum_cards_seen, 1) if sum_cards_seen else None
+        ),
+        "avg_cards_drawn": round(sum_draws / classified, 1) if classified else None,
+        "lands_drawn_pct": (
+            round(100.0 * sum_land_draws / sum_draws, 1) if sum_draws else None
+        ),
+        "expected_land_pct": expected_land_pct,
     }
+
+
+def _deck_turn_timing(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> Optional[Dict[str, Any]]:
+    """Average turn-time telemetry per seat across a deck's games."""
+    rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              pt.role AS role,
+              COUNT(*) AS turns,
+              SUM(t.duration_seconds) AS total_seconds,
+              COUNT(DISTINCT t.game_id) AS games
+            FROM games g
+            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            JOIN game_turns t ON t.game_id = g.id
+            JOIN participants pt ON pt.game_id = g.id AND pt.seat_id = t.seat_id
+            WHERE {where} AND t.duration_seconds IS NOT NULL
+            GROUP BY pt.role
+            """,
+            params,
+        )
+    )
+    summary: Dict[str, Any] = {}
+    for row in rows:
+        role = str(row.get("role") or "")
+        if role not in ("player", "opponent"):
+            continue
+        turns = int(row.get("turns") or 0)
+        total = int(row.get("total_seconds") or 0)
+        games = int(row.get("games") or 0)
+        summary[role] = {
+            "avg_total_seconds": round(total / games, 1) if games else None,
+            "avg_turn_seconds": round(total / turns, 1) if turns else None,
+            "turns_timed": turns,
+            "games": games,
+        }
+    return summary or None
 
 
 def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str, Any]:
@@ -2511,6 +3115,8 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         game["format_label"] = format_label(
             game.get("raw_format"), default_best_of=int(game.get("best_of") or 1)
         )
+        if game.get("outcome_reason"):
+            game["outcome_reason"] = _normalize_outcome_reason(game["outcome_reason"])
 
         participant_rows = _dict_rows(
             conn.execute(
@@ -2733,6 +3339,34 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                 (game_id,),
             )
         )
+        played_turns, opponent_seen_turns = _timeline_card_turns(timeline)
+        # Opponent draws revealed by name also count as a "seen" moment.
+        for drawn_name, drawn_turn in conn.execute(
+            """
+            SELECT display_name, turn_number
+            FROM game_drawn_cards
+            WHERE game_id = ? AND participant_id = ? AND turn_number IS NOT NULL
+            """,
+            (game_id, opponent_participant_id),
+        ):
+            clean_drawn = _clean_card_name(drawn_name)
+            if clean_drawn:
+                opponent_seen_turns.setdefault(clean_drawn, []).append(int(drawn_turn))
+        for row in cards_played:
+            aliases = _card_name_aliases(row.get("display_name"))
+            row["turns_played"] = sorted(
+                turn
+                for alias in aliases
+                for turn in played_turns.get(("player", alias), [])
+            )
+        for row in opponent_cards:
+            aliases = _card_name_aliases(row.get("display_name"))
+            seen = [
+                turn
+                for alias in aliases
+                for turn in opponent_seen_turns.get(alias, [])
+            ]
+            row["first_seen_turn"] = min(seen) if seen else None
         linkable_cards: Dict[str, Optional[str]] = {}
         for display_name, type_category in conn.execute(
             """
@@ -2777,7 +3411,27 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                   s.cards_drawn,
                   s.cards_discarded,
                   s.cards_milled,
-                  s.cards_exiled
+                  s.cards_exiled,
+                  s.removal_drawn,
+                  s.removal_played,
+                  s.wipes_drawn,
+                  s.wipes_played,
+                  s.bounces_drawn,
+                  s.bounces_played,
+                  s.creatures_removed,
+                  s.noncreatures_removed,
+                  s.creatures_bounced,
+                  s.noncreatures_bounced,
+                  s.poison_added,
+                  s.counters_drawn,
+                  s.counters_played,
+                  s.spells_countered,
+                  s.lands_lost,
+                  s.lands_replaced,
+                  s.tokens_created,
+                  s.tokens_destroyed,
+                  s.tokens_sacrificed,
+                  s.tokens_exiled
                 FROM game_participant_stats s
                 JOIN participants p ON p.id = s.participant_id
                 WHERE s.game_id = ?
@@ -3030,6 +3684,9 @@ def _card_multiplicity(
     decklist, where it was seen), count how many copies the player saw
     (opening hand + visible draws) and compare against the hypergeometric
     expectation from the decklist copies and total cards seen that game.
+
+    Buckets 1 through 4+ are always emitted (even at zero games) so the
+    expected percentages for rarer multiples stay visible.
     """
     name_clause = _card_name_clause("", variants)
     name_params = _card_name_params(variants)
@@ -3117,6 +3774,13 @@ def _card_multiplicity(
                     draw_count=min(cards_seen, deck_size),
                 )
 
+    # Always surface the 1..4+ rows: a zero-game row still shows the
+    # hypergeometric expectation, which is the interesting part for 3 and 4.
+    for key in (1, 2, 3, 4):
+        buckets.setdefault(
+            key, {"copies_seen": key, "games": 0, "wins": 0, "losses": 0}
+        )
+
     total_games = len(seen_rows)
     bucket_rows = []
     for key in sorted(buckets):
@@ -3135,6 +3799,81 @@ def _card_multiplicity(
                     if expected_games and key in expected_at_least and key > 0
                     else None
                 ),
+                "wins": bucket["wins"],
+                "losses": bucket["losses"],
+                "win_rate": round(100.0 * bucket["wins"] / decided, 1) if decided else None,
+            }
+        )
+    return {"games": total_games, "buckets": bucket_rows}
+
+
+def _card_opponent_multiplicity(
+    conn: sqlite3.Connection, variants: List[str]
+) -> Dict[str, Any]:
+    """Repeat-copy analysis from the opponent's side of your games.
+
+    Opponent decklists are unknown, so there is no hypergeometric expectation
+    here; copies are what the opponent visibly produced in a game (casts plus
+    revealed draws, per game_card_summary). Win rates are yours: how you fared
+    when an opponent showed N copies of this card in one game. A recurred copy
+    (recast from the graveyard, say) counts each time it is played, which is
+    the right lens for "they kept resolving it".
+    """
+    name_clause = _card_name_clause("s", variants)
+    rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              g.id AS game_id,
+              g.outcome,
+              SUM(MAX(COALESCE(s.played_count, 0), COALESCE(s.drawn_count, 0)))
+                AS copies_seen
+            FROM game_card_summary s
+            JOIN participants p ON p.id = s.participant_id AND p.role = 'opponent'
+            JOIN games g ON g.id = s.game_id
+            WHERE {name_clause}
+              AND (COALESCE(s.played_count, 0) > 0 OR COALESCE(s.drawn_count, 0) > 0)
+            GROUP BY g.id, g.outcome
+            """,
+            _card_name_params(variants),
+        )
+    )
+    if not rows:
+        return {"games": 0, "buckets": []}
+
+    buckets: Dict[int, Dict[str, Any]] = {}
+    for row in rows:
+        copies = max(int(row.get("copies_seen") or 0), 1)
+        bucket_key = min(copies, 4)
+        bucket = buckets.setdefault(
+            bucket_key,
+            {"copies_seen": bucket_key, "games": 0, "wins": 0, "losses": 0},
+        )
+        bucket["games"] += 1
+        if row.get("outcome") == "win":
+            bucket["wins"] += 1
+        elif row.get("outcome") == "loss":
+            bucket["losses"] += 1
+
+    for key in (1, 2, 3, 4):
+        buckets.setdefault(
+            key, {"copies_seen": key, "games": 0, "wins": 0, "losses": 0}
+        )
+
+    total_games = len(rows)
+    bucket_rows = []
+    for key in sorted(buckets):
+        bucket = buckets[key]
+        decided = bucket["wins"] + bucket["losses"]
+        games_at_least = sum(b["games"] for k, b in buckets.items() if k >= key)
+        bucket_rows.append(
+            {
+                "copies_seen": key,
+                "label": f"{key}+" if key == 4 else str(key),
+                "games": bucket["games"],
+                "pct_of_games": round(100.0 * bucket["games"] / total_games, 1),
+                "pct_at_least": round(100.0 * games_at_least / total_games, 1),
+                "expected_pct_at_least": None,
                 "wins": bucket["wins"],
                 "losses": bucket["losses"],
                 "win_rate": round(100.0 * bucket["wins"] / decided, 1) if decided else None,
@@ -3275,6 +4014,7 @@ def card_detail(
             match_params,
         ).fetchone()
         multiplicity = _card_multiplicity(conn, variants)
+        opponent_multiplicity = _card_opponent_multiplicity(conn, variants)
 
     opponent_usage = next((row for row in by_role if row["role"] == "opponent"), None)
     opponent_games = int(opponent_usage["games_seen"] or 0) if opponent_usage else 0
@@ -3327,6 +4067,7 @@ def card_detail(
         },
         "by_deck": by_deck,
         "multiplicity": multiplicity,
+        "opponent_multiplicity": opponent_multiplicity,
         "opener_impact": {
             "games_in_opener": int(opener[0] or 0) if opener else 0,
             "wins": int(opener[1] or 0) if opener else 0,
@@ -3473,6 +4214,14 @@ def all_games(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )
         row["opp_colors"] = normalize_colors(str(row.pop("opp_color_letters", "") or ""))
+        if "player_commander_colors" in row:
+            row["player_commander_colors"] = normalize_colors(
+                str(row.get("player_commander_colors") or "")
+            )
+        if "opponent_commander_colors" in row:
+            row["opponent_commander_colors"] = normalize_colors(
+                str(row.get("opponent_commander_colors") or "")
+            )
     return {"games": rows, "total": len(rows)}
 
 

@@ -1,18 +1,37 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Copy } from 'lucide-react';
+import {
+  ChartNoAxesCombined,
+  Check,
+  Clock,
+  Copy,
+  Crosshair,
+  Flame,
+  Gauge,
+  Hourglass,
+  Play,
+  RefreshCw,
+  Repeat,
+  Swords,
+  Timer,
+  TrendingDown,
+  Trophy,
+} from 'lucide-react';
 import {
   fetchDeckDetail,
   type CardPerformanceRow,
   type DeckCompositionRow,
   type DeckDetail,
   type DeckGameRow,
+  type DeckInteractionSide,
   type DeckVersionRow,
   type MulliganRow,
+  type OpponentColorRow,
   type SideboardSwapRow,
   type SnapshotFilters,
 } from '../api';
 import { formatPercent } from '../dashboardData';
 import {
+  boFormatLabel,
   formatCardName,
   formatDateTime,
   formatDuration,
@@ -25,12 +44,12 @@ import {
 import { gameRouteHash, gamesRouteHash } from '../routes';
 import { makeOpponentColorColumns } from '../opponentColorColumns';
 import { Badge } from './Badge';
+import { bucketCombatGroups, CombatGroupColumns } from './CombatGroupColumns';
 import { ColorPips } from './ColorPips';
 import { CardLink } from './CardLink';
 import { DeckVisual } from './DeckVisual';
 import { FilterBar } from './FilterBar';
 import { Section } from './Section';
-import { FormatsTable } from './FormatsTable';
 import { ManaReadinessTable } from './ManaReadinessTable';
 import { MetricCard } from './MetricCard';
 import { SortableTable, type Column } from './SortableTable';
@@ -601,17 +620,160 @@ export function DeckDetailPage({
   }
 
   const metrics = [
-    { label: 'Games', value: String(detail.summary.games) },
-    { label: 'Record', value: `${detail.summary.wins}–${detail.summary.losses}` },
-    { label: 'Win Rate', value: formatPercent(detail.summary.win_rate) },
-    { label: 'On Play', value: formatPercent(detail.profile.on_play_pct) },
-    { label: 'Avg Mulligans', value: formatNumber(detail.profile.avg_mulligans) },
-    { label: 'Avg Turns', value: formatNumber(detail.profile.avg_turns) },
-    { label: 'Avg Duration', value: formatDuration(detail.profile.avg_duration_seconds) },
+    { label: 'Games', value: String(detail.summary.games), icon: <Swords /> },
+    { label: 'Record', value: `${detail.summary.wins}–${detail.summary.losses}`, icon: <Trophy /> },
+    { label: 'Win Rate', value: formatPercent(detail.summary.win_rate), icon: <ChartNoAxesCombined /> },
+    { label: 'On Play', value: formatPercent(detail.profile.on_play_pct), icon: <Play /> },
+    { label: 'Avg Mulligans', value: formatNumber(detail.profile.avg_mulligans), icon: <RefreshCw /> },
+    { label: 'Avg Turns', value: formatNumber(detail.profile.avg_turns), icon: <Repeat /> },
+    { label: 'Avg Duration', value: formatDuration(detail.profile.avg_duration_seconds), icon: <Timer /> },
   ];
+
+  // Best / worst opponent color: highest and lowest win rate; ties go to the
+  // matchup with more games played (a bigger sample is the better trophy).
+  const ratedColorRows = (detail.opponent_colors ?? []).filter(
+    (row) => row.win_rate != null && row.games > 0,
+  );
+  const pickColorRow = (better: (a: OpponentColorRow, b: OpponentColorRow) => boolean) =>
+    ratedColorRows.reduce<OpponentColorRow | null>(
+      (winner, row) => (winner === null || better(row, winner) ? row : winner),
+      null,
+    );
+  const bestVsColor =
+    ratedColorRows.length >= 2
+      ? pickColorRow(
+          (a, b) =>
+            (a.win_rate ?? 0) > (b.win_rate ?? 0) ||
+            ((a.win_rate ?? 0) === (b.win_rate ?? 0) && a.games > b.games),
+        )
+      : null;
+  const worstVsColor =
+    ratedColorRows.length >= 2
+      ? pickColorRow(
+          (a, b) =>
+            (a.win_rate ?? 0) < (b.win_rate ?? 0) ||
+            ((a.win_rate ?? 0) === (b.win_rate ?? 0) && a.games > b.games),
+        )
+      : null;
+
+  const interaction = detail.interaction_profile ?? null;
+  /** Average cell: folds the drawn average into the played cell like the
+      game page ("1.2 (2.3 drawn)"); opponent drawn averages are always
+      null (hidden information) so their cells stay plain. */
+  const interactionCell = (
+    side: DeckInteractionSide | undefined,
+    key: keyof DeckInteractionSide,
+    drawnKey?: keyof DeckInteractionSide,
+  ): string => {
+    const value = side?.[key];
+    if (value == null) {
+      return '—';
+    }
+    if (key === 'land_replacement_pct') {
+      return `${value}%`;
+    }
+    const drawn = drawnKey ? side?.[drawnKey] : null;
+    return drawn != null ? `${value} (${drawn} drawn)` : String(value);
+  };
+  const interactionGroups: {
+    title: string;
+    rows: [string, keyof DeckInteractionSide, (keyof DeckInteractionSide)?][];
+  }[] = [
+    {
+      title: 'Attack',
+      rows: [
+        ['Attack steps', 'attack_steps'],
+        ['Attacking creatures', 'attacking_creatures'],
+        ['Attackers lost', 'attackers_lost'],
+      ],
+    },
+    {
+      title: 'Block',
+      rows: [
+        ['Blocking creatures', 'blocking_creatures'],
+        ['Blockers lost', 'blockers_lost'],
+      ],
+    },
+    {
+      title: 'Life',
+      rows: [
+        ['Damage dealt', 'damage_dealt'],
+        ['Damage taken', 'damage_taken'],
+        ['Life lost', 'life_lost'],
+        ['Self damage', 'self_damage'],
+        ['Life gained', 'life_gained'],
+        ['Poison counters added', 'poison_added'],
+      ],
+    },
+    {
+      title: 'Cards',
+      rows: [
+        ['Played', 'cards_played'],
+        ['Drawn', 'cards_drawn'],
+        ['Discarded', 'cards_discarded'],
+        ['Milled', 'cards_milled'],
+        ['Exiled', 'cards_exiled'],
+      ],
+    },
+    {
+      title: 'Removal',
+      rows: [
+        ['Removal played', 'removal_played', 'removal_drawn'],
+        ['Board wipes played', 'wipes_played', 'wipes_drawn'],
+        ['Creatures lost to removal', 'creatures_removed'],
+        ['Non-creatures lost to removal', 'noncreatures_removed'],
+      ],
+    },
+    {
+      title: 'Bounce',
+      rows: [
+        ['Bounce cards played', 'bounces_played', 'bounces_drawn'],
+        ['Creatures bounced to hand', 'creatures_bounced'],
+        ['Non-creatures bounced to hand', 'noncreatures_bounced'],
+      ],
+    },
+    {
+      title: 'Land Destruction',
+      rows: [
+        ['Lands Destroyed', 'lands_lost'],
+        ['Lands Successfully Replaced', 'lands_replaced'],
+        ['Lands Lost To Destruction', 'lands_unreplaced'],
+        ['Land Replacement Rate', 'land_replacement_pct'],
+      ],
+    },
+    {
+      title: 'Counter Magic',
+      rows: [
+        ['Counters played', 'counters_played', 'counters_drawn'],
+        ['Counters successful', 'counters_landed'],
+        ['Counters failed', 'counters_failed'],
+      ],
+    },
+    {
+      title: 'Tokens',
+      rows: [
+        ['Created', 'tokens_created'],
+        ['Destroyed', 'tokens_destroyed'],
+        ['Sacrificed', 'tokens_sacrificed'],
+        ['Exiled', 'tokens_exiled'],
+      ],
+    },
+  ];
+  // Format rectangles: labels already carry the queue split (Ranked vs
+  // Unranked, Best-of-1 vs Best-of-3, Competitive vs Casual Brawl).
+  const formatCards = [...detail.formats].sort((a, b) => b.games - a.games);
 
   return (
     <>
+      {detail.deck_visual.image_url ? (
+        // Ambient backdrop from the signature card's art: heavily blurred and
+        // faded so it tints the page without fighting the content.
+        <div
+          aria-hidden="true"
+          className="deck-art-backdrop"
+          style={{ backgroundImage: `url(${detail.deck_visual.image_url})` }}
+        />
+      ) : null}
       {refreshError ? (
         <p className="refresh-status refresh-status-error" role="alert">
           Refresh failed: {refreshError} — showing the last loaded data.
@@ -670,7 +832,7 @@ export function DeckDetailPage({
 
       <section className="metric-grid metric-grid-deck" aria-label="Deck metrics">
         {metrics.map((metric) => (
-          <MetricCard key={metric.label} label={metric.label} value={metric.value} />
+          <MetricCard key={metric.label} icon={metric.icon} label={metric.label} value={metric.value} />
         ))}
       </section>
 
@@ -691,6 +853,7 @@ export function DeckDetailPage({
             {detail.streaks ? (
               <>
                 <MetricCard
+                  icon={<Flame />}
                   label="Win Streak"
                   value={formatNumber(detail.streaks.longest_win)}
                   detail={
@@ -700,6 +863,7 @@ export function DeckDetailPage({
                   }
                 />
                 <MetricCard
+                  icon={<TrendingDown />}
                   label="Losing Streak"
                   value={formatNumber(detail.streaks.longest_loss)}
                   detail={
@@ -712,35 +876,145 @@ export function DeckDetailPage({
             ) : null}
             {detail.combat_profile ? (
               <>
-            <MetricCard
-              label="Profile"
-              value={detail.combat_profile.aggression_profile ?? '—'}
-            />
-            <MetricCard
-              label="Dmg Dealt / Game"
-              value={formatNumber(detail.combat_profile.avg_damage_dealt)}
-            />
-            <MetricCard
-              label="Dmg Taken / Game"
-              value={formatNumber(detail.combat_profile.avg_damage_taken)}
-            />
-            <MetricCard
-              label="Attacks / Game"
-              value={formatNumber(detail.combat_profile.avg_attack_steps)}
-            />
-            <MetricCard
-              label="Attackers / Attack"
-              value={formatNumber(detail.combat_profile.attackers_per_attack)}
-            />
-            <MetricCard
-              label="Life Gained / Game"
-              value={formatNumber(detail.combat_profile.avg_life_gained)}
-            />
+                {/* Raw per-game averages live in Combat & Resources below;
+                    this box keeps the deck-level identity and derived ratios. */}
+                <MetricCard
+                  icon={<Gauge />}
+                  label="Profile"
+                  value={detail.combat_profile.aggression_profile ?? '—'}
+                />
+                <MetricCard
+                  icon={<Crosshair />}
+                  label="Attackers / Attack"
+                  value={formatNumber(detail.combat_profile.attackers_per_attack)}
+                />
               </>
             ) : null}
           </section>
         ) : (
           <p className="empty-state">No combat telemetry recorded for this deck yet.</p>
+        )}
+      </Section>
+
+      <Section
+        id="deck-turn-timing"
+        title="Turn Timing"
+        description="Average pace across this deck's games."
+      >
+        {detail.turn_timing ? (
+          <section className="metric-grid metric-grid-deck" aria-label="Deck turn timing">
+            <MetricCard
+              icon={<Timer />}
+              label="Your Turn Time / Game"
+              value={formatDuration(detail.turn_timing.player?.avg_total_seconds ?? null)}
+            />
+            <MetricCard
+              icon={<Clock />}
+              label="Your Avg Turn"
+              value={formatTurnDuration(detail.turn_timing.player?.avg_turn_seconds ?? null)}
+            />
+            <MetricCard
+              icon={<Hourglass />}
+              label="Opponent Turn Time / Game"
+              value={formatDuration(detail.turn_timing.opponent?.avg_total_seconds ?? null)}
+            />
+            <MetricCard
+              icon={<Clock />}
+              label="Opponent Avg Turn"
+              value={formatTurnDuration(detail.turn_timing.opponent?.avg_turn_seconds ?? null)}
+            />
+          </section>
+        ) : (
+          <p className="empty-state">No turn timing recorded for this deck yet.</p>
+        )}
+      </Section>
+
+      <Section
+        id="deck-draw-quality"
+        title="Draw Quality"
+        description="Average cards and lands seen per game. The flood / screw / normal split lives in Land Statistics below."
+      >
+        {landProfile && landProfile.avg_cards_seen != null ? (
+          <section className="metric-grid metric-grid-deck" aria-label="Deck draw quality">
+            <MetricCard
+              label="Cards Seen / Game"
+              value={formatNumber(landProfile.avg_cards_seen)}
+            />
+            <MetricCard
+              label="Lands Seen"
+              value={
+                landProfile.lands_seen_pct != null ? `${landProfile.lands_seen_pct}%` : '—'
+              }
+            />
+            <MetricCard
+              label="Cards Drawn / Game"
+              value={formatNumber(landProfile.avg_cards_drawn)}
+            />
+            <MetricCard
+              label="Lands Drawn"
+              value={
+                landProfile.lands_drawn_pct != null ? `${landProfile.lands_drawn_pct}%` : '—'
+              }
+            />
+            <MetricCard
+              label="Expected Lands"
+              value={
+                landProfile.expected_land_pct != null && landProfile.expected_land_pct > 0
+                  ? `${landProfile.expected_land_pct}%`
+                  : '—'
+              }
+            />
+          </section>
+        ) : (
+          <p className="empty-state">No classified games for this deck yet.</p>
+        )}
+      </Section>
+
+      <Section
+        id="deck-interaction"
+        title="Combat & Resources"
+        description="Per-seat, per-game averages for this deck."
+      >
+        {interaction ? (
+          <CombatGroupColumns
+            columns={bucketCombatGroups(
+              interactionGroups.map((group) => ({
+                title: group.title,
+                rows: group.rows.map(([label, key, drawnKey]): [string, string, string] => [
+                  label,
+                  interactionCell(interaction.player, key, drawnKey),
+                  // Opponent draws are hidden information — no drawn suffix.
+                  interactionCell(interaction.opponent, key),
+                ]),
+              })),
+            )}
+          />
+        ) : (
+          <p className="empty-state">No interaction telemetry recorded for this deck yet.</p>
+        )}
+      </Section>
+
+      <Section
+        id="deck-formats"
+        title="Formats"
+        description="This deck's record in every queue it has been played in."
+      >
+        {formatCards.length > 0 ? (
+          <section className="metric-grid metric-grid-deck" aria-label="Deck format performance">
+            {formatCards.map((row) => (
+              <MetricCard
+                key={row.format_label}
+                icon={<Trophy />}
+                label={boFormatLabel(row.format_label)}
+                value={row.win_rate != null ? `${row.win_rate}%` : '—'}
+                detail={`${row.wins}-${row.losses} · ${row.games} game${
+                  row.games === 1 ? '' : 's'
+                }`}
+              />
+            ))}
+          </section>
+        ) : (
+          <p className="empty-state">No format data recorded for this deck yet.</p>
         )}
       </Section>
 
@@ -951,6 +1225,32 @@ export function DeckDetailPage({
         title="Vs Opponent Colors"
         description="This deck's record against each opponent color combination, inferred from every card they revealed."
       >
+        {bestVsColor && worstVsColor ? (
+          <div className="vs-color-highlights">
+            <div className="vs-color-card vs-color-card-best">
+              <span className="vs-color-card-label">Best Against</span>
+              <span className="vs-color-card-value">
+                <ColorPips colors={bestVsColor.colors} />
+                <span className="vs-color-card-rate">{bestVsColor.win_rate}%</span>
+              </span>
+              <span className="vs-color-card-detail">
+                {bestVsColor.color_label} · {bestVsColor.wins}-{bestVsColor.losses} in{' '}
+                {bestVsColor.games} games
+              </span>
+            </div>
+            <div className="vs-color-card vs-color-card-worst">
+              <span className="vs-color-card-label">Worst Against</span>
+              <span className="vs-color-card-value">
+                <ColorPips colors={worstVsColor.colors} />
+                <span className="vs-color-card-rate">{worstVsColor.win_rate}%</span>
+              </span>
+              <span className="vs-color-card-detail">
+                {worstVsColor.color_label} · {worstVsColor.wins}-{worstVsColor.losses} in{' '}
+                {worstVsColor.games} games
+              </span>
+            </div>
+          </div>
+        ) : null}
         <SortableTable
           caption="Record by opponent color combination"
           columns={deckOpponentColorColumns}
@@ -960,10 +1260,6 @@ export function DeckDetailPage({
           paginationKey={deckName}
           rows={detail.opponent_colors ?? []}
         />
-      </Section>
-
-      <Section id="deck-formats" title="Formats">
-        <FormatsTable caption="Format performance for this deck" rows={detail.formats} />
       </Section>
 
       <Section id="deck-games" title="Recent Games" description="Game length and average turn pace for both players.">

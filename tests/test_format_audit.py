@@ -528,3 +528,67 @@ def test_repair_database_recovers_completed_missing_game_but_not_incomplete_game
         ).fetchone()
     assert game == ("game-1", 180, "win", "Opponent reached 0 life", 1)
     assert player == ("Tapps", "Boros Dragons", 1, 18, 1)
+
+
+def test_is_welcome_deck_format_matches_reported_shapes():
+    from mtga_tracker.format_normalizer import is_welcome_deck_format
+
+    assert is_welcome_deck_format("Welcome Deck Duels HOB")
+    assert is_welcome_deck_format("Welcome_Deck_Duels_HOB")
+    assert is_welcome_deck_format("WelcomeDeckDuels")
+    # "welcome" alone must not be enough — only the welcome-deck stem.
+    assert not is_welcome_deck_format("Welcome_To_Standard_2027")
+    assert not is_welcome_deck_format("Ladder")
+    assert not is_welcome_deck_format(None)
+
+
+def test_post_game_tail_events_are_not_flagged_or_detached(tmp_path):
+    """Events after a game's ended_at with no other containing game are TAILS
+    (Bo3 sideboarding, rank updates, summary lines) — they belong to their
+    game. The old audit counted them as mismatches and the old repair
+    detached them, which is what non-technical users kept reporting."""
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            "INSERT INTO tracker_sessions (id, started_at) VALUES ('session-1', '2026-07-01T12:00:00')"
+        )
+        conn.execute("INSERT INTO matches (id, session_id) VALUES ('match-1', 'session-1')")
+        conn.execute(
+            "INSERT INTO games (id, session_id, match_id, started_at, ended_at, outcome) "
+            "VALUES ('game-1', 'session-1', 'match-1', '2026-07-01T12:00:00', '2026-07-01T12:05:00', 'win')"
+        )
+        # 90 seconds after the game ended: a between-games tail event.
+        conn.execute(
+            "INSERT INTO game_events (session_id, match_id, game_id, event_time, text) "
+            "VALUES ('session-1', 'match-1', 'game-1', '2026-07-01T12:06:30', 'Rank update')"
+        )
+
+    findings = audit_database(db_path)
+    assert not any(f.code == "GAME_EVENT_ASSIGNMENT_MISMATCH" for f in findings)
+
+    result = repair_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT game_id FROM game_events").fetchone()
+    assert result.repaired_count == 0
+    assert row == ("game-1",)  # still attached, not detached to NULL
+
+
+def test_brawl_queue_labels():
+    from mtga_tracker.format_normalizer import normalize_match_format
+
+    cases = {
+        "Play_Brawl_Historic": ("Historic Brawl", True),   # unranked 100-card play queue
+        "Brawl_Ladder": ("Brawl (Ranked)", True),
+        "Play_Brawl": ("Standard Brawl", True),
+        "Historic_Brawl": ("Historic Brawl", True),
+        "Brawl": ("Brawl", True),
+    }
+    for raw, (label, is_brawl) in cases.items():
+        normalized = normalize_match_format(raw)
+        assert normalized.label == label, raw
+        assert normalized.is_brawl is is_brawl, raw
+    # Midweek Magic Brawl stays a Midweek Magic event (untracked), never Brawl.
+    midweek = normalize_match_format("MWM_Brawl_20260811")
+    assert midweek.family == "midweek_magic"
+    assert midweek.is_brawl is False

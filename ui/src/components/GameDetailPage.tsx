@@ -1,3 +1,18 @@
+import {
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Heart,
+  Hourglass,
+  Layers,
+  Mountain,
+  Play,
+  RefreshCw,
+  Repeat,
+  Shield,
+  Target,
+  Timer,
+} from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   fetchGameDetail,
@@ -5,16 +20,18 @@ import {
   type GameDetail,
   type GameDrawnCardRow,
   type GameOpeningHandRow,
+  type GameParticipantStatsRow,
   type OpponentVisibleCardRow,
   type GamePlayedCardRow,
 } from '../api';
 import { saveGameAnnotation } from '../api';
 import { pageTitle } from '../branding';
 import { formatPercent } from '../dashboardData';
-import { formatDateTime, formatDuration, formatNumber, formatTurnDuration, outcomeLabel, outcomeTone } from '../format';
+import { boFormatLabel, formatDateTime, formatDuration, formatNumber, formatTurnDuration, outcomeLabel, outcomeTone } from '../format';
 import { gameRouteHash } from '../routes';
 import { DeckLink } from './DeckLink';
 import { Badge } from './Badge';
+import { bucketCombatGroups, CombatGroupColumns } from './CombatGroupColumns';
 import { CardLink } from './CardLink';
 import { ColorPips } from './ColorPips';
 import { Section } from './Section';
@@ -115,7 +132,30 @@ const deckChangeColumns: Column<DeckChangeCard>[] = [
   },
 ];
 
+/** Combat-stat cell: numbers/strings pass through, null/undefined show a dash. */
+function formatStatCell(value: number | string | null | undefined): string {
+  if (value === null || value === undefined) {
+    return '—';
+  }
+  return String(value);
+}
+
+function formatTurnList(turns: number[] | undefined): string {
+  if (!turns || turns.length === 0) {
+    return '—';
+  }
+  return turns.map((turn) => `T${turn}`).join(', ');
+}
+
 const playedColumns: Column<GamePlayedCardRow>[] = [
+  {
+    key: 'turns_played',
+    header: 'Turn(s)',
+    render: (row) => formatTurnList(row.turns_played),
+    sortValue: (row) =>
+      row.turns_played && row.turns_played.length > 0 ? row.turns_played[0] : Number.POSITIVE_INFINITY,
+    numeric: true,
+  },
   {
     key: 'display_name',
     header: 'Card',
@@ -132,6 +172,13 @@ const playedColumns: Column<GamePlayedCardRow>[] = [
 ];
 
 const opponentCardColumns: Column<OpponentVisibleCardRow>[] = [
+  {
+    key: 'first_seen_turn',
+    header: 'Revealed',
+    render: (row) => (row.first_seen_turn != null ? `T${row.first_seen_turn}` : '—'),
+    sortValue: (row) => row.first_seen_turn ?? Number.POSITIVE_INFINITY,
+    numeric: true,
+  },
   {
     key: 'display_name',
     header: 'Card',
@@ -220,6 +267,11 @@ export function GameDetailPage({
   const [noteStatus, setNoteStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [noteError, setNoteError] = useState<string | null>(null);
   const [, setAnnotationLoaded] = useState(false);
+  // Keyed by game so navigating to another game resets to the first page
+  // without needing an effect.
+  const [drawTurnPageState, setDrawTurnPageState] = useState({ gameId, page: 0 });
+  const drawTurnPage = drawTurnPageState.gameId === gameId ? drawTurnPageState.page : 0;
+  const setDrawTurnPage = (page: number) => setDrawTurnPageState({ gameId, page });
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -372,7 +424,62 @@ export function GameDetailPage({
           : 'Normal';
   const playerStats = detail.participant_stats.find((row) => row.role === 'player');
   const opponentStats = detail.participant_stats.find((row) => row.role === 'opponent');
-  const combatGroups = [
+  /** Display view: folds drawn counts into played cells and derives rates.
+      Opponent drawn counts are hidden information, so their cells stay plain. */
+  const buildStatsView = (
+    stats: GameParticipantStatsRow | undefined,
+    hideDrawn: boolean,
+  ): Record<string, number | string | null | undefined> | null => {
+    if (!stats) {
+      return null;
+    }
+    const withDrawn = (
+      played: number | null | undefined,
+      drawn: number | null | undefined,
+    ): number | string | null | undefined =>
+      // NBSP keeps "(4 drawn)" together; the cell may wrap after the number
+      // in narrow columns instead of overflowing the card.
+      !hideDrawn && drawn != null ? `${played ?? 0} (${drawn}\u00A0drawn)` : played;
+    const lost = stats.lands_lost;
+    const replaced = stats.lands_replaced;
+    return {
+      ...stats,
+      removal_played: withDrawn(stats.removal_played, stats.removal_drawn),
+      wipes_played: withDrawn(stats.wipes_played, stats.wipes_drawn),
+      bounces_played: withDrawn(stats.bounces_played, stats.bounces_drawn),
+      counters_played: withDrawn(stats.counters_played, stats.counters_drawn),
+      lands_unreplaced:
+        lost != null && replaced != null ? Math.max(0, lost - replaced) : null,
+      land_replacement_rate:
+        lost != null && replaced != null && lost > 0
+          ? `${Math.round((100 * replaced) / lost)}%`
+          : null,
+    };
+  };
+  const playerView = buildStatsView(playerStats, false);
+  const opponentView = buildStatsView(opponentStats, true);
+  // Successful counters BY a side are the OTHER side's spells that got
+  // countered; failed = played minus successful (paid-through soft counters,
+  // counter battles, fizzles — the outcome is all that matters).
+  const attachCounterOutcomes = (
+    view: Record<string, number | string | null | undefined> | null,
+    ownStats: GameParticipantStatsRow | undefined,
+    otherStats: GameParticipantStatsRow | undefined,
+  ) => {
+    if (!view) {
+      return;
+    }
+    const successful = otherStats?.spells_countered;
+    view.counters_successful = successful ?? null;
+    const played = ownStats?.counters_played;
+    view.counters_failed =
+      typeof played === 'number' && typeof successful === 'number'
+        ? Math.max(0, played - successful)
+        : null;
+  };
+  attachCounterOutcomes(playerView, playerStats, opponentStats);
+  attachCounterOutcomes(opponentView, opponentStats, playerStats);
+  const combatGroups: { title: string; rows: [string, string][] }[] = [
     {
       title: 'Attack',
       rows: [
@@ -396,6 +503,7 @@ export function GameDetailPage({
         ['Life lost', 'life_lost'],
         ['Self damage', 'self_damage'],
         ['Life gained', 'life_gained'],
+        ['Poison counters added', 'poison_added'],
       ],
     },
     {
@@ -408,7 +516,50 @@ export function GameDetailPage({
         ['Exiled', 'cards_exiled'],
       ],
     },
-  ] as const;
+    {
+      title: 'Removal',
+      rows: [
+        ['Removal played', 'removal_played'],
+        ['Board wipes played', 'wipes_played'],
+        ['Creatures lost to removal', 'creatures_removed'],
+        ['Non-creatures lost to removal', 'noncreatures_removed'],
+      ],
+    },
+    {
+      title: 'Bounce',
+      rows: [
+        ['Bounce cards played', 'bounces_played'],
+        ['Creatures bounced to hand', 'creatures_bounced'],
+        ['Non-creatures bounced to hand', 'noncreatures_bounced'],
+      ],
+    },
+    {
+      title: 'Land Destruction',
+      rows: [
+        ['Lands Destroyed', 'lands_lost'],
+        ['Lands Successfully Replaced', 'lands_replaced'],
+        ['Lands Lost To Destruction', 'lands_unreplaced'],
+        ['Land Replacement Rate', 'land_replacement_rate'],
+      ],
+    },
+    {
+      title: 'Counter Magic',
+      rows: [
+        ['Counters played', 'counters_played'],
+        ['Counters successful', 'counters_successful'],
+        ['Counters failed', 'counters_failed'],
+      ],
+    },
+    {
+      title: 'Tokens',
+      rows: [
+        ['Created', 'tokens_created'],
+        ['Destroyed', 'tokens_destroyed'],
+        ['Sacrificed', 'tokens_sacrificed'],
+        ['Exiled', 'tokens_exiled'],
+      ],
+    },
+  ];
   const mulliganHands = detail.mulligan_hands ?? [];
   async function saveAnnotation() {
     setNoteStatus('saving');
@@ -444,6 +595,24 @@ export function GameDetailPage({
   const drawsByTurn = Array.from(drawsByTurnMap.entries())
     .sort(([a], [b]) => a - b)
     .map(([turn, counts]) => ({ turn, ...counts }));
+  // Long games (hello, Brawl) page the draws-by-turn strip and table together,
+  // ten turns at a time.
+  const DRAW_TURNS_PER_PAGE = 10;
+  const drawTurnPageCount = Math.max(1, Math.ceil(drawsByTurn.length / DRAW_TURNS_PER_PAGE));
+  const activeDrawTurnPage = Math.min(drawTurnPage, drawTurnPageCount - 1);
+  const drawTurnsPaged = drawTurnPageCount > 1;
+  const visibleDrawTurnRows = drawTurnsPaged
+    ? drawsByTurn.slice(
+        activeDrawTurnPage * DRAW_TURNS_PER_PAGE,
+        (activeDrawTurnPage + 1) * DRAW_TURNS_PER_PAGE,
+      )
+    : drawsByTurn;
+  const visibleDrawTurns = new Set(visibleDrawTurnRows.map((row) => row.turn));
+  const visibleDrawnRows = drawTurnsPaged
+    ? detail.drawn.filter(
+        (row) => row.turn_number === null || row.turn_number === undefined || visibleDrawTurns.has(row.turn_number),
+      )
+    : detail.drawn;
   const timelineReturnHash = gameRouteHash(gameId, backHref, 'game-timeline');
   // AI-identified archetype (dominant colors + strategy) overrides the plain
   // color label; the pips still show every color actually seen.
@@ -465,12 +634,16 @@ export function GameDetailPage({
     0,
   );
   const metricCards = [
-    { label: 'Play / Draw', value: playDraw },
-    { label: 'Opponent Deck Type', value: opponentDeckType },
-    { label: 'Mulligans', value: formatNumber(detail.player.mulligans) },
-    { label: 'Turns', value: formatNumber(detail.game.total_turns) },
-    { label: 'Duration', value: formatDuration(detail.game.duration_seconds) },
-    { label: 'Final Life', value: `${formatNumber(detail.player.ending_life)} / ${formatNumber(detail.opponent.ending_life)}` },
+    { label: 'Play / Draw', value: playDraw, icon: <Play /> },
+    { label: 'Opponent Deck Type', value: opponentDeckType, icon: <Shield /> },
+    { label: 'Mulligans', value: formatNumber(detail.player.mulligans), icon: <RefreshCw /> },
+    { label: 'Turns', value: formatNumber(detail.game.total_turns), icon: <Repeat /> },
+    { label: 'Duration', value: formatDuration(detail.game.duration_seconds), icon: <Timer /> },
+    {
+      label: 'Final Life',
+      value: `${formatNumber(detail.player.ending_life)} / ${formatNumber(detail.opponent.ending_life)}`,
+      icon: <Heart />,
+    },
   ];
   return (
     <>
@@ -495,9 +668,9 @@ export function GameDetailPage({
             </div>
             <p>
               {detail.player.deck_name ? <DeckLink deckName={detail.player.deck_name} /> : 'Unknown deck'} ·{' '}
-              {detail.game.format_label}
+              {boFormatLabel(detail.game.format_label)}
               {detail.game.best_of && !detail.game.format_label.includes('Best-of')
-                ? ` · Best-of-${detail.game.best_of}`
+                ? ` · BO${detail.game.best_of}`
                 : ''}
               {(detail.game.game_number ?? 1) > 1 ? ` · Game ${detail.game.game_number}` : ''}
             </p>
@@ -526,7 +699,7 @@ export function GameDetailPage({
       </div>
 
       {matchGames.length > 0 ? (
-        <div className="match-strip" aria-label="Best-of-3 match overview">
+        <div className="match-strip" aria-label="BO3 match overview">
           <div className="match-strip-head">
             <Badge tone={matchOutcome === 'win' ? 'win' : matchOutcome === 'loss' ? 'loss' : 'draw'}>
               Match {matchOutcome === 'win' ? 'Win' : matchOutcome === 'loss' ? 'Loss' : 'Split'}
@@ -535,7 +708,7 @@ export function GameDetailPage({
               {matchWins}–{matchLosses}
             </span>
             <span className="match-strip-desc">
-              Best-of-{detail.game.best_of ?? 3}
+              BO{detail.game.best_of ?? 3}
               {detail.opponent.display_name ? (
                 <>
                   {' '}
@@ -576,7 +749,7 @@ export function GameDetailPage({
 
       <section className="metric-grid metric-grid-deck" aria-label="Game metrics">
         {metricCards.map((metric) => (
-          <MetricCard key={metric.label} label={metric.label} value={metric.value} />
+          <MetricCard key={metric.label} icon={metric.icon} label={metric.label} value={metric.value} />
         ))}
       </section>
 
@@ -586,10 +759,10 @@ export function GameDetailPage({
         description="Average pace stays here. Individual turn durations are shown with each turn in the Timeline; estimated values come from historical turn headers."
       >
         <section className="metric-grid metric-grid-deck" aria-label="Turn timing summary">
-          <MetricCard label="Your Turn Time" value={formatTurnDuration(detail.turn_timing.player.total_seconds)} />
-          <MetricCard label="Your Avg Turn" value={formatTurnDuration(detail.turn_timing.player.avg_seconds)} />
-          <MetricCard label="Opponent Turn Time" value={formatTurnDuration(detail.turn_timing.opponent.total_seconds)} />
-          <MetricCard label="Opponent Avg Turn" value={formatTurnDuration(detail.turn_timing.opponent.avg_seconds)} />
+          <MetricCard icon={<Timer />} label="Your Turn Time" value={formatTurnDuration(detail.turn_timing.player.total_seconds)} />
+          <MetricCard icon={<Clock />} label="Your Avg Turn" value={formatTurnDuration(detail.turn_timing.player.avg_seconds)} />
+          <MetricCard icon={<Hourglass />} label="Opponent Turn Time" value={formatTurnDuration(detail.turn_timing.opponent.total_seconds)} />
+          <MetricCard icon={<Clock />} label="Opponent Avg Turn" value={formatTurnDuration(detail.turn_timing.opponent.avg_seconds)} />
         </section>
       </Section>
 
@@ -599,6 +772,7 @@ export function GameDetailPage({
         description="Flood tracks excess lands and concentrated land streaks. Mana screw tracks statistically low land access and three or more known nonland draws while stuck on one or two lands."
       >
         <section className="metric-grid metric-grid-deck" aria-label="Game draw quality">
+          {/* No icons here: nine cards per row leave no room — values would wrap. */}
           <MetricCard label="Total Cards Seen" value={formatNumber(totalCardsSeen)} />
           <MetricCard label="Lands Seen" value={`${landsSeen} (${formatWholePercent(landSeenPct)})`} />
           <MetricCard label="Total Cards Drawn" value={formatNumber(detail.draw_quality.total_draws)} />
@@ -642,31 +816,18 @@ export function GameDetailPage({
         description="Per-seat combat, damage, and resource totals recorded for this game."
       >
         {detail.participant_stats.length > 0 ? (
-          <div className="combat-groups">
-            {combatGroups.map((group) => (
-              <div key={group.title} className="combat-group">
-                <table className="combat-group-table">
-                  <caption className="visually-hidden">{group.title} stats by seat</caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">{group.title}</th>
-                      <th scope="col" className="numeric">You</th>
-                      <th scope="col" className="numeric">Opp</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {group.rows.map(([label, key]) => (
-                      <tr key={key}>
-                        <td>{label}</td>
-                        <td className="numeric">{formatNumber(playerStats ? playerStats[key] : null)}</td>
-                        <td className="numeric">{formatNumber(opponentStats ? opponentStats[key] : null)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ))}
-          </div>
+          <CombatGroupColumns
+            columns={bucketCombatGroups(
+              combatGroups.map((group) => ({
+                title: group.title,
+                rows: group.rows.map(([label, key]): [string, string, string] => [
+                  label,
+                  formatStatCell(playerView ? playerView[key] : null),
+                  formatStatCell(opponentView ? opponentView[key] : null),
+                ]),
+              })),
+            )}
+          />
         ) : (
           <p className="empty-state">No combat telemetry recorded for this game.</p>
         )}
@@ -688,6 +849,7 @@ export function GameDetailPage({
         >
           <section className="metric-grid metric-grid-deck" aria-label="Sideboarded deck numbers">
             <MetricCard
+              icon={<Layers />}
               label="Deck Total"
               value={`${detail.deck_changes.deck_total}`}
               detail={
@@ -697,6 +859,7 @@ export function GameDetailPage({
               }
             />
             <MetricCard
+              icon={<Mountain />}
               label="Lands"
               value={`${detail.deck_changes.lands}`}
               detail={
@@ -706,6 +869,7 @@ export function GameDetailPage({
               }
             />
             <MetricCard
+              icon={<Target />}
               label="Land Density"
               value={
                 detail.deck_changes.deck_total
@@ -797,9 +961,9 @@ export function GameDetailPage({
       </Section>
 
       <Section id="game-draws" title="Drawn Cards">
-        {drawsByTurn.length > 0 ? (
+        {visibleDrawTurnRows.length > 0 ? (
           <div className="draws-by-turn" aria-label="Draws by turn">
-            {drawsByTurn.map(({ turn, lands, nonlands }) => (
+            {visibleDrawTurnRows.map(({ turn, lands, nonlands }) => (
               <div key={turn} className="draws-by-turn-cell">
                 <span className="draws-by-turn-turn">T{turn}</span>
                 <span className="draws-by-turn-counts">
@@ -810,11 +974,42 @@ export function GameDetailPage({
             ))}
           </div>
         ) : null}
+        {drawTurnsPaged ? (
+          <nav className="table-pagination" aria-label="Drawn cards turn pagination">
+            <p>
+              Turns {visibleDrawTurnRows[0]?.turn}–{visibleDrawTurnRows[visibleDrawTurnRows.length - 1]?.turn} of{' '}
+              {drawsByTurn[drawsByTurn.length - 1]?.turn}
+            </p>
+            <div className="table-pagination-controls">
+              <button
+                type="button"
+                aria-label="Previous turns"
+                title="Previous turns"
+                disabled={activeDrawTurnPage === 0}
+                onClick={() => setDrawTurnPage(activeDrawTurnPage - 1)}
+              >
+                <ChevronLeft aria-hidden="true" />
+              </button>
+              <span>
+                Page {activeDrawTurnPage + 1} of {drawTurnPageCount}
+              </span>
+              <button
+                type="button"
+                aria-label="Next turns"
+                title="Next turns"
+                disabled={activeDrawTurnPage === drawTurnPageCount - 1}
+                onClick={() => setDrawTurnPage(activeDrawTurnPage + 1)}
+              >
+                <ChevronRight aria-hidden="true" />
+              </button>
+            </div>
+          </nav>
+        ) : null}
         <SortableTable
           caption="Drawn cards"
           columns={drawnColumns}
           getRowKey={(row) => `${row.draw_position}-${row.display_name}`}
-          rows={detail.drawn}
+          rows={visibleDrawnRows}
         />
       </Section>
 

@@ -1047,7 +1047,12 @@ def test_game_detail_reports_header_cards_and_timeline(tmp_path):
         },
     ]
     assert detail["cards_played"] == [
-        {"display_name": "Mouse Mentor", "type_category": "Creature", "played_count": 2}
+        {
+            "display_name": "Mouse Mentor",
+            "type_category": "Creature",
+            "played_count": 2,
+            "turns_played": [],
+        }
     ]
     assert detail["opponent_cards"] == [
         {
@@ -1058,6 +1063,7 @@ def test_game_detail_reports_header_cards_and_timeline(tmp_path):
             "discarded_count": 1,
             "milled_count": 0,
             "exiled_count": 1,
+            "first_seen_turn": None,
         }
     ]
     assert [row["event_type"] for row in detail["timeline"]] == ["turn", "damage"]
@@ -1096,6 +1102,95 @@ def test_game_detail_reports_header_cards_and_timeline(tmp_path):
         {"turn_number": 1, "player_life": 20, "opponent_life": 20},
         {"turn_number": 4, "player_life": 12, "opponent_life": 0},
     ]
+
+
+def test_game_detail_reports_played_and_revealed_turns(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category,
+                played_count, drawn_count, milled_count
+            )
+            values (?, ?, NULL, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("game-1", "player-1", "Mouse Mentor (Creature 2/1)", "Creature", 2, 0, 0),
+                ("game-1", "player-1", "Mountain (Land)", "Land", 1, 0, 0),
+                ("game-1", "opponent-1", "Lightning Helix (Instant)", "Instant", 2, 0, 0),
+                # Never cast: revealed only through a mill.
+                ("game-1", "opponent-1", "Duress (Sorcery)", "Sorcery", 0, 0, 1),
+            ],
+        )
+        conn.executemany(
+            """
+            insert into game_events (
+                session_id, match_id, game_id, event_time, elapsed_seconds, turn_number,
+                phase, step, actor_role, event_type, text, player_life, opponent_life
+            )
+            values ('session-1', 'match-1', 'game-1', ?, ?, ?, NULL, NULL, ?, ?, ?, NULL, NULL)
+            """,
+            [
+                ("2026-06-04T00:01:05", 5, 1, "player", "land", "[0:05] You: played [Mountain (Land)]"),
+                (
+                    "2026-06-04T00:01:20",
+                    20,
+                    3,
+                    "player",
+                    "cast",
+                    "[0:20] You: cast [Mouse Mentor (Creature 2/1)]",
+                ),
+                (
+                    "2026-06-04T00:01:40",
+                    40,
+                    4,
+                    "opponent",
+                    "cast",
+                    "[0:40] Opponent: cast [Lightning Helix (Instant)] -> [Mouse Mentor (2/1)]",
+                ),
+                (
+                    "2026-06-04T00:01:55",
+                    55,
+                    5,
+                    "player",
+                    "cast",
+                    "[0:55] You: cast [Mouse Mentor (Creature 2/1)]",
+                ),
+                (
+                    "2026-06-04T00:02:05",
+                    65,
+                    6,
+                    "opponent",
+                    "cast",
+                    "[1:05] Opponent: cast [Lightning Helix (Instant)]",
+                ),
+                (
+                    "2026-06-04T00:02:15",
+                    75,
+                    7,
+                    "opponent",
+                    "zone",
+                    "[1:15] Opponent: [Duress] was milled",
+                ),
+            ],
+        )
+
+    detail = game_detail(db_path, "game-1")
+
+    played = {row["display_name"]: row for row in detail["cards_played"]}
+    # Every cast turn is listed, one entry per cast.
+    assert played["Mouse Mentor"]["turns_played"] == [3, 5]
+    assert played["Mountain"]["turns_played"] == [1]
+
+    opponent = {row["display_name"]: row for row in detail["opponent_cards"]}
+    # First reveal = the first cast, even though it was cast twice...
+    assert opponent["Lightning Helix"]["first_seen_turn"] == 4
+    # ...and zone events (mill/discard/exile) count as reveals too.
+    assert opponent["Duress"]["first_seen_turn"] == 7
+    # The opponent's Helix targeting Mouse Mentor must NOT credit the player's
+    # Mouse Mentor with a turn-4 play (only the event's primary card counts).
+    assert played["Mouse Mentor"]["turns_played"] == [3, 5]
 
 
 def test_opponent_detail_reports_head_to_head_history(tmp_path):
@@ -1964,6 +2059,122 @@ def test_dashboard_snapshot_reports_mana_readiness(tmp_path):
     assert two["behind_win_rate"] == 100.0
 
 
+def test_dashboard_snapshot_counts_bo3_matches_once_and_splits_ranked(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            "insert into matches (id, session_id, format, queue, event_name, best_of) values (?, 'session-1', ?, ?, ?, ?)",
+            [
+                ("match-bo3", "Traditional_Ladder", "Traditional_Ladder", "Traditional_Ladder", 3),
+                ("match-brawl", "Brawl_Ladder", "Brawl_Ladder", "Brawl_Ladder", 1),
+            ],
+        )
+        games = [
+            # Ranked Bo3 that went 2-1: one ranked match win, not three results.
+            ("game-b1", "match-bo3", "2026-06-05T00:01:00", "win"),
+            ("game-b2", "match-bo3", "2026-06-05T00:10:00", "loss"),
+            ("game-b3", "match-bo3", "2026-06-05T00:20:00", "win"),
+            # Ranked Brawl: counts in the combined row, not the constructed ranked row.
+            ("game-br", "match-brawl", "2026-06-05T01:00:00", "win"),
+        ]
+        for game_id, match_id, started, outcome in games:
+            conn.execute(
+                """
+                insert into games (id, session_id, match_id, game_number, started_at, outcome,
+                                   duration_seconds, total_turns, player_turns, opponent_turns)
+                values (?, 'session-1', ?, 1, ?, ?, 300, 10, 5, 5)
+                """,
+                (game_id, match_id, started, outcome),
+            )
+            conn.execute(
+                """
+                insert into participants (id, game_id, seat_id, role, display_name, deck_name,
+                                          went_first, mulligans, opening_hand_size, starting_life, ending_life)
+                values (?, ?, 1, 'player', 'Tapps', 'Boros Mouse', 1, 0, 7, 20, 12)
+                """,
+                (f"p-{game_id}", game_id),
+            )
+
+    snapshot = dashboard_snapshot(db_path)
+
+    # Combined: 2 fixture Bo1 games (1-1) + Bo3 match (one win) + brawl win.
+    match_summary = snapshot["match_summary"]
+    assert match_summary["matches"] == 4
+    assert match_summary["wins"] == 3
+    assert match_summary["losses"] == 1
+    assert match_summary["win_rate"] == 75.0
+    # win, loss (fixture) then Bo3 win + brawl win back-to-back.
+    assert match_summary["longest_win"] == 2
+    assert match_summary["longest_loss"] == 1
+
+    # Constructed ranked only: just the Bo3 ladder match; Brawl (Ranked) excluded.
+    ranked = snapshot["ranked_summary"]
+    assert ranked == {
+        "matches": 1,
+        "wins": 1,
+        "losses": 0,
+        "win_rate": 100.0,
+        "longest_win": 1,
+        "longest_loss": 0,
+    }
+
+
+def test_dashboard_snapshot_splits_ranked_stats_by_season(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "insert into matches (id, session_id, format, queue, event_name, best_of) "
+            "values ('match-l1', 'session-1', 'Ladder', 'Ladder', 'Ladder', 1)"
+        )
+        games = [
+            # Season 92: one win (fixture itself carries seasons 90/91).
+            ("game-s5", "2026-07-10T10:00:00", "win"),
+            # Season 93: a win and a loss.
+            ("game-s6a", "2026-08-10T10:00:00", "win"),
+            ("game-s6b", "2026-08-11T10:00:00", "loss"),
+        ]
+        for game_id, started, outcome in games:
+            conn.execute(
+                """
+                insert into games (id, session_id, match_id, game_number, started_at, outcome,
+                                   duration_seconds, total_turns, player_turns, opponent_turns)
+                values (?, 'session-1', 'match-l1', 1, ?, ?, 300, 10, 5, 5)
+                """,
+                (game_id, started, outcome),
+            )
+            conn.execute(
+                """
+                insert into participants (id, game_id, seat_id, role, display_name, deck_name,
+                                          went_first, mulligans, opening_hand_size, starting_life, ending_life)
+                values (?, ?, 1, 'player', 'Tapps', 'Boros Mouse', 1, 0, 7, 20, 12)
+                """,
+                (f"p-{game_id}", game_id),
+            )
+        conn.executemany(
+            """
+            insert into rank_snapshots (session_id, game_id, captured_at, season_ordinal,
+                                        rank_format, rank_class, rank_level, rank_step, rank_steps)
+            values ('session-1', ?, ?, ?, 'constructed', 'Gold', 4, 2, 6)
+            """,
+            [
+                ("game-s5", "2026-07-10T10:05:00", 92),
+                ("game-s6a", "2026-08-10T10:05:00", 93),
+                ("game-s6b", "2026-08-11T10:05:00", 93),
+            ],
+        )
+
+    latest = dashboard_snapshot(db_path)
+    # Lifetime spans both seasons; the season row defaults to the latest (93).
+    assert latest["ranked_summary"]["matches"] == 3
+    season6 = latest["ranked_season_summary"]
+    assert season6["season_ordinal"] == 93
+    assert (season6["wins"], season6["losses"]) == (1, 1)
+
+    season5 = dashboard_snapshot(db_path, season=92)["ranked_season_summary"]
+    assert season5["season_ordinal"] == 92
+    assert (season5["wins"], season5["losses"]) == (1, 0)
+
+
 def test_card_detail_reports_multiplicity(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
     with sqlite3.connect(db_path) as conn:
@@ -1987,6 +2198,56 @@ def test_card_detail_reports_multiplicity(tmp_path):
     assert buckets[1]["pct_of_games"] == 50.0
     assert buckets[1]["win_rate"] == 100.0
     assert buckets[1]["expected_pct_at_least"] is not None
+    # Buckets 2–4+ are always emitted (even at zero games) so the expected
+    # percentages for rare multiples stay visible.
+    for key in (2, 3, 4):
+        assert buckets[key]["games"] == 0
+        assert buckets[key]["win_rate"] is None
+        assert buckets[key]["expected_pct_at_least"] is not None
+    assert buckets[4]["label"] == "4+"
+
+
+def test_card_detail_reports_opponent_multiplicity(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category,
+                played_count, drawn_count
+            ) values (?, ?, NULL, 'Lightning Helix', 'Instant', ?, ?)
+            """,
+            [
+                # game-1 (a win for the player): opponent resolved it 3 times.
+                ("game-1", "opponent-1", 3, 0),
+                # game-2 (a loss): one copy, visible as both a draw and a cast
+                # (max, not sum, so it still counts as one copy).
+                ("game-2", "opponent-2", 1, 1),
+            ],
+        )
+
+    detail = card_detail(db_path, "Lightning Helix")
+
+    opp = detail["opponent_multiplicity"]
+    assert opp["games"] == 2
+    buckets = {row["copies_seen"]: row for row in opp["buckets"]}
+    assert set(buckets) == {1, 2, 3, 4}
+    assert buckets[3]["games"] == 1
+    assert buckets[3]["win_rate"] == 100.0
+    assert buckets[3]["pct_at_least"] == 50.0
+    assert buckets[1]["games"] == 1
+    assert buckets[1]["win_rate"] == 0.0
+    assert buckets[1]["pct_at_least"] == 100.0
+    assert buckets[2]["games"] == 0
+    assert buckets[2]["win_rate"] is None
+    # At-least is cumulative over higher buckets even through empty ones.
+    assert buckets[2]["pct_at_least"] == 50.0
+    assert buckets[4]["games"] == 0
+    assert buckets[4]["label"] == "4+"
+    # No decklist knowledge for opponents: expectation is always absent.
+    assert all(row["expected_pct_at_least"] is None for row in opp["buckets"])
+    # Player-side multiplicity has no data for this card.
+    assert detail["multiplicity"]["games"] == 0
 
 
 def test_dashboard_snapshot_reports_schedule_fatigue_and_streaks(tmp_path):
@@ -2012,6 +2273,19 @@ def test_dashboard_snapshot_reports_schedule_fatigue_and_streaks(tmp_path):
 
     reasons = {row["reason"]: row for row in snapshot["outcome_reasons"]}
     assert reasons["opponent_conceded"]["wins"] == 1
+
+    # Bo1 games count individually at match level too.
+    match_summary = snapshot["match_summary"]
+    assert match_summary == {
+        "matches": 2,
+        "wins": 1,
+        "losses": 1,
+        "win_rate": 50.0,
+        "longest_win": 1,
+        "longest_loss": 1,
+    }
+    # The fixture's Play queue is unranked, so the ranked slice is empty.
+    assert snapshot["ranked_summary"]["matches"] == 0
 
     opener = {row["lands"]: row for row in snapshot["opener_lands"]}
     # game-1 kept a 1-land opener and won; game-2 has no recorded opener rows
@@ -2391,3 +2665,113 @@ def test_game_detail_deck_changes_compare_against_match_original(tmp_path):
     assert changes["removed"] == []
     # Game 1 itself has no changes section.
     assert game_detail(db_path, "game-1")["deck_changes"] is None
+
+
+def test_deck_detail_interaction_profile_and_mode_splits(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        # game-1 has full interaction telemetry; game-2 predates it (all NULL).
+        conn.execute(
+            """
+            update game_participant_stats set
+              removal_played = 4, removal_drawn = 6, wipes_played = 1, wipes_drawn = 1,
+              bounces_played = 2, bounces_drawn = 3, counters_played = 3, counters_drawn = 4,
+              creatures_removed = 2, noncreatures_removed = 1,
+              creatures_bounced = 1, noncreatures_bounced = 0,
+              lands_lost = 2, lands_replaced = 1,
+              tokens_created = 5, tokens_destroyed = 2, tokens_sacrificed = 1, tokens_exiled = 0
+            where game_id = 'game-1' and participant_id = 'player-1'
+            """
+        )
+        conn.execute(
+            "update game_participant_stats set spells_countered = 2 "
+            "where game_id = 'game-1' and participant_id = 'opponent-1'"
+        )
+        # A ranked Bo1 match, a Bo3 match, a Competitive Brawl match, and a
+        # draft match (excluded from every split) for the same deck.
+        extra = [
+            ("match-l", "Ladder", 1, "game-l", "win"),
+            ("match-b3", "Constructed_BestOf3", 3, "game-b3", "loss"),
+            ("match-cb", "Brawl_Ladder", 1, "game-cb", "win"),
+            ("match-d", "PremierDraft_MSH_20260623", 1, "game-d", "win"),
+        ]
+        for match_id, fmt, best_of, game_id, outcome in extra:
+            conn.execute(
+                "insert into matches (id, session_id, format, queue, event_name, best_of) "
+                "values (?, 'session-1', ?, ?, ?, ?)",
+                (match_id, fmt, fmt, fmt, best_of),
+            )
+            conn.execute(
+                "insert into games (id, session_id, match_id, game_number, started_at, outcome) "
+                "values (?, 'session-1', ?, 1, '2026-06-05T00:01:00', ?)",
+                (game_id, match_id, outcome),
+            )
+            conn.execute(
+                "insert into participants (id, game_id, seat_id, role, deck_name) "
+                "values (?, ?, 1, 'player', 'Boros Mouse')",
+                (f"{game_id}-p", game_id),
+            )
+
+    detail = deck_detail(db_path, "Boros Mouse")
+
+    interaction = detail["interaction_profile"]
+    # Only game-1 carries telemetry; game-2's NULLs never dilute the averages.
+    assert interaction["games_tracked"] == 1
+    you = interaction["player"]
+    assert you["removal_played"] == 4
+    assert you["removal_drawn"] == 6
+    assert you["counters_landed"] == 2  # opponent's spells_countered
+    assert you["counters_failed"] == 1  # 3 played - 2 landed
+    assert you["creatures_removed"] == 2
+    assert you["lands_lost"] == 2
+    assert you["lands_unreplaced"] == 1  # 2 destroyed - 1 replaced
+    assert you["land_replacement_pct"] == 50
+    assert you["tokens_created"] == 5
+    assert you["tokens_destroyed"] == 2
+    opp = interaction["opponent"]
+    assert opp["removal_played"] is None  # opponent row never got the columns
+    assert opp["counters_landed"] is None  # player spells_countered is NULL
+
+    splits = detail["mode_splits"]
+    standard = splits["standard"]
+    # Fixture Play games: 1-1 unranked Bo1; Ladder adds a ranked Bo1 win;
+    # Constructed_BestOf3 adds an unranked Bo3 loss. Draft contributes nothing.
+    assert standard["ranked"]["matches"] == 1 and standard["ranked"]["wins"] == 1
+    assert standard["unranked"]["matches"] == 3
+    assert standard["unranked"]["wins"] == 1 and standard["unranked"]["losses"] == 2
+    assert standard["bo1"]["matches"] == 3 and standard["bo1"]["wins"] == 2
+    assert standard["bo3"]["matches"] == 1 and standard["bo3"]["losses"] == 1
+    brawl = splits["brawl"]
+    assert brawl["competitive"]["matches"] == 1 and brawl["competitive"]["wins"] == 1
+    assert brawl["casual"] is None
+
+
+def test_deck_detail_mode_splits_absent_for_nonstandard_decks(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        # Re-point the deck's only matches at a draft queue.
+        conn.execute(
+            "update matches set format = 'PremierDraft_MSH_20260623', "
+            "queue = 'PremierDraft_MSH_20260623' where id = 'match-1'"
+        )
+
+    detail = deck_detail(db_path, "Boros Mouse")
+    assert detail["mode_splits"] is None
+    assert detail["interaction_profile"] is None  # fixture rows have NULL interaction stats
+
+
+def test_deck_detail_turn_timing_and_draw_quality_averages(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    detail = deck_detail(db_path, "Boros Mouse")
+
+    timing = detail["turn_timing"]
+    # Fixture turns: player seat 1 -> 40+20 (game-1) + 25 (game-2) = 85 over 3
+    # turns in 2 games; opponent seat 2 -> 30 + 45+35 = 110 over 3 turns.
+    assert timing["player"]["turns_timed"] == 3
+    assert timing["player"]["avg_total_seconds"] == 42.5
+    assert timing["player"]["avg_turn_seconds"] == 28.3
+    assert timing["opponent"]["avg_total_seconds"] == 55.0
+
+    profile = detail["land_profile"]
+    assert profile["avg_cards_seen"] is not None
+    assert profile["classified_games"] >= 1

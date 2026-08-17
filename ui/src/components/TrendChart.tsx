@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { TrendRow } from '../api';
-import { rollingWinRates, TREND_WINDOW } from '../trend';
+import { rollingWinRates } from '../trend';
 
 const VIEW_WIDTH = 600;
 const VIEW_HEIGHT = 120;
@@ -46,12 +46,6 @@ export function TrendChart({ rows }: { rows: TrendRow[] }) {
 
   return (
     <figure className="trend-chart" aria-label="Rolling win rate trend">
-      <div className="trend-meta">
-        <span>
-          Rolling win rate <em>(last {Math.min(TREND_WINDOW, points.length)} games)</em>
-        </span>
-        <strong>{latest.rate.toFixed(0)}%</strong>
-      </div>
       <svg
         viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
         preserveAspectRatio="none"
@@ -91,25 +85,6 @@ export function TrendChart({ rows }: { rows: TrendRow[] }) {
         <span>50% guide</span>
         <span>{formatDate(latest.started_at)}</span>
       </div>
-      <details className="chart-data-details">
-        <summary>View as table</summary>
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Date</th>
-              <th scope="col">Rolling win rate</th>
-            </tr>
-          </thead>
-          <tbody>
-            {points.map((point, index) => (
-              <tr key={`${point.started_at}-${index}`}>
-                <td>{formatDate(point.started_at)}</td>
-                <td>{point.rate.toFixed(0)}%</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </details>
     </figure>
   );
 }

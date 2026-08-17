@@ -371,40 +371,38 @@ a {
   color: var(--danger);
 }
 
+/* Compact, box-less filter row: labels sit left of their controls. */
 .filter-bar {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
-  margin-bottom: 18px;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel);
+  gap: 8px 16px;
+  margin-bottom: 12px;
 }
 
-/* Inside a section box (All Games), inset the filter panel from the edges. */
+/* Inside a section box (All Games), inset the filter row from the edges. */
 .dashboard-section .filter-bar {
-  margin: 8px 16px 14px;
+  margin: 10px 16px 12px;
 }
 
-.filter-bar label {
-  display: grid;
-  gap: 5px;
-  min-width: 170px;
+.filter-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
-.filter-bar label span {
+.filter-field-label {
   color: var(--muted);
-  font-size: 0.74rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .filter-bar select,
-.filter-bar input[type="date"] {
-  min-height: 36px;
+.filter-bar input[type="date"],
+.deck-select-trigger {
+  min-height: 34px;
   max-width: 260px;
   padding: 0 10px;
   border: 1px solid var(--border);
@@ -416,8 +414,102 @@ a {
 .filter-bar select:hover,
 .filter-bar select:focus-visible,
 .filter-bar input[type="date"]:hover,
-.filter-bar input[type="date"]:focus-visible {
+.filter-bar input[type="date"]:focus-visible,
+.deck-select-trigger:hover,
+.deck-select-trigger:focus-visible {
   border-color: var(--accent);
+}
+
+/* Searchable deck dropdown. */
+.deck-select {
+  position: relative;
+}
+
+.deck-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 160px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.deck-select-value {
+  overflow: hidden;
+  max-width: 210px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deck-select-caret {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.deck-select-popup {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  display: grid;
+  gap: 6px;
+  min-width: 250px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  box-shadow: var(--preview-shadow);
+}
+
+.deck-select-popup input {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.deck-select-popup input:focus-visible {
+  border-color: var(--accent);
+}
+
+.deck-select-popup ul {
+  overflow-y: auto;
+  max-height: 300px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.deck-select-option {
+  display: block;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.deck-select-option:hover,
+.deck-select-option:focus-visible {
+  background: var(--hover-tint);
+}
+
+.deck-select-option-active {
+  background: var(--nav-active-bg);
+  font-weight: 600;
+}
+
+.deck-select-empty {
+  padding: 8px 9px;
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 .filter-clear {
@@ -446,6 +538,7 @@ a {
 
 /* Best Deck: slim full-width strip between the metric cards and the analytics panels. */
 .best-deck-bar {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -455,6 +548,20 @@ a {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel);
+  overflow: hidden;
+}
+
+/* Signature card art fading in from the right edge, mockup-style. */
+.best-deck-art {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: min(42%, 420px);
+  background-position: center 30%;
+  background-size: cover;
+  opacity: 0.5;
+  pointer-events: none;
+  mask-image: linear-gradient(to right, transparent, black 60%);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 60%);
 }
 
 .best-deck-label {
@@ -493,16 +600,23 @@ a.best-deck-name:focus-visible {
   white-space: nowrap;
 }
 
+/* The whole overview — metric cards down through How Games End — lives in
+   one bordered container, mockup-style. */
 .overview-section {
   min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
 }
 
 .overview-analytics {
   display: grid;
-  gap: 20px;
-  margin-top: 18px;
+  gap: 10px;
+  margin-top: 8px;
   border-top: 1px solid var(--border);
-  padding-top: 18px;
+  padding-top: 8px;
 }
 
 /* Subgroups live inside the section box now — no nested boxes, rules only. */
@@ -524,7 +638,7 @@ a.best-deck-name:focus-visible {
     border-top: 0;
     padding-top: 0;
     border-left: 1px solid var(--border);
-    padding-left: 20px;
+    padding-left: 10px;
   }
 }
 
@@ -623,7 +737,8 @@ a.best-deck-name:focus-visible {
 
 .metric-card strong {
   display: block;
-  overflow-wrap: anywhere;
+  /* Wrap between words when cramped, but never split a word ("Flo od"). */
+  overflow-wrap: break-word;
   color: var(--text);
   font-size: 1.35rem;
   line-height: 1.15;
@@ -634,6 +749,66 @@ a.best-deck-name:focus-visible {
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
   line-height: 1.35;
+}
+
+/* Text block left, big icon right, both vertically centered (mockup style).
+   Cards without an icon collapse the icon column and look unchanged. */
+.metric-card {
+  grid-template-areas:
+    'label icon'
+    'value icon'
+    'detail icon';
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-content: center;
+  column-gap: 14px;
+  padding: 14px 18px;
+}
+
+.metric-card > span:not(.metric-card-icon) {
+  grid-area: label;
+}
+
+.metric-card strong,
+.metric-card .metric-link {
+  grid-area: value;
+}
+
+.metric-card-detail {
+  grid-area: detail;
+}
+
+.metric-card-icon {
+  grid-area: icon;
+  align-self: center;
+  display: inline-flex;
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+.metric-card-icon svg {
+  width: 32px;
+  height: 32px;
+}
+
+
+.metric-card-win {
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+  background: color-mix(in srgb, var(--success) 7%, var(--panel));
+}
+
+.metric-card-win strong,
+.metric-card-win .metric-card-icon {
+  color: var(--success);
+}
+
+.metric-card-loss {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  background: var(--card-danger-bg);
+}
+
+.metric-card-loss strong,
+.metric-card-loss .metric-card-icon {
+  color: var(--danger);
 }
 
 .metric-card-danger {
@@ -666,7 +841,7 @@ a.best-deck-name:focus-visible {
 .dashboard-section {
   min-width: 0;
   overflow: hidden;
-  margin-top: 18px;
+  margin-top: 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel);
@@ -678,7 +853,7 @@ a.best-deck-name:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 16px 16px 0;
+  padding: 12px 12px 0;
 }
 
 .dashboard-section-collapsed .section-heading {
@@ -852,7 +1027,7 @@ a.best-deck-name:focus-visible {
 .table-wrap {
   width: 100%;
   overflow-x: auto;
-  padding: 8px 12px 12px;
+  padding: 4px 10px 8px;
 }
 
 .table-container {
@@ -954,10 +1129,17 @@ caption {
 
 th,
 td {
-  padding: 8px 9px;
+  padding: 6px 9px;
   border-bottom: 1px solid var(--border);
   text-align: left;
   vertical-align: middle;
+}
+
+/* Header bars run slimmer than data rows to save vertical room. */
+thead th,
+.outcome-reason-grid .outcome-group-row th {
+  padding-top: 4px;
+  padding-bottom: 4px;
 }
 
 th {
@@ -1499,7 +1681,12 @@ tbody tr:hover {
 }
 
 .table-filter {
-  padding: 12px 16px 0;
+  padding: 10px 12px 6px;
+}
+
+.table-filter > input[type='search'] {
+  width: 100%;
+  max-width: 280px;
 }
 
 .table-filter label {
@@ -2282,18 +2469,134 @@ tbody tr:hover {
 
 /* ---- Combat & Resources subsections ---- */
 
+/* Masonry columns: groups pack tightly instead of stretching to the
+   tallest neighbor, so short groups (Block, Tokens) don't leave holes. */
 .combat-groups {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 14px;
+  columns: 4 250px;
+  column-gap: 14px;
   padding: 12px 16px 16px;
 }
 
+/* Ambient deck-page backdrop from the signature card's art. */
+.deck-art-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-size: cover;
+  background-position: center 20%;
+  filter: blur(64px) saturate(1.2);
+  opacity: 0.22;
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.95),
+    rgba(0, 0, 0, 0.45) 45%,
+    transparent 80%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.95),
+    rgba(0, 0, 0, 0.45) 45%,
+    transparent 80%
+  );
+}
+
+:root[data-theme="light"] .deck-art-backdrop {
+  opacity: 0.16;
+}
+
+/* Best / worst opponent-color highlight cards. */
+.vs-color-highlights {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  padding: 12px 16px 4px;
+}
+
+.vs-color-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+}
+
+.vs-color-card-best {
+  border-left-color: var(--success);
+}
+
+.vs-color-card-worst {
+  border-left-color: var(--danger);
+}
+
+.vs-color-card-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.vs-color-card-value {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vs-color-card-rate {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.vs-color-card-best .vs-color-card-rate {
+  color: var(--success);
+}
+
+.vs-color-card-worst .vs-color-card-rate {
+  color: var(--danger);
+}
+
+.vs-color-card-detail {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+/* Deterministic Combat & Resources layout: explicit columns (shared between
+   the game and deck pages) instead of height-balanced CSS masonry. */
+.combat-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 12px 16px 16px;
+  align-items: flex-start;
+}
+
+.combat-column {
+  flex: 1 1 250px;
+  min-width: 250px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.combat-column .combat-group {
+  margin-bottom: 0;
+}
+
 .combat-group {
+  break-inside: avoid;
+  margin-bottom: 14px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
+}
+
+.combat-groups .combat-group:last-child {
+  margin-bottom: 0;
 }
 
 .combat-group-table {
@@ -2304,8 +2607,18 @@ tbody tr:hover {
 
 .combat-group-table th,
 .combat-group-table td {
-  padding: 7px 12px;
+  padding: 7px 9px;
   font-size: 0.88rem;
+}
+
+.combat-group-table th:first-child,
+.combat-group-table td:first-child {
+  padding-left: 12px;
+}
+
+.combat-group-table th:last-child,
+.combat-group-table td:last-child {
+  padding-right: 12px;
 }
 
 .combat-group-table thead th {
@@ -2316,6 +2629,9 @@ tbody tr:hover {
   color: var(--muted);
   background: var(--panel-strong);
   border-bottom: 1px solid var(--border);
+  /* Group titles may wrap: nowrap headers force the whole table wider than
+     the masonry column and the overflow gets clipped by the card. */
+  white-space: normal;
 }
 
 .combat-group-table thead th:first-child {
@@ -2336,7 +2652,6 @@ tbody tr:hover {
 .combat-group-table th.numeric,
 .combat-group-table td.numeric {
   text-align: right;
-  width: 58px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2452,6 +2767,46 @@ tbody tr:hover {
   margin: 4px 0 0;
   font-size: 0.9rem;
   font-weight: 700;
+}
+
+/* How Games End: real tables so alignment matches every other table.
+   Group rows are styled exactly like thead bars, tinted by result. */
+.outcome-reason-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0 6px;
+  align-items: start;
+}
+
+.outcome-reason-grid {
+  min-width: 0;
+}
+
+.outcome-reason-pct {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.result-label-win {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.result-label-loss {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.outcome-reason-grid .outcome-group-row th {
+  background: var(--thead-bg);
+}
+
+.outcome-reason-grid .outcome-group-row-win th {
+  color: var(--success);
+}
+
+.outcome-reason-grid .outcome-group-row-loss th {
+  color: var(--danger);
 }
 
 .mulligan-history-missing {
@@ -3097,4 +3452,23 @@ tr.deck-change-row-out .card-link {
   line-height: 1.4;
   color: var(--muted);
   text-align: center;
+}
+
+/* Brawl: commander-vs-commander detail row under a Recent Games row. */
+.table-detail-row td {
+  padding: 8px 12px 10px 40px;
+}
+
+.commander-matchup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-weight: 600;
+}
+
+.commander-matchup-vs {
+  color: var(--text-muted, #8b93a7);
+  font-weight: 400;
+  font-size: 0.85em;
 }

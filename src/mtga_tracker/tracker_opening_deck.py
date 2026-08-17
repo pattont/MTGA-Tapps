@@ -123,8 +123,20 @@ class TrackerOpeningDeckMixin:
             g.opponent_commanders = self._unique_names(g.commanders_by_seat[g.opponent_seat_id])
 
     def _best_brawl_format_label(self) -> str:
-        """Return best Brawl label based on known metadata."""
-        candidates = [self.game_state.format_str, self.game_state.player_deck_event_name]
+        """Return best Brawl label based on known metadata.
+
+        A trusted queue already on the match wins verbatim: a cBrawl match
+        (Brawl_Ladder) must never be downgraded to "Historic Brawl" just
+        because some deck's format attribute says "HistoricBrawlRanked" —
+        that substring contains "historicbrawl" and poisoned the label
+        (reported from a real cBrawl session log). Only when no brawl queue
+        is known do we guess from deck metadata, checking the ranked marker
+        BEFORE the historic one for the same reason.
+        """
+        current_raw = str(self.game_state.format_str or "")
+        if normalize_match_format(current_raw).is_brawl:
+            return current_raw
+        candidates = [self.game_state.player_deck_event_name]
         for candidate in self._deck_candidates.values():
             candidates.append(candidate.get("format_attr"))
             candidates.append(candidate.get("internal_event_name"))
@@ -132,6 +144,8 @@ class TrackerOpeningDeckMixin:
             text = self._normalize_match_text(raw)
             if not text:
                 continue
+            if "brawlladder" in text or ("brawl" in text and "ranked" in text):
+                return "Brawl (Ranked)"
             if "historicbrawl" in text:
                 return "Historic Brawl"
             if "brawl" in text:
@@ -723,11 +737,35 @@ class TrackerOpeningDeckMixin:
             self._deck_candidates[key] = candidate
         return updated
 
+    def _submitted_deck_overlap(self, candidate: Dict[str, Any]) -> Optional[float]:
+        """Fraction of the game's submitted decklist found in a candidate's list.
+
+        The submitted deck (from ConnectResp/SubmitDeckReq) is ground truth for
+        what is actually being played, so it can arbitrate between course
+        candidates when the selection heuristics would otherwise pick a stale
+        deck (e.g. the tracker launched mid-queue after a deck switch).
+        Returns None when either side has no card list to compare.
+        """
+        submitted = set(getattr(self.game_state, "submitted_deck_cards", None) or [])
+        main_ids = candidate.get("main_deck_ids")
+        if not submitted or not isinstance(main_ids, set) or not main_ids:
+            return None
+        return len(submitted & main_ids) / len(submitted)
+
     def _candidate_score(self, candidate: Dict[str, Any], format_hint: str) -> tuple:
         """Return sortable score tuple for selecting likely active deck."""
         score = 0
         if candidate.get("trusted_active"):
             score += 20
+        # The actually-submitted decklist outranks every selection heuristic:
+        # a candidate whose course list matches the cards in play is the deck
+        # being played, and one that contradicts them is not.
+        overlap = self._submitted_deck_overlap(candidate)
+        if overlap is not None:
+            if overlap >= 0.8:
+                score += 25
+            elif overlap <= 0.4:
+                score -= 25
         deck_name = candidate.get("deck_name")
         if (
             isinstance(deck_name, str)
@@ -780,8 +818,14 @@ class TrackerOpeningDeckMixin:
         if self._active_deck_candidate_key:
             locked_candidate = self._deck_candidates.get(self._active_deck_candidate_key)
             if isinstance(locked_candidate, dict):
-                self._set_active_deck_from_candidate(locked_candidate)
-                return
+                # A locked candidate that contradicts the submitted decklist is
+                # a stale selection — unlock and re-rank instead of stamping
+                # this game with the wrong deck's identity.
+                locked_overlap = self._submitted_deck_overlap(locked_candidate)
+                if locked_overlap is None or locked_overlap > 0.4:
+                    self._set_active_deck_from_candidate(locked_candidate)
+                    return
+                self._active_deck_candidate_key = None
         format_hint = self.game_state.format_str if self.game_state.format_str != "Unknown" else ""
         if not format_hint:
             return
@@ -797,6 +841,11 @@ class TrackerOpeningDeckMixin:
             return
         # Avoid locking in a deck when candidates are similarly plausible.
         if (best_score - second_score) < 3:
+            return
+        # Never adopt an identity the submitted decklist contradicts: leaving
+        # the deck unresolved beats attributing the game to the wrong deck.
+        best_overlap = self._submitted_deck_overlap(best)
+        if best_overlap is not None and best_overlap <= 0.4:
             return
 
         self._set_active_deck_from_candidate(best)
@@ -841,7 +890,16 @@ class TrackerOpeningDeckMixin:
                 or "bestof3" in format_norm
                 or format_norm in {"constructedbestof3", "bestof3"}
             )
-            if not used_trusted_queue_format and not implies_best_of_three and (
+            # A deck's Format ATTRIBUTE (e.g. "HistoricBrawl",
+            # "HistoricBrawlRanked") describes the deck, not the queue — it
+            # must never replace a format that already names a Brawl queue
+            # (Brawl_Ladder / Play_Brawl_Historic). This rewrote a real
+            # cBrawl match to "HistoricBrawl" when the player set a deck
+            # between matches.
+            existing_is_brawl_queue = normalize_match_format(
+                str(self.game_state.format_str or "")
+            ).is_brawl
+            if not used_trusted_queue_format and not implies_best_of_three and not existing_is_brawl_queue and (
                 self.game_state.format_str == "Unknown" or self._format_from_backfill
             ):
                 self.game_state.format_str = format_attr
