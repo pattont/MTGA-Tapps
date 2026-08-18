@@ -66,6 +66,13 @@ Primary code paths:
 - `src/mtga_tracker/tracker_opening_deck.py`: opening hand, mulligan, format, commander, deck metadata.
 - `src/mtga_tracker/tracker_analytics.py`: SQLite persistence helpers.
 - `src/mtga_tracker/format_normalizer.py`: single source of truth for raw queue/format labels and best-of inference.
+- `src/mtga_tracker/removal_classifier.py`: text-based card-role classification (removal /
+  board wipe / bounce / counter) from Arena rules text, cached per grpId. Roles feed the
+  played/drawn interaction stats; behavioral stats (things actually destroyed, countered,
+  bounced) come from game events and work without the Arena card DB.
+- `src/mtga_tracker/events_backfill.py`: recomputes behavioral interaction stats for
+  historical games from the `game_events` timeline (used by migration v19 — fills NULL
+  columns only, never overwrites live-tracked values).
 - `src/mtga_tracker/db_audit.py`: SQLite consistency audit and safe repair CLI.
 - `src/mtga_tracker/dashboard.py`: dependency-free local SQLite dashboard.
 - `src/mtga_tracker/draw_quality.py`: CLI/report helpers for land flood/screw and repeated-card draw audits.
@@ -261,6 +268,19 @@ Arena logs are not a simple chronological event stream. Be careful with inferred
   (`EventName: Brawl_Ladder` for cBrawl), and Arena's deck attributes use "HistoricBrawl*"
   naming everywhere — never infer the queue from them (substring 'historicbrawl' inside
   'HistoricBrawlRanked' has mislabeled real cBrawl matches twice).
+- Log timestamps are locale-formatted: day-first locales write `dd/mm/yyyy`. The parser
+  (`log_timestamp.py`) learns the order from unambiguous entries with a system-locale
+  fallback; storage is always ISO. Never parse a log date with a fixed `%m/%d` order
+  (pre-0.5.5 did, and migration v21 repairs the month/day-swapped rows it stored).
+- The deck a game is attributed to comes from course-candidate scoring, and the decklist
+  actually submitted to the game is the trump card: a candidate that contradicts the
+  submitted 60 must never win (a tracker launched mid-queue after a deck switch once
+  stamped games with the previous deck's name). Leaving the deck unresolved beats
+  guessing wrong.
+- Arena's SBA death annotations reference instance ids that do NOT match declared
+  attacker/blocker ids (verified against real logs) — combat deaths cannot be told apart
+  from burn kills at SBA time, which is why lethal-damage deaths are excluded from
+  "lost to removal" and why attackers_lost/blockers_lost membership checks miss.
 
 ## Analytics DB
 
@@ -276,7 +296,13 @@ Important tables:
 - `game_drawn_cards`: one row per visible player/opponent drawn card identity when Arena exposes it.
 - `game_deck_cards`: authoritative per-game submitted main-deck and sideboard quantities from Arena.
 - `game_card_summary`: cards played by each participant.
-- `game_participant_stats`: combat, damage/life, cards drawn/discarded/milled/exiled, stack stats.
+- `game_participant_stats`: combat, damage/life, cards drawn/discarded/milled/exiled, stack
+  stats, plus nullable interaction columns added over time — removal/wipes/bounce/counters
+  played+drawn, creatures/non-creatures removed and bounced, spells_countered, lands
+  lost/replaced, tokens created/destroyed/sacrificed/exiled, poison_added. Convention:
+  NULL means "not tracked when this game was recorded" and renders as a dash — a backfill
+  or the live tracker writes real zeros. Opponent `*_drawn` columns stay NULL forever
+  (hidden information).
 - `game_turns`: observed turn start/end timestamps and duration by active seat; `timing_source`
   distinguishes exact `live` rows, exact `recovered_previous_turn_logs` rows restored from
   durable console headers, and `estimated_header_events` historical backfills.
