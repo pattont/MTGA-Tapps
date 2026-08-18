@@ -14,19 +14,34 @@ data, your disk.
 
 ## What it does
 
-**Live tracking.** A menu-bar app (macOS) or console tracker follows your game
-in real time: casts, draws, lands, combat, life totals, stack resolution — with
-a readable play-by-play log and a full per-game timeline saved for later.
+**Live tracking.** One lightweight app — menu bar on macOS, system tray on
+Windows — runs everything: it follows your game in real time (casts, draws,
+lands, combat, life totals, stack resolution), writes every game to the local
+analytics database, serves the dashboard, and shows a readable play-by-play
+log window with a full per-game timeline saved for later. Prefer a terminal?
+The same tracker runs as a plain console command.
 
-**Deck analytics.** Every deck gets a drill-down page: card performance,
-mulligan results, decklist version history with diffs, land statistics with
-flood/screw classification, win & loss streaks, Bo3 sideboarding records, and
-your record against every opponent color combination.
+**Deck analytics.** Every deck gets a drill-down page tinted with its signature
+card's art: per-game combat and resource averages for both players, turn-pace
+and draw-quality summaries, card performance, mulligan results, decklist
+version history with diffs, land statistics with flood/screw classification,
+win & loss streaks, per-queue records (BO1/BO3, ranked/unranked, competitive
+Brawl), Bo3 sideboarding records, and Best Against / Worst Against opponent
+color highlights.
 
 **Game forensics.** Each game page reconstructs the match: opening hand and
-every mulligan (including the card you bottomed), drawn cards, draw-quality
-analysis with statistically-grounded flood/screw detection, a life-total chart,
-combat summaries, and the complete event timeline.
+every mulligan (including the card you bottomed), drawn cards with the turn
+they arrived, draw-quality analysis with statistically-grounded flood/screw
+detection, a life-total chart, per-seat combat summaries, and the complete
+event timeline.
+
+**Interaction analytics.** Every game records what both players did with their
+interaction: removal and board wipes played (and how many you drew), creatures
+lost to removal, counter magic — including how many counters actually landed
+versus fizzled — bounce, land destruction with replacement rates, token
+lifecycles, and poison. Cards are classified from their Arena rules text, and
+a one-time backfill computes these stats for the games you tracked before the
+feature existed.
 
 **Opponent intelligence.** Revealed cards identify the opponent's colors, named
 with community archetype names (Dimir, Jeskai, Mono-Red…), tracked across your
@@ -48,10 +63,13 @@ creators and sites (Moxfield, AetherHub, TCGplayer, magic.gg, MTGO, Untapped)
 and copies any list straight to your clipboard in Arena import format. Launch
 it from the menu bar or the dashboard sidebar.
 
-**The long game.** Win-rate trends, ranked ladder progress by season, session
-habits and fatigue splits, format breakdowns, and a database health audit that
-can repair its own inconsistencies. A compressed raw-payload archive means new
-tracker features can retroactively backfill your old games.
+**The long game.** Match-level records (a Bo3 counts once, like the ladder
+does), win-rate trends, How Games End with per-reason percentages — concedes,
+damage, decking, poison, timeouts — Constructed Ranked lifetime and per-season
+stats beside the rank chart, session habits and fatigue splits, format
+breakdowns, and a database health audit that can repair its own
+inconsistencies. Recorded timelines mean new tracker features retroactively
+backfill your old games.
 
 ## Screenshots
 

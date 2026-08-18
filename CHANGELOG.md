@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Repaired dates stored month/day-swapped by pre-0.5.5 versions** for day-first
+  locales: games recorded before the locale-aware parser (e.g. 9 August read as
+  8 September) landed months in the future and scrambled every date-sorted view.
+  A one-time migration swaps them back using each tracker session's system-clock
+  start time as the anchor — conservative by design, ambiguous rows are left
+  untouched. Covers games, matches, turns, events, console logs, rank snapshots,
+  and the payload archive. No database reset needed.
+
 ## 0.5.5
 
 ### Brawl
