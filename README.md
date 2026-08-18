@@ -78,6 +78,17 @@ game pace at a glance:
 
 ![Recent Games](docs/images/recent-games.png)
 
+**Constructed Ranked** — lifetime and per-season match records around the ladder
+chart, with a season selector to replay any climb:
+
+![Constructed Ranked stats and ladder chart](docs/images/ranked-games.png)
+
+**Your decks** — every deck with its signature card, an Aggro/Midrange/Control
+profile judged from damage pace, win-rate bars, and per-game combat telemetry,
+searchable and sortable:
+
+![Decks table on the Overview](docs/images/deck-overview.png)
+
 **Deck drill-down** — combat profile, streaks, decklist performance, land statistics:
 
 ![Deck detail page](docs/images/deck-detail.png)
