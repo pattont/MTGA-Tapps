@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.6
 
 - **Repaired dates stored month/day-swapped by pre-0.5.5 versions** for day-first
   locales: games recorded before the locale-aware parser (e.g. 9 August read as
