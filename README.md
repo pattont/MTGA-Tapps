@@ -73,6 +73,11 @@ backfill your old games.
 
 ## Screenshots
 
+**Recent Games** — outcomes, formats, Brawl commander matchups, draw status, and
+game pace at a glance:
+
+![Recent Games](docs/images/recent-games.png)
+
 **Deck drill-down** — combat profile, streaks, decklist performance, land statistics:
 
 ![Deck detail page](docs/images/deck-detail.png)
