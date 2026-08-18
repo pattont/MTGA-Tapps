@@ -986,3 +986,69 @@ def test_events_backfill_fills_null_stats_only(tmp_path):
     assert opponent["lands_replaced"] == 1
     assert opponent["creatures_bounced"] == 1  # Ox returned to hand
     assert opponent["spells_countered"] == 0
+
+
+def test_v21_repairs_month_day_swapped_timestamps(tmp_path):
+    """Day-first-locale rows stored as Sep/Oct 8 return to 9/10 August.
+
+    Regression for the Italian user whose Aug 8-12 games (dd/mm logs read as
+    mm/dd) landed months in the future and scrambled every date-sorted view.
+    The session row's system-clock started_at anchors the repair.
+    """
+    store = AnalyticsStore(tmp_path / "swapped.sqlite3")
+    conn = store.connect()
+    conn.execute(
+        "INSERT INTO tracker_sessions (id, started_at) "
+        "VALUES ('s-aug9', '2026-08-09T20:00:00')"
+    )
+    conn.execute(
+        "INSERT INTO matches (id, session_id, started_at) "
+        "VALUES ('m-bad', 's-aug9', '2026-09-08T20:05:00')"  # true date: 9 Aug
+    )
+    conn.executemany(
+        "INSERT INTO games (id, session_id, match_id, started_at, ended_at) "
+        "VALUES (?, 's-aug9', 'm-bad', ?, ?)",
+        [
+            # dd/mm read as mm/dd: 9 Aug -> 8 Sep; crossing midnight 10 Aug -> 8 Oct.
+            ("g-swapped", "2026-09-08T20:05:00", "2026-09-08T20:20:00"),
+            ("g-midnight", "2026-10-08T00:10:00", "2026-10-08T00:25:00"),
+            # Legit row close to the session: must be untouched.
+            ("g-fine", "2026-08-09T21:00:00", "2026-08-09T21:15:00"),
+            # Far away AND swap would not land in the session: untouched.
+            ("g-old", "2026-05-02T12:00:00", "2026-05-02T12:30:00"),
+        ],
+    )
+    conn.execute(
+        "INSERT INTO game_events (session_id, game_id, event_time, text) "
+        "VALUES ('s-aug9', 'g-swapped', '2026-09-08T20:06:00', 'Turn 1 begins')"
+    )
+    conn.execute(
+        "INSERT INTO rank_snapshots (session_id, captured_at, season_ordinal, "
+        "rank_class, rank_level, rank_step, rank_steps) "
+        "VALUES ('s-aug9', '2026-09-08T20:21:00', 91, 'Gold', 4, 1, 6)"
+    )
+
+    AnalyticsStore._migrate_v21_repair_swapped_log_dates(conn)
+
+    started = {
+        row[0]: (row[1], row[2])
+        for row in conn.execute("SELECT id, started_at, ended_at FROM games")
+    }
+    assert started["g-swapped"] == ("2026-08-09T20:05:00", "2026-08-09T20:20:00")
+    assert started["g-midnight"] == ("2026-08-10T00:10:00", "2026-08-10T00:25:00")
+    assert started["g-fine"] == ("2026-08-09T21:00:00", "2026-08-09T21:15:00")
+    assert started["g-old"] == ("2026-05-02T12:00:00", "2026-05-02T12:30:00")
+    assert conn.execute("SELECT started_at FROM matches WHERE id='m-bad'").fetchone()[0] == (
+        "2026-08-09T20:05:00"
+    )
+    assert conn.execute("SELECT event_time FROM game_events").fetchone()[0] == (
+        "2026-08-09T20:06:00"
+    )
+    assert conn.execute("SELECT captured_at FROM rank_snapshots").fetchone()[0] == (
+        "2026-08-09T20:21:00"
+    )
+    # Running again is a no-op (repaired rows now sit inside the window).
+    AnalyticsStore._migrate_v21_repair_swapped_log_dates(conn)
+    assert conn.execute(
+        "SELECT started_at FROM games WHERE id='g-swapped'"
+    ).fetchone()[0] == "2026-08-09T20:05:00"
