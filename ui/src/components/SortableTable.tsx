@@ -71,6 +71,12 @@ interface SortableTableProps<T extends object> {
   renderDetailRow?: (row: T) => ReactNode | null | undefined;
   /** Extra class for a row's <tr>, e.g. to highlight changed rows. */
   getRowClassName?: (row: T) => string | undefined;
+  /**
+   * Totals row rendered in a <tfoot>, keyed by column key — e.g.
+   * `{ display_name: 'Total', quantity: 60 }`. Unkeyed columns stay empty.
+   * Always reflects the FULL row set (sorting and pagination don't move it).
+   */
+  footerCells?: Partial<Record<string, ReactNode>>;
 }
 
 export function SortableTable<T extends object>({
@@ -85,6 +91,7 @@ export function SortableTable<T extends object>({
   getSubRows,
   renderDetailRow,
   getRowClassName,
+  footerCells,
 }: SortableTableProps<T>) {
   const [expandedKeys, setExpandedKeys] = useState<Set<string | number>>(() => new Set());
 
@@ -266,6 +273,17 @@ export function SortableTable<T extends object>({
               );
             })}
           </tbody>
+          {footerCells ? (
+            <tfoot>
+              <tr className="table-footer-row">
+                {columns.map((column) => (
+                  <td key={String(column.key)} className={column.numeric ? 'num' : undefined}>
+                    {footerCells[String(column.key)] ?? ''}
+                  </td>
+                ))}
+              </tr>
+            </tfoot>
+          ) : null}
         </table>
       </div>
       {isPaginated ? (

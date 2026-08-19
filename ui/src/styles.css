@@ -551,11 +551,10 @@ a {
   font-size: 0.82rem;
 }
 
-/* Deck list: "N cards total" line under the main deck / sideboard tables. */
-.table-total {
-  margin: 8px 2px 0;
-  color: var(--muted);
-  font-size: 0.85rem;
+/* Totals row (<tfoot>) at the bottom of card tables. */
+.table-footer-row td {
+  border-top: 2px solid var(--border);
+  font-weight: 600;
 }
 
 /* Best Deck: slim full-width strip between the metric cards and the analytics panels. */

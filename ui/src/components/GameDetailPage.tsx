@@ -31,6 +31,7 @@ import { boFormatLabel, formatDateTime, formatDuration, formatNumber, formatTurn
 import { gameRouteHash } from '../routes';
 import { fetchManaCosts, playedManaStats, seedManaCosts, type CardManaInfo } from '../manaCosts';
 import { DeckLink } from './DeckLink';
+import { ManaCost } from './ManaCost';
 import { Badge } from './Badge';
 import { bucketCombatGroups, CombatGroupColumns } from './CombatGroupColumns';
 import { CardLink } from './CardLink';
@@ -56,7 +57,19 @@ function isAbortError(error: unknown): boolean {
 }
 
 
-const openingColumns: Column<GameOpeningHandRow>[] = [
+/** Card-table row enriched with its mana cost for the Mana column. */
+type WithMana<T> = T & { mana: CardManaInfo | null; mana_cmc: number | null };
+
+function manaColumn<T extends { mana: CardManaInfo | null; mana_cmc: number | null }>(): Column<T> {
+  return {
+    key: 'mana_cmc' as keyof T,
+    header: 'Mana',
+    render: (row) => <ManaCost info={row.mana} />,
+    sortValue: (row) => row.mana_cmc,
+  };
+}
+
+const openingColumns: Column<WithMana<GameOpeningHandRow>>[] = [
   { key: 'hand_position', header: '#', numeric: true },
   {
     key: 'display_name',
@@ -64,6 +77,7 @@ const openingColumns: Column<GameOpeningHandRow>[] = [
     render: (row) => <CardLink cardName={row.display_name} />,
     sortValue: (row) => row.display_name,
   },
+  manaColumn(),
   {
     key: 'type_category',
     header: 'Type',
@@ -73,7 +87,7 @@ const openingColumns: Column<GameOpeningHandRow>[] = [
   { key: 'copy_number', header: 'Copy', numeric: true },
 ];
 
-const drawnColumns: Column<GameDrawnCardRow>[] = [
+const drawnColumns: Column<WithMana<GameDrawnCardRow>>[] = [
   {
     key: 'turn_number',
     header: 'Turn',
@@ -88,6 +102,7 @@ const drawnColumns: Column<GameDrawnCardRow>[] = [
     render: (row) => <CardLink cardName={row.display_name} />,
     sortValue: (row) => row.display_name,
   },
+  manaColumn(),
   {
     key: 'type_category',
     header: 'Type',
@@ -148,7 +163,7 @@ function formatTurnList(turns: number[] | undefined): string {
   return turns.map((turn) => `T${turn}`).join(', ');
 }
 
-const playedColumns: Column<GamePlayedCardRow>[] = [
+const playedColumns: Column<WithMana<GamePlayedCardRow>>[] = [
   {
     key: 'turns_played',
     header: 'Turn(s)',
@@ -163,6 +178,7 @@ const playedColumns: Column<GamePlayedCardRow>[] = [
     render: (row) => <CardLink cardName={row.display_name} />,
     sortValue: (row) => row.display_name,
   },
+  manaColumn(),
   {
     key: 'type_category',
     header: 'Type',
@@ -172,7 +188,8 @@ const playedColumns: Column<GamePlayedCardRow>[] = [
   { key: 'played_count', header: 'Played', numeric: true },
 ];
 
-const opponentCardColumns: Column<OpponentVisibleCardRow>[] = [
+/** Opponent Deck → Revealed Cards: everything exposed OUTSIDE of being played. */
+const opponentRevealedColumns: Column<WithMana<OpponentVisibleCardRow>>[] = [
   {
     key: 'first_seen_turn',
     header: 'Revealed',
@@ -186,13 +203,13 @@ const opponentCardColumns: Column<OpponentVisibleCardRow>[] = [
     render: (row) => <CardLink cardName={row.display_name} />,
     sortValue: (row) => row.display_name,
   },
+  manaColumn(),
   {
     key: 'type_category',
     header: 'Type',
     render: (row) => <TypeChip type={row.type_category} />,
     sortValue: (row) => row.type_category,
   },
-  { key: 'played_count', header: 'Played', numeric: true },
   { key: 'drawn_count', header: 'Revealed Draws', numeric: true },
   { key: 'discarded_count', header: 'Discarded', numeric: true },
   { key: 'milled_count', header: 'Milled', numeric: true },
@@ -348,9 +365,12 @@ export function GameDetailPage({
     seedManaCosts(loadedDetail.card_mana);
     const names = Array.from(
       new Set(
-        [...loadedDetail.cards_played, ...loadedDetail.opponent_cards].map(
-          (row) => row.display_name,
-        ),
+        [
+          ...loadedDetail.cards_played,
+          ...loadedDetail.opponent_cards,
+          ...loadedDetail.opening_hand,
+          ...loadedDetail.drawn,
+        ].map((row) => row.display_name),
       ),
     );
     void fetchManaCosts(names).then((map) => {
@@ -588,6 +608,24 @@ export function GameDetailPage({
       ],
     },
   ];
+  // Opponent Deck splits into what they PLAYED vs what was merely revealed
+  // (a card discarded after being played appears in both, scoped per table).
+  const opponentPlayedRows = (detail.opponent_cards ?? []).filter((row) => row.played_count > 0);
+  const opponentRevealedRows = (detail.opponent_cards ?? []).filter(
+    (row) =>
+      (row.drawn_count ?? 0) +
+        (row.discarded_count ?? 0) +
+        (row.milled_count ?? 0) +
+        (row.exiled_count ?? 0) >
+      0,
+  );
+  // Enrich card-table rows with their cost for the Mana column.
+  function withMana<T extends { display_name: string }>(rows: T[]): WithMana<T>[] {
+    return rows.map((row) => {
+      const mana = manaCosts.get(row.display_name) ?? null;
+      return { ...row, mana, mana_cmc: mana ? mana.cmc : null };
+    });
+  }
   // Mana-value stats from printed costs (Scryfall) — lands excluded, X = 0.
   const playerManaStats = playedManaStats(
     detail.cards_played.map((row) => ({
@@ -1018,7 +1056,7 @@ export function GameDetailPage({
           caption={mulliganHands.length > 0 ? 'Kept hand' : 'Opening hand'}
           columns={openingColumns}
           getRowKey={(row) => `${row.hand_position}-${row.display_name}`}
-          rows={detail.opening_hand}
+          rows={withMana(detail.opening_hand)}
         />
       </Section>
 
@@ -1071,7 +1109,8 @@ export function GameDetailPage({
           caption="Drawn cards"
           columns={drawnColumns}
           getRowKey={(row) => `${row.draw_position}-${row.display_name}`}
-          rows={visibleDrawnRows}
+          rows={withMana(visibleDrawnRows)}
+          footerCells={{ draw_position: detail.drawn.length, display_name: 'Total' }}
         />
       </Section>
 
@@ -1080,22 +1119,59 @@ export function GameDetailPage({
           caption="Cards played"
           columns={playedColumns}
           getRowKey={(row) => `${row.display_name}-${row.type_category}`}
-          rows={detail.cards_played}
+          rows={withMana(detail.cards_played)}
+          footerCells={{
+            display_name: 'Total',
+            played_count: detail.cards_played.reduce((sum, row) => sum + row.played_count, 0),
+          }}
         />
       </Section>
 
       <Section
         id="game-opponent-cards"
-        title="Opponent Revealed Cards"
-        description="Every identified opponent card exposed through play, a visible draw, discard, mill, or exile."
+        title="Opponent Deck"
+        description="Every identified opponent card: what they played (with the turns it hit), and what else was exposed through visible draws, discards, mills, and exiles."
       >
+        <div className="section-heading">
+          <div>
+            <h3>Opponent Played Cards</h3>
+          </div>
+        </div>
         <SortableTable
-          caption="Opponent revealed cards"
-          columns={opponentCardColumns}
+          caption="Opponent played cards"
+          columns={playedColumns}
           getRowKey={(row) => `${row.display_name}-${row.type_category}`}
-          initialSort={{ key: 'played_count', direction: 'desc' }}
-          rows={detail.opponent_cards ?? []}
+          initialSort={{ key: 'turns_played', direction: 'asc' }}
+          rows={withMana(opponentPlayedRows)}
+          footerCells={{
+            display_name: 'Total',
+            played_count: opponentPlayedRows.reduce((sum, row) => sum + row.played_count, 0),
+          }}
         />
+        {opponentRevealedRows.length > 0 ? (
+          <>
+            <div className="section-heading">
+              <div>
+                <h3>Opponent Revealed Cards</h3>
+              </div>
+            </div>
+            <SortableTable
+              caption="Opponent revealed cards"
+              columns={opponentRevealedColumns}
+              getRowKey={(row) => `${row.display_name}-${row.type_category}`}
+              initialSort={{ key: 'first_seen_turn', direction: 'asc' }}
+              rows={withMana(opponentRevealedRows)}
+              footerCells={{
+                display_name: 'Total',
+                ...Object.fromEntries(
+                  (['drawn_count', 'discarded_count', 'milled_count', 'exiled_count'] as const).map(
+                    (key) => [key, opponentRevealedRows.reduce((sum, row) => sum + (row[key] ?? 0), 0)],
+                  ),
+                ),
+              }}
+            />
+          </>
+        ) : null}
       </Section>
 
       <Section

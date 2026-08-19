@@ -777,8 +777,11 @@ describe('App', () => {
     expect(typeBoxText('Creatures')).toContain('4');
     expect(typeBoxText('Lands')).toContain('20');
     expect(typeBoxText('Planeswalkers')).toContain('0');
-    expect(screen.getByText('24 cards total')).toBeInTheDocument();
-    expect(screen.getByText('1 card total')).toBeInTheDocument();
+    // Totals render as a footer row inside each table: count under Count, then "Total".
+    const deckTotalCells = within(deckListTable).getByText('Total').closest('tr');
+    expect(within(deckTotalCells as HTMLElement).getAllByRole('cell')[0]).toHaveTextContent('24');
+    const sideboardTotalCells = within(sideboardTable).getByText('Total').closest('tr');
+    expect(within(sideboardTotalCells as HTMLElement).getAllByRole('cell')[0]).toHaveTextContent('1');
 
     const nav = screen.getByRole('navigation', { name: 'Dashboard sections' });
     expect(within(nav).getByRole('link', { name: '← Back to dashboard' })).toHaveAttribute('href', '#overview');
@@ -1126,7 +1129,7 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: /Game 6\/4\/26/i })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/game?id=game-1', expect.anything());
     expect(document.title).toContain('Game 6/4/26');
-    ['Turn Timing', 'Draw Quality', 'Life Totals', 'Opening Hand', 'Drawn Cards', 'Cards Played', 'Opponent Revealed Cards', 'Timeline'].forEach((sectionName) => {
+    ['Turn Timing', 'Draw Quality', 'Life Totals', 'Opening Hand', 'Drawn Cards', 'Cards Played', 'Opponent Deck', 'Timeline'].forEach((sectionName) => {
       expect(screen.getByRole('heading', { name: sectionName })).toBeInTheDocument();
     });
     expect(screen.queryByRole('table', { name: 'Turn timing' })).not.toBeInTheDocument();

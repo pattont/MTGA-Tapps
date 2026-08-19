@@ -1150,12 +1150,10 @@ export function DeckDetailPage({
           initialSort={{ key: 'type_category', direction: 'asc' }}
           getRowKey={(row) => `${row.display_name}-${row.type_category}`}
           rows={mainDeckRows}
+          footerCells={
+            deckCountsKnown ? { quantity: mainDeckTotal, display_name: 'Total' } : undefined
+          }
         />
-        {deckCountsKnown ? (
-          <p className="table-total">
-            {mainDeckTotal} card{mainDeckTotal === 1 ? '' : 's'} total
-          </p>
-        ) : null}
         {sideboardRows.length > 0 ? (
           <>
             <div className="section-heading">
@@ -1169,12 +1167,10 @@ export function DeckDetailPage({
               initialSort={{ key: 'type_category', direction: 'asc' }}
               getRowKey={(row) => `${row.display_name}-${row.type_category}`}
               rows={sideboardRows}
+              footerCells={
+                deckCountsKnown ? { quantity: sideboardTotal, display_name: 'Total' } : undefined
+              }
             />
-            {deckCountsKnown ? (
-              <p className="table-total">
-                {sideboardTotal} card{sideboardTotal === 1 ? '' : 's'} total
-              </p>
-            ) : null}
           </>
         ) : null}
       </Section>
