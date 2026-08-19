@@ -774,9 +774,9 @@ describe('App', () => {
     const typeCounts = screen.getByLabelText('Main deck card type counts');
     const typeBoxText = (label: string) =>
       within(typeCounts).getByText(label).closest('article')?.textContent ?? '';
-    expect(typeBoxText('Creatures')).toContain('4');
-    expect(typeBoxText('Lands')).toContain('20');
-    expect(typeBoxText('Planeswalkers')).toContain('0');
+    expect(typeBoxText('Creature')).toContain('4');
+    expect(typeBoxText('Land')).toContain('20');
+    expect(typeBoxText('Planeswalker')).toContain('0');
     // Totals render as a footer row inside each table: count under Count, then "Total".
     const deckTotalCells = within(deckListTable).getByText('Total').closest('tr');
     expect(within(deckTotalCells as HTMLElement).getAllByRole('cell')[0]).toHaveTextContent('24');

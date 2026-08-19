@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
-  Amphora,
   ChartNoAxesCombined,
   Check,
   Clock,
@@ -9,19 +8,13 @@ import {
   Flame,
   Gauge,
   Hourglass,
-  Mountain,
-  PawPrint,
   Play,
   RefreshCw,
   Repeat,
-  Sparkles,
-  Sun,
   Swords,
   Timer,
   TrendingDown,
   Trophy,
-  Wand,
-  Zap,
 } from 'lucide-react';
 import {
   fetchDeckDetail,
@@ -101,15 +94,19 @@ function deckCardNames(detail: DeckDetail): string[] {
   return Array.from(names);
 }
 
-/** MTGA-style type bar, left to right, rendered as themed count boxes. */
+/** MTGA-style type bar, left to right, using the official card-type symbols
+    from the bundled mana-font (chalice, claw mark, sunrise, bolt, flame…). */
+const typeSymbol = (name: string): ReactNode => (
+  <i aria-hidden="true" className={`ms ms-${name} type-count-icon`} />
+);
 const TYPE_COUNT_BOXES: Array<{ category: string; label: string; icon: ReactNode }> = [
-  { category: 'Planeswalker', label: 'Planeswalkers', icon: <Sparkles /> },
-  { category: 'Creature', label: 'Creatures', icon: <PawPrint /> },
-  { category: 'Sorcery', label: 'Sorceries', icon: <Wand /> },
-  { category: 'Instant', label: 'Instants', icon: <Zap /> },
-  { category: 'Artifact', label: 'Artifacts', icon: <Amphora /> },
-  { category: 'Enchantment', label: 'Enchantments', icon: <Sun /> },
-  { category: 'Land', label: 'Lands', icon: <Mountain /> },
+  { category: 'Planeswalker', label: 'Planeswalker', icon: typeSymbol('planeswalker') },
+  { category: 'Creature', label: 'Creature', icon: typeSymbol('creature') },
+  { category: 'Sorcery', label: 'Sorcery', icon: typeSymbol('sorcery') },
+  { category: 'Instant', label: 'Instant', icon: typeSymbol('instant') },
+  { category: 'Artifact', label: 'Artifact', icon: typeSymbol('artifact') },
+  { category: 'Enchantment', label: 'Enchantment', icon: typeSymbol('enchantment') },
+  { category: 'Land', label: 'Land', icon: typeSymbol('land') },
 ];
 
 function isAbortError(error: unknown): boolean {
