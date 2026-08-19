@@ -29,7 +29,7 @@ import { pageTitle } from '../branding';
 import { formatPercent } from '../dashboardData';
 import { boFormatLabel, formatDateTime, formatDuration, formatNumber, formatTurnDuration, outcomeLabel, outcomeTone } from '../format';
 import { gameRouteHash } from '../routes';
-import { fetchManaCosts, playedManaStats, type CardManaInfo } from '../manaCosts';
+import { fetchManaCosts, playedManaStats, seedManaCosts, type CardManaInfo } from '../manaCosts';
 import { DeckLink } from './DeckLink';
 import { Badge } from './Badge';
 import { bucketCombatGroups, CombatGroupColumns } from './CombatGroupColumns';
@@ -336,25 +336,24 @@ export function GameDetailPage({
     };
   }, [gameId]);
 
-  // Mana costs for both seats' played cards (client-side Scryfall cache)
-  // feed the mana-value rows in Combat & Resources.
+  // Mana costs for both seats' played cards feed the mana-value rows in
+  // Combat & Resources: Arena-derived payload costs first, Scryfall for gaps.
   const [manaCosts, setManaCosts] = useState<Map<string, CardManaInfo | null>>(() => new Map());
-  const manaNamesKey =
-    loadState.status === 'loaded'
-      ? Array.from(
-          new Set(
-            [...loadState.detail.cards_played, ...loadState.detail.opponent_cards].map(
-              (row) => row.display_name,
-            ),
-          ),
-        ).join('\n')
-      : '';
+  const loadedDetail = loadState.status === 'loaded' ? loadState.detail : null;
   useEffect(() => {
-    if (!manaNamesKey) {
+    if (!loadedDetail) {
       return;
     }
     let cancelled = false;
-    void fetchManaCosts(manaNamesKey.split('\n')).then((map) => {
+    seedManaCosts(loadedDetail.card_mana);
+    const names = Array.from(
+      new Set(
+        [...loadedDetail.cards_played, ...loadedDetail.opponent_cards].map(
+          (row) => row.display_name,
+        ),
+      ),
+    );
+    void fetchManaCosts(names).then((map) => {
       if (!cancelled) {
         setManaCosts(map);
       }
@@ -362,7 +361,7 @@ export function GameDetailPage({
     return () => {
       cancelled = true;
     };
-  }, [manaNamesKey]);
+  }, [loadedDetail]);
 
   if (loadState.status === 'loading') {
     return (

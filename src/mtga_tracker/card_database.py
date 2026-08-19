@@ -10,7 +10,7 @@ import time
 import os
 import re
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 import urllib.request
 import urllib.error
 from .paths import DATA_DIR, get_mtga_raw_card_db_folders
@@ -293,6 +293,137 @@ class CardDatabase:
 
         self._ability_text_cache[grp_id] = resolved
         return resolved
+
+    #: Cost-column candidates across Arena client versions, most likely first.
+    _MANA_COST_COLUMN_CANDIDATES = (
+        "OldSchoolManaText",
+        "CastingCost",
+        "ManaCost",
+        "ManaCostText",
+        "Cost",
+    )
+
+    _MANA_PIP_LETTERS = frozenset("WUBRGCSXP")
+
+    @staticmethod
+    def parse_arena_mana_cost(raw: object) -> Optional[Tuple[str, float]]:
+        """Parse an Arena cost string into (Scryfall-style cost, mana value).
+
+        Handles every format seen across client versions:
+        - GRE pip text: ``o2oBoB``, ``oXo(G/W)`` (lowercase ``o`` separates pips)
+        - old-school text: ``2BB``, ``X(W/U)(W/U)``
+        - already-braced: ``{2}{B}{B}``
+        Hybrids keep their slash (``{G/W}``), twobrids count as 2 (``{2/W}``),
+        X counts as 0. Returns ``("", 0.0)`` for empty costs (lands) and None
+        when any token can't be understood — callers should then leave the
+        cost unset so the UI's Scryfall fallback can try instead.
+        """
+        if raw is None:
+            return ("", 0.0)
+        text = str(raw).strip()
+        if not text:
+            return ("", 0.0)
+        tokens: List[str] = []
+        i = 0
+        while i < len(text):
+            ch = text[i]
+            if ch == "o" or ch.isspace():  # GRE pip separator / stray spacing
+                i += 1
+                continue
+            if ch in "{(":
+                closer = "}" if ch == "{" else ")"
+                end = text.find(closer, i)
+                if end < 0:
+                    return None
+                tokens.append(text[i + 1 : end])
+                i = end + 1
+            elif ch.isdigit():
+                end = i
+                while end < len(text) and text[end].isdigit():
+                    end += 1
+                tokens.append(text[i:end])
+                i = end
+            elif ch.isalpha():
+                tokens.append(ch)
+                i += 1
+            else:
+                return None
+        cost_parts: List[str] = []
+        mana_value = 0.0
+        for token in tokens:
+            parts = [part.strip().upper() for part in token.split("/")]
+            for part in parts:
+                if not part or not (
+                    part.isdigit() or (len(part) == 1 and part in CardDatabase._MANA_PIP_LETTERS)
+                ):
+                    return None
+            canonical = "/".join(parts)
+            first = parts[0]
+            if first.isdigit():
+                mana_value += int(first)
+            elif first != "X":  # X contributes 0
+                mana_value += 1
+            cost_parts.append("{%s}" % canonical)
+        return ("".join(cost_parts), mana_value)
+
+    def mana_cost_index_by_name(self) -> Dict[str, Tuple[str, float]]:
+        """Build a card-name -> (mana cost, mana value) index from Arena's card DB.
+
+        Probes the Cards table for a casting-cost column (schema varies by
+        client version), joins titles through Localizations_enUS, and parses
+        costs into Scryfall notation via parse_arena_mana_cost. Returns an
+        empty dict when the Arena database or a usable column is unavailable;
+        unparsable values are skipped rather than guessed.
+        """
+        if getattr(self, "_mana_index_by_name", None) is not None:
+            return self._mana_index_by_name
+
+        index: Dict[str, Tuple[str, float]] = {}
+        import sqlite3
+
+        db_path = self._resolve_mtga_db_path()
+        if db_path:
+            try:
+                conn = self._connect_mtga_db(db_path)
+                cur = conn.cursor()
+                cur.execute('PRAGMA table_info("Cards")')
+                columns = {str(row[1]) for row in cur.fetchall()}
+                cost_column = next(
+                    (
+                        name
+                        for name in self._MANA_COST_COLUMN_CANDIDATES
+                        if name in columns
+                    ),
+                    None,
+                )
+                if cost_column is None:
+                    # Schema drift: accept any column that smells like a cost.
+                    cost_column = next(
+                        (
+                            name
+                            for name in sorted(columns)
+                            if "manatext" in name.lower() or "castingcost" in name.lower()
+                        ),
+                        None,
+                    )
+                if cost_column:
+                    cur.execute(
+                        f'SELECT l."loc", c."{cost_column}" FROM "Cards" c '
+                        'JOIN "Localizations_enUS" l ON c."TitleId" = l."LocId" '
+                        f'WHERE c."{cost_column}" IS NOT NULL'
+                    )
+                    for name, raw_cost in cur.fetchall():
+                        clean_name = str(name or "").strip()
+                        if not clean_name or clean_name in index:
+                            continue
+                        parsed = self.parse_arena_mana_cost(raw_cost)
+                        if parsed is not None:
+                            index[clean_name] = parsed
+                conn.close()
+            except Exception:
+                index = {}
+        self._mana_index_by_name = index
+        return index
 
     def color_identity_index_by_name(self) -> Dict[str, str]:
         """Build a card-name -> WUBRG color-identity index from Arena's card DB.

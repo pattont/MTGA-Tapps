@@ -125,3 +125,66 @@ def test_connect_mtga_db_never_creates_a_file(tmp_path):
     with pytest.raises(sqlite3.OperationalError):
         CardDatabase._connect_mtga_db(missing)
     assert not missing.exists()  # plain connect() would have created it
+
+
+def test_parse_arena_mana_cost_formats():
+    parse = CardDatabase.parse_arena_mana_cost
+    # Old-school text
+    assert parse("2BB") == ("{2}{B}{B}", 4.0)
+    assert parse("X(W/U)(W/U)") == ("{X}{W/U}{W/U}", 2.0)
+    assert parse("0") == ("{0}", 0.0)
+    # GRE pip text ('o' separators)
+    assert parse("o2oBoB") == ("{2}{B}{B}", 4.0)
+    assert parse("oXo(G/W)") == ("{X}{G/W}", 1.0)
+    assert parse("o10oGoG") == ("{10}{G}{G}", 12.0)
+    # Already-braced Scryfall notation passes through
+    assert parse("{1}{B/P}{U}") == ("{1}{B/P}{U}", 3.0)
+    # Twobrid counts as 2; Phyrexian and snow pips count as 1
+    assert parse("(2/W)(2/W)") == ("{2/W}{2/W}", 4.0)
+    assert parse("(G/P)S") == ("{G/P}{S}", 2.0)
+    # Lands / empty costs
+    assert parse(None) == ("", 0.0)
+    assert parse("   ") == ("", 0.0)
+    # Garbage is refused, never guessed
+    assert parse("2%%") is None
+    assert parse("(W/Q)") is None
+    assert parse("{unclosed") is None
+
+
+def test_mana_cost_index_by_name_probes_cost_column(tmp_path, monkeypatch):
+    raw_dir = tmp_path / "Raw"
+    raw_dir.mkdir()
+    raw_path = raw_dir / "Raw_CardDatabase_test.mtga"
+    conn = sqlite3.connect(raw_path)
+    conn.execute(
+        'CREATE TABLE "Cards" ("GrpId" INTEGER, "TitleId" INTEGER, "OldSchoolManaText" TEXT)'
+    )
+    conn.execute('CREATE TABLE "Localizations_enUS" ("LocId" INTEGER, "Loc" TEXT)')
+    rows = [
+        (1, 10, "1B"),
+        (2, 20, "(G/W)(G/W)"),
+        (3, 30, None),  # land: NULL cost stays out of the index
+        (4, 40, "not-a-cost%%"),  # unparsable: skipped, not guessed
+    ]
+    for grp_id, title_id, cost in rows:
+        conn.execute(
+            'INSERT INTO "Cards" ("GrpId", "TitleId", "OldSchoolManaText") VALUES (?, ?, ?)',
+            (grp_id, title_id, cost),
+        )
+    for title_id, name in ((10, "Dusk Rat"), (20, "Watchwolf"), (30, "Swamp"), (40, "Broken")):
+        conn.execute(
+            'INSERT INTO "Localizations_enUS" ("LocId", "Loc") VALUES (?, ?)', (title_id, name)
+        )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(
+        card_database, "get_mtga_raw_card_db_folders", lambda mtga_data_dir=None, log_path=None: [raw_dir]
+    )
+
+    db = CardDatabase()
+    index = db.mana_cost_index_by_name()
+
+    assert index["Dusk Rat"] == ("{1}{B}", 2.0)
+    assert index["Watchwolf"] == ("{G/W}{G/W}", 2.0)
+    assert "Swamp" not in index  # NULL cost filtered by the query
+    assert "Broken" not in index  # unparsable value skipped

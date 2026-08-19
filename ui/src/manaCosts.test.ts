@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  fetchManaCosts,
   frontFaceName,
   manaCostSymbols,
-  manaSymbolUrl,
+  manaSymbolClass,
   playedManaStats,
+  seedManaCosts,
   type CardManaInfo,
 } from './manaCosts';
 
@@ -15,11 +17,39 @@ describe('manaCostSymbols', () => {
   });
 });
 
-describe('manaSymbolUrl', () => {
-  it('maps symbols to Scryfall SVGs, dropping braces and slashes', () => {
-    expect(manaSymbolUrl('{G}')).toBe('https://svgs.scryfall.io/card-symbols/G.svg');
-    expect(manaSymbolUrl('{10}')).toBe('https://svgs.scryfall.io/card-symbols/10.svg');
-    expect(manaSymbolUrl('{G/U}')).toBe('https://svgs.scryfall.io/card-symbols/GU.svg');
+describe('manaSymbolClass', () => {
+  it('maps every symbol shape to its mana-font class', () => {
+    expect(manaSymbolClass('{G}')).toBe('ms-g');
+    expect(manaSymbolClass('{10}')).toBe('ms-10');
+    expect(manaSymbolClass('{X}')).toBe('ms-x');
+    // Hybrid, twobrid, Phyrexian, hybrid-Phyrexian, colorless-hybrid, snow.
+    expect(manaSymbolClass('{G/U}')).toBe('ms-gu');
+    expect(manaSymbolClass('{2/W}')).toBe('ms-2w');
+    expect(manaSymbolClass('{B/P}')).toBe('ms-bp');
+    expect(manaSymbolClass('{G/W/P}')).toBe('ms-gwp');
+    expect(manaSymbolClass('{C/B}')).toBe('ms-cb');
+    expect(manaSymbolClass('{S}')).toBe('ms-s');
+  });
+});
+
+describe('seedManaCosts', () => {
+  it('serves seeded server costs without touching the network', async () => {
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {} });
+    const fetchSpy = vi.fn(async () => {
+      throw new Error('offline');
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    seedManaCosts({
+      'Unholy Annex // Ritual Chamber': { mana_cost: '{1}{B}{B}', mana_value: 3 },
+      Swamp: { mana_cost: '', mana_value: 0 },
+    });
+
+    const map = await fetchManaCosts(['Unholy Annex // Ritual Chamber', 'Swamp']);
+
+    expect(map.get('Unholy Annex // Ritual Chamber')).toEqual({ mana_cost: '{1}{B}{B}', cmc: 3 });
+    expect(map.get('Swamp')).toEqual({ mana_cost: '', cmc: 0 });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });
 

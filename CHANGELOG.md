@@ -3,8 +3,12 @@
 ## 0.5.6
 
 - **Mana costs on the deck list**: a new Mana column (between Card and Type) shows
-  each card's cost with real mana symbols, resolved client-side from Scryfall and
-  cached in the browser — no schema change, works for every deck retroactively.
+  each card's cost with the official MTG symbols — hybrid, twobrid, Phyrexian, X,
+  the lot — rendered from a bundled icon font (mana-font), no network needed.
+  Costs come from Arena's own local card database (backfilled into the tracker's
+  `cards` table at startup and after each game, like color identities already
+  were), with a browser-cached Scryfall lookup as fallback for anything Arena's
+  DB doesn't cover. Works for every deck retroactively.
 - **Deck list at a glance**: MTGA-style card-type count boxes (Planeswalkers →
   Lands) above the deck list, plus "N cards total" lines under the main deck and
   sideboard tables.

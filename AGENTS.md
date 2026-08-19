@@ -229,13 +229,21 @@ Preserve these behaviors unless the user explicitly changes requirements:
   when another game shares the exact maindeck (`canonicalize_imported_deck_names`).
 - Card Drill-Down persistently uses the same Scryfall full-card image loader as card hover
   previews; deck thumbnails continue using cropped artwork.
-- Mana costs are NEVER stored server-side (Arena's log doesn't state them). The UI resolves
-  them client-side via Scryfall's batched `/cards/collection` endpoint (`ui/src/manaCosts.ts`,
-  localStorage-cached, dash on failure/offline) and renders Scryfall-hosted symbol SVGs. The
-  deck page's Mana column, the type-count boxes, and both pages' "Avg mana value / card
-  played" + "Mana spent / turn" rows (Combat & Resources → Cards; printed costs, lands
-  excluded, X = 0) all build on it; the deck payload only ships raw inputs via `played_mana`
-  (per-seat play totals + turns from `games.player_turns`/`opponent_turns`).
+- Mana costs: Arena's log never states them, so the PRIMARY source is Arena's local card DB —
+  `CardDatabase.mana_cost_index_by_name()` probes the Cards table for a cost column (schema
+  varies; `parse_arena_mana_cost` handles GRE pip text `o2oBoB`, old-school `2BB`, and braced
+  forms, refusing rather than guessing) and `AnalyticsStore.backfill_card_mana` fills
+  `cards.mana_cost`/`mana_value` at startup and game end, exactly like color identities.
+  Payloads ship a `card_mana` name→cost map (deck + game); the UI seeds its cache from it and
+  only falls back to Scryfall's batched `/cards/collection` for gaps (`ui/src/manaCosts.ts`,
+  localStorage-cached, dash when unresolvable). Symbols render OFFLINE from the bundled
+  mana-font package (class = braces/slashes stripped, lowercased: `{G/W}` → `ms-gw`) — never
+  hotlink symbol images. The deck page's Mana column, type-count boxes, and both pages'
+  "Avg mana value / card played" + "Mana spent / turn" rows (Combat & Resources → Cards;
+  printed costs, lands excluded, X = 0) build on this; the deck payload also ships raw
+  per-seat inputs via `played_mana` (play totals + turns from `games.player_turns`/
+  `opponent_turns`). `scripts/probe_mtga_card_db.py` verifies the cost column/format against
+  a real Arena install.
 - The sidebar `MTGA Tracker` brand uses the dashboard heading typography, links to the very
   top of Overview, and displays local vector W/U/B/R/G mana symbols rather than upscaled raster
   icons. Browser tab titles use `MTGA Tracker – <page>`.

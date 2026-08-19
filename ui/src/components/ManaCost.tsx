@@ -1,8 +1,10 @@
-import { manaCostSymbols, manaSymbolUrl, type CardManaInfo } from '../manaCosts';
+import 'mana-font/css/mana.min.css';
+import { manaCostSymbols, manaSymbolClass, type CardManaInfo } from '../manaCosts';
 
 /**
- * A card's mana cost as official symbol images (Scryfall-hosted SVGs, same
- * dependency as the card-art backdrop). Lands and unknown costs render a dash.
+ * A card's mana cost as official MTG symbols, rendered from the bundled
+ * mana-font icon set (works offline; covers hybrid, twobrid, Phyrexian,
+ * X, snow, and colorless pips). Lands and unknown costs render a dash.
  */
 export function ManaCost({ info }: { info: CardManaInfo | null | undefined }) {
   if (!info || !info.mana_cost) {
@@ -15,12 +17,11 @@ export function ManaCost({ info }: { info: CardManaInfo | null | undefined }) {
   return (
     <span className="mana-cost" aria-label={`Mana cost ${info.mana_cost}`}>
       {symbols.map((symbol, index) => (
-        <img
+        <i
           key={`${symbol}-${index}`}
-          alt={symbol}
-          className="mana-symbol"
-          loading="lazy"
-          src={manaSymbolUrl(symbol)}
+          aria-hidden="true"
+          className={`ms ms-cost ms-shadow ${manaSymbolClass(symbol)}`}
+          title={symbol}
         />
       ))}
     </span>

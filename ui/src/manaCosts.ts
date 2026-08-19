@@ -189,13 +189,46 @@ export function playedManaStats(
   };
 }
 
+/** A server-provided cost (Arena card DB via the tracker's cards table). */
+export interface ServerManaEntry {
+  mana_cost: string;
+  mana_value: number;
+}
+
+/**
+ * Seed the cache with Arena-derived costs from a dashboard payload's
+ * `card_mana` map. Server values take precedence over anything Scryfall
+ * cached earlier, and seeded names are skipped by fetchManaCosts entirely —
+ * with a complete map the page never talks to Scryfall at all.
+ */
+export function seedManaCosts(
+  entries: Record<string, ServerManaEntry> | null | undefined,
+): void {
+  if (!entries) {
+    return;
+  }
+  loadStorage();
+  for (const [name, entry] of Object.entries(entries)) {
+    if (!entry || typeof entry.mana_cost !== 'string') {
+      continue;
+    }
+    const info: CardManaInfo = { mana_cost: entry.mana_cost, cmc: Number(entry.mana_value ?? 0) };
+    cache.set(name.toLowerCase(), info);
+    name.split(' // ').forEach((part) => cache.set(part.trim().toLowerCase(), info));
+  }
+}
+
 /** Split "{2}{G}{G}" into ["{2}", "{G}", "{G}"]. */
 export function manaCostSymbols(cost: string): string[] {
   return cost.match(/\{[^}]+\}/g) ?? [];
 }
 
-/** Scryfall-hosted SVG for one "{G}"-style symbol. */
-export function manaSymbolUrl(symbol: string): string {
-  const code = symbol.slice(1, -1).replace(/\//g, '');
-  return `https://svgs.scryfall.io/card-symbols/${encodeURIComponent(code)}.svg`;
+/**
+ * mana-font class for one "{G/W}"-style symbol: braces off, slashes out,
+ * lowercased — {G/W} → ms-gw, {2/U} → ms-2u, {B/P} → ms-bp, {10} → ms-10.
+ * The font ships every printed cost symbol including hybrid, twobrid,
+ * Phyrexian, hybrid-Phyrexian, X, snow, and colorless.
+ */
+export function manaSymbolClass(symbol: string): string {
+  return `ms-${symbol.slice(1, -1).toLowerCase().replace(/\//g, '')}`;
 }

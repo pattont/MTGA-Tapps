@@ -2810,3 +2810,36 @@ def test_deck_detail_played_mana_inputs(tmp_path):
     assert "Shock" not in player_cards
     opponent_cards = {row["display_name"]: row for row in played["opponent"]["cards"]}
     assert opponent_cards["Duress"]["times_played"] == 2
+
+
+def test_deck_and_game_payloads_ship_arena_mana_costs(tmp_path):
+    """card_mana maps display names to Arena-derived costs from the cards table."""
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            ) values (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("game-1", "player-1", 11, "Mouse Mentor (Creature 2/1)", "Creature", 2),
+                ("game-1", "opponent-1", 21, "Duress", "Sorcery", 1),
+            ],
+        )
+        conn.executemany(
+            "insert into cards (name, first_seen_at, mana_cost, mana_value) "
+            "values (?, '2026-08-01T00:00:00', ?, ?)",
+            [
+                ("Mouse Mentor", "{R}{W}", 2.0),
+                ("Duress", "{B}", 1.0),
+                ("Swamp", "", 0.0),  # lands carry an empty (not NULL) cost
+            ],
+        )
+
+    detail = deck_detail(db_path, "Boros Mouse")
+    assert detail["card_mana"]["Mouse Mentor"] == {"mana_cost": "{R}{W}", "mana_value": 2.0}
+
+    game = game_detail(db_path, "game-1")
+    assert game["card_mana"]["Mouse Mentor"] == {"mana_cost": "{R}{W}", "mana_value": 2.0}
+    assert game["card_mana"]["Duress"] == {"mana_cost": "{B}", "mana_value": 1.0}
