@@ -811,6 +811,12 @@ a.best-deck-name:focus-visible {
   height: 32px;
 }
 
+/* Official card-type symbols (mana-font) in the deck-list type-count boxes. */
+.metric-card-icon .type-count-icon {
+  font-size: 26px;
+  line-height: 1;
+}
+
 
 .metric-card-win {
   border-color: color-mix(in srgb, var(--success) 45%, var(--border));
