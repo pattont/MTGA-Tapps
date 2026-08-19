@@ -50,7 +50,7 @@ import {
   shortFormatLabel,
 } from '../format';
 import { gameRouteHash, gamesRouteHash } from '../routes';
-import { fetchManaCosts, playedManaStats, type CardManaInfo } from '../manaCosts';
+import { fetchManaCosts, playedManaStats, seedManaCosts, type CardManaInfo } from '../manaCosts';
 import { makeOpponentColorColumns } from '../opponentColorColumns';
 import { ManaCost } from './ManaCost';
 import { Badge } from './Badge';
@@ -608,13 +608,15 @@ export function DeckDetailPage({
     [deckName],
   );
   const [manaCosts, setManaCosts] = useState<Map<string, CardManaInfo | null>>(() => new Map());
-  const manaNamesKey = loadState.status === 'loaded' ? deckCardNames(loadState.detail).join('\n') : '';
+  const loadedDetail = loadState.status === 'loaded' ? loadState.detail : null;
   useEffect(() => {
-    if (!manaNamesKey) {
+    if (!loadedDetail) {
       return;
     }
     let cancelled = false;
-    void fetchManaCosts(manaNamesKey.split('\n')).then((map) => {
+    // Arena-derived costs from the payload win; Scryfall only fills gaps.
+    seedManaCosts(loadedDetail.card_mana);
+    void fetchManaCosts(deckCardNames(loadedDetail)).then((map) => {
       if (!cancelled) {
         setManaCosts(map);
       }
@@ -622,7 +624,7 @@ export function DeckDetailPage({
     return () => {
       cancelled = true;
     };
-  }, [manaNamesKey]);
+  }, [loadedDetail]);
   const landProfile =
     loadState.status === 'loaded' &&
     loadState.detail.land_profile &&

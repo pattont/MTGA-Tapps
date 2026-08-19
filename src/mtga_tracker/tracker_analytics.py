@@ -246,6 +246,9 @@ class TrackerAnalyticsMixin:
             index = self.card_db.color_identity_index_by_name()
             if index:
                 AnalyticsStore.backfill_card_colors(conn, index)
+            mana_index = self.card_db.mana_cost_index_by_name()
+            if mana_index:
+                AnalyticsStore.backfill_card_mana(conn, mana_index)
         except (AttributeError, sqlite3.Error, OSError, TypeError, ValueError):
             return
 
@@ -1178,6 +1181,9 @@ class TrackerAnalyticsMixin:
             color_index = self.card_db.color_identity_index_by_name()
             if color_index:
                 AnalyticsStore.backfill_card_colors(conn, color_index)
+            mana_index = self.card_db.mana_cost_index_by_name()
+            if mana_index:
+                AnalyticsStore.backfill_card_mana(conn, mana_index)
         except (AttributeError, sqlite3.Error, OSError, TypeError, ValueError):
             pass
         try:

@@ -16,7 +16,7 @@ import sys
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .draw_quality import (
@@ -2825,6 +2825,19 @@ def deck_detail(
         trend_rows.reverse()
         deck_visuals = _deck_visuals(conn)
         deck_export = _deck_export_snapshot(conn, where, params, deck_name)
+        # Arena-derived mana costs for every card the page can show; the UI
+        # falls back to Scryfall for names missing from this map.
+        mana_names: Set[str] = {str(row["display_name"]) for row in card_rows}
+        if deck_export.get("available"):
+            for section in ("main_deck", "sideboard"):
+                mana_names.update(
+                    str(card.get("display_name") or "")
+                    for card in deck_export.get(section) or []
+                )
+        if played_mana:
+            for seat in played_mana.values():
+                mana_names.update(str(card["display_name"]) for card in seat["cards"])
+        deck_card_mana = _card_mana_map(conn, mana_names)
         opponent_color_rows = _opponent_color_rows(conn, where, params)
         land_profile = _deck_land_profile(conn, where, params)
         account_rows = _dict_rows(
@@ -2899,6 +2912,7 @@ def deck_detail(
         "formats": format_rows,
         "midweek_formats": midweek_rows,
         "card_performance": card_rows,
+        "card_mana": deck_card_mana,
         "opening_hands": opener_rows,
         "mulligans": mulligan_rows,
         "recent": recent_rows,
@@ -3074,6 +3088,39 @@ def _deck_turn_timing(
             "games": games,
         }
     return summary or None
+
+
+def _card_mana_map(
+    conn: sqlite3.Connection, names: Iterable[str]
+) -> Dict[str, Dict[str, Any]]:
+    """Map display names to Arena-derived mana costs from the cards table.
+
+    Costs land in cards.mana_cost/mana_value via the Arena card-DB backfill
+    (AnalyticsStore.backfill_card_mana). Names match through their aliases so
+    "A // B" display names find the front face's row. Only names with a stored
+    cost appear; the UI falls back to Scryfall for anything missing.
+    """
+    wanted = {str(name) for name in names if name}
+    if not wanted or not _table_exists(conn, "cards"):
+        return {}
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(cards)")}
+    if "mana_cost" not in columns:
+        return {}
+    by_name: Dict[str, Tuple[str, Any]] = {}
+    for name, cost, value in conn.execute(
+        "SELECT name, mana_cost, mana_value FROM cards WHERE mana_cost IS NOT NULL"
+    ):
+        clean_name = _clean_card_name(str(name or ""))
+        if clean_name and clean_name not in by_name:
+            by_name[clean_name] = (str(cost), value)
+    result: Dict[str, Dict[str, Any]] = {}
+    for name in wanted:
+        for alias in _card_name_aliases(name):
+            entry = by_name.get(alias)
+            if entry is not None:
+                result[name] = {"mana_cost": entry[0], "mana_value": entry[1]}
+                break
+    return result
 
 
 def _deck_played_mana(
@@ -3385,6 +3432,11 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         )
         for row in opponent_cards:
             row["display_name"] = _clean_card_name(row.get("display_name"))
+        game_card_mana = _card_mana_map(
+            conn,
+            [str(row.get("display_name") or "") for row in cards_played]
+            + [str(row.get("display_name") or "") for row in opponent_cards],
+        )
 
         timeline = _dict_rows(
             conn.execute(
@@ -3648,6 +3700,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         "turns": turn_timings,
         "cards_played": cards_played,
         "opponent_cards": opponent_cards,
+        "card_mana": game_card_mana,
         "timeline": timeline,
         "life_curve": life_curve,
     }

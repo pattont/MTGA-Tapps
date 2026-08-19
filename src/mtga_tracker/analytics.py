@@ -470,6 +470,8 @@ class AnalyticsStore:
             conn, "game_turns", "timing_source", "TEXT NOT NULL DEFAULT 'live'"
         )
         AnalyticsStore.ensure_table_column(conn, "cards", "color_identity", "TEXT")
+        AnalyticsStore.ensure_table_column(conn, "cards", "mana_cost", "TEXT")
+        AnalyticsStore.ensure_table_column(conn, "cards", "mana_value", "REAL")
         AnalyticsStore.backfill_game_turn_counts(conn)
         AnalyticsStore.apply_pending_migrations(conn)
         AnalyticsStore.canonicalize_imported_deck_names(conn)
@@ -729,6 +731,39 @@ class AnalyticsStore:
                 continue
             conn.execute(
                 "UPDATE cards SET color_identity = ? WHERE id = ?", (letters, card_id)
+            )
+            updated += 1
+        if updated:
+            conn.commit()
+        return updated
+
+    @staticmethod
+    def backfill_card_mana(conn: sqlite3.Connection, mana_by_name) -> int:
+        """Fill cards.mana_cost/mana_value for rows without one, by base name.
+
+        mana_by_name maps clean card names to (Scryfall-style cost, mana value)
+        tuples from the Arena card database (CardDatabase.mana_cost_index_by_name).
+        Only NULL rows are touched, so this is cheap to re-run at startup and
+        after each game. Split cards fall back to their front face's cost.
+        """
+        if not mana_by_name:
+            return 0
+        from .analytics_persistence import analytics_card_base_name
+
+        updated = 0
+        for card_id, name in conn.execute(
+            "SELECT id, name FROM cards WHERE mana_cost IS NULL"
+        ).fetchall():
+            base = analytics_card_base_name(str(name or ""))
+            entry = mana_by_name.get(base)
+            if entry is None and " // " in base:
+                entry = mana_by_name.get(base.split(" // ")[0].strip())
+            if entry is None:
+                continue
+            cost, value = entry
+            conn.execute(
+                "UPDATE cards SET mana_cost = ?, mana_value = ? WHERE id = ?",
+                (cost, float(value), card_id),
             )
             updated += 1
         if updated:

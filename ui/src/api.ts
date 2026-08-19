@@ -450,11 +450,14 @@ export interface DeckPlayedManaSeat {
   cards: DeckPlayedManaCard[];
 }
 
-/** Raw inputs for client-side mana-value stats (costs come from Scryfall). */
+/** Raw inputs for client-side mana-value stats (costs come from card_mana / Scryfall). */
 export interface DeckPlayedMana {
   player?: DeckPlayedManaSeat;
   opponent?: DeckPlayedManaSeat;
 }
+
+/** Arena-card-DB mana costs keyed by display name (Scryfall notation). */
+export type CardManaMap = Record<string, { mana_cost: string; mana_value: number }>;
 
 export interface DeckExportCard {
   display_name: string;
@@ -628,6 +631,7 @@ export interface DeckDetail {
   combat_profile: CombatDeckRow | null;
   interaction_profile?: DeckInteractionProfile | null;
   played_mana?: DeckPlayedMana | null;
+  card_mana?: CardManaMap;
   turn_timing?: {
     player?: DeckTurnTimingSide;
     opponent?: DeckTurnTimingSide;
@@ -901,6 +905,7 @@ export interface GameDetail {
   turns: GameTurnTimingRow[];
   cards_played: GamePlayedCardRow[];
   opponent_cards: OpponentVisibleCardRow[];
+  card_mana?: CardManaMap;
   timeline: GameTimelineRow[];
   life_curve: LifePoint[];
 }

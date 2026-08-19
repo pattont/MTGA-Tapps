@@ -1052,3 +1052,42 @@ def test_v21_repairs_month_day_swapped_timestamps(tmp_path):
     assert conn.execute(
         "SELECT started_at FROM games WHERE id='g-swapped'"
     ).fetchone()[0] == "2026-08-09T20:05:00"
+
+
+def test_backfill_card_mana_fills_null_rows_only(tmp_path):
+    db_path = tmp_path / "mana.sqlite3"
+    conn = sqlite3.connect(db_path)
+    AnalyticsStore.ensure_schema(conn)
+    conn.executemany(
+        "INSERT INTO cards (name, first_seen_at) VALUES (?, '2026-08-01T00:00:00')",
+        [
+            ("Forsaken Miner (Creature 2/2)",),  # base name lookup
+            ("Fire // Ice",),                    # split: front-face fallback
+            ("Already Set",),
+            ("Unknown To Arena",),
+        ],
+    )
+    conn.execute(
+        "UPDATE cards SET mana_cost = '{9}', mana_value = 9 WHERE name = 'Already Set'"
+    )
+    index = {
+        "Forsaken Miner": ("{B}", 1.0),
+        "Fire": ("{1}{R}", 2.0),
+        "Already Set": ("{1}", 1.0),
+    }
+
+    updated = AnalyticsStore.backfill_card_mana(conn, index)
+
+    assert updated == 2
+    rows = dict(
+        (name, (cost, value))
+        for name, cost, value in conn.execute(
+            "SELECT name, mana_cost, mana_value FROM cards"
+        )
+    )
+    assert rows["Forsaken Miner (Creature 2/2)"] == ("{B}", 1.0)
+    assert rows["Fire // Ice"] == ("{1}{R}", 2.0)
+    assert rows["Already Set"] == ("{9}", 9.0)  # non-NULL rows never touched
+    assert rows["Unknown To Arena"] == (None, None)
+    # Idempotent: nothing left to fill for known names.
+    assert AnalyticsStore.backfill_card_mana(conn, index) == 0
