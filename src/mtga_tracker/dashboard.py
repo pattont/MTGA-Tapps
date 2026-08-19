@@ -3480,6 +3480,11 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
             )
         for row in opponent_cards:
             aliases = _card_name_aliases(row.get("display_name"))
+            row["turns_played"] = sorted(
+                turn
+                for alias in aliases
+                for turn in played_turns.get(("opponent", alias), [])
+            )
             seen = [
                 turn
                 for alias in aliases

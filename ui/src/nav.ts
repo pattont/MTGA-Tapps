@@ -58,7 +58,7 @@ export const gameNavItems: AppNavItem[] = [
   { id: 'game-opening-hand', label: 'Opening Hand' },
   { id: 'game-draws', label: 'Drawn Cards' },
   { id: 'game-played', label: 'Cards Played' },
-  { id: 'game-opponent-cards', label: 'Opponent Cards' },
+  { id: 'game-opponent-cards', label: 'Opponent Deck' },
   { id: 'game-timeline', label: 'Timeline' },
 ];
 

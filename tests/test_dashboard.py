@@ -1063,6 +1063,7 @@ def test_game_detail_reports_header_cards_and_timeline(tmp_path):
             "discarded_count": 1,
             "milled_count": 0,
             "exiled_count": 1,
+            "turns_played": [],
             "first_seen_turn": None,
         }
     ]

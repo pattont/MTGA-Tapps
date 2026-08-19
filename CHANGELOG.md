@@ -1,7 +1,18 @@
 # Changelog
 
-## 0.5.6
+## 0.5.7
 
+Rolls up everything since 0.5.5 (including the 0.5.6 beta's date repair).
+
+- **Mana columns everywhere cards are listed**: the deck page's Deck List &
+  Sideboard, and the game page's Opening Hand, Drawn Cards, Cards Played, and
+  Opponent Deck tables all show each card's cost with official symbols.
+- **Opponent Deck on the game page** replaces "Opponent Revealed Cards", split
+  into Opponent Played Cards (with the turn(s) each copy hit, like your own
+  Cards Played table) and Opponent Revealed Cards (visible draws, discards,
+  mills, exiles).
+- **Table totals**: proper totals rows on the deck list and sideboard, and on
+  the game page's Drawn Cards, Cards Played, and Opponent Deck tables.
 - **Mana costs on the deck list**: a new Mana column (between Card and Type) shows
   each card's cost with the official MTG symbols — hybrid, twobrid, Phyrexian, X,
   the lot — rendered from a bundled icon font (mana-font), no network needed.
