@@ -438,6 +438,24 @@ export interface DeckGameRow {
   opp_colors?: string;
 }
 
+export interface DeckPlayedManaCard {
+  display_name: string;
+  type_category: string;
+  times_played: number;
+}
+
+export interface DeckPlayedManaSeat {
+  /** Total turns this seat took across the deck's games; null if untracked. */
+  turns: number | null;
+  cards: DeckPlayedManaCard[];
+}
+
+/** Raw inputs for client-side mana-value stats (costs come from Scryfall). */
+export interface DeckPlayedMana {
+  player?: DeckPlayedManaSeat;
+  opponent?: DeckPlayedManaSeat;
+}
+
 export interface DeckExportCard {
   display_name: string;
   quantity: number;
@@ -609,6 +627,7 @@ export interface DeckDetail {
   profile: DeckProfile;
   combat_profile: CombatDeckRow | null;
   interaction_profile?: DeckInteractionProfile | null;
+  played_mana?: DeckPlayedMana | null;
   turn_timing?: {
     player?: DeckTurnTimingSide;
     opponent?: DeckTurnTimingSide;

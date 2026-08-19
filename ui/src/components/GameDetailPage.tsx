@@ -29,6 +29,7 @@ import { pageTitle } from '../branding';
 import { formatPercent } from '../dashboardData';
 import { boFormatLabel, formatDateTime, formatDuration, formatNumber, formatTurnDuration, outcomeLabel, outcomeTone } from '../format';
 import { gameRouteHash } from '../routes';
+import { fetchManaCosts, playedManaStats, type CardManaInfo } from '../manaCosts';
 import { DeckLink } from './DeckLink';
 import { Badge } from './Badge';
 import { bucketCombatGroups, CombatGroupColumns } from './CombatGroupColumns';
@@ -335,6 +336,34 @@ export function GameDetailPage({
     };
   }, [gameId]);
 
+  // Mana costs for both seats' played cards (client-side Scryfall cache)
+  // feed the mana-value rows in Combat & Resources.
+  const [manaCosts, setManaCosts] = useState<Map<string, CardManaInfo | null>>(() => new Map());
+  const manaNamesKey =
+    loadState.status === 'loaded'
+      ? Array.from(
+          new Set(
+            [...loadState.detail.cards_played, ...loadState.detail.opponent_cards].map(
+              (row) => row.display_name,
+            ),
+          ),
+        ).join('\n')
+      : '';
+  useEffect(() => {
+    if (!manaNamesKey) {
+      return;
+    }
+    let cancelled = false;
+    void fetchManaCosts(manaNamesKey.split('\n')).then((map) => {
+      if (!cancelled) {
+        setManaCosts(map);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [manaNamesKey]);
+
   if (loadState.status === 'loading') {
     return (
       <p className="state-panel" role="status" aria-busy="true">
@@ -559,6 +588,37 @@ export function GameDetailPage({
         ['Exiled', 'tokens_exiled'],
       ],
     },
+  ];
+  // Mana-value stats from printed costs (Scryfall) — lands excluded, X = 0.
+  const playerManaStats = playedManaStats(
+    detail.cards_played.map((row) => ({
+      display_name: row.display_name,
+      type_category: row.type_category,
+      count: row.played_count,
+    })),
+    manaCosts,
+    detail.game.player_turns,
+  );
+  const opponentManaStats = playedManaStats(
+    detail.opponent_cards.map((row) => ({
+      display_name: row.display_name,
+      type_category: row.type_category,
+      count: row.played_count,
+    })),
+    manaCosts,
+    detail.game.opponent_turns,
+  );
+  const playedManaRows: [string, string, string][] = [
+    [
+      'Avg mana value / card played',
+      formatStatCell(playerManaStats.avg_per_card),
+      formatStatCell(opponentManaStats.avg_per_card),
+    ],
+    [
+      'Mana spent / turn',
+      formatStatCell(playerManaStats.per_turn),
+      formatStatCell(opponentManaStats.per_turn),
+    ],
   ];
   const mulliganHands = detail.mulligan_hands ?? [];
   async function saveAnnotation() {
@@ -820,11 +880,14 @@ export function GameDetailPage({
             columns={bucketCombatGroups(
               combatGroups.map((group) => ({
                 title: group.title,
-                rows: group.rows.map(([label, key]): [string, string, string] => [
-                  label,
-                  formatStatCell(playerView ? playerView[key] : null),
-                  formatStatCell(opponentView ? opponentView[key] : null),
-                ]),
+                rows: [
+                  ...group.rows.map(([label, key]): [string, string, string] => [
+                    label,
+                    formatStatCell(playerView ? playerView[key] : null),
+                    formatStatCell(opponentView ? opponentView[key] : null),
+                  ]),
+                  ...(group.title === 'Cards' ? playedManaRows : []),
+                ],
               })),
             )}
           />

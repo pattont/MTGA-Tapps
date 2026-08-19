@@ -536,6 +536,34 @@ a {
   margin-bottom: 18px;
 }
 
+/* Deck list: MTGA-style card-type count boxes above the decklist table. */
+.type-count-grid {
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  margin-bottom: 14px;
+}
+
+/* Deck list: mana-cost symbols (Scryfall SVGs) inside the Mana column. */
+.mana-cost {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  vertical-align: middle;
+}
+
+.mana-symbol {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  box-shadow: -1px 1px 0 rgb(0 0 0 / 30%);
+}
+
+/* Deck list: "N cards total" line under the main deck / sideboard tables. */
+.table-total {
+  margin: 8px 2px 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 /* Best Deck: slim full-width strip between the metric cards and the analytics panels. */
 .best-deck-bar {
   position: relative;

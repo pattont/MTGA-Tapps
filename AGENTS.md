@@ -229,6 +229,13 @@ Preserve these behaviors unless the user explicitly changes requirements:
   when another game shares the exact maindeck (`canonicalize_imported_deck_names`).
 - Card Drill-Down persistently uses the same Scryfall full-card image loader as card hover
   previews; deck thumbnails continue using cropped artwork.
+- Mana costs are NEVER stored server-side (Arena's log doesn't state them). The UI resolves
+  them client-side via Scryfall's batched `/cards/collection` endpoint (`ui/src/manaCosts.ts`,
+  localStorage-cached, dash on failure/offline) and renders Scryfall-hosted symbol SVGs. The
+  deck page's Mana column, the type-count boxes, and both pages' "Avg mana value / card
+  played" + "Mana spent / turn" rows (Combat & Resources → Cards; printed costs, lands
+  excluded, X = 0) all build on it; the deck payload only ships raw inputs via `played_mana`
+  (per-seat play totals + turns from `games.player_turns`/`opponent_turns`).
 - The sidebar `MTGA Tracker` brand uses the dashboard heading typography, links to the very
   top of Overview, and displays local vector W/U/B/R/G mana symbols rather than upscaled raster
   icons. Browser tab titles use `MTGA Tracker – <page>`.

@@ -2775,3 +2775,38 @@ def test_deck_detail_turn_timing_and_draw_quality_averages(tmp_path):
     profile = detail["land_profile"]
     assert profile["avg_cards_seen"] is not None
     assert profile["classified_games"] >= 1
+
+
+def test_deck_detail_played_mana_inputs(tmp_path):
+    """played_mana ships per-seat play totals + turns for the UI's mana math."""
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            ) values (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("game-1", "player-1", 11, "Mouse Mentor (Creature 2/1)", "Creature", 2),
+                ("game-2", "player-2", 11, "Mouse Mentor (Creature 2/1)", "Creature", 1),
+                ("game-1", "player-1", 12, "Mountain (Land)", "Land", 3),
+                ("game-1", "opponent-1", 21, "Duress", "Sorcery", 2),
+                ("game-2", "player-2", 13, "Shock", "Instant", 0),  # never played
+            ],
+        )
+
+    detail = deck_detail(db_path, "Boros Mouse")
+
+    played = detail["played_mana"]
+    # Each seat took 4 turns in game-1 and 5 in game-2.
+    assert played["player"]["turns"] == 9
+    assert played["opponent"]["turns"] == 9
+    player_cards = {row["display_name"]: row for row in played["player"]["cards"]}
+    # "(Creature 2/1)"-style suffixes are cleaned and copies merged across games.
+    assert player_cards["Mouse Mentor"]["times_played"] == 3
+    assert player_cards["Mouse Mentor"]["type_category"] == "Creature"
+    assert player_cards["Mountain"]["times_played"] == 3
+    assert "Shock" not in player_cards
+    opponent_cards = {row["display_name"]: row for row in played["opponent"]["cards"]}
+    assert opponent_cards["Duress"]["times_played"] == 2

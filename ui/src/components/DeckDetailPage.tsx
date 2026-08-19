@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
+  Amphora,
   ChartNoAxesCombined,
   Check,
   Clock,
@@ -8,13 +9,19 @@ import {
   Flame,
   Gauge,
   Hourglass,
+  Mountain,
+  PawPrint,
   Play,
   RefreshCw,
   Repeat,
+  Sparkles,
+  Sun,
   Swords,
   Timer,
   TrendingDown,
   Trophy,
+  Wand,
+  Zap,
 } from 'lucide-react';
 import {
   fetchDeckDetail,
@@ -23,6 +30,7 @@ import {
   type DeckDetail,
   type DeckGameRow,
   type DeckInteractionSide,
+  type DeckPlayedManaSeat,
   type DeckVersionRow,
   type MulliganRow,
   type OpponentColorRow,
@@ -42,7 +50,9 @@ import {
   shortFormatLabel,
 } from '../format';
 import { gameRouteHash, gamesRouteHash } from '../routes';
+import { fetchManaCosts, playedManaStats, type CardManaInfo } from '../manaCosts';
 import { makeOpponentColorColumns } from '../opponentColorColumns';
+import { ManaCost } from './ManaCost';
 import { Badge } from './Badge';
 import { bucketCombatGroups, CombatGroupColumns } from './CombatGroupColumns';
 import { ColorPips } from './ColorPips';
@@ -72,6 +82,35 @@ type DeckListPerformanceRow = CardPerformanceRow & {
   seen_delta: number | null;
   opener_pct: number | null;
 };
+
+type DeckListManaRow = DeckListPerformanceRow & {
+  mana: CardManaInfo | null;
+  mana_cmc: number | null;
+};
+
+/** Every card name the decklist tables can show, for the mana-cost lookup. */
+function deckCardNames(detail: DeckDetail): string[] {
+  const names = new Set<string>();
+  detail.card_performance.forEach((row) => names.add(row.display_name));
+  detail.deck_export.main_deck.forEach((card) => names.add(card.display_name));
+  detail.deck_export.sideboard.forEach((card) => names.add(card.display_name));
+  // Both seats' played cards feed the mana-value averages in Combat & Resources.
+  [detail.played_mana?.player, detail.played_mana?.opponent].forEach((seat) => {
+    seat?.cards.forEach((card) => names.add(card.display_name));
+  });
+  return Array.from(names);
+}
+
+/** MTGA-style type bar, left to right, rendered as themed count boxes. */
+const TYPE_COUNT_BOXES: Array<{ category: string; label: string; icon: ReactNode }> = [
+  { category: 'Planeswalker', label: 'Planeswalkers', icon: <Sparkles /> },
+  { category: 'Creature', label: 'Creatures', icon: <PawPrint /> },
+  { category: 'Sorcery', label: 'Sorceries', icon: <Wand /> },
+  { category: 'Instant', label: 'Instants', icon: <Zap /> },
+  { category: 'Artifact', label: 'Artifacts', icon: <Amphora /> },
+  { category: 'Enchantment', label: 'Enchantments', icon: <Sun /> },
+  { category: 'Land', label: 'Lands', icon: <Mountain /> },
+];
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
@@ -221,13 +260,19 @@ const sideboardSwapColumns: Column<SideboardSwapRow>[] = [
   },
 ];
 
-const cardColumns: Column<DeckListPerformanceRow>[] = [
+const cardColumns: Column<DeckListManaRow>[] = [
   { key: 'quantity', header: 'Count', numeric: true },
   {
     key: 'display_name',
     header: 'Card',
     render: (row) => <CardLink cardName={row.display_name} />,
     sortValue: (row) => row.display_name,
+  },
+  {
+    key: 'mana_cmc',
+    header: 'Mana',
+    render: (row) => <ManaCost info={row.mana} />,
+    sortValue: (row) => row.mana_cmc,
   },
   {
     key: 'type_category',
@@ -562,6 +607,22 @@ export function DeckDetailPage({
     () => makeOpponentColorColumns((row) => gamesRouteHash({ deck: deckName, colors: row.colors })),
     [deckName],
   );
+  const [manaCosts, setManaCosts] = useState<Map<string, CardManaInfo | null>>(() => new Map());
+  const manaNamesKey = loadState.status === 'loaded' ? deckCardNames(loadState.detail).join('\n') : '';
+  useEffect(() => {
+    if (!manaNamesKey) {
+      return;
+    }
+    let cancelled = false;
+    void fetchManaCosts(manaNamesKey.split('\n')).then((map) => {
+      if (!cancelled) {
+        setManaCosts(map);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [manaNamesKey]);
   const landProfile =
     loadState.status === 'loaded' &&
     loadState.detail.land_profile &&
@@ -591,6 +652,44 @@ export function DeckDetailPage({
   const deckExport = detail.deck_export;
   const cardRows = deckListPerformanceRows(detail);
   const cutCards = cutCardRows(detail);
+  const deckListRows: DeckListManaRow[] = cardRows.map((row) => {
+    const mana = manaCosts.get(row.display_name) ?? null;
+    return { ...row, mana, mana_cmc: mana ? mana.cmc : null };
+  });
+  const mainDeckRows = deckListRows.filter((row) => row.deck_section !== 'Sideboard');
+  const sideboardRows = deckListRows.filter((row) => row.deck_section === 'Sideboard');
+  const deckCountsKnown = deckExport.available;
+  const mainDeckTotal = mainDeckRows.reduce((sum, row) => sum + (row.quantity ?? 0), 0);
+  const sideboardTotal = sideboardRows.reduce((sum, row) => sum + (row.quantity ?? 0), 0);
+  const typeCounts = TYPE_COUNT_BOXES.map((box) => ({
+    ...box,
+    count: mainDeckRows
+      .filter((row) => row.type_category === box.category)
+      .reduce((sum, row) => sum + (row.quantity ?? 0), 0),
+  }));
+  // Mana-value stats: printed costs from the client-side Scryfall cache
+  // joined against each seat's played-card totals. Lands excluded.
+  const manaStatsFor = (seat: DeckPlayedManaSeat | undefined) =>
+    playedManaStats(
+      (seat?.cards ?? []).map((card) => ({
+        display_name: card.display_name,
+        type_category: card.type_category,
+        count: card.times_played,
+      })),
+      manaCosts,
+      seat?.turns,
+    );
+  const playerManaStats = manaStatsFor(detail.played_mana?.player);
+  const opponentManaStats = manaStatsFor(detail.played_mana?.opponent);
+  const manaCell = (value: number | null) => (value == null ? '—' : String(value));
+  const playedManaRows: [string, string, string][] = [
+    [
+      'Avg mana value / card played',
+      manaCell(playerManaStats.avg_per_card),
+      manaCell(opponentManaStats.avg_per_card),
+    ],
+    ['Mana spent / turn', manaCell(playerManaStats.per_turn), manaCell(opponentManaStats.per_turn)],
+  ];
 
   async function copyArenaDeck() {
     if (!deckExport?.available || !deckExport.text) {
@@ -980,12 +1079,15 @@ export function DeckDetailPage({
             columns={bucketCombatGroups(
               interactionGroups.map((group) => ({
                 title: group.title,
-                rows: group.rows.map(([label, key, drawnKey]): [string, string, string] => [
-                  label,
-                  interactionCell(interaction.player, key, drawnKey),
-                  // Opponent draws are hidden information — no drawn suffix.
-                  interactionCell(interaction.opponent, key),
-                ]),
+                rows: [
+                  ...group.rows.map(([label, key, drawnKey]): [string, string, string] => [
+                    label,
+                    interactionCell(interaction.player, key, drawnKey),
+                    // Opponent draws are hidden information — no drawn suffix.
+                    interactionCell(interaction.opponent, key),
+                  ]),
+                  ...(group.title === 'Cards' ? playedManaRows : []),
+                ],
               })),
             )}
           />
@@ -1033,14 +1135,26 @@ export function DeckDetailPage({
             : 'Tracked card performance. Exact deck counts are unavailable because no submitted deck list was captured.'
         }
       >
+        {deckCountsKnown ? (
+          <section className="metric-grid type-count-grid" aria-label="Main deck card type counts">
+            {typeCounts.map((box) => (
+              <MetricCard key={box.category} icon={box.icon} label={box.label} value={box.count} />
+            ))}
+          </section>
+        ) : null}
         <SortableTable
           caption="Deck list and card performance"
           columns={cardColumns}
           initialSort={{ key: 'type_category', direction: 'asc' }}
           getRowKey={(row) => `${row.display_name}-${row.type_category}`}
-          rows={cardRows.filter((row) => row.deck_section !== 'Sideboard')}
+          rows={mainDeckRows}
         />
-        {cardRows.some((row) => row.deck_section === 'Sideboard') ? (
+        {deckCountsKnown ? (
+          <p className="table-total">
+            {mainDeckTotal} card{mainDeckTotal === 1 ? '' : 's'} total
+          </p>
+        ) : null}
+        {sideboardRows.length > 0 ? (
           <>
             <div className="section-heading">
               <div>
@@ -1052,8 +1166,13 @@ export function DeckDetailPage({
               columns={cardColumns}
               initialSort={{ key: 'type_category', direction: 'asc' }}
               getRowKey={(row) => `${row.display_name}-${row.type_category}`}
-              rows={cardRows.filter((row) => row.deck_section === 'Sideboard')}
+              rows={sideboardRows}
             />
+            {deckCountsKnown ? (
+              <p className="table-total">
+                {sideboardTotal} card{sideboardTotal === 1 ? '' : 's'} total
+              </p>
+            ) : null}
           </>
         ) : null}
       </Section>
