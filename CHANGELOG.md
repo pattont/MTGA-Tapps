@@ -2,6 +2,16 @@
 
 ## 0.5.6
 
+- **Mana costs on the deck list**: a new Mana column (between Card and Type) shows
+  each card's cost with real mana symbols, resolved client-side from Scryfall and
+  cached in the browser — no schema change, works for every deck retroactively.
+- **Deck list at a glance**: MTGA-style card-type count boxes (Planeswalkers →
+  Lands) above the deck list, plus "N cards total" lines under the main deck and
+  sideboard tables.
+- **Mana-value stats in Combat & Resources** on both the game and deck pages:
+  "Avg mana value / card played" and "Mana spent / turn" for you vs the opponent,
+  computed from printed costs (lands excluded, X = 0) — a low cards-played count
+  with high mana spent per turn reads very differently from four one-drops.
 - **Repaired dates stored month/day-swapped by pre-0.5.5 versions** for day-first
   locales: games recorded before the locale-aware parser (e.g. 9 August read as
   8 September) landed months in the future and scrambled every date-sorted view.

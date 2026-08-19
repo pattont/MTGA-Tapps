@@ -765,9 +765,20 @@ describe('App', () => {
     expect(within(deckListTable).queryByRole('link', { name: 'Duress' })).toBeNull();
     expect(within(mountainRow as HTMLElement).getAllByRole('cell')[0]).toHaveTextContent('20');
     expect(within(mentorRow as HTMLElement).getAllByRole('cell')[0]).toHaveTextContent('4');
-    expect(within(mentorRow as HTMLElement).getAllByRole('cell')[3]).toHaveTextContent('2');
+    // The Mana column sits between Card and Type; Games Seen moved to cell 4.
+    expect(within(deckListTable).getByRole('columnheader', { name: /Mana/ })).toBeInTheDocument();
+    expect(within(mentorRow as HTMLElement).getAllByRole('cell')[4]).toHaveTextContent('2');
     expect(within(duressRow as HTMLElement).getAllByRole('cell')[0]).toHaveTextContent('1');
-    expect(within(duressRow as HTMLElement).getAllByRole('cell')[3]).toHaveTextContent('0');
+    expect(within(duressRow as HTMLElement).getAllByRole('cell')[4]).toHaveTextContent('0');
+    // MTGA-style type counts over the decklist, plus per-table card totals.
+    const typeCounts = screen.getByLabelText('Main deck card type counts');
+    const typeBoxText = (label: string) =>
+      within(typeCounts).getByText(label).closest('article')?.textContent ?? '';
+    expect(typeBoxText('Creatures')).toContain('4');
+    expect(typeBoxText('Lands')).toContain('20');
+    expect(typeBoxText('Planeswalkers')).toContain('0');
+    expect(screen.getByText('24 cards total')).toBeInTheDocument();
+    expect(screen.getByText('1 card total')).toBeInTheDocument();
 
     const nav = screen.getByRole('navigation', { name: 'Dashboard sections' });
     expect(within(nav).getByRole('link', { name: '← Back to dashboard' })).toHaveAttribute('href', '#overview');

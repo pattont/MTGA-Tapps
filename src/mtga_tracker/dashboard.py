@@ -2547,6 +2547,7 @@ def deck_detail(
         combat_profile = combat_rows[0] if combat_rows else None
         interaction_profile = _interaction_deck_profile(conn, where, params)
         turn_timing = _deck_turn_timing(conn, where, params)
+        played_mana = _deck_played_mana(conn, where, params)
         mode_splits = _deck_mode_splits(_match_level_results(conn, where, params))
         streaks = _streak_summary(conn, where, params)
         composition_rows, version_rows, sideboard_summary = _deck_decklist_analysis(
@@ -2884,6 +2885,7 @@ def deck_detail(
         },
         "combat_profile": combat_profile,
         "interaction_profile": interaction_profile,
+        "played_mana": played_mana,
         "turn_timing": turn_timing,
         "mode_splits": mode_splits,
         "streaks": streaks,
@@ -3072,6 +3074,71 @@ def _deck_turn_timing(
             "games": games,
         }
     return summary or None
+
+
+def _deck_played_mana(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> Optional[Dict[str, Any]]:
+    """Per-seat played-card totals and turn counts across a deck's games.
+
+    The database never learns mana costs (MTGA's log doesn't state them), so
+    this only ships the raw inputs — card names with play counts plus each
+    seat's total turns taken — and the UI joins them against its client-side
+    Scryfall mana-cost cache to derive average-mana-value stats.
+    """
+    if not _table_exists(conn, "game_card_summary"):
+        return None
+    turn_row = conn.execute(
+        f"""
+        SELECT SUM(g.player_turns), SUM(g.opponent_turns)
+        FROM games g
+        JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+        WHERE {where}
+        """,
+        params,
+    ).fetchone()
+    seat_turns = {
+        "player": int(turn_row[0]) if turn_row and turn_row[0] is not None else None,
+        "opponent": int(turn_row[1]) if turn_row and turn_row[1] is not None else None,
+    }
+    seats: Dict[str, Any] = {}
+    for role in ("player", "opponent"):
+        rows = _dict_rows(
+            conn.execute(
+                f"""
+                SELECT
+                  s.display_name,
+                  COALESCE(s.type_category, 'Other') AS type_category,
+                  SUM(s.played_count) AS times_played
+                FROM games g
+                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                JOIN participants pt ON pt.game_id = g.id AND pt.role = ?
+                JOIN game_card_summary s ON s.game_id = g.id AND s.participant_id = pt.id
+                WHERE s.played_count > 0 AND {where}
+                GROUP BY s.display_name, COALESCE(s.type_category, 'Other')
+                """,
+                [role, *params],
+            )
+        )
+        merged: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for row in rows:
+            clean_name = _clean_card_name(row.get("display_name"))
+            if not clean_name:
+                continue
+            type_category = str(row.get("type_category") or "Other")
+            entry = merged.setdefault(
+                (clean_name, type_category),
+                {"display_name": clean_name, "type_category": type_category, "times_played": 0},
+            )
+            entry["times_played"] += int(row.get("times_played") or 0)
+        seats[role] = {
+            "turns": seat_turns[role],
+            "cards": sorted(
+                merged.values(),
+                key=lambda item: (-item["times_played"], item["display_name"]),
+            ),
+        }
+    return seats
 
 
 def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str, Any]:
