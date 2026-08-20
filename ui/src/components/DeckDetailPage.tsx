@@ -1190,93 +1190,6 @@ export function DeckDetailPage({
       </Section>
 
       <Section
-        id="deck-versions"
-        title="Decklist Changes"
-        description="Every distinct submitted maindeck, in play order, with its record and the diff against the previous version."
-      >
-        {(detail.versions ?? []).length > 0 ? (
-          <SortableTable
-            caption="Deck versions"
-            columns={versionColumns}
-            getRowKey={(row) => String(row.version)}
-            initialSort={{ key: 'version', direction: 'asc' }}
-            rows={versionsWithDelta(detail.versions ?? [])}
-          />
-        ) : (
-          <p className="empty-state">No submitted decklists recorded for this deck yet.</p>
-        )}
-        {cutCards.length > 0 ? (
-          <>
-            <div className="section-heading">
-              <div>
-                <h3>Cut From Current List</h3>
-                <p className="section-description">
-                  Cards from earlier versions that are not in the current list, with the deck's record
-                  while they were in it. The Deck List table and Arena export always reflect only the
-                  current version.
-                </p>
-              </div>
-            </div>
-            <SortableTable
-              caption="Cards cut from the current list"
-              columns={cutCardColumns}
-              getRowKey={(row) => row.display_name}
-              initialSort={{ key: 'games_in_deck', direction: 'desc' }}
-              rows={cutCards}
-            />
-          </>
-        ) : null}
-        {detail.sideboard ? (
-          <>
-            <div className="section-heading">
-              <div>
-                <h3>Sideboarding (Bo3)</h3>
-                <p className="section-description">
-                  Game 1 record vs post-sideboard record across {detail.sideboard.matches}{' '}
-                  multi-game {detail.sideboard.matches === 1 ? 'match' : 'matches'}.
-                </p>
-              </div>
-            </div>
-            <section className="metric-grid metric-grid-deck" aria-label="Sideboard record">
-              <MetricCard
-                label="Game 1 Record"
-                value={`${detail.sideboard.game_one.wins}-${detail.sideboard.game_one.losses}`}
-              />
-              <MetricCard
-                label="Game 1 Win Rate"
-                value={formatPercent(detail.sideboard.game_one.win_rate)}
-              />
-              <MetricCard
-                label="Post-Board Record"
-                value={`${detail.sideboard.post_board.wins}-${detail.sideboard.post_board.losses}`}
-              />
-              <MetricCard
-                label="Post-Board Win Rate"
-                value={formatPercent(detail.sideboard.post_board.win_rate)}
-              />
-            </section>
-            {(detail.sideboard.swaps ?? []).length > 0 ? (
-              <SortableTable
-                caption="Sideboard swaps"
-                columns={sideboardSwapColumns}
-                getRowKey={(row) => row.display_name}
-                initialSort={{ key: 'boarded_in', direction: 'desc' }}
-                pageSize={10}
-                rows={detail.sideboard.swaps ?? []}
-              />
-            ) : detail.sideboard.boarded_in.length > 0 ? (
-              <p className="section-description">
-                Most boarded in:{' '}
-                {detail.sideboard.boarded_in
-                  .map((card) => `${card.copies}x ${card.display_name}`)
-                  .join(', ')}
-              </p>
-            ) : null}
-          </>
-        ) : null}
-      </Section>
-
-      <Section
         id="deck-lands"
         title={landProfile ? 'Land Statistics' : 'Land Availability'}
         description={
@@ -1382,6 +1295,93 @@ export function DeckDetailPage({
           paginationKey={deckName}
           rows={detail.opponent_colors ?? []}
         />
+      </Section>
+
+      <Section
+        id="deck-versions"
+        title="Decklist Changes"
+        description="Every distinct submitted maindeck, in play order, with its record and the diff against the previous version."
+      >
+        {(detail.versions ?? []).length > 0 ? (
+          <SortableTable
+            caption="Deck versions"
+            columns={versionColumns}
+            getRowKey={(row) => String(row.version)}
+            initialSort={{ key: 'version', direction: 'asc' }}
+            rows={versionsWithDelta(detail.versions ?? [])}
+          />
+        ) : (
+          <p className="empty-state">No submitted decklists recorded for this deck yet.</p>
+        )}
+        {cutCards.length > 0 ? (
+          <>
+            <div className="section-heading">
+              <div>
+                <h3>Cut From Current List</h3>
+                <p className="section-description">
+                  Cards from earlier versions that are not in the current list, with the deck's record
+                  while they were in it. The Deck List table and Arena export always reflect only the
+                  current version.
+                </p>
+              </div>
+            </div>
+            <SortableTable
+              caption="Cards cut from the current list"
+              columns={cutCardColumns}
+              getRowKey={(row) => row.display_name}
+              initialSort={{ key: 'games_in_deck', direction: 'desc' }}
+              rows={cutCards}
+            />
+          </>
+        ) : null}
+        {detail.sideboard ? (
+          <>
+            <div className="section-heading">
+              <div>
+                <h3>Sideboarding (Bo3)</h3>
+                <p className="section-description">
+                  Game 1 record vs post-sideboard record across {detail.sideboard.matches}{' '}
+                  multi-game {detail.sideboard.matches === 1 ? 'match' : 'matches'}.
+                </p>
+              </div>
+            </div>
+            <section className="metric-grid metric-grid-deck" aria-label="Sideboard record">
+              <MetricCard
+                label="Game 1 Record"
+                value={`${detail.sideboard.game_one.wins}-${detail.sideboard.game_one.losses}`}
+              />
+              <MetricCard
+                label="Game 1 Win Rate"
+                value={formatPercent(detail.sideboard.game_one.win_rate)}
+              />
+              <MetricCard
+                label="Post-Board Record"
+                value={`${detail.sideboard.post_board.wins}-${detail.sideboard.post_board.losses}`}
+              />
+              <MetricCard
+                label="Post-Board Win Rate"
+                value={formatPercent(detail.sideboard.post_board.win_rate)}
+              />
+            </section>
+            {(detail.sideboard.swaps ?? []).length > 0 ? (
+              <SortableTable
+                caption="Sideboard swaps"
+                columns={sideboardSwapColumns}
+                getRowKey={(row) => row.display_name}
+                initialSort={{ key: 'boarded_in', direction: 'desc' }}
+                pageSize={10}
+                rows={detail.sideboard.swaps ?? []}
+              />
+            ) : detail.sideboard.boarded_in.length > 0 ? (
+              <p className="section-description">
+                Most boarded in:{' '}
+                {detail.sideboard.boarded_in
+                  .map((card) => `${card.copies}x ${card.display_name}`)
+                  .join(', ')}
+              </p>
+            ) : null}
+          </>
+        ) : null}
       </Section>
 
       <Section id="deck-games" title="Recent Games" description="Game length and average turn pace for both players.">

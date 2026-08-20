@@ -11,7 +11,7 @@ export const dashboardNavItems: AppNavItem[] = [
   { id: 'rank-progress', label: 'Ranked Progress' },
   { id: 'recent-games', label: 'Recent Games' },
   { id: 'decks', label: 'Decks' },
-  { id: 'land-drops', label: 'Land Availability' },
+  { id: 'land-drops', label: 'Land Statistics' },
   { id: 'habits', label: 'Habits & Schedule' },
   { id: 'opponent-meta', label: 'Opponent Meta' },
   { id: 'formats', label: 'Formats' },
@@ -42,9 +42,9 @@ export const deckNavItems: AppNavItem[] = [
   { id: 'deck-trend', label: 'Win Rate Trend' },
   { id: 'deck-cards', label: 'Deck List & Card Performance' },
   { id: 'deck-mulligans', label: 'Mulligans' },
-  { id: 'deck-versions', label: 'Decklist Changes' },
-  { id: 'deck-lands', label: 'Land Availability' },
+  { id: 'deck-lands', label: 'Land Statistics' },
   { id: 'deck-opponent-colors', label: 'Vs Colors' },
+  { id: 'deck-versions', label: 'Decklist Changes' },
   { id: 'deck-games', label: 'Recent Games' },
 ];
 

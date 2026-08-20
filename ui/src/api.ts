@@ -367,6 +367,8 @@ export interface DashboardSnapshot {
   combat_decks: CombatDeckRow[];
   combat_split: CombatSplitRow[];
   mana_readiness: ManaReadinessRow[];
+  /** Overall flood/screw/normal split for the homepage Land Statistics. */
+  land_profile?: DeckLandProfile | null;
   schedule: { by_weekday: ScheduleRow[]; by_time_of_day: ScheduleRow[] };
   fatigue: FatigueRow[];
   streaks: StreakSummary;

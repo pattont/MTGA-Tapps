@@ -1011,6 +1011,10 @@ function Dashboard({
 }) {
   const [deckSearch, setDeckSearch] = useState('');
   const [recentQuickFilter, setRecentQuickFilter] = useState('all');
+  const landProfile =
+    snapshot.land_profile && snapshot.land_profile.classified_games > 0
+      ? snapshot.land_profile
+      : null;
   const filteredDecks = useMemo(() => {
     const combatByDeck = new Map((snapshot.combat_decks ?? []).map((row) => [row.deck_name, row]));
     const merged = snapshot.decks.map((row) => ({ ...combatByDeck.get(row.deck_name), ...row }));
@@ -1380,9 +1384,55 @@ function Dashboard({
 
       <Section
         id="land-drops"
-        title="Land Availability"
-        description="How often you had N lands available by turn N (opening hand + tagged draws), and how win rate shifts when you fall behind."
+        title="Land Statistics"
+        description={
+          landProfile
+            ? `Across ${landProfile.classified_games} classified games`
+            : 'How often you had N lands available by turn N (opening hand + tagged draws), and how win rate shifts when you fall behind.'
+        }
       >
+        {landProfile ? (
+          <>
+            <section className="metric-grid" aria-label="Land draw profile">
+              <MetricCard
+                label="Normal"
+                value={
+                  <span className="land-stat-normal">
+                    {Math.round((100 * landProfile.normal_games) / landProfile.classified_games)}%
+                  </span>
+                }
+                detail={`${landProfile.normal_games}/${landProfile.classified_games} games`}
+              />
+              <MetricCard
+                label="Flood"
+                value={
+                  <span className="land-stat-flood">
+                    {Math.round((100 * landProfile.flood_games) / landProfile.classified_games)}%
+                  </span>
+                }
+                detail={`${landProfile.flood_games}/${landProfile.classified_games} games`}
+              />
+              <MetricCard
+                label="Screw"
+                value={
+                  <span className="land-stat-screw">
+                    {Math.round((100 * landProfile.screw_games) / landProfile.classified_games)}%
+                  </span>
+                }
+                detail={`${landProfile.screw_games}/${landProfile.classified_games} games`}
+              />
+            </section>
+            <div className="section-heading">
+              <div>
+                <h3>Land Availability</h3>
+                <p className="section-description">
+                  How often you had N lands available by turn N (opening hand + tagged draws), and
+                  how win rate shifts when you fall behind.
+                </p>
+              </div>
+            </div>
+          </>
+        ) : null}
         <ManaReadinessTable caption="Land availability on curve" rows={snapshot.mana_readiness ?? []} />
       </Section>
 
@@ -1510,7 +1560,8 @@ function Dashboard({
           columns={homeOpponentColorColumns}
           getRowKey={(row) => row.color_label}
           initialSort={{ key: 'games', direction: 'desc' }}
-          rows={(snapshot.opponent_colors ?? []).slice(0, 15)}
+          pageSize={10}
+          rows={snapshot.opponent_colors ?? []}
         />
       </Section>
 

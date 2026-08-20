@@ -2359,6 +2359,10 @@ def dashboard_snapshot(
         combat_deck_rows = _combat_deck_rows(conn, where, params)
         combat_split_rows = _combat_split_rows(conn, where, params)
         mana_readiness_rows = _mana_readiness_rows(conn, where, params)
+        # Overall flood/screw/normal profile for the homepage's Land
+        # Statistics section — same computation the deck page uses, across
+        # every game the current filters cover.
+        land_profile = _deck_land_profile(conn, where, params)
         schedule = _schedule_rows(conn, where, params)
         fatigue_rows = _fatigue_rows(conn, where, params)
         streaks = _streak_summary(conn, where, params)
@@ -2467,6 +2471,7 @@ def dashboard_snapshot(
         "combat_decks": combat_deck_rows,
         "combat_split": combat_split_rows,
         "mana_readiness": mana_readiness_rows,
+        "land_profile": land_profile,
         "schedule": schedule,
         "fatigue": fatigue_rows,
         "streaks": streaks,
