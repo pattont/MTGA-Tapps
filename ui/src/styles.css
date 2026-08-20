@@ -251,6 +251,16 @@ a {
   gap: 10px;
 }
 
+/* Page-provided topbar actions (portal target); collapses when empty. */
+.topbar-page-actions {
+  display: inline-flex;
+  align-items: center;
+}
+
+.topbar-page-actions:empty {
+  display: none;
+}
+
 .card-search {
   position: relative;
   width: min(380px, 38vw);

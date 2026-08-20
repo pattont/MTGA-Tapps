@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { TopbarActionsContext } from '../topbarActions';
 import {
   ChartNoAxesCombined,
   Check,
@@ -605,6 +607,8 @@ export function DeckDetailPage({
     [deckName],
   );
   const [manaCosts, setManaCosts] = useState<Map<string, CardManaInfo | null>>(() => new Map());
+  // Topbar slot for the Copy Arena Deck button, provided by AppShell.
+  const topbarSlot = useContext(TopbarActionsContext);
   const loadedDetail = loadState.status === 'loaded' ? loadState.detail : null;
   useEffect(() => {
     if (!loadedDetail) {
@@ -892,6 +896,12 @@ export function DeckDetailPage({
                   : 'No card data yet'}
               </p>
             </div>
+          </div>
+        </div>
+      </div>
+      {/* The copy button lives in the topbar, in line with the card search. */}
+      {topbarSlot
+        ? createPortal(
             <button
               className="deck-export-button"
               disabled={!deckExport?.available}
@@ -905,10 +915,10 @@ export function DeckDetailPage({
             >
               {copyStatus === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
               {copyStatus === 'copied' ? 'Copied' : copyStatus === 'error' ? 'Copy Failed' : 'Copy Arena Deck'}
-            </button>
-          </div>
-        </div>
-      </div>
+            </button>,
+            topbarSlot,
+          )
+        : null}
 
       {onFiltersChange ? (
         <FilterBar
