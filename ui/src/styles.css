@@ -221,7 +221,9 @@ a {
 
 .dashboard-main {
   min-width: 0;
-  padding: 24px;
+  /* Extra bottom padding lets content scroll clear of the floating
+     "Back to top" pill instead of hiding the last rows under it. */
+  padding: 24px 24px 96px;
 }
 
 .topbar {
@@ -1860,7 +1862,7 @@ tbody tr:hover {
 
 @media (max-width: 620px) {
   .dashboard-main {
-    padding: 16px;
+    padding: 16px 16px 88px;
   }
 
   .topbar {
