@@ -1820,11 +1820,16 @@ def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
     for row in rows:
         deck_name = row["deck_name"]
         card_name = row.get("card_name") or _clean_card_name(row.get("display_name"))
+        image_url = _card_image_url(row.get("arena_id"), card_name)
+        # New sets often reach Scryfall before their Arena-ID mapping does;
+        # the by-name URL is the client's fallback when the arena URL 404s.
+        fallback_url = _card_image_url(None, card_name) if row.get("arena_id") else None
         visuals[deck_name] = {
             "card_id": row.get("card_id"),
             "card_name": card_name,
             "type_category": row.get("type_category") or "Other",
-            "image_url": _card_image_url(row.get("arena_id"), card_name),
+            "image_url": image_url,
+            "image_fallback_url": fallback_url if fallback_url != image_url else None,
             "source": "local_metadata",
         }
     return visuals
@@ -1836,6 +1841,7 @@ def _empty_deck_visual(deck_name: str) -> Dict[str, Any]:
         "card_name": deck_name,
         "type_category": "Other",
         "image_url": None,
+        "image_fallback_url": None,
         "source": "deck_name",
     }
 

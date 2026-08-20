@@ -881,8 +881,8 @@ export function DeckDetailPage({
         <a className="back-link" href={backHref}>
           ← Back to dashboard
         </a>
-        <div className="deck-detail-title">
-          <DeckVisual deckName={detail.deck_name} visual={detail.deck_visual} />
+        <div className="deck-detail-title deck-detail-title-hero">
+          <DeckVisual deckName={detail.deck_name} size="large" visual={detail.deck_visual} />
           <div className="deck-detail-title-content">
             <div>
               <h2>{detail.deck_name}</h2>

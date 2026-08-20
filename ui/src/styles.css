@@ -1395,6 +1395,12 @@ tbody tr:hover {
   align-items: center;
 }
 
+/* Deck page header: room for the hero-sized signature art. */
+.deck-detail-title-hero {
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 18px;
+}
+
 .deck-detail-title-content {
   display: flex;
   min-width: 0;
@@ -1519,6 +1525,32 @@ tbody tr:hover {
   height: 44px;
   border-radius: 6px;
   object-fit: cover;
+}
+
+/* Hero-sized signature art on the deck detail header. */
+.deck-visual-large {
+  width: 220px;
+  border-radius: 10px;
+}
+
+.deck-visual-large .deck-visual-art {
+  height: 124px;
+  border-radius: 10px;
+}
+
+.deck-visual-large .deck-visual-frame {
+  min-height: 124px;
+  padding: 10px;
+  border-radius: 10px;
+}
+
+.deck-visual-large .deck-visual-type {
+  font-size: 0.78rem;
+}
+
+.deck-visual-large strong {
+  font-size: 0.95rem;
+  -webkit-line-clamp: 3;
 }
 
 .deck-visual-frame {

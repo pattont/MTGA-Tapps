@@ -3,6 +3,9 @@ export interface DeckVisual {
   card_name: string | null;
   type_category: string;
   image_url: string | null;
+  /** By-name Scryfall URL tried when image_url (arena-id) 404s — new sets
+      often reach Scryfall before their Arena-ID mapping does. */
+  image_fallback_url?: string | null;
   source: 'local_metadata' | 'deck_name';
 }
 
