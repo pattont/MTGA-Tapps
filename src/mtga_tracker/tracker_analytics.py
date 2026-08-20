@@ -1187,6 +1187,14 @@ class TrackerAnalyticsMixin:
         except (AttributeError, sqlite3.Error, OSError, TypeError, ValueError):
             pass
         try:
+            # Import-and-queue-immediately games arrive from Arena named
+            # "Imported Deck"; once the SAME exact maindeck shows up under
+            # the real name (usually the very next game), retitle them now
+            # instead of waiting for the next tracker restart.
+            AnalyticsStore.canonicalize_imported_deck_names(conn)
+        except sqlite3.Error:
+            pass
+        try:
             # Game boundary: allow one re-scan for a newer Arena card DB
             # (set-release day drops a new Raw_CardDatabase mid-session).
             self.card_db.allow_db_recheck()
