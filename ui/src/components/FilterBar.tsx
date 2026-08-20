@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { FilterOptions, SnapshotFilters } from '../api';
 import { showInFormatAnalytics } from '../formatVisibility';
 
@@ -8,6 +8,8 @@ interface FilterBarProps {
   onChange: (filters: SnapshotFilters) => void;
   /** Hide the deck selector (e.g. on a deck detail page). */
   hideDeck?: boolean;
+  /** Right-aligned page action on the filter row (e.g. Copy Arena Deck). */
+  trailing?: ReactNode;
 }
 
 const DAY_CHOICES = [
@@ -127,7 +129,7 @@ function DeckSelect({
   );
 }
 
-export function FilterBar({ filters, options, onChange, hideDeck = false }: FilterBarProps) {
+export function FilterBar({ filters, options, onChange, hideDeck = false, trailing }: FilterBarProps) {
   const hasFilters = Boolean(
     filters.deck || filters.format || filters.days || filters.since || filters.until,
   );
@@ -194,6 +196,7 @@ export function FilterBar({ filters, options, onChange, hideDeck = false }: Filt
           Clear filters
         </button>
       ) : null}
+      {trailing ? <div className="filter-bar-trailing">{trailing}</div> : null}
     </div>
   );
 }

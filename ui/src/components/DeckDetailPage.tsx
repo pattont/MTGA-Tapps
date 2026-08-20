@@ -1,6 +1,4 @@
-import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
-import { TopbarActionsContext } from '../topbarActions';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   ChartNoAxesCombined,
   Check,
@@ -607,8 +605,6 @@ export function DeckDetailPage({
     [deckName],
   );
   const [manaCosts, setManaCosts] = useState<Map<string, CardManaInfo | null>>(() => new Map());
-  // Topbar slot for the Copy Arena Deck button, provided by AppShell.
-  const topbarSlot = useContext(TopbarActionsContext);
   const loadedDetail = loadState.status === 'loaded' ? loadState.detail : null;
   useEffect(() => {
     if (!loadedDetail) {
@@ -720,6 +716,24 @@ export function DeckDetailPage({
       setCopyStatus('error');
     }
   }
+
+  // Lives on the filter row (trailing slot), in line with Format/Period.
+  const copyDeckButton = (
+    <button
+      className="deck-export-button"
+      disabled={!deckExport?.available}
+      onClick={() => void copyArenaDeck()}
+      title={
+        deckExport?.available
+          ? 'Copy this deck in MTG Arena import format'
+          : 'No exact submitted deck list has been captured yet'
+      }
+      type="button"
+    >
+      {copyStatus === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+      {copyStatus === 'copied' ? 'Copied' : copyStatus === 'error' ? 'Copy Failed' : 'Copy Arena Deck'}
+    </button>
+  );
 
   const metrics = [
     { label: 'Games', value: String(detail.summary.games), icon: <Swords /> },
@@ -899,31 +913,11 @@ export function DeckDetailPage({
           </div>
         </div>
       </div>
-      {/* The copy button lives in the topbar, in line with the card search. */}
-      {topbarSlot
-        ? createPortal(
-            <button
-              className="deck-export-button"
-              disabled={!deckExport?.available}
-              onClick={() => void copyArenaDeck()}
-              title={
-                deckExport?.available
-                  ? 'Copy this deck in MTG Arena import format'
-                  : 'No exact submitted deck list has been captured yet'
-              }
-              type="button"
-            >
-              {copyStatus === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-              {copyStatus === 'copied' ? 'Copied' : copyStatus === 'error' ? 'Copy Failed' : 'Copy Arena Deck'}
-            </button>,
-            topbarSlot,
-          )
-        : null}
-
       {onFiltersChange ? (
         <FilterBar
           filters={filters}
           hideDeck
+          trailing={copyDeckButton}
           onChange={onFiltersChange}
           options={{
             decks: [],
@@ -936,7 +930,11 @@ export function DeckDetailPage({
             ),
           }}
         />
-      ) : null}
+      ) : (
+        <div className="filter-bar" role="group" aria-label="Deck actions">
+          <div className="filter-bar-trailing">{copyDeckButton}</div>
+        </div>
+      )}
 
       <section className="metric-grid metric-grid-deck" aria-label="Deck metrics">
         {metrics.map((metric) => (

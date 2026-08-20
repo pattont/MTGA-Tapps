@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { TRACKER_NAME } from '../branding';
-import { TopbarActionsContext } from '../topbarActions';
 import { dashboardNavItems, type AppNavItem } from '../nav';
 import type { ThemeName } from '../theme';
 import { checkForUpdate, type UpdateInfo } from '../updateCheck';
@@ -33,9 +32,6 @@ export function AppShell({
   const nextTheme = theme === 'dark' ? 'light' : 'dark';
   const [activeSection, setActiveSection] = useState<string | null>(null);
   const [showBackToTop, setShowBackToTop] = useState(false);
-  // Portal target for page-provided topbar actions (ref callback → state so
-  // consumers re-render once the node exists).
-  const [pageActionsNode, setPageActionsNode] = useState<HTMLElement | null>(null);
   // After a nav click, the clicked section stays active briefly even though
   // scroll events fire — otherwise the scroll-spy can immediately override
   // the choice (e.g. for sections near the page bottom).
@@ -294,8 +290,6 @@ export function AppShell({
         <header className="topbar">
           <h2>{heading}</h2>
           <div className="topbar-actions">
-            {/* Pages portal their own actions here (e.g. Copy Arena Deck). */}
-            <span className="topbar-page-actions" ref={setPageActionsNode} />
             <CardSearch />
             <button
               aria-label={`Color theme: ${theme}. Switch to ${nextTheme} mode`}
@@ -307,9 +301,7 @@ export function AppShell({
             </button>
           </div>
         </header>
-        <TopbarActionsContext.Provider value={pageActionsNode}>
-          {children}
-        </TopbarActionsContext.Provider>
+        {children}
       </main>
       {showBackToTop ? (
         <button

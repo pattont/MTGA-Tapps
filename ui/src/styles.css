@@ -251,14 +251,11 @@ a {
   gap: 10px;
 }
 
-/* Page-provided topbar actions (portal target); collapses when empty. */
-.topbar-page-actions {
+/* Right-aligned page action on a filter row (e.g. Copy Arena Deck). */
+.filter-bar-trailing {
   display: inline-flex;
   align-items: center;
-}
-
-.topbar-page-actions:empty {
-  display: none;
+  margin-left: auto;
 }
 
 .card-search {
