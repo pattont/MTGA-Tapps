@@ -65,11 +65,12 @@ export const gameNavItems: AppNavItem[] = [
 export const cardNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
   { id: 'card-summary', label: 'Card Summary' },
+  { id: 'card-opener-impact', label: 'Opening Hand Impact' },
   { id: 'card-usage-by-side', label: 'Opponent Impact' },
   { id: 'card-usage-comparison', label: 'Played by Side' },
-  { id: 'card-decks', label: 'Your Decks' },
   { id: 'card-multiplicity', label: 'Repeat Draws' },
-  { id: 'card-opener-impact', label: 'Opening Hand Impact' },
+  { id: 'card-opponent-multiplicity', label: 'Opponent Repeat Draws' },
+  { id: 'card-decks', label: 'Your Decks' },
 ];
 
 export const opponentNavItems: AppNavItem[] = [

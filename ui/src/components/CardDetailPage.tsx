@@ -252,6 +252,15 @@ export function CardDetailPage({
 
   return (
     <>
+      {canShowImage ? (
+        // Ambient backdrop from the card's art, matching the deck page:
+        // heavily blurred and faded so it tints without fighting content.
+        <div
+          aria-hidden="true"
+          className="deck-art-backdrop"
+          style={{ backgroundImage: `url(${cardImageUrl})` }}
+        />
+      ) : null}
       {refreshError ? (
         <p className="refresh-status refresh-status-error" role="alert">
           Refresh failed: {refreshError} — showing the last loaded data.
@@ -301,12 +310,36 @@ export function CardDetailPage({
       </Section>
 
       <Section
+        id="card-opener-impact"
+        title="Opening Hand Impact"
+        description="Results when the card was in your opening hand, plus visible draws recorded later."
+      >
+        <section className="metric-grid metric-grid-deck" aria-label="Opening hand impact">
+          <MetricCard label="Games In Opener" value={formatNumber(detail.opener_impact.games_in_opener)} />
+          <MetricCard
+            label="Opener Record"
+            value={`${detail.opener_impact.wins}–${detail.opener_impact.losses}`}
+          />
+          <MetricCard label="Opener Win Rate" value={formatPercent(detail.opener_impact.win_rate)} />
+          <MetricCard label="Visible Draws" value={formatNumber(detail.opener_impact.times_drawn)} />
+        </section>
+      </Section>
+
+      <Section
         id="card-usage-by-side"
         title="When Opponent Plays This Card"
         description="Your results only in games where the opponent actually played this card."
       >
         <section className="metric-grid metric-grid-deck" aria-label="Opponent card impact">
           <MetricCard label="Games" value={formatNumber(opponentImpact.games)} />
+          <MetricCard
+            label="Avg Per Game"
+            value={
+              opponentImpact.games > 0
+                ? String(Math.round((10 * opponentImpact.plays) / opponentImpact.games) / 10)
+                : '—'
+            }
+          />
           <MetricCard label="Opponent Plays" value={formatNumber(opponentImpact.plays)} />
           <MetricCard label="Your Record" value={`${opponentImpact.wins}–${opponentImpact.losses}`} />
           <MetricCard label="Your Win Rate" value={formatPercent(opponentImpact.win_rate)} />
@@ -325,16 +358,6 @@ export function CardDetailPage({
           compact
           getRowKey={(row) => row.role}
           rows={roleRows}
-        />
-      </Section>
-
-      <Section id="card-decks" title="Your Decks" description="Your results in games where you used this card.">
-        <SortableTable
-          caption="Card performance by deck"
-          columns={deckColumns}
-          compact
-          getRowKey={(row) => row.deck_name}
-          rows={detail.by_deck}
         />
       </Section>
 
@@ -376,20 +399,14 @@ export function CardDetailPage({
         )}
       </Section>
 
-      <Section
-        id="card-opener-impact"
-        title="Opening Hand Impact"
-        description="Results when the card was in your opening hand, plus visible draws recorded later."
-      >
-        <section className="metric-grid metric-grid-deck" aria-label="Opening hand impact">
-          <MetricCard label="Games In Opener" value={formatNumber(detail.opener_impact.games_in_opener)} />
-          <MetricCard
-            label="Opener Record"
-            value={`${detail.opener_impact.wins}–${detail.opener_impact.losses}`}
-          />
-          <MetricCard label="Opener Win Rate" value={formatPercent(detail.opener_impact.win_rate)} />
-          <MetricCard label="Visible Draws" value={formatNumber(detail.opener_impact.times_drawn)} />
-        </section>
+      <Section id="card-decks" title="Your Decks" description="Your results in games where you used this card.">
+        <SortableTable
+          caption="Card performance by deck"
+          columns={deckColumns}
+          compact
+          getRowKey={(row) => row.deck_name}
+          rows={detail.by_deck}
+        />
       </Section>
     </>
   );
