@@ -647,7 +647,7 @@ export function GameDetailPage({
   );
   const playedManaRows: [string, ReactNode, ReactNode][] = [
     [
-      'Avg mana value / card played',
+      'Mana value / card played',
       formatStatCell(playerManaStats.avg_per_card),
       formatStatCell(opponentManaStats.avg_per_card),
     ],

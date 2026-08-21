@@ -24,7 +24,7 @@ Rolls up everything since 0.5.5 (including the 0.5.6 beta's date repair).
   Lands) above the deck list, plus "N cards total" lines under the main deck and
   sideboard tables.
 - **Mana-value stats in Combat & Resources** on both the game and deck pages:
-  "Avg mana value / card played" and "Mana spent / turn" for you vs the opponent,
+  "Mana value / card played" and "Mana spent / turn" for you vs the opponent,
   computed from printed costs (lands excluded, X = 0) — a low cards-played count
   with high mana spent per turn reads very differently from four one-drops.
 - **Repaired dates stored month/day-swapped by pre-0.5.5 versions** for day-first

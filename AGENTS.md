@@ -239,7 +239,7 @@ Preserve these behaviors unless the user explicitly changes requirements:
   localStorage-cached, dash when unresolvable). Symbols render OFFLINE from the bundled
   mana-font package (class = braces/slashes stripped, lowercased: `{G/W}` → `ms-gw`) — never
   hotlink symbol images. The deck page's Mana column, type-count boxes, and both pages'
-  "Avg mana value / card played" + "Mana spent / turn" rows (Combat & Resources → Cards;
+  "Mana value / card played" + "Mana spent / turn" rows (Combat & Resources → Cards;
   printed costs, lands excluded, X = 0) build on this; the deck payload also ships raw
   per-seat inputs via `played_mana` (play totals + turns from `games.player_turns`/
   `opponent_turns`). `scripts/probe_mtga_card_db.py` verifies the cost column/format against

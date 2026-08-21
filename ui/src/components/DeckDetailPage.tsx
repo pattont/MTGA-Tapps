@@ -683,7 +683,7 @@ export function DeckDetailPage({
   const manaCell = (value: number | null) => (value == null ? '—' : String(value));
   const playedManaRows: [string, string, string][] = [
     [
-      'Avg mana value / card played',
+      'Mana value / card played',
       manaCell(playerManaStats.avg_per_card),
       manaCell(opponentManaStats.avg_per_card),
     ],
