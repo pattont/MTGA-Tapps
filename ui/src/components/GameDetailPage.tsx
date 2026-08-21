@@ -13,7 +13,7 @@ import {
   Target,
   Timer,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   fetchGameDetail,
   type DeckChangeCard,
@@ -33,7 +33,7 @@ import { fetchManaCosts, playedManaStats, seedManaCosts, type CardManaInfo } fro
 import { DeckLink } from './DeckLink';
 import { ManaCost } from './ManaCost';
 import { Badge } from './Badge';
-import { bucketCombatGroups, CombatGroupColumns } from './CombatGroupColumns';
+import { bucketCombatGroups, CombatGroupColumns, withDrawnSuffix } from './CombatGroupColumns';
 import { CardLink } from './CardLink';
 import { ColorPips } from './ColorPips';
 import { Section } from './Section';
@@ -148,12 +148,12 @@ const deckChangeColumns: Column<DeckChangeCard>[] = [
   },
 ];
 
-/** Combat-stat cell: numbers/strings pass through, null/undefined show a dash. */
-function formatStatCell(value: number | string | null | undefined): string {
+/** Combat-stat cell: values pass through, null/undefined show a dash. */
+function formatStatCell(value: ReactNode | number | null | undefined): ReactNode {
   if (value === null || value === undefined) {
     return '—';
   }
-  return String(value);
+  return typeof value === 'number' ? String(value) : value;
 }
 
 function formatTurnList(turns: number[] | undefined): string {
@@ -477,17 +477,17 @@ export function GameDetailPage({
   const buildStatsView = (
     stats: GameParticipantStatsRow | undefined,
     hideDrawn: boolean,
-  ): Record<string, number | string | null | undefined> | null => {
+  ): Record<string, ReactNode> | null => {
     if (!stats) {
       return null;
     }
     const withDrawn = (
       played: number | null | undefined,
       drawn: number | null | undefined,
-    ): number | string | null | undefined =>
-      // NBSP keeps "(4 drawn)" together; the cell may wrap after the number
-      // in narrow columns instead of overflowing the card.
-      !hideDrawn && drawn != null ? `${played ?? 0} (${drawn}\u00A0drawn)` : played;
+    ): ReactNode =>
+      // The drawn count renders as a small muted no-wrap suffix so wide
+      // values ("1.08 (1.5 drawn)") never break onto a second line.
+      !hideDrawn && drawn != null ? withDrawnSuffix(played ?? 0, drawn) : played;
     const lost = stats.lands_lost;
     const replaced = stats.lands_replaced;
     return {
@@ -510,7 +510,7 @@ export function GameDetailPage({
   // countered; failed = played minus successful (paid-through soft counters,
   // counter battles, fizzles — the outcome is all that matters).
   const attachCounterOutcomes = (
-    view: Record<string, number | string | null | undefined> | null,
+    view: Record<string, ReactNode> | null,
     ownStats: GameParticipantStatsRow | undefined,
     otherStats: GameParticipantStatsRow | undefined,
   ) => {
@@ -645,7 +645,7 @@ export function GameDetailPage({
     manaCosts,
     detail.game.opponent_turns,
   );
-  const playedManaRows: [string, string, string][] = [
+  const playedManaRows: [string, ReactNode, ReactNode][] = [
     [
       'Avg mana value / card played',
       formatStatCell(playerManaStats.avg_per_card),
@@ -918,7 +918,7 @@ export function GameDetailPage({
               combatGroups.map((group) => ({
                 title: group.title,
                 rows: [
-                  ...group.rows.map(([label, key]): [string, string, string] => [
+                  ...group.rows.map(([label, key]): [string, ReactNode, ReactNode] => [
                     label,
                     formatStatCell(playerView ? playerView[key] : null),
                     formatStatCell(opponentView ? opponentView[key] : null),

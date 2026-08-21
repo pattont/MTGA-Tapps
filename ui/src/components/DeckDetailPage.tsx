@@ -47,7 +47,7 @@ import { fetchManaCosts, playedManaStats, seedManaCosts, type CardManaInfo } fro
 import { makeOpponentColorColumns } from '../opponentColorColumns';
 import { ManaCost } from './ManaCost';
 import { Badge } from './Badge';
-import { bucketCombatGroups, CombatGroupColumns } from './CombatGroupColumns';
+import { bucketCombatGroups, CombatGroupColumns, withDrawnSuffix } from './CombatGroupColumns';
 import { ColorPips } from './ColorPips';
 import { CardLink } from './CardLink';
 import { DeckVisual } from './DeckVisual';
@@ -780,7 +780,7 @@ export function DeckDetailPage({
     side: DeckInteractionSide | undefined,
     key: keyof DeckInteractionSide,
     drawnKey?: keyof DeckInteractionSide,
-  ): string => {
+  ): ReactNode => {
     const value = side?.[key];
     if (value == null) {
       return '—';
@@ -789,7 +789,8 @@ export function DeckDetailPage({
       return `${value}%`;
     }
     const drawn = drawnKey ? side?.[drawnKey] : null;
-    return drawn != null ? `${value} (${drawn} drawn)` : String(value);
+    // Drawn renders as a small muted no-wrap suffix so cells stay one line.
+    return drawn != null ? withDrawnSuffix(value, drawn) : String(value);
   };
   const interactionGroups: {
     title: string;
@@ -1092,7 +1093,7 @@ export function DeckDetailPage({
               interactionGroups.map((group) => ({
                 title: group.title,
                 rows: [
-                  ...group.rows.map(([label, key, drawnKey]): [string, string, string] => [
+                  ...group.rows.map(([label, key, drawnKey]): [string, ReactNode, ReactNode] => [
                     label,
                     interactionCell(interaction.player, key, drawnKey),
                     // Opponent draws are hidden information — no drawn suffix.

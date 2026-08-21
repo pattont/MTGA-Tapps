@@ -560,6 +560,17 @@ a {
   font-size: 0.82rem;
 }
 
+/* "played (N drawn)" cells in Combat & Resources: one line, small muted suffix. */
+.stat-with-drawn {
+  white-space: nowrap;
+}
+
+.stat-drawn-suffix {
+  color: var(--muted);
+  font-size: 0.78em;
+  font-weight: 500;
+}
+
 /* Totals row (<tfoot>) at the bottom of card tables. */
 .table-footer-row td {
   border-top: 2px solid var(--border);

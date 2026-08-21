@@ -1,7 +1,22 @@
+import type { ReactNode } from 'react';
+
 /** One Combat & Resources category table: rows are [label, you, opp] cells. */
 export interface CombatGroupTable {
   title: string;
-  rows: [string, string, string][];
+  rows: [string, ReactNode, ReactNode][];
+}
+
+/**
+ * "played (N drawn)" cell that never wraps: the drawn part renders as a
+ * small muted one-line suffix so wide values stay on a single row.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function withDrawnSuffix(played: ReactNode, drawn: ReactNode): ReactNode {
+  return (
+    <span className="stat-with-drawn">
+      {played} <span className="stat-drawn-suffix">({drawn} drawn)</span>
+    </span>
+  );
 }
 
 /**
