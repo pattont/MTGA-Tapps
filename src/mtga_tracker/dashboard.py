@@ -1835,64 +1835,126 @@ def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
     return visuals
 
 
-def _deck_color_map(conn: sqlite3.Connection) -> Dict[str, str]:
-    """WUBRG colors per deck, from the newest submitted decklist's mana costs.
+_MANA_PIP_RE = re.compile(r"\{([^}]+)\}")
 
-    Casting costs (cards.mana_cost, backfilled from Arena's card DB) define a
-    deck's colors — color IDENTITY would drag in off-color hybrid/ability
-    pips (e.g. a mono-black deck showing blue because one creature has a
-    {U/B} ability). Cards without a stored cost fall back to their color
-    identity; lands contribute nothing (their cost is empty, as printed).
+
+def _strict_pip_letters(mana_cost: str) -> List[str]:
+    """Colors a cost genuinely REQUIRES: single-color pips (Phyrexian included).
+
+    Hybrid pips ({U/B}) and twobrids ({2/W}) are payable another way, so a
+    mono-black deck's blue-OR-black card never forces blue into its colors.
+    One letter per matching pip, so {R}{W}{W} yields ['R', 'W', 'W'].
     """
-    if not _table_exists(conn, "game_deck_cards") or not _table_exists(conn, "cards"):
+    letters: List[str] = []
+    for pip in _MANA_PIP_RE.findall(str(mana_cost or "")):
+        parts = pip.split("/")
+        if parts and parts[0] in "WUBRG" and all(p in ("P", parts[0]) for p in parts[1:]):
+            letters.append(parts[0])
+    return letters
+
+
+def _score_deck_colors(card_rows) -> str:
+    """WUBRG colors from (type_category, mana_cost, color_identity, copies) rows.
+
+    The mana base carries the most weight: each land copy contributes 2 to
+    every color its identity can produce; each nonland copy contributes 1 per
+    strictly-required pip color. A color needs a score of 3 to count, so one
+    off-color card (or a single stray dual land) never repaints the deck.
+    """
+    scores: Dict[str, float] = {}
+    for type_category, mana_cost, identity, copies in card_rows:
+        quantity = max(1, int(copies or 1))
+        if str(type_category or "").lower() == "land":
+            for ch in str(identity or ""):
+                if ch in "WUBRG":
+                    scores[ch] = scores.get(ch, 0) + 2 * quantity
+        else:
+            for ch in set(_strict_pip_letters(mana_cost or "")):
+                scores[ch] = scores.get(ch, 0) + quantity
+    return normalize_colors("".join(ch for ch, score in scores.items() if score >= 3))
+
+
+def _deck_color_map(conn: sqlite3.Connection) -> Dict[str, str]:
+    """WUBRG colors per deck, judged lands-first from real casting requirements.
+
+    Preferred evidence is the newest submitted decklist; decks tracked before
+    decklist capture existed fall back to the cards they were observed
+    playing (max copies seen in any one game as the quantity). Both paths
+    feed _score_deck_colors: land identities dominate, only strictly
+    required pips count for spells, and single-card colors are ignored.
+    """
+    if not _table_exists(conn, "cards"):
         return {}
     has_mana = "mana_cost" in {
         row[1] for row in conn.execute("PRAGMA table_info(cards)")
     }
+    cost_column = 'c."mana_cost"' if has_mana else "NULL"
+    result: Dict[str, str] = {}
+    if _table_exists(conn, "game_deck_cards"):
+        try:
+            latest = conn.execute(
+                """
+                SELECT deck_name, game_id FROM (
+                  SELECT
+                    p.deck_name AS deck_name,
+                    p.game_id AS game_id,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY p.deck_name
+                      ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
+                    ) AS rn
+                  FROM participants p
+                  JOIN games g ON g.id = p.game_id
+                  WHERE p.role = 'player' AND COALESCE(p.deck_name, '') != ''
+                    AND EXISTS (
+                      SELECT 1 FROM game_deck_cards dc
+                      WHERE dc.participant_id = p.id AND dc.deck_zone = 'deck'
+                    )
+                ) WHERE rn = 1
+                """
+            ).fetchall()
+        except sqlite3.OperationalError:
+            latest = []
+        for deck_name, game_id in latest:
+            card_rows = conn.execute(
+                f"""
+                SELECT dc.type_category, {cost_column}, c.color_identity, dc.quantity
+                FROM game_deck_cards dc
+                JOIN participants p ON p.id = dc.participant_id AND p.role = 'player'
+                LEFT JOIN cards c ON c.id = dc.card_id
+                WHERE dc.game_id = ? AND dc.deck_zone = 'deck'
+                """,
+                (game_id,),
+            ).fetchall()
+            result[str(deck_name)] = _score_deck_colors(card_rows)
+    # Decks with no captured decklist (tracked before submitted-deck capture,
+    # or scoring empty above): judge from the cards they were seen playing.
     try:
-        latest = conn.execute(
-            """
-            SELECT deck_name, game_id FROM (
-              SELECT
-                p.deck_name AS deck_name,
-                p.game_id AS game_id,
-                ROW_NUMBER() OVER (
-                  PARTITION BY p.deck_name
-                  ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
-                ) AS rn
-              FROM participants p
-              JOIN games g ON g.id = p.game_id
-              WHERE p.role = 'player' AND COALESCE(p.deck_name, '') != ''
-                AND EXISTS (
-                  SELECT 1 FROM game_deck_cards dc
-                  WHERE dc.participant_id = p.id AND dc.deck_zone = 'deck'
-                )
-            ) WHERE rn = 1
+        observed = conn.execute(
+            f"""
+            SELECT
+              p.deck_name,
+              s.type_category,
+              {("MAX(c.mana_cost)" if has_mana else "NULL")} AS mana_cost,
+              MAX(c.color_identity) AS color_identity,
+              MAX(s.played_count) AS copies
+            FROM participants p
+            JOIN game_card_summary s ON s.participant_id = p.id
+            LEFT JOIN cards c ON c.id = s.card_id
+            WHERE p.role = 'player' AND COALESCE(p.deck_name, '') != ''
+              AND s.played_count > 0
+            GROUP BY p.deck_name, s.display_name, s.type_category
             """
         ).fetchall()
     except sqlite3.OperationalError:
-        return {}
-    cost_column = 'c."mana_cost"' if has_mana else "NULL"
-    result: Dict[str, str] = {}
-    for deck_name, game_id in latest:
-        card_rows = conn.execute(
-            f"""
-            SELECT {cost_column}, c.color_identity
-            FROM game_deck_cards dc
-            JOIN participants p ON p.id = dc.participant_id AND p.role = 'player'
-            LEFT JOIN cards c ON c.id = dc.card_id
-            WHERE dc.game_id = ? AND dc.deck_zone = 'deck'
-            """,
-            (game_id,),
-        ).fetchall()
-        letters: Set[str] = set()
-        identity_fallback: Set[str] = set()
-        for mana_cost, identity in card_rows:
-            if mana_cost:
-                letters.update(ch for ch in str(mana_cost) if ch in "WUBRG")
-            elif mana_cost is None and identity:
-                identity_fallback.update(ch for ch in str(identity) if ch in "WUBRG")
-        result[str(deck_name)] = normalize_colors("".join(letters or identity_fallback))
+        observed = []
+    observed_by_deck: Dict[str, List[Any]] = {}
+    for deck_name, type_category, mana_cost, identity, copies in observed:
+        observed_by_deck.setdefault(str(deck_name), []).append(
+            (type_category, mana_cost, identity, int(copies or 1))
+        )
+    for deck_name, rows in observed_by_deck.items():
+        if not result.get(deck_name):
+            result[deck_name] = _score_deck_colors(rows)
     return result
 
 

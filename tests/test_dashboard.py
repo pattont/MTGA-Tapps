@@ -2877,3 +2877,60 @@ def test_deck_colors_come_from_newest_decklist_casting_costs(tmp_path):
 
     detail = deck_detail(db_path, "Boros Mouse")
     assert detail["deck_colors"] == "WR"
+
+
+def test_deck_color_scoring_rules():
+    """Lands lead; hybrids never force a color; single-card colors drop."""
+    from mtga_tracker.dashboard import _score_deck_colors
+
+    rows = [
+        ("Land", "", "B", 22),  # 22 Swamps -> B score 44
+        ("Creature", "{1}{B}", "B", 4),
+        # Hybrid blue-or-black: castable off Swamps alone, adds NO blue.
+        ("Creature", "{1}{U/B}", "UB", 4),
+        # One off-color splash card: a single card never adds a color.
+        ("Sorcery", "{2}{G}", "G", 1),
+    ]
+    assert _score_deck_colors(rows) == "B"
+
+    # Two green cards but no green sources still stay off (score 2 < 3);
+    # add a couple of dual lands and green becomes real.
+    rows_with_duals = rows + [
+        ("Sorcery", "{2}{G}", "G", 2),
+        ("Land", "", "BG", 2),
+    ]
+    assert _score_deck_colors(rows_with_duals) == "BG"
+
+
+def test_deck_colors_fall_back_to_observed_cards(tmp_path):
+    """Decks tracked before decklist capture still get colors from play."""
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            "insert into cards (name, first_seen_at, mana_cost, color_identity) values (?, ?, ?, ?)",
+            [
+                ("Mountain", "2026-06-01T00:00:00", "", "R"),
+                ("Mouse Mentor", "2026-06-01T00:00:00", "{R}{W}", "RW"),
+            ],
+        )
+        card_ids = {
+            name: card_id for card_id, name in conn.execute("select id, name from cards")
+        }
+        # No submitted decklist at all for this deck...
+        conn.execute("delete from game_deck_cards")
+        # ...but the tracker saw it play Mountains and Mouse Mentors.
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            ) values (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("game-1", "player-1", card_ids["Mountain"], "Mountain", "Land", 6),
+                ("game-1", "player-1", card_ids["Mouse Mentor"], "Mouse Mentor", "Creature", 3),
+            ],
+        )
+
+    snapshot = dashboard_snapshot(db_path)
+    deck_row = next(row for row in snapshot["decks"] if row["deck_name"] == "Boros Mouse")
+    assert deck_row["colors"] == "WR"
