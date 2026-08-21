@@ -329,7 +329,7 @@ const deckColumns: Column<DeckWithCombatRow>[] = [
   },
   {
     key: 'colors',
-    header: 'Deck Colors',
+    header: 'Colors',
     render: (row) => (row.colors ? <ColorPips colors={row.colors} /> : '—'),
     sortValue: (row) => row.colors ?? '',
   },
@@ -374,13 +374,6 @@ const deckColumns: Column<DeckWithCombatRow>[] = [
     header: 'Avg Turns',
     render: (row) => formatNumber(row.avg_player_turns),
     sortValue: (row) => row.avg_player_turns,
-    numeric: true,
-  },
-  {
-    key: 'avg_life_gained',
-    header: 'Life Gained / Game',
-    render: (row) => formatNumber(row.avg_life_gained),
-    sortValue: (row) => row.avg_life_gained,
     numeric: true,
   },
 ];
