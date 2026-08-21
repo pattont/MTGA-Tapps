@@ -2879,6 +2879,45 @@ def test_deck_colors_come_from_newest_decklist_casting_costs(tmp_path):
     assert detail["deck_colors"] == "WR"
 
 
+def test_card_detail_opponent_playable_counts_color_covered_games(tmp_path):
+    """'Could have played it' = games whose revealed opponent colors cover the cost."""
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            "insert into cards (name, first_seen_at, mana_cost, color_identity) values (?, ?, ?, ?)",
+            [
+                ("Duress", "2026-06-01T00:00:00", "{B}", "B"),
+                ("Swamp", "2026-06-01T00:00:00", "", "B"),
+                ("Shock", "2026-06-01T00:00:00", "{R}", "R"),
+            ],
+        )
+        card_ids = {
+            name: card_id for card_id, name in conn.execute("select id, name from cards")
+        }
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            ) values (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                # game-1 opponent showed black mana and cast Duress.
+                ("game-1", "opponent-1", card_ids["Swamp"], "Swamp", "Land", 3),
+                ("game-1", "opponent-1", card_ids["Duress"], "Duress", "Sorcery", 1),
+                # game-2 opponent was mono-red: Duress was never castable there.
+                ("game-2", "opponent-2", card_ids["Shock"], "Shock", "Instant", 2),
+            ],
+        )
+
+    detail = card_detail(db_path, "Duress")
+
+    playable = detail["opponent_playable"]
+    assert playable["required_colors"] == "B"
+    assert playable["games_possible"] == 1  # game-2's red opponent excluded
+    assert playable["games_played"] == 1
+    assert playable["pct"] == 100.0
+
+
 def test_deck_color_scoring_rules():
     """Lands lead; hybrids never force a color; single-card colors drop."""
     from mtga_tracker.dashboard import _score_deck_colors

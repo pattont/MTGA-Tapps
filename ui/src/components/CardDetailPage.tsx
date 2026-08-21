@@ -345,6 +345,34 @@ export function CardDetailPage({
           <MetricCard label="Your Win Rate" value={formatPercent(opponentImpact.win_rate)} />
           <MetricCard label="Your Loss Rate" value={formatPercent(opponentImpact.loss_rate)} />
         </section>
+        {detail.opponent_playable && detail.opponent_playable.games_possible > 0 ? (
+          <>
+            <div className="section-heading">
+              <div>
+                <h3>Opponent Could Have Played It</h3>
+                <p className="section-description">
+                  {detail.opponent_playable.required_colors
+                    ? 'Games where the colors the opponent revealed could cast this card. Based only on colors they actually showed, so quick games can undercount.'
+                    : 'This card needs no colored mana, so every tracked game counts as possible.'}
+                </p>
+              </div>
+            </div>
+            <section className="metric-grid metric-grid-deck" aria-label="Opponent playable games">
+              <MetricCard
+                label="Games Possible"
+                value={formatNumber(detail.opponent_playable.games_possible)}
+              />
+              <MetricCard
+                label="Games They Played It"
+                value={formatNumber(detail.opponent_playable.games_played)}
+              />
+              <MetricCard
+                label="Appearance Rate"
+                value={formatPercent(detail.opponent_playable.pct)}
+              />
+            </section>
+          </>
+        ) : null}
       </Section>
 
       <Section

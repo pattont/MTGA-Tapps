@@ -1012,9 +1012,19 @@ export interface CardMultiplicity {
   buckets: CardMultiplicityBucket[];
 }
 
+export interface CardOpponentPlayable {
+  /** WUBRG letters the card's cost strictly requires ("" = none). */
+  required_colors: string;
+  games_possible: number;
+  games_played: number;
+  pct: number | null;
+}
+
 export interface CardDetail {
   card_name: string;
   image_url: string | null;
+  /** Games where the opponent's revealed colors could cast this card. */
+  opponent_playable?: CardOpponentPlayable | null;
   summary: CardSummary;
   all_usage: CardAllUsage;
   by_role: CardByRoleRow[];

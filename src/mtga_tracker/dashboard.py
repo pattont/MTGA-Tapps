@@ -4145,6 +4145,72 @@ def _card_opponent_multiplicity(
     return {"games": total_games, "buckets": bucket_rows}
 
 
+def _card_opponent_playable(
+    conn: sqlite3.Connection,
+    variants: List[str],
+    where: str,
+    filter_params: List[Any],
+) -> Optional[Dict[str, Any]]:
+    """How often opponents COULD have cast this card, judged by revealed colors.
+
+    A game counts as "possible" when the colors the opponent revealed cover
+    every color the card's cost strictly requires (hybrid pips require
+    nothing), plus any game where they actually played it. Cards with no
+    color requirement (artifacts, lands) count every game — technically true,
+    flagged in the UI. Returns None when the card's cost is unknown, since a
+    guessed requirement would make the percentage meaningless.
+    """
+    if not _table_exists(conn, "cards"):
+        return None
+    if "mana_cost" not in {row[1] for row in conn.execute("PRAGMA table_info(cards)")}:
+        return None
+    name_matches = " OR ".join(["c.name = ?"] * len(variants))
+    cost_row = conn.execute(
+        f"SELECT c.mana_cost FROM cards c WHERE ({name_matches}) AND c.mana_cost IS NOT NULL LIMIT 1",
+        tuple(variants),
+    ).fetchone()
+    if cost_row is None:
+        return None
+    required = set(_strict_pip_letters(str(cost_row[0] or "")))
+    rows = conn.execute(
+        f"""
+        SELECT
+          g.id,
+          (
+            SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+            FROM game_card_summary s
+            JOIN cards c ON c.id = s.card_id
+            WHERE s.game_id = g.id AND s.participant_id = po.id
+          ) AS letters,
+          EXISTS (
+            SELECT 1 FROM game_card_summary s2
+            WHERE s2.game_id = g.id AND s2.participant_id = po.id
+              AND s2.played_count > 0 AND {_card_name_clause('s2', variants)}
+          ) AS played_it
+        FROM games g
+        JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
+        WHERE {where}
+        """,
+        (*_card_name_params(variants), *filter_params),
+    ).fetchall()
+    games_possible = 0
+    games_played = 0
+    for _game_id, letters, played_it in rows:
+        shown = {ch for ch in str(letters or "") if ch in "WUBRG"}
+        if played_it or required <= shown:
+            games_possible += 1
+            if played_it:
+                games_played += 1
+    return {
+        "required_colors": normalize_colors("".join(required)),
+        "games_possible": games_possible,
+        "games_played": games_played,
+        "pct": (
+            round(100.0 * games_played / games_possible, 1) if games_possible else None
+        ),
+    }
+
+
 def card_detail(
     db_path: Path = DEFAULT_DB_PATH,
     card_name: str = "",
@@ -4278,6 +4344,9 @@ def card_detail(
         ).fetchone()
         multiplicity = _card_multiplicity(conn, variants)
         opponent_multiplicity = _card_opponent_multiplicity(conn, variants)
+        opponent_playable = _card_opponent_playable(
+            conn, variants, where, list(filter_params)
+        )
 
     opponent_usage = next((row for row in by_role if row["role"] == "opponent"), None)
     opponent_games = int(opponent_usage["games_seen"] or 0) if opponent_usage else 0
@@ -4328,6 +4397,7 @@ def card_detail(
                 else None
             ),
         },
+        "opponent_playable": opponent_playable,
         "by_deck": by_deck,
         "multiplicity": multiplicity,
         "opponent_multiplicity": opponent_multiplicity,
