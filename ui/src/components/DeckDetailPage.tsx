@@ -909,6 +909,11 @@ export function DeckDetailPage({
                   ? `Signature card: ${formatCardName(detail.deck_visual.card_name)}`
                   : 'No card data yet'}
               </p>
+              {detail.deck_colors ? (
+                <div className="deck-color-pips">
+                  <ColorPips colors={detail.deck_colors} size={22} />
+                </div>
+              ) : null}
             </div>
           </div>
         </div>

@@ -1410,6 +1410,11 @@ tbody tr:hover {
   gap: 18px;
 }
 
+/* Deck color pips under the signature-card line. */
+.deck-color-pips {
+  margin-top: 8px;
+}
+
 .deck-detail-title-content {
   display: flex;
   min-width: 0;

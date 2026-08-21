@@ -26,6 +26,8 @@ export interface DeckRow {
   losses: number;
   win_rate: number | null;
   deck_visual: DeckVisual;
+  /** WUBRG letters from the newest decklist's casting costs (e.g. "WR"). */
+  colors?: string;
 }
 
 export interface FormatRow {
@@ -630,6 +632,8 @@ export interface DeckModeSplits {
 export interface DeckDetail {
   deck_name: string;
   deck_visual: DeckVisual;
+  /** WUBRG letters from the newest decklist's casting costs (e.g. "B"). */
+  deck_colors?: string;
   deck_export: DeckExport;
   summary: Summary;
   profile: DeckProfile;

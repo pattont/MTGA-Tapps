@@ -2844,3 +2844,36 @@ def test_deck_and_game_payloads_ship_arena_mana_costs(tmp_path):
     game = game_detail(db_path, "game-1")
     assert game["card_mana"]["Mouse Mentor"] == {"mana_cost": "{R}{W}", "mana_value": 2.0}
     assert game["card_mana"]["Duress"] == {"mana_cost": "{B}", "mana_value": 1.0}
+
+
+def test_deck_colors_come_from_newest_decklist_casting_costs(tmp_path):
+    """Deck colors use mana costs (not identity) from the latest decklist."""
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            "insert into cards (name, first_seen_at, mana_cost, color_identity) values (?, ?, ?, ?)",
+            [
+                ("Mountain", "2026-06-01T00:00:00", "", "R"),
+                ("Mouse Mentor", "2026-06-01T00:00:00", "{R}{W}", "RW"),
+                # Costs only {R}, but a {U} ability gives it UR identity —
+                # identity must NOT leak blue into the deck's colors.
+                ("Shock", "2026-06-01T00:00:00", "{R}", "UR"),
+                ("Sheltered by Ghosts", "2026-06-01T00:00:00", "{1}{W}", "W"),
+            ],
+        )
+        card_ids = {
+            name: card_id
+            for card_id, name in conn.execute("select id, name from cards")
+        }
+        for name, card_id in card_ids.items():
+            conn.execute(
+                "update game_deck_cards set card_id = ? where display_name = ?",
+                (card_id, name),
+            )
+
+    snapshot = dashboard_snapshot(db_path)
+    deck_row = next(row for row in snapshot["decks"] if row["deck_name"] == "Boros Mouse")
+    assert deck_row["colors"] == "WR"
+
+    detail = deck_detail(db_path, "Boros Mouse")
+    assert detail["deck_colors"] == "WR"

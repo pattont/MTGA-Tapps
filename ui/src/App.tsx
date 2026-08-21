@@ -327,6 +327,12 @@ const deckColumns: Column<DeckWithCombatRow>[] = [
       ),
     sortValue: (row) => row.aggression_profile ?? '',
   },
+  {
+    key: 'colors',
+    header: 'Deck Colors',
+    render: (row) => (row.colors ? <ColorPips colors={row.colors} /> : '—'),
+    sortValue: (row) => row.colors ?? '',
+  },
   { key: 'games', header: 'Games', numeric: true },
   {
     key: 'win_rate',

@@ -1835,6 +1835,67 @@ def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
     return visuals
 
 
+def _deck_color_map(conn: sqlite3.Connection) -> Dict[str, str]:
+    """WUBRG colors per deck, from the newest submitted decklist's mana costs.
+
+    Casting costs (cards.mana_cost, backfilled from Arena's card DB) define a
+    deck's colors — color IDENTITY would drag in off-color hybrid/ability
+    pips (e.g. a mono-black deck showing blue because one creature has a
+    {U/B} ability). Cards without a stored cost fall back to their color
+    identity; lands contribute nothing (their cost is empty, as printed).
+    """
+    if not _table_exists(conn, "game_deck_cards") or not _table_exists(conn, "cards"):
+        return {}
+    has_mana = "mana_cost" in {
+        row[1] for row in conn.execute("PRAGMA table_info(cards)")
+    }
+    try:
+        latest = conn.execute(
+            """
+            SELECT deck_name, game_id FROM (
+              SELECT
+                p.deck_name AS deck_name,
+                p.game_id AS game_id,
+                ROW_NUMBER() OVER (
+                  PARTITION BY p.deck_name
+                  ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
+                ) AS rn
+              FROM participants p
+              JOIN games g ON g.id = p.game_id
+              WHERE p.role = 'player' AND COALESCE(p.deck_name, '') != ''
+                AND EXISTS (
+                  SELECT 1 FROM game_deck_cards dc
+                  WHERE dc.participant_id = p.id AND dc.deck_zone = 'deck'
+                )
+            ) WHERE rn = 1
+            """
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    cost_column = 'c."mana_cost"' if has_mana else "NULL"
+    result: Dict[str, str] = {}
+    for deck_name, game_id in latest:
+        card_rows = conn.execute(
+            f"""
+            SELECT {cost_column}, c.color_identity
+            FROM game_deck_cards dc
+            JOIN participants p ON p.id = dc.participant_id AND p.role = 'player'
+            LEFT JOIN cards c ON c.id = dc.card_id
+            WHERE dc.game_id = ? AND dc.deck_zone = 'deck'
+            """,
+            (game_id,),
+        ).fetchall()
+        letters: Set[str] = set()
+        identity_fallback: Set[str] = set()
+        for mana_cost, identity in card_rows:
+            if mana_cost:
+                letters.update(ch for ch in str(mana_cost) if ch in "WUBRG")
+            elif mana_cost is None and identity:
+                identity_fallback.update(ch for ch in str(identity) if ch in "WUBRG")
+        result[str(deck_name)] = normalize_colors("".join(letters or identity_fallback))
+    return result
+
+
 def _empty_deck_visual(deck_name: str) -> Dict[str, Any]:
     return {
         "card_id": None,
@@ -2395,9 +2456,11 @@ def dashboard_snapshot(
         brawl_summary = _brawl_summary(conn, where, params)
         faced_commander_rows = _commander_rows(conn, where, params, "opponent")
         deck_visuals = _deck_visuals(conn)
+        deck_color_map = _deck_color_map(conn)
         for row in deck_rows:
             deck_name = row["deck_name"]
             row["deck_visual"] = deck_visuals.get(deck_name, _empty_deck_visual(deck_name))
+            row["colors"] = deck_color_map.get(deck_name, "")
         for row in recent_rows:
             quality = _game_draw_quality(
                 conn,
@@ -2835,6 +2898,7 @@ def deck_detail(
         )
         trend_rows.reverse()
         deck_visuals = _deck_visuals(conn)
+        deck_colors = _deck_color_map(conn).get(deck_name, "")
         deck_export = _deck_export_snapshot(conn, where, params, deck_name)
         # Arena-derived mana costs for every card the page can show; the UI
         # falls back to Scryfall for names missing from this map.
@@ -2893,6 +2957,7 @@ def deck_detail(
     return {
         "deck_name": deck_name,
         "deck_visual": deck_visuals.get(deck_name, _empty_deck_visual(deck_name)),
+        "deck_colors": deck_colors,
         "deck_export": deck_export,
         "summary": {
             "games": int(summary[0] or 0),
