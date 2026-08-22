@@ -19,7 +19,7 @@ class MoxfieldProvider(DeckProvider):
 
     @property
     def source_picker_title(self) -> str:
-        return "Configured Creators"
+        return "Creators"
 
     @property
     def source_picker_item_label(self) -> str:
@@ -27,7 +27,7 @@ class MoxfieldProvider(DeckProvider):
 
     @property
     def source_picker_all_label(self) -> str:
-        return "all configured creators"
+        return "all creators"
 
     @property
     def change_label(self) -> str:

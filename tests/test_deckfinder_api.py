@@ -125,6 +125,26 @@ def test_fetch_runs_as_job_then_serves_from_cache(stub_provider):
     assert stub_provider.fetch_calls == 2
 
 
+def test_untapped_bo3_without_win_rates_explains_why(monkeypatch):
+    """untapped's free API has no Bo3 win rates (Premium-gated upstream);
+    the view should say so instead of silently dropping the column."""
+
+    class UntappedStub(StubProvider):
+        key = "untapped"
+
+        def fetch_decks(self, selected_format, limit=50, source=None):
+            deck = super().fetch_decks(selected_format, limit, source)[0]
+            return [DeckEntry(**{**deck.__dict__, "win_rate": None, "matches": 900})]
+
+    provider = UntappedStub()
+    monkeypatch.setattr(deckfinder_api, "_PROVIDERS", [provider])
+    deckfinder_api._CACHE.clear()
+
+    result = deckfinder_api._run_fetch("untapped", "bo3", "", "", 50)
+    assert "Premium" in (result["view"]["helper_text"] or "")
+    assert "win_rate" not in [c["key"] for c in result["view"]["columns"]]
+
+
 def test_hydrate_resolves_deck_text(stub_provider):
     deck = {
         "name": "Stub Aggro",

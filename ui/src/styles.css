@@ -3630,9 +3630,18 @@ tr.deck-change-row-out .card-link {
 }
 
 .deckfinder-surprise svg,
+.deckfinder-heading-action svg,
 .deckfinder-detail-actions svg {
   width: 15px;
   height: 15px;
+}
+
+.deckfinder-heading-action {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
 }
 
 .deckfinder-providers {

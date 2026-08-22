@@ -336,9 +336,11 @@ export function DeckFinderPage() {
   }));
 
   const showFormatChips = Boolean(provider && provider.format_options.length > 1);
-  const showSources = Boolean(
-    provider?.uses_source_picker && sources.length > 1,
-  );
+  // Creator-backed sources (name "Creator: X") get their own chip row, like
+  // the terminal app's separate creator table (TCGplayer, Moxfield).
+  const regularSources = sources.filter((source) => !source.name.startsWith('Creator: '));
+  const creatorSources = sources.filter((source) => source.name.startsWith('Creator: '));
+  const showSources = Boolean(provider?.uses_source_picker && sources.length > 1);
   const resultContext = provider
     ? [
         provider.display_name,
@@ -437,7 +439,7 @@ export function DeckFinderPage() {
         </div>
       ) : null}
 
-      {showSources && provider ? (
+      {showSources && provider && regularSources.length > 0 ? (
         <div className="deckfinder-filter-row">
           <span className="deckfinder-step-label">{provider.source_picker_title}</span>
           <div className="quick-filters deckfinder-chips" role="group" aria-label="Deck sources">
@@ -453,7 +455,7 @@ export function DeckFinderPage() {
                 All ({provider.source_picker_all_label})
               </button>
             ) : null}
-            {sources.map((source) => (
+            {regularSources.map((source) => (
               <button
                 key={`${source.name}-${source.url}`}
                 className="quick-filter"
@@ -469,6 +471,46 @@ export function DeckFinderPage() {
                 }
               >
                 {source.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {showSources && provider && creatorSources.length > 0 ? (
+        <div className="deckfinder-filter-row">
+          <span className="deckfinder-step-label">
+            {regularSources.length > 0 ? 'Creators' : provider.source_picker_title}
+          </span>
+          <div className="quick-filters deckfinder-chips" role="group" aria-label="Creators">
+            {regularSources.length === 0 && provider.allow_all_sources ? (
+              <button
+                className="quick-filter"
+                type="button"
+                onClick={() =>
+                  provider &&
+                  void runFetch(provider, { format, sourceUrl: '', sourceName: '' })
+                }
+              >
+                All ({provider.source_picker_all_label})
+              </button>
+            ) : null}
+            {creatorSources.map((source) => (
+              <button
+                key={`${source.name}-${source.url}`}
+                className="quick-filter"
+                title={source.description}
+                type="button"
+                onClick={() =>
+                  provider &&
+                  void runFetch(provider, {
+                    format,
+                    sourceUrl: source.url,
+                    sourceName: source.name,
+                  })
+                }
+              >
+                {source.name.replace(/^Creator:\s*/u, '')}
               </button>
             ))}
           </div>
@@ -501,7 +543,7 @@ export function DeckFinderPage() {
             </div>
             {variantsParent ? (
               <button
-                className="quick-filter"
+                className="quick-filter deckfinder-heading-action"
                 type="button"
                 onClick={() =>
                   provider && lastFetch && void runFetch(provider, lastFetch)
@@ -511,7 +553,7 @@ export function DeckFinderPage() {
               </button>
             ) : (
               <button
-                className="quick-filter"
+                className="quick-filter deckfinder-heading-action"
                 title="Fetch fresh results"
                 type="button"
                 onClick={() =>

@@ -436,6 +436,24 @@ def _run_fetch(
     source = _resolve_source(provider, source_url or None, source_name)
     decks = provider.fetch_decks(fmt, limit=limit, source=source)
     view = provider.result_view_config(source)
+    if (
+        provider_key == "untapped"
+        and decks
+        and not any(deck.win_rate is not None for deck in decks)
+    ):
+        # untapped.gg's free API carries win rates for the Bo1 ladder only;
+        # Bo3 (Traditional) meta stats are Premium-gated upstream. Say so
+        # instead of silently dropping the Win % column.
+        import dataclasses as _dc
+
+        note = (
+            "untapped.gg only shares Bo3 win rates with Premium subscribers, "
+            "so these archetypes are ranked by matches played."
+        )
+        view = _dc.replace(
+            view,
+            helper_text=f"{view.helper_text} {note}" if view.helper_text else note,
+        )
     columns, cells = _table_spec(provider, decks, view, source.name if source else "")
     serialized = [
         {**_serialize_deck(deck), "cells": row} for deck, row in zip(decks, cells)
