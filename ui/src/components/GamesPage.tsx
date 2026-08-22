@@ -54,22 +54,13 @@ const columns: Column<AllGamesRow>[] = [
     header: 'Outcome',
     render: (row) => <Badge tone={outcomeTone(row.outcome)}>{outcomeLabel(row.outcome)}</Badge>,
     sortValue: (row) => row.outcome,
+    center: true,
   },
   {
     key: 'opp_colors',
     header: 'Opp',
     render: (row) => <ColorPips colors={row.opp_colors} />,
     sortValue: (row) => row.opp_colors ?? '',
-  },
-  {
-    key: 'match_wins',
-    header: 'Match Record',
-    render: (row) =>
-      (row.best_of ?? 1) > 1 && row.match_wins !== null && row.match_wins !== undefined
-        ? `${row.match_wins}–${row.match_losses ?? 0}`
-        : '—',
-    sortValue: (row) => ((row.best_of ?? 1) > 1 ? (row.match_wins ?? 0) - (row.match_losses ?? 0) : null),
-    numeric: true,
   },
   {
     key: 'is_flood',
@@ -83,6 +74,7 @@ const columns: Column<AllGamesRow>[] = [
         'Normal'
       ),
     sortValue: (row) => (row.is_flood ? 2 : row.is_screw ? 1 : 0),
+    center: true,
   },
   {
     key: 'mulligans',
@@ -91,7 +83,6 @@ const columns: Column<AllGamesRow>[] = [
     sortValue: (row) => row.mulligans,
     numeric: true,
   },
-  { key: 'total_turns', header: 'Turns', numeric: true },
   { key: 'cards_seen', header: 'Cards Seen', numeric: true },
   {
     key: 'lands_seen',
@@ -100,6 +91,7 @@ const columns: Column<AllGamesRow>[] = [
     sortValue: (row) => row.lands_seen,
     numeric: true,
   },
+  { key: 'total_turns', header: 'Turns', numeric: true },
   {
     key: 'duration_seconds',
     header: 'Game Time',

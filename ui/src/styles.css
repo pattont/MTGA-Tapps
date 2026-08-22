@@ -1246,6 +1246,16 @@ th.num .table-sort {
   justify-content: flex-end;
 }
 
+/* Centered badge columns (Outcome, Draw Status). */
+th.center,
+td.center {
+  text-align: center;
+}
+
+th.center .table-sort {
+  justify-content: center;
+}
+
 .win-rate-cell {
   display: inline-grid;
   gap: 4px;

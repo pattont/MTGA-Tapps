@@ -41,6 +41,8 @@ export interface Column<T extends object> {
   sortValue?: (row: T) => SortValue;
   sortable?: boolean;
   numeric?: boolean;
+  /** Center header + cells — for short categorical badges (Outcome, status). */
+  center?: boolean;
 }
 
 export interface InitialSort<T extends object> {
@@ -192,7 +194,7 @@ export function SortableTable<T extends object>({
                     key={String(column.key)}
                     scope="col"
                     aria-sort={ariaSort}
-                    className={column.numeric ? 'num' : undefined}
+                    className={column.numeric ? 'num' : column.center ? 'center' : undefined}
                   >
                     {isSortable ? (
                       <button
@@ -231,7 +233,7 @@ export function SortableTable<T extends object>({
                 <Fragment key={rowKey}>
                   <tr className={rowClasses || undefined}>
                     {columns.map((column, columnIndex) => (
-                      <td key={String(column.key)} className={column.numeric ? 'num' : undefined}>
+                      <td key={String(column.key)} className={column.numeric ? 'num' : column.center ? 'center' : undefined}>
                         {columnIndex === 0 && expandable ? (
                           <span className="row-expander-cell">
                             <button
@@ -262,7 +264,7 @@ export function SortableTable<T extends object>({
                     ? subRows.map((subRow) => (
                         <tr key={getRowKey(subRow)} className="table-subrow">
                           {columns.map((column) => (
-                            <td key={String(column.key)} className={column.numeric ? 'num' : undefined}>
+                            <td key={String(column.key)} className={column.numeric ? 'num' : column.center ? 'center' : undefined}>
                               {column.render ? column.render(subRow) : String(subRow[column.key] ?? '')}
                             </td>
                           ))}
@@ -277,7 +279,7 @@ export function SortableTable<T extends object>({
             <tfoot>
               <tr className="table-footer-row">
                 {columns.map((column) => (
-                  <td key={String(column.key)} className={column.numeric ? 'num' : undefined}>
+                  <td key={String(column.key)} className={column.numeric ? 'num' : column.center ? 'center' : undefined}>
                     {footerCells[String(column.key)] ?? ''}
                   </td>
                 ))}

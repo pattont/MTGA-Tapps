@@ -630,6 +630,7 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
     header: 'Outcome',
     render: (row) => <Badge tone={outcomeTone(row.outcome)}>{outcomeLabel(row.outcome)}</Badge>,
     sortValue: (row) => row.outcome,
+    center: true,
   },
   {
     key: 'opp_colors',
@@ -649,19 +650,13 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
         'Normal'
       ),
     sortValue: (row) => (row.is_flood ? 2 : row.is_screw ? 1 : 0),
+    center: true,
   },
   {
     key: 'mulligans',
     header: 'Mulligan(s)',
     render: (row) => formatNumber(row.mulligans),
     sortValue: (row) => row.mulligans,
-    numeric: true,
-  },
-  {
-    key: 'total_turns',
-    header: 'Total Turns',
-    render: (row) => formatNumber(row.total_turns),
-    sortValue: (row) => row.total_turns,
     numeric: true,
   },
   {
@@ -676,6 +671,13 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
     header: 'Lands Seen',
     render: (row) => formatLandsSeen(row.lands_seen, row.land_seen_pct),
     sortValue: (row) => row.lands_seen,
+    numeric: true,
+  },
+  {
+    key: 'total_turns',
+    header: 'Turns',
+    render: (row) => formatNumber(row.total_turns),
+    sortValue: (row) => row.total_turns,
     numeric: true,
   },
   {

@@ -986,9 +986,9 @@ describe('App', () => {
       'Opp',
       'Draw Status',
       'Mulligan(s)',
-      'Total Turns',
       'Cards Seen',
       'Lands Seen',
+      'Turns',
       'Game Time',
     ]);
     expect(within(recentTable).queryByRole('columnheader', { name: 'Land Seen' })).not.toBeInTheDocument();
