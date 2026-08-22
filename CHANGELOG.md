@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.5.8
+
+- **Deck colors everywhere**: color pips on the deck page header, a Colors
+  column on the overview Decks table, and a Colors column in Recent Games
+  (between Deck and Format). Colors are judged lands-first from real casting
+  requirements — land identities carry double weight, hybrid pips ({U/B})
+  never force a color, a single off-color card never counts, and decks
+  tracked before decklist capture fall back to the cards they were seen
+  playing, so every deck gets pips.
+- **Card page overhaul**: sections reordered (Summary, Opening Hand Impact,
+  opponent impact, Played By Side, Repeat Draws, Opponent Repeat Draws, Your
+  Decks), an Avg Per Game metric, the same ambient card-art backdrop as the
+  deck page, and a new **"Opponent Could Have Played It"** panel — games
+  where the opponent's revealed colors could cast the card, how often they
+  actually did, and the appearance rate. Computed live from existing data,
+  no backfill.
+- **Recent Games**: the Match Record column is gone from the top level (a
+  win is a win) — expanding a Bo3 match shows "Match record: 2–1" in the
+  flyout instead.
+- **Deck page polish**: hero-sized signature art (with a by-name Scryfall
+  fallback for new sets whose Arena-ID mapping hasn't landed yet), the Copy
+  Arena Deck button moved into the topbar beside the card search, and
+  Decklist Changes moved down between Vs Opponent Colors and Recent Games.
+- **Overview**: the deck page's Land Statistics (Normal/Flood/Screw split
+  across all classified games) now heads the land section, Opponent Meta
+  pages at 10 rows instead of silently cutting at 15, and the Decks table
+  dropped Life Gained / Game to stop horizontal scrolling.
+- **Fit and finish**: Combat & Resources "(N drawn)" counts render as small
+  muted one-line suffixes instead of wrapping, the card-search focus ring is
+  a single clean accent border, pages scroll clear of the Back to top pill,
+  official card-type symbols (chalice, claw mark, sunrise…) with singular
+  labels in the deck-list type boxes, and "Imported Deck" games retitle
+  themselves the moment the renamed deck's first game lands instead of
+  waiting for a tracker restart.
+
 ## 0.5.7
 
 Rolls up everything since 0.5.5 (including the 0.5.6 beta's date repair).
