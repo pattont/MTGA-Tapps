@@ -980,10 +980,10 @@ describe('App', () => {
     expect(headers).toEqual([
       'Started',
       'Deck',
+      'Colors',
       'Format',
       'Outcome',
       'Opp',
-      'Match Record',
       'Draw Status',
       'Mulligan(s)',
       'Total Turns',

@@ -2534,6 +2534,7 @@ def dashboard_snapshot(
             row["is_flood"] = quality["is_flood"]
             row["screw_reasons"] = quality["screw_reasons"]
             row["is_screw"] = quality["is_screw"]
+            row["deck_colors"] = deck_color_map.get(str(row.get("deck_name") or ""), "")
 
     summary_dict = {
         "games": int(summary[0] or 0),

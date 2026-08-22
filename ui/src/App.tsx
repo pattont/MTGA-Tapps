@@ -606,6 +606,13 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
     sortValue: (row) => row.deck_name,
   },
   {
+    key: 'deck_colors',
+    header: 'Colors',
+    render: (row) =>
+      row.game_label || !row.deck_colors ? null : <ColorPips colors={row.deck_colors} />,
+    sortValue: (row) => row.deck_colors ?? '',
+  },
+  {
     key: 'format_label',
     header: 'Format',
     render: (row) =>
@@ -629,16 +636,6 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
     header: 'Opp',
     render: (row) => (row.game_label ? null : <ColorPips colors={row.opp_colors} />),
     sortValue: (row) => row.opp_colors ?? '',
-  },
-  {
-    key: 'match_wins',
-    header: 'Match Record',
-    render: (row) =>
-      !row.game_label && (row.best_of ?? 1) > 1 && row.match_wins !== null && row.match_wins !== undefined
-        ? `${row.match_wins}–${row.match_losses ?? 0}`
-        : '—',
-    sortValue: (row) => ((row.best_of ?? 1) > 1 ? (row.match_wins ?? 0) - (row.match_losses ?? 0) : null),
-    numeric: true,
   },
   {
     key: 'is_flood',
@@ -1328,7 +1325,16 @@ function Dashboard({
           getRowKey={(row) => (row.match_row ? `match:${row.match_id}` : row.game_id)}
           getSubRows={(row) => row.sub_games}
           renderDetailRow={(row) =>
-            !row.match_row && (row.player_commander || row.opponent_commander) ? (
+            row.match_row && row.match_wins !== null && row.match_wins !== undefined ? (
+              // Match record lives in the Bo3 flyout only — a win is a win at
+              // the top level, whether it took two games or three.
+              <div className="match-record-detail">
+                Match record:{' '}
+                <strong>
+                  {row.match_wins}–{row.match_losses ?? 0}
+                </strong>
+              </div>
+            ) : !row.match_row && (row.player_commander || row.opponent_commander) ? (
               <div className="commander-matchup">
                 <span className="color-combo">
                   {row.player_commander_colors ? (

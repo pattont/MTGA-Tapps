@@ -299,6 +299,26 @@ a {
   cursor: default;
 }
 
+/* Bo3 flyout: the match record line shown when a match row is expanded. */
+.match-record-detail {
+  padding: 2px 4px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.match-record-detail strong {
+  color: var(--text);
+}
+
+/* One clean focus ring: the control's accent border IS the indicator, so the
+   browser's default outline (which doubled it up) is suppressed. */
+.card-search-control input:focus,
+.card-search-control input:focus-visible,
+.card-search-control button:focus,
+.card-search-control button:focus-visible {
+  outline: none;
+}
+
 .card-search-control:focus-within input,
 .card-search-control:focus-within button {
   border-color: var(--accent);

@@ -256,6 +256,8 @@ export interface RecentGameRow {
   is_screw?: boolean;
   /** Opponent's revealed WUBRG colors (e.g. "UR"); empty when nothing colored was seen. */
   opp_colors?: string;
+  /** Your deck's WUBRG colors (same derivation as the Decks table). */
+  deck_colors?: string;
   /** Brawl: commander names (partners joined with " & "); null outside Brawl. */
   player_commander?: string | null;
   opponent_commander?: string | null;
