@@ -44,19 +44,6 @@ export function AppShell({
   }
   const [version, setVersion] = useState<string | null>(null);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
-  const [deckFinderStatus, setDeckFinderStatus] = useState<string | null>(null);
-
-  async function launchDeckFinder() {
-    setDeckFinderStatus('Launching…');
-    try {
-      const response = await fetch('/api/deck-downloader/launch', { method: 'POST' });
-      const payload = (await response.json()) as { ok?: boolean; message?: string };
-      setDeckFinderStatus(payload.message ?? (response.ok ? 'Opened.' : 'Launch failed.'));
-    } catch {
-      setDeckFinderStatus('Could not reach the tracker to launch it.');
-    }
-    window.setTimeout(() => setDeckFinderStatus(null), 8000);
-  }
 
   useEffect(() => {
     let cancelled = false;
@@ -265,19 +252,9 @@ export function AppShell({
                 Update {update.tag} available →
               </a>
             ) : null}
-            {deckFinderStatus ? (
-              <p className="sidebar-deck-finder-status" role="status">
-                {deckFinderStatus}
-              </p>
-            ) : null}
-            <button
-              className="sidebar-deck-finder"
-              title="Open the Deck Finder in a terminal window"
-              type="button"
-              onClick={() => void launchDeckFinder()}
-            >
+            <a className="sidebar-deck-finder" href="#/deck-finder" title="Browse top decks inside the dashboard">
               Deck Finder
-            </button>
+            </a>
             {version ? (
               <span aria-label={`Tracker version ${version}`} className="sidebar-version">
                 v{version}

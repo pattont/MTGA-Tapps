@@ -3586,3 +3586,146 @@ tr.deck-change-row-out .card-link {
   font-weight: 400;
   font-size: 0.85em;
 }
+
+/* ---- Deck Finder page ---- */
+.deckfinder-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.deckfinder-surprise,
+.deckfinder-detail-actions .quick-filter,
+.deckfinder-toolbar .quick-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.deckfinder-surprise svg,
+.deckfinder-detail-actions svg {
+  width: 15px;
+  height: 15px;
+}
+
+.deckfinder-providers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.deckfinder-provider {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.deckfinder-provider span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.deckfinder-provider:hover {
+  border-color: var(--accent);
+}
+
+.deckfinder-provider-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}
+
+.deckfinder-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.deckfinder-deck-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-strong);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.deckfinder-deck-link:hover {
+  text-decoration: underline;
+}
+
+.deckfinder-back {
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.deckfinder-detail {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.deckfinder-detail-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.deckfinder-decklist {
+  max-height: 420px;
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.deckfinder-settings {
+  display: grid;
+  gap: 12px;
+  max-width: 640px;
+}
+
+.deckfinder-settings-field {
+  display: grid;
+  gap: 6px;
+}
+
+.deckfinder-settings-field span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.deckfinder-settings-field textarea {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+/* The sidebar Deck Finder entry is a route link now, not a button. */
+a.sidebar-deck-finder {
+  display: block;
+  text-decoration: none;
+}

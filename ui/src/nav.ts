@@ -78,3 +78,9 @@ export const opponentNavItems: AppNavItem[] = [
   { id: 'opponent-summary', label: 'Summary' },
   { id: 'opponent-games', label: 'Game History' },
 ];
+
+export const deckFinderNavItems: AppNavItem[] = [
+  { id: 'back-to-dashboard', label: '\u2190 Back to dashboard', route: '#overview' },
+  { id: 'deck-finder-browse', label: 'Browse Decks' },
+  { id: 'deck-finder-settings', label: 'Creator Settings' },
+];

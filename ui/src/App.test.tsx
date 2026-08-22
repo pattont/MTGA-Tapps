@@ -725,6 +725,53 @@ describe('App', () => {
     });
   });
 
+  it('routes to the Deck Finder page and lists providers', async () => {
+    const providers = [
+      {
+        key: 'stub',
+        display_name: 'Stub Site',
+        description: 'Fixture decks.',
+        homepage: 'https://example.invalid/',
+        supported_formats: ['bo1', 'bo3'],
+        uses_source_picker: true,
+        allow_all_sources: true,
+        source_picker_title: 'Deck Source Endpoints',
+        source_picker_item_label: 'endpoint',
+        source_picker_all_label: 'all matching endpoints',
+      },
+    ];
+    const fetchMock = vi.fn(async (url: string) => {
+      const target = String(url);
+      if (target.startsWith('/api/deckfinder/providers')) {
+        return new Response(JSON.stringify({ providers }), { status: 200 });
+      }
+      if (target.startsWith('/api/deckfinder/config')) {
+        return new Response(
+          JSON.stringify({ path: '/tmp/cfg.json', moxfield: [], aetherhub: [], tcgplayer: [] }),
+          { status: 200 },
+        );
+      }
+      if (target.startsWith('/api/deckfinder/sources')) {
+        return new Response(JSON.stringify({ sources: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify(snapshot), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
+
+    await act(async () => {
+      window.location.hash = '#/deck-finder';
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Browse Decks' })).toBeInTheDocument();
+    expect(await screen.findByText('Stub Site')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Surprise Me/ })).toBeInTheDocument();
+    // The sidebar entry is now a route link, not a launch button.
+    expect(screen.getByRole('link', { name: 'Deck Finder' })).toHaveAttribute('href', '#/deck-finder');
+  });
+
   it('routes to the deck detail page and back to the dashboard', async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).startsWith('/api/deck')) {

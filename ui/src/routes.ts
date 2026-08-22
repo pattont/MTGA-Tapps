@@ -219,6 +219,10 @@ export function parseAuditRoute(hash: string): boolean {
   return hash === '#/audit' || hash.startsWith('#/audit?');
 }
 
+export function parseDeckFinderRoute(hash: string): boolean {
+  return hash === '#/deck-finder' || hash.startsWith('#/deck-finder?');
+}
+
 export function gamesRouteHash(filters: SnapshotFilters = {}): string {
   const query = routeQuery(filters, true);
   return `#/games${query ? `?${query}` : ''}`;

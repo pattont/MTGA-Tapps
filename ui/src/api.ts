@@ -1267,3 +1267,186 @@ export async function fetchDashboardSnapshot(
   }
   return response.json() as Promise<DashboardSnapshot>;
 }
+
+// ---------------------------------------------------------------------------
+// Deck Finder (in-app): thin client over /api/deckfinder/*.
+
+export interface DeckFinderProvider {
+  key: string;
+  display_name: string;
+  description: string;
+  homepage: string;
+  supported_formats: string[];
+  uses_source_picker: boolean;
+  allow_all_sources: boolean;
+  source_picker_title: string;
+  source_picker_item_label: string;
+  source_picker_all_label: string;
+}
+
+export interface DeckFinderSource {
+  name: string;
+  url: string;
+  description: string;
+  formats: string[];
+}
+
+export interface DeckFinderDeck {
+  name: string;
+  source_site: string;
+  source_url: string;
+  format_label: string;
+  matches: number | null;
+  win_rate: number | null;
+  player_name: string | null;
+  placing: string | null;
+  event_name: string | null;
+  event_date: string | null;
+  deck_text: string | null;
+  notes: string | null;
+}
+
+export interface DeckFinderView {
+  title: string;
+  count_label: string;
+  name_column_label: string;
+  selection_label: string;
+  selection_action: string;
+  helper_text: string | null;
+  show_notes: boolean | null;
+}
+
+export interface DeckFinderResults {
+  decks: DeckFinderDeck[];
+  view: DeckFinderView;
+}
+
+export interface DeckFinderJobStatus {
+  status: 'running' | 'done' | 'error' | 'unknown';
+  note?: string;
+  error?: string;
+  decks?: DeckFinderDeck[];
+  view?: DeckFinderView;
+  provider?: string;
+  deck?: DeckFinderDeck;
+}
+
+export interface DeckFinderCreator {
+  name: string;
+  short_name: string | null;
+}
+
+export interface DeckFinderConfig {
+  path: string;
+  moxfield: DeckFinderCreator[];
+  aetherhub: DeckFinderCreator[];
+  tcgplayer: DeckFinderCreator[];
+}
+
+async function deckFinderJson<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    let message = `Deck Finder API returned ${response.status}`;
+    try {
+      const body = (await response.json()) as { error?: string };
+      if (body.error) {
+        message = body.error;
+      }
+    } catch {
+      // keep the status message
+    }
+    throw new Error(message);
+  }
+  return response.json() as Promise<T>;
+}
+
+export async function fetchDeckFinderProviders(signal?: AbortSignal): Promise<DeckFinderProvider[]> {
+  const response = await fetch('/api/deckfinder/providers', { signal });
+  const body = await deckFinderJson<{ providers: DeckFinderProvider[] }>(response);
+  return body.providers;
+}
+
+export async function fetchDeckFinderSources(
+  provider: string,
+  format: string,
+  signal?: AbortSignal,
+): Promise<DeckFinderSource[]> {
+  const response = await fetch(
+    `/api/deckfinder/sources?provider=${encodeURIComponent(provider)}&format=${encodeURIComponent(format)}`,
+    { signal },
+  );
+  const body = await deckFinderJson<{ sources: DeckFinderSource[] }>(response);
+  return body.sources;
+}
+
+export async function startDeckFinderFetch(payload: {
+  provider: string;
+  format: string;
+  source_url?: string;
+  limit?: number;
+  refresh?: boolean;
+}): Promise<{ job?: string; done?: boolean; decks?: DeckFinderDeck[]; view?: DeckFinderView }> {
+  const response = await fetch('/api/deckfinder/fetch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return deckFinderJson(response);
+}
+
+export async function fetchDeckFinderJob(jobId: string, signal?: AbortSignal): Promise<DeckFinderJobStatus> {
+  const response = await fetch(`/api/deckfinder/job?id=${encodeURIComponent(jobId)}`, { signal });
+  return deckFinderJson(response);
+}
+
+export async function hydrateDeckFinderDeck(
+  provider: string,
+  deck: DeckFinderDeck,
+): Promise<DeckFinderDeck> {
+  const response = await fetch('/api/deckfinder/hydrate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider, deck }),
+  });
+  const body = await deckFinderJson<{ deck: DeckFinderDeck }>(response);
+  return body.deck;
+}
+
+export async function startDeckFinderVariants(payload: {
+  provider: string;
+  format: string;
+  deck: DeckFinderDeck;
+}): Promise<{ job: string }> {
+  const response = await fetch('/api/deckfinder/variants', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return deckFinderJson(response);
+}
+
+export async function startDeckFinderSurprise(format: string): Promise<{ job: string }> {
+  const response = await fetch('/api/deckfinder/surprise', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ format }),
+  });
+  return deckFinderJson(response);
+}
+
+export async function fetchDeckFinderConfig(signal?: AbortSignal): Promise<DeckFinderConfig> {
+  const response = await fetch('/api/deckfinder/config', { signal });
+  return deckFinderJson(response);
+}
+
+export async function saveDeckFinderConfig(payload: {
+  moxfield: DeckFinderCreator[];
+  aetherhub: DeckFinderCreator[];
+  tcgplayer: DeckFinderCreator[];
+}): Promise<DeckFinderConfig> {
+  const response = await fetch('/api/deckfinder/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return deckFinderJson(response);
+}
