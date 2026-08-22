@@ -1,8 +1,9 @@
-"""Settings dialog for the menu-bar app (Deck AI provider / key / model)."""
+"""Settings dialog for the menu-bar app (Deck AI provider / key / model,
+plus the Deck Finder creator lists)."""
 
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
@@ -13,6 +14,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -74,6 +76,33 @@ class DeckAISettingsDialog(QDialog):
         note.setStyleSheet("color: gray; font-size: 11px;")
         layout.addWidget(note)
 
+        # ---- Deck Finder creator lists ---------------------------------
+        creators_header = QLabel("<b>Deck Finder creators</b>")
+        layout.addWidget(creators_header)
+        creators_intro = QLabel(
+            "Which creators the Deck Finder's Moxfield, Aetherhub, and "
+            "TCGplayer sites follow. One creator per line; add a display "
+            "name with a pipe, e.g. “MTGMalone | Malone”."
+        )
+        creators_intro.setWordWrap(True)
+        creators_intro.setStyleSheet("color: gray; font-size: 11px;")
+        layout.addWidget(creators_intro)
+
+        creators_form = QFormLayout()
+        self._creator_edits: Dict[str, QPlainTextEdit] = {}
+        for key, label in (
+            ("moxfield", "Moxfield:"),
+            ("aetherhub", "Aetherhub:"),
+            ("tcgplayer", "TCGplayer:"),
+        ):
+            edit = QPlainTextEdit()
+            edit.setFixedHeight(64)
+            edit.setTabChangesFocus(True)
+            self._creator_edits[key] = edit
+            creators_form.addRow(label, edit)
+        layout.addLayout(creators_form)
+        self._creators_loaded = self._load_creator_fields()
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
@@ -116,6 +145,51 @@ class DeckAISettingsDialog(QDialog):
         self._showing = _PROVIDERS[index][0]
         self._load_provider_fields(index)
 
+    def _load_creator_fields(self) -> bool:
+        """Prefill the creator editors; False hides/disables them on error."""
+        try:
+            from .deckfinder_api import read_creator_config
+
+            config = read_creator_config()
+        except Exception:
+            for edit in self._creator_edits.values():
+                edit.setEnabled(False)
+                edit.setPlaceholderText("Deck Finder configuration unavailable")
+            return False
+        for key, edit in self._creator_edits.items():
+            lines = []
+            for creator in config.get(key) or []:
+                name = str(creator.get("name") or "").strip()
+                if not name:
+                    continue
+                short = str(creator.get("short_name") or "").strip()
+                lines.append(f"{name} | {short}" if short else name)
+            edit.setPlainText("\n".join(lines))
+        return True
+
+    def _creator_entries(self, key: str) -> List[Dict[str, Optional[str]]]:
+        entries: List[Dict[str, Optional[str]]] = []
+        for line in self._creator_edits[key].toPlainText().splitlines():
+            name, _, short = line.partition("|")
+            name = name.strip()
+            if not name:
+                continue
+            entries.append({"name": name, "short_name": short.strip() or None})
+        return entries
+
+    def _save_creators(self) -> None:
+        if not self._creators_loaded:
+            return
+        try:
+            from .deckfinder_api import write_creator_config
+
+            write_creator_config(
+                {key: self._creator_entries(key) for key in self._creator_edits}
+            )
+        except Exception:
+            # Creator-list problems must never block saving the AI settings.
+            pass
+
     def _save(self) -> None:
         self._stash_current_fields()
         index = self.provider_combo.currentIndex()
@@ -134,6 +208,7 @@ class DeckAISettingsDialog(QDialog):
                 if self._models.get(other):
                     values[other_model] = self._models[other]
         deck_llm.save_settings(values)
+        self._save_creators()
         self.accept()
 
 

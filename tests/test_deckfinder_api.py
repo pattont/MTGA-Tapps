@@ -68,7 +68,9 @@ def test_providers_and_sources_endpoints(stub_provider):
     status, body = deckfinder_api.handle_get("/api/deckfinder/providers", {})
     assert status == 200
     assert body["providers"][0]["key"] == "stub"
-    assert body["providers"][0]["supported_formats"] == ["bo1", "bo3"]
+    # Format options mirror the CLI's format screen: supported formats + Any.
+    assert body["providers"][0]["format_options"] == ["bo1", "bo3", "any"]
+    assert body["providers"][0]["creators"] == []
 
     status, body = deckfinder_api.handle_get(
         "/api/deckfinder/sources", {"provider": ["stub"], "format": ["bo1"]}
@@ -91,6 +93,20 @@ def test_fetch_runs_as_job_then_serves_from_cache(stub_provider):
     assert result["status"] == "done"
     assert result["decks"][0]["name"] == "Stub Aggro"
     assert result["view"]["count_label"] == "Decks found"
+    # Table spec matches the CLI's dynamic columns for this data set:
+    # win rate / matches / player present, no placing, no date.
+    assert [column["key"] for column in result["view"]["columns"]] == [
+        "index", "name", "win_rate", "matches", "player", "format", "notes",
+    ]
+    assert result["decks"][0]["cells"] == {
+        "index": "1",
+        "name": "Stub Aggro",
+        "win_rate": "57.50%",
+        "matches": "120",
+        "player": "StubPlayer",
+        "format": "Standard / Bo1",
+        "notes": "-",
+    }
     assert stub_provider.fetch_calls == 1
 
     # Second identical request: answered from cache, no new scrape.
@@ -123,23 +139,25 @@ def test_hydrate_resolves_deck_text(stub_provider):
     assert body["deck"]["deck_text"] == "4 Stub Bear\n20 Forest"
 
 
-def test_config_roundtrip(tmp_path, monkeypatch, stub_provider):
+def test_creator_config_roundtrip(tmp_path, monkeypatch, stub_provider):
+    """The Settings dialog reads/writes creators through these helpers."""
     config_path = tmp_path / "deckfinder_config.json"
     monkeypatch.setenv("MTGA_DECK_DOWNLOADER_CONFIG", str(config_path))
 
-    status, body = deckfinder_api.handle_post(
-        "/api/deckfinder/config",
+    body = deckfinder_api.write_creator_config(
         {
             "moxfield": [{"name": "SomeCreator", "short_name": "SC"}],
             "aetherhub": [{"name": "OtherCreator"}],
             "tcgplayer": [],
-        },
+        }
     )
-    assert status == 200
     assert body["moxfield"] == [{"name": "SomeCreator", "short_name": "SC"}]
     assert body["aetherhub"] == [{"name": "OtherCreator", "short_name": None}]
     assert config_path.exists()
 
-    status, body = deckfinder_api.handle_get("/api/deckfinder/config", {})
-    assert status == 200
+    body = deckfinder_api.read_creator_config()
     assert body["moxfield"][0]["name"] == "SomeCreator"
+
+    # The old HTTP config endpoints are gone (creators live in Settings now).
+    assert deckfinder_api.handle_get("/api/deckfinder/config", {}) is None
+    assert deckfinder_api.handle_post("/api/deckfinder/config", {}) is None

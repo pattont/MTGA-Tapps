@@ -19,7 +19,8 @@ class MagicGGProvider(DeckProvider):
                 name="Event Decklists",
                 url="https://magic.gg/decklists",
                 description="Official decklists with event results and standings.",
-                formats=(MatchFormat.BO1, MatchFormat.BO3),
+                # magic.gg only publishes Bo3 tournament decklists.
+                formats=(MatchFormat.BO3,),
             )
         ]
 

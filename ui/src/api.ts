@@ -1276,12 +1276,21 @@ export interface DeckFinderProvider {
   display_name: string;
   description: string;
   homepage: string;
-  supported_formats: string[];
+  /** Formats worth offering for this site ('any' only means no choice). */
+  format_options: string[];
   uses_source_picker: boolean;
   allow_all_sources: boolean;
   source_picker_title: string;
-  source_picker_item_label: string;
   source_picker_all_label: string;
+  /** Configured creators shown next to the format choice (Aetherhub). */
+  creators: DeckFinderProviderCreator[];
+}
+
+export interface DeckFinderProviderCreator {
+  label: string;
+  name: string;
+  url: string;
+  description: string;
 }
 
 export interface DeckFinderSource {
@@ -1304,6 +1313,15 @@ export interface DeckFinderDeck {
   event_date: string | null;
   deck_text: string | null;
   notes: string | null;
+  /** Display strings per table column, computed server-side to match the
+      terminal Deck Finder's per-site tables. */
+  cells?: Record<string, string>;
+}
+
+export interface DeckFinderColumn {
+  key: string;
+  label: string;
+  numeric?: boolean;
 }
 
 export interface DeckFinderView {
@@ -1314,6 +1332,7 @@ export interface DeckFinderView {
   selection_action: string;
   helper_text: string | null;
   show_notes: boolean | null;
+  columns: DeckFinderColumn[];
 }
 
 export interface DeckFinderResults {
@@ -1329,18 +1348,6 @@ export interface DeckFinderJobStatus {
   view?: DeckFinderView;
   provider?: string;
   deck?: DeckFinderDeck;
-}
-
-export interface DeckFinderCreator {
-  name: string;
-  short_name: string | null;
-}
-
-export interface DeckFinderConfig {
-  path: string;
-  moxfield: DeckFinderCreator[];
-  aetherhub: DeckFinderCreator[];
-  tcgplayer: DeckFinderCreator[];
 }
 
 async function deckFinderJson<T>(response: Response): Promise<T> {
@@ -1382,6 +1389,7 @@ export async function startDeckFinderFetch(payload: {
   provider: string;
   format: string;
   source_url?: string;
+  source_name?: string;
   limit?: number;
   refresh?: boolean;
 }): Promise<{ job?: string; done?: boolean; decks?: DeckFinderDeck[]; view?: DeckFinderView }> {
@@ -1415,6 +1423,7 @@ export async function startDeckFinderVariants(payload: {
   provider: string;
   format: string;
   deck: DeckFinderDeck;
+  source_name?: string;
 }): Promise<{ job: string }> {
   const response = await fetch('/api/deckfinder/variants', {
     method: 'POST',
@@ -1429,24 +1438,6 @@ export async function startDeckFinderSurprise(format: string): Promise<{ job: st
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ format }),
-  });
-  return deckFinderJson(response);
-}
-
-export async function fetchDeckFinderConfig(signal?: AbortSignal): Promise<DeckFinderConfig> {
-  const response = await fetch('/api/deckfinder/config', { signal });
-  return deckFinderJson(response);
-}
-
-export async function saveDeckFinderConfig(payload: {
-  moxfield: DeckFinderCreator[];
-  aetherhub: DeckFinderCreator[];
-  tcgplayer: DeckFinderCreator[];
-}): Promise<DeckFinderConfig> {
-  const response = await fetch('/api/deckfinder/config', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
   });
   return deckFinderJson(response);
 }

@@ -732,24 +732,18 @@ describe('App', () => {
         display_name: 'Stub Site',
         description: 'Fixture decks.',
         homepage: 'https://example.invalid/',
-        supported_formats: ['bo1', 'bo3'],
+        format_options: ['bo1', 'bo3', 'any'],
         uses_source_picker: true,
         allow_all_sources: true,
         source_picker_title: 'Deck Source Endpoints',
-        source_picker_item_label: 'endpoint',
         source_picker_all_label: 'all matching endpoints',
+        creators: [],
       },
     ];
     const fetchMock = vi.fn(async (url: string) => {
       const target = String(url);
       if (target.startsWith('/api/deckfinder/providers')) {
         return new Response(JSON.stringify({ providers }), { status: 200 });
-      }
-      if (target.startsWith('/api/deckfinder/config')) {
-        return new Response(
-          JSON.stringify({ path: '/tmp/cfg.json', moxfield: [], aetherhub: [], tcgplayer: [] }),
-          { status: 200 },
-        );
       }
       if (target.startsWith('/api/deckfinder/sources')) {
         return new Response(JSON.stringify({ sources: [] }), { status: 200 });

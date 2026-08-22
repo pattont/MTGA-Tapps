@@ -3593,7 +3593,32 @@ tr.deck-change-row-out .card-link {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 14px;
+  margin: 14px 16px 0;
+}
+
+/* Muted step labels ("Site", "Format", "Creators", source picker title). */
+.deckfinder-step-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* One row per follow-up choice: label above, chips below. */
+.deckfinder-filter-row {
+  display: grid;
+  gap: 2px;
+  margin: 4px 16px 12px;
+}
+
+.deckfinder-filter-row .quick-filters,
+.deckfinder-chips {
+  padding: 6px 0 0;
+}
+
+.deckfinder-state {
+  margin: 0 16px 16px;
 }
 
 .deckfinder-surprise,
@@ -3614,7 +3639,7 @@ tr.deck-change-row-out .card-link {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 12px;
-  margin-bottom: 16px;
+  margin: 10px 16px 16px;
 }
 
 .deckfinder-provider {
@@ -3644,13 +3669,6 @@ tr.deck-change-row-out .card-link {
   background: color-mix(in srgb, var(--accent) 8%, var(--panel));
 }
 
-.deckfinder-sources {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
 .deckfinder-deck-link {
   padding: 0;
   border: 0;
@@ -3665,18 +3683,18 @@ tr.deck-change-row-out .card-link {
   text-decoration: underline;
 }
 
-.deckfinder-back {
-  border: 0;
-  background: none;
-  cursor: pointer;
-}
-
 .deckfinder-detail {
-  margin-top: 18px;
+  margin: 18px 16px 16px;
   padding: 14px 16px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel);
+}
+
+/* The detail card provides its own padding; the global section-heading
+   padding would double it up inside. */
+.deckfinder-detail .section-heading {
+  padding: 0;
 }
 
 .deckfinder-detail-actions {
@@ -3696,32 +3714,6 @@ tr.deck-change-row-out .card-link {
   font-size: 0.85rem;
   line-height: 1.5;
   white-space: pre;
-}
-
-.deckfinder-settings {
-  display: grid;
-  gap: 12px;
-  max-width: 640px;
-}
-
-.deckfinder-settings-field {
-  display: grid;
-  gap: 6px;
-}
-
-.deckfinder-settings-field span {
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
-.deckfinder-settings-field textarea {
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  resize: vertical;
 }
 
 /* The sidebar Deck Finder entry is a route link now, not a button. */
