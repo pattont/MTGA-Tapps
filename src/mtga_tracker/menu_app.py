@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QLockFile, QObject, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QLockFile, QObject, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
     QCloseEvent,
@@ -20,6 +20,8 @@ from PyQt6.QtGui import (
     QFont,
     QFontDatabase,
     QIcon,
+    QPainter,
+    QPixmap,
     QTextCharFormat,
     QTextCursor,
 )
@@ -40,6 +42,27 @@ from .settings import AppSettings, load_app_settings
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _ASSET_DIR = Path(__file__).resolve().parent / "assets"
+
+
+def _status_dot_icon(color: str) -> QIcon:
+    """A small colored dot for the tray status line.
+
+    Native menus (NSMenu on macOS, the Windows tray menu) don't support
+    per-item text color, so a colored icon is the cross-platform way to
+    show green = running / red = stopped at a glance.
+    """
+    pixmap = QPixmap(16, 16)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(color))
+    painter.drawEllipse(3, 3, 10, 10)
+    painter.end()
+    icon = QIcon(pixmap)
+    # Keep the real colors on macOS — template masking would strip them.
+    icon.setIsMask(False)
+    return icon
 _APP_NAME = "MTGA Tracker"
 _XTERM_BASE_COLORS = (
     "#000000",
@@ -202,6 +225,13 @@ class MenuBarController(QObject):
         "dashboard-stopped": "Dashboard: Stopped",
     }
 
+    STATUS_COLORS = {
+        "tracker-starting": "#f0b400",  # amber while spinning up
+        "tracker-running": "#2ecc71",  # green
+        "tracker-stopped": "#e74c3c",  # red
+        "tracker-error": "#e74c3c",  # red
+    }
+
     def __init__(self, app: QApplication, args: Any):
         super().__init__()
         self.app = app
@@ -227,6 +257,7 @@ class MenuBarController(QObject):
         self.menu = QMenu()
 
         self.status_action = QAction("Tracker: Starting", self)
+        self.status_action.setIcon(_status_dot_icon(self.STATUS_COLORS["tracker-starting"]))
         self.status_action.setEnabled(False)
         self.menu.addAction(self.status_action)
         self.menu.addSeparator()
@@ -354,6 +385,8 @@ class MenuBarController(QObject):
     def _update_status(self, status: str) -> None:
         if status.startswith("tracker-"):
             self.status_action.setText(self.STATUS_LABELS.get(status, status))
+            color = self.STATUS_COLORS.get(status, self.STATUS_COLORS["tracker-stopped"])
+            self.status_action.setIcon(_status_dot_icon(color))
             running = status in {"tracker-starting", "tracker-running"}
             self.toggle_tracker_action.setText("Stop Tracking" if running else "Start Tracking")
             self.toggle_tracker_action.setEnabled(status not in {"tracker-starting"})
