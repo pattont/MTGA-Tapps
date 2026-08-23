@@ -3935,28 +3935,56 @@ a.settings-link-button {
 /* ------------------------------------------------------------------ */
 /* Live Log page (#/live)                                              */
 
+/* The page fills the viewport: scoreboard on top, the feed takes every
+   remaining pixel (minus breathing room at the bottom), and the rail's
+   game list stretches to match. */
 .live-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
   gap: 12px;
-  align-items: start;
+  align-items: stretch;
+  height: calc(100vh - 150px);
+  min-height: 540px;
 }
 
 @media (max-width: 1100px) {
   .live-layout {
     grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+
+  .live-layout .live-feed,
+  .live-layout .live-games {
+    max-height: 470px;
   }
 }
 
 .live-main,
 .live-rail {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   min-width: 0;
+  min-height: 0;
 }
 
 .live-layout .dashboard-section {
   margin-top: 0;
+}
+
+.live-feed-section {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Today's Games stretches to the bottom alongside the feed. */
+.live-rail > section:last-child {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
 }
 
 /* --- Scoreboard ---------------------------------------------------- */
@@ -4213,13 +4241,17 @@ a.settings-link-button {
 
 .live-feed-wrap {
   position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
 }
 
-/* Scroll container around the shared TimelineList. Its height matches the
-   Today's Games list so the two columns scroll at the same size. */
+/* Scroll container around the shared TimelineList. */
 .live-feed {
+  flex: 1;
   overflow-y: auto;
-  max-height: 470px;
+  min-height: 0;
   margin: 8px 0 0;
   padding: 4px 16px 14px;
 }
@@ -4324,8 +4356,9 @@ a.settings-link-button {
 }
 
 .live-games {
+  flex: 1;
   overflow-y: auto;
-  max-height: 470px; /* ~10 rows, then scroll */
+  min-height: 0;
   margin: 6px 0 0;
   padding: 0 8px 12px;
   list-style: none;

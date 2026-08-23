@@ -146,13 +146,21 @@ class TrackerAnalyticsMixin:
                 game_id = self._current_game_id()
             except Exception:
                 pass
+        format_label: Optional[str] = None
+        if g.format_str and g.format_str != "Unknown":
+            try:
+                # Friendly label ("Standard Best-of-3 Ranked"), same family the
+                # dashboard's Recent Games shows — not the raw queue string.
+                format_label = self._friendly_format_label()
+            except Exception:
+                format_label = g.format_str
         return {
             "session_id": self.session_id,
             "updated_at": (now or self._now()).isoformat(),
             "in_game": 1 if in_game else 0,
             "match_id": match_id,
             "game_id": game_id,
-            "format": g.format_str if g.format_str != "Unknown" else None,
+            "format": format_label,
             "match_type": g.match_type,
             "game_number": g.game_number,
             "player_name": g.player_display_name,

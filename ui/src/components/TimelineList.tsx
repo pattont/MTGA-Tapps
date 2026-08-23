@@ -264,10 +264,13 @@ export function TimelineList({
   rows,
   timings = [],
   cardReturnHash,
+  showFilters = true,
 }: {
   rows: GameTimelineRow[];
   timings?: GameTurnTimingRow[];
   cardReturnHash?: string;
+  /** The Live Log renders the same timeline without the filter bar. */
+  showFilters?: boolean;
 }) {
   const [eventType, setEventType] = useState('');
   const [actor, setActor] = useState('');
@@ -304,6 +307,7 @@ export function TimelineList({
 
   return (
     <div className="timeline-wrap">
+      {showFilters ? (
       <div className="timeline-filter" role="group" aria-label="Timeline filters">
         <label>
           <span>Event Type</span>
@@ -329,6 +333,7 @@ export function TimelineList({
           {filtered.length} of {visibleRows.length} events
         </span>
       </div>
+      ) : null}
       {groups.length === 0 ? (
         <p className="empty-state">No events match the current filters.</p>
       ) : (

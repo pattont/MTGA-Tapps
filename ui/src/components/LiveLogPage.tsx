@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchLiveStatus, type LiveEventRow, type LiveGameRow, type LiveNow, type LivePayload } from '../api';
-import { formatDuration, outcomeLabel, outcomeTone } from '../format';
+import { formatDuration, outcomeLabel, outcomeTone, shortFormatLabel } from '../format';
 import { Badge } from './Badge';
 import { TimelineList } from './TimelineList';
 import { gameRouteHash } from '../routes';
@@ -24,21 +24,7 @@ function gameClock(startedAt: string | null, nowMs: number): string | null {
   return formatDuration(Math.max(0, Math.floor((nowMs - started) / 1000)));
 }
 
-/** Life bar denominator: Brawl starts at 25, everything else at 20; never
-    let the bar overflow when life goes above the start. */
-function lifeBarMax(life: number | null, isBrawl: boolean): number {
-  return Math.max(isBrawl ? 25 : 20, life ?? 0);
-}
-
-function LifeReadout({
-  life,
-  isBrawl,
-  side,
-}: {
-  life: number | null;
-  isBrawl: boolean;
-  side: 'player' | 'opponent';
-}) {
+function LifeReadout({ life, side }: { life: number | null; side: 'player' | 'opponent' }) {
   const previous = useRef<number | null>(null);
   const [pulse, setPulse] = useState<'up' | 'down' | null>(null);
 
@@ -53,15 +39,10 @@ function LifeReadout({
     return undefined;
   }, [life]);
 
-  const max = lifeBarMax(life, isBrawl);
-  const percent = life === null ? 0 : Math.max(0, Math.min(1, life / max)) * 100;
   return (
     <div className={`live-life live-life-${side}`}>
       <span className={pulse ? `live-life-value live-life-${pulse}` : 'live-life-value'}>
         {life ?? '—'}
-      </span>
-      <span aria-hidden="true" className="live-life-bar">
-        <span className="live-life-fill" style={{ width: `${percent}%` }} />
       </span>
     </div>
   );
@@ -84,9 +65,18 @@ function CommanderCard({ name }: { name: string | null }) {
   );
 }
 
-function Scoreboard({ now, clockMs }: { now: LiveNow; clockMs: number }) {
+function Scoreboard({
+  now,
+  clockMs,
+  waiting,
+}: {
+  now: LiveNow;
+  clockMs: number;
+  /** Game over: keep showing the final scoreboard, flagged as waiting. */
+  waiting: boolean;
+}) {
   const isBrawl = now.player_commanders.length > 0 || now.opponent_commanders.length > 0;
-  const clock = gameClock(now.game_started_at, clockMs);
+  const clock = waiting ? null : gameClock(now.game_started_at, clockMs);
   const turnChip =
     now.turn_number && now.active_role
       ? `Turn ${now.turn_number} — ${now.active_role === 'player' ? 'You' : 'Opponent'}`
@@ -97,17 +87,23 @@ function Scoreboard({ now, clockMs }: { now: LiveNow; clockMs: number }) {
   return (
     <div className="live-scoreboard">
       <div className="live-scoreboard-meta">
-        {now.format ? <span className="live-chip">{now.format}</span> : null}
+        {now.format ? <span className="live-chip">{shortFormatLabel(now.format)}</span> : null}
         {now.match_type === 'best_of_3' ? (
           <span className="live-chip">Game {now.game_number ?? 1} of 3</span>
         ) : null}
-        <span
-          className={
-            now.active_role === 'opponent' ? 'live-chip live-chip-turn live-chip-pulse' : 'live-chip live-chip-turn'
-          }
-        >
-          {turnChip}
-        </span>
+        {waiting ? (
+          <span className="live-chip live-chip-turn">
+            <span aria-hidden="true" className="live-pulse-dot" /> Waiting for next game…
+          </span>
+        ) : (
+          <span
+            className={
+              now.active_role === 'opponent' ? 'live-chip live-chip-turn live-chip-pulse' : 'live-chip live-chip-turn'
+            }
+          >
+            {turnChip}
+          </span>
+        )}
         {clock ? <span className="live-chip live-chip-quiet">{clock}</span> : null}
       </div>
 
@@ -126,7 +122,7 @@ function Scoreboard({ now, clockMs }: { now: LiveNow; clockMs: number }) {
               )}
             </div>
           ) : null}
-          <LifeReadout isBrawl={isBrawl} life={now.player_life} side="player" />
+          <LifeReadout life={now.player_life} side="player" />
         </div>
 
         <div aria-hidden="true" className="live-vs">
@@ -145,7 +141,7 @@ function Scoreboard({ now, clockMs }: { now: LiveNow; clockMs: number }) {
               )}
             </div>
           ) : null}
-          <LifeReadout isBrawl={isBrawl} life={now.opponent_life} side="opponent" />
+          <LifeReadout life={now.opponent_life} side="opponent" />
         </div>
       </div>
 
@@ -198,6 +194,9 @@ function GamesList({ games }: { games: LiveGameRow[] }) {
 
 export function LiveLogPage() {
   const [payload, setPayload] = useState<LivePayload | null>(null);
+  // The last in-game snapshot: kept on screen between games so players can
+  // study the final board state while they queue.
+  const [lastGameNow, setLastGameNow] = useState<LiveNow | null>(null);
   const [events, setEvents] = useState<LiveEventRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [following, setFollowing] = useState(true);
@@ -218,6 +217,9 @@ export function LiveLogPage() {
       const isNewGame = gameKey !== null && gameKey !== gameKeyRef.current;
       if (gameKey !== null) {
         gameKeyRef.current = gameKey;
+      }
+      if (next.now?.in_game) {
+        setLastGameNow(next.now);
       }
       if (isNewGame || next.events.length > 0) {
         setEvents((current) => {
@@ -289,7 +291,7 @@ export function LiveLogPage() {
       <div className="live-main">
         <section className="dashboard-section" id="live-scoreboard">
           {state === 'live' && now?.in_game ? (
-            <Scoreboard clockMs={clockMs} now={now} />
+            <Scoreboard clockMs={clockMs} now={now} waiting={false} />
           ) : state === 'offline' ? (
             <div className="live-waiting">
               <p className="live-waiting-title">Tracker is not running</p>
@@ -298,6 +300,10 @@ export function LiveLogPage() {
                 needed.
               </p>
             </div>
+          ) : lastGameNow ? (
+            // Between games: the previous game's final scoreboard stays up,
+            // flagged as waiting, so a break doesn't blank the page.
+            <Scoreboard clockMs={clockMs} now={lastGameNow} waiting />
           ) : (
             <div className="live-waiting">
               <p className="live-waiting-title">
@@ -335,7 +341,7 @@ export function LiveLogPage() {
             <div className="live-feed-wrap">
               {/* The exact same Timeline the /game page renders, live. */}
               <div className="live-feed" ref={feedRef} onScroll={onFeedScroll}>
-                <TimelineList cardReturnHash="#/live" rows={events} />
+                <TimelineList cardReturnHash="#/live" rows={events} showFilters={false} />
               </div>
               {!following ? (
                 <button
