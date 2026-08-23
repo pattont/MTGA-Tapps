@@ -236,6 +236,32 @@ export function LiveLogPage() {
       }
       if (next.now?.in_game) {
         setLastGameNow(next.now);
+      } else if (next.now) {
+        // Game over: the frozen scoreboard keeps the last in-game snapshot,
+        // but the endgame log lines land after that snapshot — fold in the
+        // final life totals and the persisted deck colors as they arrive.
+        const after = next.now;
+        const tail = [...next.events]
+          .reverse()
+          .find((row) => row.player_life !== null || row.opponent_life !== null);
+        setLastGameNow((previous) => {
+          if (!previous || (after.game_id !== null && after.game_id !== previous.game_id)) {
+            return previous;
+          }
+          const merged = {
+            ...previous,
+            player_colors: previous.player_colors || after.player_colors,
+            opponent_colors: previous.opponent_colors || after.opponent_colors,
+            player_life: tail?.player_life ?? previous.player_life,
+            opponent_life: tail?.opponent_life ?? previous.opponent_life,
+          };
+          return merged.player_colors === previous.player_colors &&
+            merged.opponent_colors === previous.opponent_colors &&
+            merged.player_life === previous.player_life &&
+            merged.opponent_life === previous.opponent_life
+            ? previous
+            : merged;
+        });
       }
       if (isNewGame || next.events.length > 0) {
         setEvents((current) => {

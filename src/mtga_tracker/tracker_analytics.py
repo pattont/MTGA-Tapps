@@ -187,14 +187,53 @@ class TrackerAnalyticsMixin:
             "tracker_version": self._live_tracker_version(),
         }
 
+    def _live_color_index(self) -> Dict[str, str]:
+        """Card name -> WUBRG identity for the Live Log scoreboard pips.
+
+        Layered so a schema change in any one source can't blank the pips:
+        mana costs give a baseline (a card's pips are at least its cost
+        colors), the analytics DB's own cards table (filled by earlier
+        backfills, so it works even when Arena's current schema hides the
+        color column) refines it, and Arena's color-identity column — the
+        authoritative source — wins when it is available."""
+        cached = getattr(self, "_live_color_index_cache", None)
+        if cached is not None:
+            return cached
+        index: Dict[str, str] = {}
+        try:
+            for name, parsed in (self.card_db.mana_cost_index_by_name() or {}).items():
+                cost = str(parsed[0] if isinstance(parsed, tuple) else parsed or "")
+                letters = "".join(ch for ch in "WUBRG" if ch in cost)
+                if letters:
+                    index[str(name)] = letters
+        except Exception:
+            pass
+        try:
+            conn = self._analytics_connect()
+            if conn is not None:
+                rows = conn.execute(
+                    "SELECT name, color_identity FROM cards "
+                    "WHERE color_identity IS NOT NULL AND color_identity != ''"
+                ).fetchall()
+                for name, identity in rows:
+                    if name and identity:
+                        index[str(name)] = str(identity)
+        except Exception:
+            pass
+        try:
+            for name, identity in (self.card_db.color_identity_index_by_name() or {}).items():
+                if identity:
+                    index[str(name)] = str(identity)
+        except Exception:
+            pass
+        self._live_color_index_cache = index
+        return index
+
     def _live_colors_for(self, cards) -> str:
         """WUBRG letters for the color identity of cards a side has played
         this game — fills the Live Log scoreboard pips in real time (the
         game_card_summary rows only exist after the game persists)."""
-        try:
-            index = self.card_db.color_identity_index_by_name()
-        except Exception:
-            return ""
+        index = self._live_color_index()
         if not index:
             return ""
         letters: set = set()

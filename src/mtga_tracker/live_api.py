@@ -145,6 +145,21 @@ def _seat_colors(conn: sqlite3.Connection, game_id: Optional[str]) -> Dict[str, 
     return out
 
 
+def _latest_event_game_id(conn: sqlite3.Connection) -> Optional[str]:
+    """game_id of the newest game_events row — the game whose feed the page
+    should keep showing between games. The tracker clears live_status.game_id
+    the moment a match completes, and Arena flushes the endgame log lines in
+    the same burst, so without this fallback the final turns of a game would
+    never be served (the client polls once a second and misses the window)."""
+    try:
+        row = conn.execute(
+            "SELECT game_id FROM game_events ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return str(row[0]) if row and row[0] else None
+
+
 def _games_payload(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     """Today's finished games, newest first, ready to link to #/game/<id>."""
     today = datetime.now().strftime("%Y-%m-%d")
@@ -252,23 +267,29 @@ def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
         state = _tracker_state(status, now)
         session_id = status.get("session_id") if status else None
 
+        # The game the feed should show: the live one, or — between games —
+        # the game the last events belong to, so the feed's tail still lands
+        # and the previous game stays on screen until the next one starts.
+        feed_game_id = (status.get("game_id") if status else None) or _latest_event_game_id(conn)
+
         now_payload: Optional[Dict[str, Any]] = None
         if status is not None:
             # The tracker writes live colors straight into live_status (from
             # cards played, via Arena's card DB); the game_card_summary query
-            # is the fallback for reloads after a game already persisted.
+            # is the fallback once the game has persisted — and the only
+            # source for the previous-game scoreboard.
             colors = {
                 "player": str(status.get("player_colors") or ""),
                 "opponent": str(status.get("opponent_colors") or ""),
             }
             if not colors["player"] and not colors["opponent"]:
-                colors = _seat_colors(conn, status.get("game_id"))
+                colors = _seat_colors(conn, feed_game_id)
             now_payload = {
                 "player_colors": colors["player"],
                 "opponent_colors": colors["opponent"],
                 "in_game": bool(status.get("in_game")),
                 "match_id": status.get("match_id"),
-                "game_id": status.get("game_id"),
+                "game_id": feed_game_id,
                 "format": status.get("format"),
                 "match_type": status.get("match_type"),
                 "game_number": status.get("game_number"),
@@ -286,11 +307,7 @@ def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
                 "opponent_commanders": _json_list(status.get("opponent_commanders")),
             }
 
-        events, seq = _events_payload(
-            conn,
-            status.get("game_id") if status else None,
-            since,
-        )
+        events, seq = _events_payload(conn, feed_game_id, since)
         return {
             "tracker": {
                 "state": state,

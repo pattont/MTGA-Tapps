@@ -129,6 +129,87 @@ def test_live_payload_snapshot_session_and_events(tmp_path):
     assert delta["seq"] == payload["seq"]
 
 
+def test_feed_tail_and_colors_survive_game_end(tmp_path):
+    """Arena flushes the endgame log lines in the same burst that completes
+    the match, and the tracker's final live_status write clears game_id —
+    the feed must still serve those trailing events, and the previous-game
+    scoreboard must pick up colors from the persisted summary."""
+    store = _store(tmp_path)
+    _log_line(store, "mid game", live=_live())
+    _game_event(store, "G1", "You: Casts [Llanowar Elves]", "cast", turn=7, actor="player")
+    mid = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+    assert len(mid["events"]) == 1
+
+    # Game over: endgame events land, then live_status loses its game_id.
+    _game_event(store, "G1", "Opponent: lost 4 life (now 0)", "life_loss", turn=9, actor="opponent", lives=(13, 0))
+    _log_line(
+        store,
+        "match complete",
+        live=_live(in_game=0, game_id=None, match_id=None, player_life=None, opponent_life=None),
+    )
+    # The persisted game summary knows each side's colors.
+    conn = store.connect()
+    with conn:
+        conn.execute(
+            "INSERT INTO participants (id, game_id, role) VALUES ('P1', 'G1', 'player'), ('P2', 'G1', 'opponent')"
+        )
+        conn.execute(
+            "INSERT INTO cards (name, color_identity, first_seen_at) VALUES ('Llanowar Elves', 'G', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO cards (name, color_identity, first_seen_at) VALUES ('Lightning Helix', 'WR', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO game_card_summary (game_id, participant_id, card_id, display_name, played_count) "
+            "SELECT 'G1', 'P1', id, name, 1 FROM cards WHERE name = 'Llanowar Elves'"
+        )
+        conn.execute(
+            "INSERT INTO game_card_summary (game_id, participant_id, card_id, display_name, played_count) "
+            "SELECT 'G1', 'P2', id, name, 2 FROM cards WHERE name = 'Lightning Helix'"
+        )
+    store.close()
+
+    after = live_api.build_live_payload(tmp_path / "tracker.sqlite3", since=mid["seq"])
+    assert after["tracker"]["state"] == "idle"
+    # The tail event still arrives, under the finished game's id.
+    assert [event["text"] for event in after["events"]] == ["Opponent: lost 4 life (now 0)"]
+    assert after["now"]["game_id"] == "G1"
+    # Colors fall back to the persisted summary once live_status goes blank.
+    assert after["now"]["player_colors"] == "G"
+    assert after["now"]["opponent_colors"] == "WR"
+
+
+def test_live_color_index_survives_missing_arena_color_column():
+    """The live pips must not go blank when Arena's schema hides its color
+    column: mana costs and the analytics DB's own cards table fill in."""
+    import sqlite3
+
+    from mtga_tracker.state import CardEvent
+    from mtga_tracker.tracker_analytics import TrackerAnalyticsMixin
+
+    class FakeCardDb:
+        def mana_cost_index_by_name(self):
+            return {"Lightning Helix": ("{R}{W}", 2.0), "Mind Stone": ("{2}", 2.0)}
+
+        def color_identity_index_by_name(self):
+            return {}  # Arena schema without a usable color column
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE cards (name TEXT, color_identity TEXT)")
+    conn.execute("INSERT INTO cards VALUES ('Llanowar Elves', 'G'), ('Mind Stone', '')")
+
+    stub = TrackerAnalyticsMixin.__new__(TrackerAnalyticsMixin)
+    stub.card_db = FakeCardDb()
+    stub._analytics_connect = lambda: conn  # type: ignore[method-assign]
+
+    colors = stub._live_colors_for(
+        [CardEvent("Llanowar Elves", "you"), CardEvent("Lightning Helix", "you")]
+    )
+    assert colors == "WRG"
+    # Colorless stays colorless; unknown names contribute nothing.
+    assert stub._live_colors_for([CardEvent("Mind Stone", "you"), CardEvent("Mystery", "you")]) == ""
+
+
 def test_offline_and_idle_states(tmp_path):
     store = _store(tmp_path)
     stale = datetime.now() - timedelta(minutes=5)
