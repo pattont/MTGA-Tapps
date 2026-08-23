@@ -3075,13 +3075,10 @@ tbody tr:hover {
 .app-layout-collapsed .sidebar {
   align-items: stretch;
   gap: 8px;
-  /* Top padding clears the absolute collapse toggle. */
-  padding: 46px 5px 12px;
-}
-
-.app-layout-collapsed .sidebar-toggle {
-  top: 8px;
-  right: 9px;
+  /* The collapse toggle sits in normal flow here (see below), so the rail
+     needs only a slim top inset — the toggle then hugs the top like the
+     expanded sidebar's absolute one does. */
+  padding: 8px 5px 12px;
 }
 
 .app-layout-collapsed .sidebar nav {
@@ -4518,6 +4515,12 @@ a.settings-link-button {
 .app-layout-collapsed .sidebar-live-link {
   justify-content: center;
   padding: 8px 0;
+}
+
+/* The -10px squeeze above is tuned for the expanded sidebar's 18px gap; in
+   the tight collapsed rail it would drag the dot up into the toggle. */
+.app-layout-collapsed .sidebar-live-block {
+  margin: 0;
 }
 
 /* The sidebar Deck Finder entry is a route link now, not a button. Keep it
