@@ -405,7 +405,9 @@ class AnalyticsStore:
                 log_path TEXT,
                 card_db_path TEXT,
                 db_path TEXT,
-                tracker_version TEXT
+                tracker_version TEXT,
+                player_colors TEXT,
+                opponent_colors TEXT
             );
 
             CREATE TABLE IF NOT EXISTS rank_snapshots (
@@ -508,6 +510,8 @@ class AnalyticsStore:
         AnalyticsStore.ensure_table_column(conn, "live_status", "card_db_path", "TEXT")
         AnalyticsStore.ensure_table_column(conn, "live_status", "db_path", "TEXT")
         AnalyticsStore.ensure_table_column(conn, "live_status", "tracker_version", "TEXT")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "player_colors", "TEXT")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "opponent_colors", "TEXT")
         AnalyticsStore.backfill_game_turn_counts(conn)
         AnalyticsStore.apply_pending_migrations(conn)
         AnalyticsStore.canonicalize_imported_deck_names(conn)
@@ -2350,6 +2354,8 @@ class AnalyticsStore:
         "card_db_path",
         "db_path",
         "tracker_version",
+        "player_colors",
+        "opponent_colors",
     )
 
     def _upsert_live_status(self, conn: sqlite3.Connection, live: Dict[str, Any]) -> None:

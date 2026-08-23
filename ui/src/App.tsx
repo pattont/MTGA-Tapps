@@ -953,7 +953,8 @@ export default function App() {
                   ? opponentNavItems
                   : undefined
         }
-        heading={gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Live Log' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute?.name ?? dashboardTitle)}
+        heading={gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute?.name ?? dashboardTitle)}
+        mainClassName={liveRoute ? 'live-page-main' : undefined}
       >
         {gamesRoute ? (
           <GamesPage

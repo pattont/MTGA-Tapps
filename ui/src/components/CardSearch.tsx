@@ -90,12 +90,12 @@ export function CardSearch() {
           id={`${listId}-input`}
           type="search"
           role="combobox"
-          aria-label="Search by card name"
+          aria-label="Search by card or deck name"
           aria-autocomplete="list"
           aria-controls={listId}
           aria-expanded={open && Boolean(trimmedQuery)}
           autoComplete="off"
-          placeholder="Search by card name"
+          placeholder="Search by card or deck name"
           value={query}
           onChange={(event) => {
             const nextQuery = event.target.value;

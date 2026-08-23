@@ -3076,7 +3076,12 @@ tbody tr:hover {
   align-items: stretch;
   gap: 8px;
   /* Top padding clears the absolute collapse toggle. */
-  padding: 34px 5px 12px;
+  padding: 46px 5px 12px;
+}
+
+.app-layout-collapsed .sidebar-toggle {
+  top: 8px;
+  right: 9px;
 }
 
 .app-layout-collapsed .sidebar nav {
@@ -3088,13 +3093,13 @@ tbody tr:hover {
   z-index: 2;
   top: 8px;
   right: 8px;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--subtle);
-  font-size: 0.85rem;
+  font-size: 1.05rem;
   line-height: 1;
   cursor: pointer;
   opacity: 0.7;
@@ -3943,8 +3948,14 @@ a.settings-link-button {
   grid-template-columns: minmax(0, 1fr) 340px;
   gap: 12px;
   align-items: stretch;
-  height: calc(100vh - 150px);
+  height: calc(100vh - 126px);
   min-height: 540px;
+}
+
+/* The Live Log page trims the big back-to-top clearance so the panels end
+   near the bottom edge with normal padding. */
+.dashboard-main.live-page-main {
+  padding-bottom: 24px;
 }
 
 @media (max-width: 1100px) {
@@ -4276,13 +4287,22 @@ a.settings-link-button {
   min-height: 0;
 }
 
-/* Scroll container around the shared TimelineList. */
+/* Scroll container around the shared TimelineList — edge to edge: turn
+   headers run the full width of the panel. */
 .live-feed {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
   margin: 8px 0 0;
-  padding: 4px 16px 14px;
+  padding: 0 0 12px;
+}
+
+.live-feed .timeline-wrap {
+  padding: 0;
+}
+
+.live-feed .timeline-turn-header {
+  border-radius: 0;
 }
 
 /* Compact variant of the /game timeline — same look, smaller type. */

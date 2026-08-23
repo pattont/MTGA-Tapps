@@ -1479,7 +1479,7 @@ describe('App', () => {
     render(<App />);
 
     await screen.findByText('MTGA Tracker');
-    await user.type(screen.getByRole('combobox', { name: 'Search by card name' }), 'Sheltered by Ghosts');
+    await user.type(screen.getByRole('combobox', { name: 'Search by card or deck name' }), 'Sheltered by Ghosts');
 
     const result = await screen.findByRole('option', { name: /Sheltered by Ghosts.*12 games.*9 played/i });
     expect(result).toHaveAttribute('href', '#/card/Sheltered%20by%20Ghosts');

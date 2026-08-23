@@ -51,6 +51,9 @@ interface AppShellProps {
   onToggleTheme: () => void;
   navItems?: AppNavItem[];
   heading: string;
+  /** Extra class for the main content area (e.g. the Live Log's
+      viewport-filling layout wants less bottom padding). */
+  mainClassName?: string;
   children: ReactNode;
 }
 
@@ -130,6 +133,7 @@ export function AppShell({
   onToggleTheme,
   navItems = dashboardNavItems,
   heading,
+  mainClassName,
   children,
 }: AppShellProps) {
   const [activeSection, setActiveSection] = useState<string | null>(null);
@@ -435,7 +439,10 @@ export function AppShell({
           </div>
         )}
       </aside>
-      <main className="dashboard-main" id="main-content">
+      <main
+        className={mainClassName ? `dashboard-main ${mainClassName}` : 'dashboard-main'}
+        id="main-content"
+      >
         <header className="topbar">
           <h2>{heading}</h2>
           <div className="topbar-actions">

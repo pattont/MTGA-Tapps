@@ -254,7 +254,15 @@ def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
 
         now_payload: Optional[Dict[str, Any]] = None
         if status is not None:
-            colors = _seat_colors(conn, status.get("game_id"))
+            # The tracker writes live colors straight into live_status (from
+            # cards played, via Arena's card DB); the game_card_summary query
+            # is the fallback for reloads after a game already persisted.
+            colors = {
+                "player": str(status.get("player_colors") or ""),
+                "opponent": str(status.get("opponent_colors") or ""),
+            }
+            if not colors["player"] and not colors["opponent"]:
+                colors = _seat_colors(conn, status.get("game_id"))
             now_payload = {
                 "player_colors": colors["player"],
                 "opponent_colors": colors["opponent"],

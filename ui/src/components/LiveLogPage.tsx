@@ -4,6 +4,7 @@ import { formatDuration, outcomeLabel, outcomeTone, shortFormatLabel } from '../
 import { Badge } from './Badge';
 import { CardLink } from './CardLink';
 import { ColorPips } from './ColorPips';
+import { DeckLink } from './DeckLink';
 import { TimelineList } from './TimelineList';
 import { gameRouteHash } from '../routes';
 
@@ -120,7 +121,7 @@ function Scoreboard({
         <div className="live-side">
           <p className="live-side-name">{now.player_name ?? 'You'}</p>
           <p className="live-side-detail">
-            {isBrawl ? null : (now.deck_name ?? '')}
+            {isBrawl || !now.deck_name ? null : <DeckLink deckName={now.deck_name} />}
             <ColorPips colors={now.player_colors} />
           </p>
           {isBrawl ? (

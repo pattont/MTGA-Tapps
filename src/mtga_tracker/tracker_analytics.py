@@ -158,6 +158,10 @@ class TrackerAnalyticsMixin:
             "session_id": self.session_id,
             "updated_at": (now or self._now()).isoformat(),
             "in_game": 1 if in_game else 0,
+            "player_colors": self._live_colors_for(self.player_cards) if in_game else None,
+            "opponent_colors": (
+                self._live_colors_for(self.opponent_cards) if in_game else None
+            ),
             "match_id": match_id,
             "game_id": game_id,
             "format": format_label,
@@ -182,6 +186,24 @@ class TrackerAnalyticsMixin:
             "db_path": str(self._console_db_path),
             "tracker_version": self._live_tracker_version(),
         }
+
+    def _live_colors_for(self, cards) -> str:
+        """WUBRG letters for the color identity of cards a side has played
+        this game — fills the Live Log scoreboard pips in real time (the
+        game_card_summary rows only exist after the game persists)."""
+        try:
+            index = self.card_db.color_identity_index_by_name()
+        except Exception:
+            return ""
+        if not index:
+            return ""
+        letters: set = set()
+        for event in cards or []:
+            name = str(getattr(event, "card_name", "") or "")
+            identity = index.get(name) or index.get(name.split(" // ")[0].strip())
+            if identity:
+                letters.update(ch for ch in str(identity) if ch in "WUBRG")
+        return "".join(ch for ch in "WUBRG" if ch in letters)
 
     def _live_card_db_path(self) -> Optional[str]:
         cached = getattr(self, "_live_card_db_path_cache", "unset")
