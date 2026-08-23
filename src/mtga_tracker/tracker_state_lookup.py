@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Any, Dict, List, Optional, Set
 
 
@@ -50,6 +51,57 @@ class TrackerStateLookupMixin:
         if len(self.game_state.object_snapshots) > max_snapshots:
             for old_id in list(self.game_state.object_snapshots.keys())[:trim_batch]:
                 self.game_state.object_snapshots.pop(old_id, None)
+        if self.game_state.unresolved_target_ids:
+            self._resolve_pending_target_names()
+
+    def _register_unresolved_target(self, instance_id: Any) -> str:
+        """Remember a target we can only print as "[ID: N]" — the object was
+        still hidden when the line logged (e.g. a graveyard card Arena had
+        only listed by id). Once the object's identity arrives, the recorded
+        lines are patched in place (see _resolve_pending_target_names)."""
+        token = f"ID: {instance_id}"
+        try:
+            self.game_state.unresolved_target_ids[int(instance_id)] = token
+        except (TypeError, ValueError):
+            pass
+        return token
+
+    def _resolve_pending_target_names(self) -> None:
+        """Fill in "[ID: N]" placeholders whose objects have since revealed."""
+        for instance_id, token in list(self.game_state.unresolved_target_ids.items()):
+            obj = self._lookup_object(instance_id)
+            if not obj:
+                continue
+            label = self._object_display_label(obj, instance_id)
+            if not label or label.startswith("ID "):
+                continue
+            self.game_state.unresolved_target_ids.pop(instance_id, None)
+            self._patch_recorded_target(token, label)
+
+    def _patch_recorded_target(self, token: str, label: str) -> None:
+        """Rewrite an "[ID: N]" placeholder to the real card name everywhere
+        it was recorded: pending stack-item labels (so a later resolve line
+        prints correctly) and the persisted timeline/console rows."""
+        needle = f"[{token}]"
+        replacement = f"[{label}]"
+        for item in self.game_state.stack_items.values():
+            if isinstance(item, dict) and needle in str(item.get("label") or ""):
+                item["label"] = str(item["label"]).replace(needle, replacement)
+        try:
+            game_id = self._current_game_id() if self.game_state.game_start_time else None
+        except Exception:
+            game_id = None
+        if not game_id:
+            return
+        try:
+            self._analytics_store().patch_event_texts(
+                session_id=self.session_id,
+                game_id=game_id,
+                needle=needle,
+                replacement=replacement,
+            )
+        except (AttributeError, OSError, sqlite3.Error):
+            return
 
     def _remove_deleted_instances(self, deleted_instance_ids: Any) -> None:
         """Purge deleted object ids from snapshot and combat caches."""

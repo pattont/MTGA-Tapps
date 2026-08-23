@@ -1490,6 +1490,7 @@ export interface LiveGameRow {
   id: string;
   started_at: string | null;
   outcome: string | null;
+  outcome_reason: string | null;
   total_turns: number | null;
   duration_seconds: number | null;
   game_number: number | null;

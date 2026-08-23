@@ -140,6 +140,11 @@ class GameState:
         self.submitted_sideboard_cards: List[int] = []
 
         self.instance_roots: Dict[int, int] = {}
+        # Targets printed as "[ID: N]" because the object was still hidden
+        # when the line logged (e.g. a graveyard card Arena had only listed
+        # by id). instance_id -> the literal token; when the object's
+        # identity arrives, the recorded lines are patched in place.
+        self.unresolved_target_ids: Dict[int, str] = {}
         self.pending_spell_roots: Dict[int, Dict[str, Any]] = {}
         self.stack_items: Dict[int, Dict[str, Any]] = {}
         self.ability_instance_sources: Dict[int, int] = {}

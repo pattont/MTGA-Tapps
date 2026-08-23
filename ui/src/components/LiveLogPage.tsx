@@ -15,6 +15,33 @@ import { gameRouteHash } from '../routes';
 const POLL_MS = 500;
 const MAX_FEED_ROWS = 600;
 
+/** Merge a delta poll into the feed by row id. The server re-serves a short
+    tail of already-sent rows so corrections patched in place after the fact
+    (an "[ID: N]" target resolving to its card) replace the stale line.
+    Returns `current` untouched when nothing changed, so React skips the
+    re-render on quiet polls. */
+function mergeEvents(current: LiveEventRow[], incoming: LiveEventRow[]): LiveEventRow[] {
+  if (current.length === 0) {
+    return incoming;
+  }
+  const lastId = current[current.length - 1].id;
+  const byId = new Map(incoming.map((row) => [row.id, row]));
+  let changed = false;
+  const updated = current.map((row) => {
+    const replacement = byId.get(row.id);
+    if (replacement && replacement.text !== row.text) {
+      changed = true;
+      return replacement;
+    }
+    return row;
+  });
+  const appended = incoming.filter((row) => row.id > lastId);
+  if (appended.length === 0 && !changed) {
+    return current;
+  }
+  return [...(changed ? updated : current), ...appended];
+}
+
 function commanderArtUrl(name: string): string {
   const front = name.split(' // ')[0];
   return `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(front)}&format=image&version=art_crop`;
@@ -269,11 +296,10 @@ export function LiveLogPage() {
       }
       if (isNewGame || next.events.length > 0) {
         setEvents((current) => {
-          const base = isNewGame
-            ? next.events
-            : current.length === 0
-              ? next.events
-              : [...current, ...next.events];
+          const base = isNewGame ? next.events : mergeEvents(current, next.events);
+          if (base === current) {
+            return current;
+          }
           return base.length > MAX_FEED_ROWS ? base.slice(-MAX_FEED_ROWS) : base;
         });
       }
@@ -331,6 +357,12 @@ export function LiveLogPage() {
   const now = payload?.now ?? null;
   const session = payload?.session ?? null;
   const lastGame = payload?.games[0] ?? null;
+  // The finished game the feed is still showing (it persists the moment the
+  // match ends) — drives the /game-style end-of-game banner under the feed.
+  const endedGame =
+    state !== 'offline' && now && !now.in_game && now.game_id
+      ? (payload?.games.find((game) => game.id === now.game_id) ?? null)
+      : null;
 
   return (
     <div className="live-layout">
@@ -393,6 +425,27 @@ export function LiveLogPage() {
               {/* The exact same Timeline the /game page renders, live. */}
               <div className="live-feed" ref={feedRef} onScroll={onFeedScroll}>
                 <TimelineList cardReturnHash="#/live" rows={events} showFilters={false} />
+                {/* Same closing banner the /game timeline shows, once the
+                    finished game has persisted. */}
+                {endedGame ? (
+                  <div className={`timeline-end timeline-end-${endedGame.outcome ?? 'unknown'}`}>
+                    <strong>
+                      Game ended —{' '}
+                      {endedGame.outcome === 'win'
+                        ? 'You won'
+                        : endedGame.outcome === 'loss'
+                          ? 'You lost'
+                          : endedGame.outcome === 'draw'
+                            ? 'Draw'
+                            : 'Result unknown'}
+                    </strong>
+                    {endedGame.outcome_reason ? <span>{endedGame.outcome_reason}</span> : null}
+                    <span>
+                      {endedGame.duration_seconds ? `${formatDuration(endedGame.duration_seconds)} · ` : ''}
+                      {endedGame.total_turns ?? '?'} turns
+                    </span>
+                  </div>
+                ) : null}
               </div>
               {!following ? (
                 <button

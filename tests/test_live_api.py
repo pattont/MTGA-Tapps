@@ -123,9 +123,12 @@ def test_live_payload_snapshot_session_and_events(tmp_path):
     assert isinstance(event["text_segments"], list) and event["text_segments"]
     assert payload["seq"] == event["id"]
 
-    # Delta: nothing new after seq.
+    # Delta: nothing new after seq — only the refresh tail (already-sent
+    # rows re-served so in-place corrections propagate; client merges by id).
     delta = live_api.build_live_payload(tmp_path / "tracker.sqlite3", since=payload["seq"])
-    assert delta["events"] == []
+    assert [event["text"] for event in delta["events"]] == [
+        "Opponent: Casts [Atraxa, Praetors' Voice]"
+    ]
     assert delta["seq"] == payload["seq"]
 
 
@@ -172,11 +175,82 @@ def test_feed_tail_and_colors_survive_game_end(tmp_path):
     after = live_api.build_live_payload(tmp_path / "tracker.sqlite3", since=mid["seq"])
     assert after["tracker"]["state"] == "idle"
     # The tail event still arrives, under the finished game's id.
-    assert [event["text"] for event in after["events"]] == ["Opponent: lost 4 life (now 0)"]
+    assert "Opponent: lost 4 life (now 0)" in [event["text"] for event in after["events"]]
     assert after["now"]["game_id"] == "G1"
     # Colors fall back to the persisted summary once live_status goes blank.
     assert after["now"]["player_colors"] == "G"
     assert after["now"]["opponent_colors"] == "WR"
+
+
+def test_patched_event_text_reaches_delta_polls(tmp_path):
+    """A target printed as "[ID: N]" (hidden object) gets patched in place
+    once the object reveals — and the correction must reach a live page
+    that already received the stale line (the delta re-serves a short tail
+    the client merges by id)."""
+    store = _store(tmp_path)
+    _log_line(store, "any", live=_live())
+    _game_event(store, "G1", "Opponent: cast [Flashback (Instant)] -> [ID: 301]", "cast", turn=9, actor="opponent")
+    first = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+    assert "[ID: 301]" in first["events"][0]["text"]
+
+    store.patch_event_texts(
+        session_id="S1", game_id="G1", needle="[ID: 301]", replacement="[Boros Charm]"
+    )
+    store.close()
+
+    # The already-sent row comes back corrected on the next delta poll.
+    delta = live_api.build_live_payload(tmp_path / "tracker.sqlite3", since=first["seq"])
+    texts = [event["text"] for event in delta["events"]]
+    assert "Opponent: cast [Flashback (Instant)] -> [Boros Charm]" in texts
+    assert not any("[ID: 301]" in text for text in texts)
+
+
+def test_unresolved_target_patches_on_reveal(tmp_path):
+    """Tracker side: a snapshot carrying the hidden object's identity
+    rewrites the recorded line and any pending stack label."""
+    from mtga_tracker.state import GameState
+    from mtga_tracker.tracker_state_lookup import TrackerStateLookupMixin
+
+    store = _store(tmp_path)
+    _log_line(store, "any", live=_live())
+    _game_event(store, "G1", "Opponent: cast [Flashback (Instant)] -> [ID: 301]", "cast", turn=9, actor="opponent")
+
+    class FakeCardDb:
+        def get_card_name(self, grp_id):
+            return "Boros Charm" if grp_id == 94149 else f"Card #{grp_id}"
+
+    class Stub(TrackerStateLookupMixin):
+        def __init__(self):
+            self.game_state = GameState()
+            self.game_state.in_match = True
+            self.game_state.game_start_time = object()
+            self.game_state.stack_items[448] = {"label": "[Flashback (Instant)] -> [ID: 301]"}
+            self.card_db = FakeCardDb()
+            self.session_id = "S1"
+
+        def _lookup_object(self, instance_id, game_objects_by_id=None):
+            return self.game_state.object_snapshots.get(instance_id) or {}
+
+        def _refresh_fallback_name_text(self, name):
+            return name
+
+        def _current_game_id(self):
+            return "G1"
+
+        def _analytics_store(self):
+            return store
+
+    stub = Stub()
+    assert stub._register_unresolved_target(301) == "ID: 301"
+    # Snapshot arrives with the reveal; the placeholder resolves everywhere.
+    stub._snapshot_game_objects(
+        [{"instanceId": 301, "grpId": 94149, "cardTypes": ["CardType_Instant"]}]
+    )
+    assert stub.game_state.unresolved_target_ids == {}
+    assert stub.game_state.stack_items[448]["label"] == "[Flashback (Instant)] -> [Boros Charm]"
+    row = store.connect().execute("SELECT text FROM game_events WHERE game_id = 'G1'").fetchone()
+    store.close()
+    assert row[0] == "Opponent: cast [Flashback (Instant)] -> [Boros Charm]"
 
 
 def test_live_color_index_survives_missing_arena_color_column():

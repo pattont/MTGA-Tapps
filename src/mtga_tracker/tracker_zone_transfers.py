@@ -893,7 +893,7 @@ class TrackerZoneTransferMixin:
                 return " -> [you]"
             if target_id == self.game_state.opponent_seat_id:
                 return " -> [opponent]"
-            return f" -> [ID: {target_id}]"
+            return f" -> [{self._register_unresolved_target(target_id)}]"
         return ""
 
     def _track_name_for_card(

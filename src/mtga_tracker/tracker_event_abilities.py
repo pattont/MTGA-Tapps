@@ -391,7 +391,7 @@ class TrackerAbilitiesMixin:
                                 t_name = (
                                     self.card_db.get_card_name(t_grp_id)
                                     if t_grp_id
-                                    else f"[ID: {t_id}]"
+                                    else f"[{self._register_unresolved_target(t_id)}]"
                                 )
                                 t_owner_seat = obj.get("ownerSeatId")
                                 t_owner = (
@@ -402,7 +402,7 @@ class TrackerAbilitiesMixin:
                                 target_names.append(f"{t_name} ({t_owner})")
                                 break
                         else:
-                            target_names.append(f"[ID: {t_id}]")
+                            target_names.append(f"[{self._register_unresolved_target(t_id)}]")
 
                 if target_names:
                     target_str = f" targeting {', '.join(target_names)}"

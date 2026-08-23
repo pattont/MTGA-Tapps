@@ -2368,6 +2368,34 @@ class AnalyticsStore:
             values,
         )
 
+    def patch_event_texts(
+        self,
+        *,
+        session_id: str,
+        game_id: str,
+        needle: str,
+        replacement: str,
+    ) -> None:
+        """Rewrite a placeholder (e.g. "[ID: 301]") inside already-recorded
+        lines once the tracker learns what the object actually was — a target
+        can be hidden (a graveyard card Arena only listed by id) at the
+        moment its line logs, then reveal seconds later."""
+        conn = self.connect()
+        if conn is None:
+            return
+        like = f"%{needle}%"
+        with conn:
+            conn.execute(
+                "UPDATE game_events SET text = REPLACE(text, ?, ?) "
+                "WHERE game_id = ? AND text LIKE ?",
+                (needle, replacement, game_id, like),
+            )
+            conn.execute(
+                "UPDATE console_logs SET text = REPLACE(text, ?, ?) "
+                "WHERE session_id = ? AND text LIKE ?",
+                (needle, replacement, session_id, like),
+            )
+
     def touch_live_status(self, session_id: str, now: datetime) -> None:
         """Idle heartbeat: bump updated_at so the dashboard can tell a quiet
         tracker from a stopped one. Creates the row if it doesn't exist."""

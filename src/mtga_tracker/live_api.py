@@ -39,6 +39,11 @@ OFFLINE_AFTER_SECONDS = 20.0
 #: the current game's timeline from its start.
 MAX_EVENT_LINES = 800
 
+#: Delta polls re-serve this many already-sent rows so in-place corrections
+#: (an "[ID: N]" target resolving to its card once the object reveals) reach
+#: the live page; the client merges rows by id.
+REFRESH_TAIL_ROWS = 15
+
 
 def _dict_row(cursor: sqlite3.Cursor) -> Optional[Dict[str, Any]]:
     row = cursor.fetchone()
@@ -170,6 +175,7 @@ def _games_payload(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
               g.id,
               g.started_at,
               g.outcome,
+              g.outcome_reason,
               g.total_turns,
               g.duration_seconds,
               g.game_number,
@@ -202,10 +208,7 @@ def _events_payload(
     game_events, so they never reach the feed."""
     if not game_id:
         return [], since
-    rows = _dict_rows(
-        conn.execute(
-            f"""
-            SELECT
+    columns = """
               id,
               event_time,
               turn_number,
@@ -216,14 +219,31 @@ def _events_payload(
               text,
               player_life,
               opponent_life
+    """
+    if since > 0:
+        # Delta poll: new rows plus a short tail of already-sent rows, so a
+        # line patched in place after the fact still reaches the page.
+        query = f"""
+            SELECT {columns}
+            FROM game_events
+            WHERE game_id = ? AND (id > ? OR id IN (
+                SELECT id FROM game_events WHERE game_id = ?
+                ORDER BY id DESC LIMIT {REFRESH_TAIL_ROWS}
+            ))
+            ORDER BY id ASC
+            LIMIT {MAX_EVENT_LINES}
+            """
+        params: Tuple[Any, ...] = (game_id, since, game_id)
+    else:
+        query = f"""
+            SELECT {columns}
             FROM game_events
             WHERE game_id = ? AND id > ?
             ORDER BY id ASC
             LIMIT {MAX_EVENT_LINES}
-            """,
-            (game_id, since),
-        )
-    )
+            """
+        params = (game_id, since)
+    rows = _dict_rows(conn.execute(query, params))
     if not rows:
         return [], since
 
