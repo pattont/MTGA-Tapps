@@ -114,7 +114,6 @@ function Scoreboard({
             {turnChip}
           </span>
         )}
-        {clock ? <span className="live-chip live-chip-quiet">{clock}</span> : null}
       </div>
 
       <div className="live-versus">
@@ -159,15 +158,18 @@ function Scoreboard({
         </div>
       </div>
 
-      <p className="live-scoreboard-footnote">
-        {[
-          now.on_play === null ? null : now.on_play ? 'On the play' : 'On the draw',
-          now.mulligans ? `${now.mulligans} mulligan${now.mulligans === 1 ? '' : 's'}` : 'No mulligans',
-          now.deck_name && isBrawl ? now.deck_name : null,
-        ]
-          .filter(Boolean)
-          .join(' · ')}
-      </p>
+      <div className="live-scoreboard-footer">
+        <p className="live-scoreboard-footnote">
+          {[
+            now.on_play === null ? null : now.on_play ? 'On the play' : 'On the draw',
+            now.mulligans ? `${now.mulligans} mulligan${now.mulligans === 1 ? '' : 's'}` : 'No mulligans',
+            now.deck_name && isBrawl ? now.deck_name : null,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+        </p>
+        {clock ? <span className="live-scoreboard-clock">{clock}</span> : null}
+      </div>
     </div>
   );
 }

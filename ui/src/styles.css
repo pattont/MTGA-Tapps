@@ -4224,10 +4224,28 @@ a.settings-link-button {
   background: linear-gradient(90deg, var(--subtle), var(--muted));
 }
 
+/* Footer row: the play/mulligan footnote on the left, game clock pinned
+   to the bottom-right corner of the scoreboard. */
+.live-scoreboard-footer {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+}
+
 .live-scoreboard-footnote {
-  margin: 16px 0 0;
+  margin: 0;
   color: var(--muted);
   font-size: 0.84rem;
+}
+
+.live-scoreboard-clock {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-variant-numeric: tabular-nums;
 }
 
 /* --- Waiting / offline states -------------------------------------- */
