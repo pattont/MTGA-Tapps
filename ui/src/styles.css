@@ -3614,6 +3614,10 @@ tr.deck-change-row-out .card-link {
 }
 
 .sidebar-deck-finder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   padding: 8px 12px;
   border: 1px solid color-mix(in srgb, var(--draw) 45%, var(--border));
   border-radius: 8px;
@@ -3624,6 +3628,23 @@ tr.deck-change-row-out .card-link {
   font-weight: 700;
   text-align: center;
   cursor: pointer;
+}
+
+.sidebar-deck-finder svg {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+}
+
+/* Collapsed sidebar: just the blue box with the magnifying glass. */
+.sidebar-deck-finder-mini {
+  margin-top: auto;
+  padding: 8px 0;
+}
+
+.sidebar-deck-finder-mini svg {
+  width: 17px;
+  height: 17px;
 }
 
 .sidebar-deck-finder:hover,
@@ -4194,12 +4215,40 @@ a.settings-link-button {
   position: relative;
 }
 
+/* Scroll container around the shared TimelineList. Its height matches the
+   Today's Games list so the two columns scroll at the same size. */
 .live-feed {
   overflow-y: auto;
-  max-height: 56vh;
+  max-height: 470px;
   margin: 8px 0 0;
   padding: 4px 16px 14px;
-  list-style: none;
+}
+
+/* Compact variant of the /game timeline — same look, smaller type. */
+.live-feed .timeline {
+  gap: 10px;
+}
+
+.live-feed .timeline-event {
+  padding: 3px 8px 3px 10px;
+  font-size: 0.8rem;
+}
+
+.live-feed .timeline-chip {
+  min-width: 64px;
+  font-size: 0.62rem;
+}
+
+.live-feed .timeline-turn-header strong {
+  font-size: 0.78rem;
+}
+
+.live-feed .timeline-turn-header {
+  padding: 4px 8px;
+}
+
+.live-feed .timeline-filter {
+  padding-top: 0;
 }
 
 .live-feed-empty {
@@ -4209,102 +4258,13 @@ a.settings-link-button {
   margin: 8px 16px 16px;
 }
 
-.live-feed-turn {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 14px 0 6px;
-  color: var(--subtle);
-  font-size: 0.74rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.live-feed-turn::after {
-  content: '';
-  flex: 1;
-  border-top: 1px solid var(--border);
-}
-
-.live-feed-row {
-  margin: 2px 0;
-  padding: 3px 10px;
-  border-left: 3px solid transparent;
-  border-radius: 4px;
-  font-size: 0.86rem;
-  line-height: 1.45;
-  animation: live-row-in 0.16s ease;
-}
-
-@keyframes live-row-in {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
-  }
-}
-
+/* Reduced motion: no chip pulse / life ticks. */
 @media (prefers-reduced-motion: reduce) {
-  .live-feed-row,
   .live-chip-pulse,
   .live-life-up,
   .live-life-down {
     animation: none;
   }
-}
-
-.live-feed-text {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-/* Event tints: same semantics as the old terminal legend. */
-.live-style-turn { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); font-weight: 600; }
-.live-style-cast,
-.live-style-stack,
-.live-style-stack_resolve { border-left-color: var(--draw); }
-.live-style-ability { border-left-color: color-mix(in srgb, var(--draw) 55%, var(--muted)); }
-.live-style-draw,
-.live-style-zone { border-left-color: color-mix(in srgb, var(--draw) 40%, transparent); color: var(--muted); }
-.live-style-land { border-left-color: var(--success); }
-.live-style-life_gain { border-left-color: var(--success); background: color-mix(in srgb, var(--success) 7%, transparent); }
-.live-style-life_loss,
-.live-style-damage,
-.live-style-combat_damage { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, transparent); }
-.live-style-attack,
-.live-style-block { border-left-color: color-mix(in srgb, var(--accent) 70%, var(--danger)); }
-.live-style-counter,
-.live-style-stack_fail { border-left-color: color-mix(in srgb, var(--danger) 55%, var(--muted)); color: var(--muted); }
-.live-style-plain { color: var(--muted); }
-
-/* Compact color key under the feed. */
-.live-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 14px;
-  margin: 0;
-  padding: 10px 16px 14px;
-  border-top: 1px solid var(--border);
-  list-style: none;
-}
-
-.live-legend li {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 0.72rem;
-}
-
-.live-legend-swatch {
-  display: inline-block;
-  width: 0;
-  height: 11px;
-  padding: 0;
-  border-left-width: 4px;
-  border-left-style: solid;
-  border-radius: 2px;
-  background: none !important;
 }
 
 .live-jump {

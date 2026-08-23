@@ -1,39 +1,12 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchLiveStatus, type LiveEventRow, type LiveGameRow, type LiveNow, type LivePayload } from '../api';
 import { formatDuration, outcomeLabel, outcomeTone } from '../format';
 import { Badge } from './Badge';
+import { TimelineList } from './TimelineList';
 import { gameRouteHash } from '../routes';
 
 const POLL_MS = 1000;
-const MAX_FEED_ROWS = 300;
-
-/** Color key rendered under the feed — same tints the rows use. */
-const FEED_LEGEND: Array<[string, string]> = [
-  ['turn', 'Turn / Session Header'],
-  ['cast', 'Cast / Spell Played'],
-  ['land', 'Land Played'],
-  ['ability', 'Ability / Trigger'],
-  ['stack_resolve', 'Stack Resolved'],
-  ['stack_fail', 'Stack Countered / Unresolved'],
-  ['attack', 'Attack'],
-  ['block', 'Block'],
-  ['combat_damage', 'Combat Damage'],
-  ['damage', 'Damage'],
-  ['life_gain', 'Life Gained'],
-  ['life_loss', 'Life Lost'],
-  ['draw', 'Draw'],
-  ['zone', 'Card Movement'],
-];
-
-/** Decorative terminal lines (separators, blank padding) that would be
-    noise in the web feed. */
-function isDecorative(text: string): boolean {
-  const stripped = text.trim();
-  if (!stripped) {
-    return true;
-  }
-  return /^[=\-_*\s]+$/u.test(stripped);
-}
+const MAX_FEED_ROWS = 600;
 
 function commanderArtUrl(name: string): string {
   const front = name.split(' // ')[0];
@@ -189,15 +162,6 @@ function Scoreboard({ now, clockMs }: { now: LiveNow; clockMs: number }) {
   );
 }
 
-function FeedRow({ event }: { event: LiveEventRow }) {
-  const style = event.style ?? 'plain';
-  return (
-    <li className={`live-feed-row live-style-${style}`}>
-      <span className="live-feed-text">{event.text.trim()}</span>
-    </li>
-  );
-}
-
 function GamesList({ games }: { games: LiveGameRow[] }) {
   if (games.length === 0) {
     return <p className="empty-state">No finished games yet today — go queue up!</p>;
@@ -239,7 +203,7 @@ export function LiveLogPage() {
   const [following, setFollowing] = useState(true);
   const [clockMs, setClockMs] = useState(() => Date.now());
   const seqRef = useRef(0);
-  const feedRef = useRef<HTMLOListElement | null>(null);
+  const feedRef = useRef<HTMLDivElement | null>(null);
   const gameKeyRef = useRef<string | null>(null);
 
   const poll = useCallback(async () => {
@@ -250,7 +214,7 @@ export function LiveLogPage() {
       setError(null);
       // A new game clears the previous one — the finished game lives in the
       // rail's game list; the feed is the current game only.
-      const gameKey = next.now?.game_started_at ?? null;
+      const gameKey = next.now?.game_id ?? null;
       const isNewGame = gameKey !== null && gameKey !== gameKeyRef.current;
       if (gameKey !== null) {
         gameKeyRef.current = gameKey;
@@ -258,7 +222,7 @@ export function LiveLogPage() {
       if (isNewGame || next.events.length > 0) {
         setEvents((current) => {
           const base = isNewGame
-            ? next.events.filter((event) => gameKey !== null && event.at >= gameKey)
+            ? next.events
             : current.length === 0
               ? next.events
               : [...current, ...next.events];
@@ -315,7 +279,6 @@ export function LiveLogPage() {
     setFollowing(atBottom);
   }, []);
 
-  const visibleEvents = useMemo(() => events.filter((event) => !isDecorative(event.text)), [events]);
   const state = payload?.tracker.state ?? 'offline';
   const now = payload?.now ?? null;
   const session = payload?.session ?? null;
@@ -358,7 +321,7 @@ export function LiveLogPage() {
           <div className="section-heading">
             <h3>Live Feed</h3>
           </div>
-          {visibleEvents.length === 0 ? (
+          {events.length === 0 ? (
             <p className="empty-state live-feed-empty">
               {state === 'offline' ? (
                 'Start the tracker and game events stream here live.'
@@ -370,23 +333,10 @@ export function LiveLogPage() {
             </p>
           ) : (
             <div className="live-feed-wrap">
-              <ol className="live-feed" ref={feedRef} onScroll={onFeedScroll}>
-                {visibleEvents.map((event, index) => {
-                  const previous = index > 0 ? visibleEvents[index - 1] : null;
-                  const newTurn =
-                    event.turn !== null && event.turn !== (previous?.turn ?? null) ? event.turn : null;
-                  return (
-                    <Fragment key={event.id}>
-                      {newTurn !== null ? (
-                        <li aria-hidden="true" className="live-feed-turn">
-                          Turn {newTurn}
-                        </li>
-                      ) : null}
-                      <FeedRow event={event} />
-                    </Fragment>
-                  );
-                })}
-              </ol>
+              {/* The exact same Timeline the /game page renders, live. */}
+              <div className="live-feed" ref={feedRef} onScroll={onFeedScroll}>
+                <TimelineList cardReturnHash="#/live" rows={events} />
+              </div>
               {!following ? (
                 <button
                   className="live-jump"
@@ -404,14 +354,6 @@ export function LiveLogPage() {
               ) : null}
             </div>
           )}
-          <ul aria-label="Card event colors" className="live-legend">
-            {FEED_LEGEND.map(([style, label]) => (
-              <li key={style}>
-                <span aria-hidden="true" className={`live-legend-swatch live-style-${style}`} />
-                {label}
-              </li>
-            ))}
-          </ul>
         </section>
       </div>
 

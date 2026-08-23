@@ -819,8 +819,19 @@ describe('App', () => {
         },
       ],
       events: [
-        { id: 1, at: new Date().toISOString(), turn: 7, style: 'turn', text: 'Turn 7 - Opponent', player_life: 18, opponent_life: 11 },
-        { id: 2, at: new Date().toISOString(), turn: 7, style: 'cast', text: 'Opponent: Casts Big Spell', player_life: 18, opponent_life: 11 },
+        {
+          id: 2,
+          at: new Date().toISOString(),
+          turn_number: 7,
+          phase: null,
+          step: null,
+          event_type: 'cast',
+          actor_role: 'opponent',
+          text: 'Opponent: Casts Big Spell',
+          text_segments: [{ kind: 'text', text: 'Opponent: Casts Big Spell' }],
+          player_life: 18,
+          opponent_life: 11,
+        },
       ],
       seq: 2,
     };

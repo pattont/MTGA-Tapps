@@ -40,11 +40,44 @@ def _log_line(store, text, style=None, turn=None, lives=(20, 20), live=None, at=
     )
 
 
+def _game_event(store, game_id, text, event_type=None, turn=None, actor=None, lives=(20, 20)):
+    conn = store.connect()
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO game_events (
+                session_id, match_id, game_id, event_time, elapsed_seconds,
+                turn_number, phase, step, participant_id, seat_id, actor_role,
+                event_type, text, player_life, opponent_life
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "S1",
+                "M1",
+                game_id,
+                datetime.now().isoformat(),
+                30,
+                turn,
+                None,
+                None,
+                None,
+                None,
+                actor,
+                event_type,
+                text,
+                lives[0],
+                lives[1],
+            ),
+        )
+
+
 def _live(now=None, **overrides):
     payload = {
         "session_id": "S1",
         "updated_at": (now or datetime.now()).isoformat(),
         "in_game": 1,
+        "game_id": "G1",
+        "match_id": "M1",
         "format": "Standard Brawl",
         "match_type": "best_of_1",
         "game_number": 1,
@@ -67,18 +100,10 @@ def _live(now=None, **overrides):
 
 def test_live_payload_snapshot_session_and_events(tmp_path):
     store = _store(tmp_path)
-    # One stable game start shared by both lines — the feed only serves the
-    # current game's lines (created_at >= game_started_at).
-    game_started = (datetime.now() - timedelta(minutes=3)).isoformat()
-    _log_line(store, "Turn 7 - Opponent", style="turn", turn=7, live=_live(game_started_at=game_started))
-    _log_line(
-        store,
-        "Opponent: Casts Atraxa",
-        style="cast",
-        turn=7,
-        lives=(18, 11),
-        live=_live(game_started_at=game_started),
-    )
+    _log_line(store, "any console line", live=_live())
+    # The feed serves game_events — the same rows the /game Timeline shows.
+    _game_event(store, "G1", "Opponent: Casts [Atraxa, Praetors' Voice]", "cast", turn=7, actor="opponent", lives=(18, 11))
+    _game_event(store, "G2", "a different game's event", "cast", turn=2)
     store.close()
 
     payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
@@ -87,10 +112,16 @@ def test_live_payload_snapshot_session_and_events(tmp_path):
     assert payload["now"]["player_commanders"] == ["Wilhelt, the Rotcleaver"]
     assert payload["now"]["opponent_commanders"] == ["Atraxa, Praetors' Voice"]
     assert payload["session"]["wins"] == 2 and payload["session"]["win_rate"] == 66.7
-    texts = [event["text"] for event in payload["events"]]
-    assert texts == ["Turn 7 - Opponent", "Opponent: Casts Atraxa"]
-    assert payload["events"][1]["style"] == "cast"
-    assert payload["seq"] == payload["events"][-1]["id"]
+    # Only the current game's (G1) events; timeline-shaped rows.
+    assert [event["text"] for event in payload["events"]] == [
+        "Opponent: Casts [Atraxa, Praetors' Voice]"
+    ]
+    event = payload["events"][0]
+    assert event["event_type"] == "cast"
+    assert event["actor_role"] == "opponent"
+    assert event["turn_number"] == 7
+    assert isinstance(event["text_segments"], list) and event["text_segments"]
+    assert payload["seq"] == event["id"]
 
     # Delta: nothing new after seq.
     delta = live_api.build_live_payload(tmp_path / "tracker.sqlite3", since=payload["seq"])
@@ -115,14 +146,15 @@ def test_offline_and_idle_states(tmp_path):
 
 def test_handle_get_routes_and_parses_since(tmp_path):
     store = _store(tmp_path)
-    _log_line(store, "hello", live=_live(in_game=0))
+    _log_line(store, "hello", live=_live())
+    _game_event(store, "G1", "You: Casts [Llanowar Elves]", "cast", turn=1, actor="player")
     store.close()
     db = tmp_path / "tracker.sqlite3"
 
     assert live_api.handle_get("/api/other", {}, db) is None
     status, body = live_api.handle_get("/api/live", {"since": ["not-a-number"]}, db)
     assert status == 200
-    assert [event["text"] for event in body["events"]] == ["hello"]
+    assert [event["text"] for event in body["events"]] == ["You: Casts [Llanowar Elves]"]
 
 
 def test_settings_tracker_info_reads_live_status_paths(tmp_path):

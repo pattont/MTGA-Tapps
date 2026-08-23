@@ -401,7 +401,16 @@ export function AppShell({
             );
           })}
         </nav>
-        {collapsed ? null : (
+        {collapsed ? (
+          <a
+            aria-label="Deck Finder"
+            className="sidebar-deck-finder sidebar-deck-finder-mini"
+            href="#/deck-finder"
+            title="Deck Finder"
+          >
+            <Search aria-hidden="true" />
+          </a>
+        ) : (
           <div className="sidebar-bottom">
             {update ? (
               <a
@@ -415,7 +424,8 @@ export function AppShell({
               </a>
             ) : null}
             <a className="sidebar-deck-finder" href="#/deck-finder" title="Browse top decks inside the dashboard">
-              Deck Finder
+              <Search aria-hidden="true" />
+              <span className="sidebar-nav-label">Deck Finder</span>
             </a>
             {version ? (
               <span aria-label={`Tracker version ${version}`} className="sidebar-version">

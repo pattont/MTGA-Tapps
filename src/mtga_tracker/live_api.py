@@ -1,9 +1,9 @@
 """Live Log API: /api/live served straight from SQLite.
 
 The tracker maintains a single-row live_status snapshot and appends every
-rendered console line to console_logs (with style, turn, and life totals),
-so the dashboard can drive the Live Log page purely from the database —
-whether it runs inside the unified app or standalone.
+in-game turn-log line to game_events — the same table the /game page's
+Timeline renders — so the dashboard can drive the Live Log page purely
+from the database, and the live feed reads exactly like the game page.
 
 GET /api/live?since=<console_logs.id> returns:
 
@@ -35,11 +35,9 @@ from typing import Any, Dict, List, Optional, Tuple
 #: (its idle heartbeat writes every ~5 seconds).
 OFFLINE_AFTER_SECONDS = 20.0
 
-#: Lines returned on a fresh page load (no `since`).
-INITIAL_EVENT_LINES = 150
-
-#: Hard cap per response, delta requests included.
-MAX_EVENT_LINES = 500
+#: Hard cap per response, delta requests included. A fresh page load pulls
+#: the current game's timeline from its start.
+MAX_EVENT_LINES = 800
 
 
 def _dict_row(cursor: sqlite3.Cursor) -> Optional[Dict[str, Any]]:
@@ -148,62 +146,70 @@ def _games_payload(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
 
 def _events_payload(
     conn: sqlite3.Connection,
-    session_id: Optional[str],
+    game_id: Optional[str],
     since: int,
-    game_started_at: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], int]:
-    # The feed shows the CURRENT game only (the session's finished games live
-    # in the rail). Before the first game of a session there is nothing to
-    # stream — the page shows its waiting state instead of old history.
-    if not game_started_at:
+    """Timeline rows for the CURRENT game, straight from game_events — the
+    exact same source the /game page's Timeline renders, so the live feed
+    and the game page read identically. Between games there is nothing to
+    stream (finished games live in the rail); match summaries never hit
+    game_events, so they never reach the feed."""
+    if not game_id:
         return [], since
-    params: List[Any] = []
-    where = "created_at >= ?"
-    params.append(game_started_at)
-    if session_id:
-        where += " AND session_id = ?"
-        params.append(session_id)
-    if since > 0:
-        rows = _dict_rows(
-            conn.execute(
-                f"""
-                SELECT id, created_at, turn_number, style, text, player_life, opponent_life
-                FROM console_logs
-                WHERE {where} AND id > ?
-                ORDER BY id ASC
-                LIMIT {MAX_EVENT_LINES}
-                """,
-                (*params, since),
-            )
+    rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              id,
+              event_time,
+              turn_number,
+              phase,
+              step,
+              event_type,
+              actor_role,
+              text,
+              player_life,
+              opponent_life
+            FROM game_events
+            WHERE game_id = ? AND id > ?
+            ORDER BY id ASC
+            LIMIT {MAX_EVENT_LINES}
+            """,
+            (game_id, since),
         )
-    else:
-        rows = _dict_rows(
-            conn.execute(
-                f"""
-                SELECT id, created_at, turn_number, style, text, player_life, opponent_life
-                FROM console_logs
-                WHERE {where}
-                ORDER BY id DESC
-                LIMIT {INITIAL_EVENT_LINES}
-                """,
-                params,
-            )
+    )
+    if not rows:
+        return [], since
+
+    # Same card-link segmentation as the game page's timeline.
+    from .dashboard import _clean_card_name, _timeline_text_segments
+
+    linkable_cards: Dict[str, Optional[str]] = {}
+    for display_name, type_category in conn.execute(
+        "SELECT DISTINCT display_name, type_category FROM game_card_summary"
+    ):
+        clean_name = _clean_card_name(display_name)
+        if clean_name and (clean_name not in linkable_cards or not linkable_cards[clean_name]):
+            linkable_cards[clean_name] = type_category
+
+    events = []
+    for row in rows:
+        events.append(
+            {
+                "id": row["id"],
+                "at": row["event_time"],
+                "turn_number": row["turn_number"],
+                "phase": row["phase"],
+                "step": row["step"],
+                "event_type": row["event_type"],
+                "actor_role": row["actor_role"],
+                "text": row["text"],
+                "text_segments": _timeline_text_segments(str(row["text"] or ""), linkable_cards),
+                "player_life": row["player_life"],
+                "opponent_life": row["opponent_life"],
+            }
         )
-        rows.reverse()
-    events = [
-        {
-            "id": row["id"],
-            "at": row["created_at"],
-            "turn": row["turn_number"],
-            "style": row["style"],
-            "text": row["text"],
-            "player_life": row["player_life"],
-            "opponent_life": row["opponent_life"],
-        }
-        for row in rows
-    ]
-    seq = events[-1]["id"] if events else since
-    return events, seq
+    return events, events[-1]["id"]
 
 
 def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
@@ -240,9 +246,8 @@ def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
 
         events, seq = _events_payload(
             conn,
-            session_id,
+            status.get("game_id") if status else None,
             since,
-            status.get("game_started_at") if status else None,
         )
         return {
             "tracker": {

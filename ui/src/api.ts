@@ -1496,14 +1496,11 @@ export interface LiveGameRow {
   opponent_name: string | null;
 }
 
-export interface LiveEventRow {
+/** One live feed row — a GameTimelineRow (same shape the /game Timeline
+    renders) plus its game_events id for delta polling. */
+export interface LiveEventRow extends GameTimelineRow {
   id: number;
   at: string;
-  turn: number | null;
-  style: string | null;
-  text: string;
-  player_life: number | null;
-  opponent_life: number | null;
 }
 
 export interface LivePayload {
