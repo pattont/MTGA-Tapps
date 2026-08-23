@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchLiveStatus, type LiveEventRow, type LiveGameRow, type LiveNow, type LivePayload } from '../api';
 import { formatDuration, outcomeLabel, outcomeTone, shortFormatLabel } from '../format';
 import { Badge } from './Badge';
+import { CardLink } from './CardLink';
+import { ColorPips } from './ColorPips';
 import { TimelineList } from './TimelineList';
 import { gameRouteHash } from '../routes';
 
@@ -50,17 +52,26 @@ function LifeReadout({ life, side }: { life: number | null; side: 'player' | 'op
 
 function CommanderCard({ name }: { name: string | null }) {
   const [failed, setFailed] = useState(false);
-  if (!name || failed) {
+  if (!name) {
     return (
-      <div aria-hidden={!name} className="live-commander live-commander-hidden" title={name ?? 'Not revealed yet'}>
-        <span>{name ? name : '?'}</span>
+      <div aria-hidden="true" className="live-commander live-commander-hidden" title="Not revealed yet">
+        <span>?</span>
       </div>
     );
   }
   return (
-    <div className="live-commander" title={name}>
-      <img alt={name} loading="lazy" src={commanderArtUrl(name)} onError={() => setFailed(true)} />
-      <span>{name}</span>
+    <div className="live-commander">
+      {failed ? (
+        <div className="live-commander-hidden">
+          <span>?</span>
+        </div>
+      ) : (
+        <img alt={name} loading="lazy" src={commanderArtUrl(name)} onError={() => setFailed(true)} />
+      )}
+      {/* Full card name, linked to /card, with the usual hover preview. */}
+      <CardLink cardName={name} className="live-commander-name" returnHash="#/live">
+        {name}
+      </CardLink>
     </div>
   );
 }
@@ -92,9 +103,7 @@ function Scoreboard({
           <span className="live-chip">Game {now.game_number ?? 1} of 3</span>
         ) : null}
         {waiting ? (
-          <span className="live-chip live-chip-turn">
-            <span aria-hidden="true" className="live-pulse-dot" /> Waiting for next game…
-          </span>
+          <span className="live-chip live-chip-previous">Previous Game</span>
         ) : (
           <span
             className={
@@ -111,7 +120,8 @@ function Scoreboard({
         <div className="live-side">
           <p className="live-side-name">{now.player_name ?? 'You'}</p>
           <p className="live-side-detail">
-            {isBrawl ? '' : (now.deck_name ?? '')}
+            {isBrawl ? null : (now.deck_name ?? '')}
+            <ColorPips colors={now.player_colors} />
           </p>
           {isBrawl ? (
             <div className="live-commanders">
@@ -131,7 +141,10 @@ function Scoreboard({
 
         <div className="live-side live-side-opponent">
           <p className="live-side-name">{now.opponent_name ?? 'Opponent'}</p>
-          <p className="live-side-detail">{isBrawl ? '' : ' '}</p>
+          {/* Opponent colors fill in the moment their cards reveal them. */}
+          <p className="live-side-detail">
+            <ColorPips colors={now.opponent_colors} />
+          </p>
           {isBrawl ? (
             <div className="live-commanders">
               {(now.opponent_commanders.length > 0 ? now.opponent_commanders : [null]).map(
@@ -326,6 +339,11 @@ export function LiveLogPage() {
         <section className="dashboard-section live-feed-section" id="live-feed">
           <div className="section-heading">
             <h3>Live Feed</h3>
+            {state !== 'offline' && !now?.in_game && events.length > 0 ? (
+              <span className="live-chip live-chip-turn">
+                <span aria-hidden="true" className="live-pulse-dot" /> Waiting for next match…
+              </span>
+            ) : null}
           </div>
           {events.length === 0 ? (
             <p className="empty-state live-feed-empty">

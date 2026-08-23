@@ -114,6 +114,37 @@ def _session_payload(conn: sqlite3.Connection, session_id: Optional[str]) -> Opt
     return row
 
 
+def _seat_colors(conn: sqlite3.Connection, game_id: Optional[str]) -> Dict[str, str]:
+    """WUBRG colors revealed so far this game, per role, from the color
+    identity of cards each side has played (fills in live as cards hit the
+    board)."""
+    out = {"player": "", "opponent": ""}
+    if not game_id:
+        return out
+    try:
+        rows = conn.execute(
+            """
+            SELECT p.role, c.color_identity
+            FROM game_card_summary s
+            JOIN participants p ON p.id = s.participant_id
+            LEFT JOIN cards c ON c.id = s.card_id
+            WHERE p.game_id = ? AND s.played_count > 0
+            """,
+            (game_id,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return out
+    seen: Dict[str, set] = {"player": set(), "opponent": set()}
+    for role, identity in rows:
+        if role in seen and identity:
+            for letter in str(identity):
+                if letter in "WUBRG":
+                    seen[role].add(letter)
+    for role, letters in seen.items():
+        out[role] = "".join(letter for letter in "WUBRG" if letter in letters)
+    return out
+
+
 def _games_payload(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     """Today's finished games, newest first, ready to link to #/game/<id>."""
     today = datetime.now().strftime("%Y-%m-%d")
@@ -223,7 +254,10 @@ def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
 
         now_payload: Optional[Dict[str, Any]] = None
         if status is not None:
+            colors = _seat_colors(conn, status.get("game_id"))
             now_payload = {
+                "player_colors": colors["player"],
+                "opponent_colors": colors["opponent"],
                 "in_game": bool(status.get("in_game")),
                 "match_id": status.get("match_id"),
                 "game_id": status.get("game_id"),

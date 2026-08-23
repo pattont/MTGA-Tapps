@@ -4024,6 +4024,18 @@ a.settings-link-button {
   animation: live-chip-pulse 2s ease-in-out infinite;
 }
 
+/* Between games: the scoreboard shows the finished game. */
+.live-chip-previous {
+  border-color: color-mix(in srgb, var(--danger) 50%, var(--border));
+  color: var(--danger);
+}
+
+.live-chip .live-pulse-dot {
+  display: inline-block;
+  margin-right: 2px;
+  vertical-align: -1px;
+}
+
 @keyframes live-chip-pulse {
   50% {
     background: color-mix(in srgb, var(--accent) 14%, var(--surface));
@@ -4069,10 +4081,22 @@ a.settings-link-button {
 }
 
 .live-side-detail {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   margin: -6px 0 0;
   color: var(--muted);
   font-size: 0.82rem;
   min-height: 0.9em;
+}
+
+.live-side-opponent .live-side-detail {
+  justify-content: flex-end;
+}
+
+.live-side-detail .color-pips {
+  display: inline-flex;
+  gap: 3px;
 }
 
 .live-commanders {
@@ -4096,14 +4120,19 @@ a.settings-link-button {
   box-shadow: var(--shadow);
 }
 
-.live-commander span {
-  overflow: hidden;
-  max-width: 132px;
-  color: var(--muted);
-  font-size: 0.75rem;
+/* Full commander name, linked to /card (hover shows the card preview). */
+.live-commander .live-commander-name {
+  max-width: 150px;
+  color: var(--accent-strong);
+  font-size: 0.76rem;
+  line-height: 1.3;
   text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.live-commander .live-commander-name:hover {
+  text-decoration: underline;
 }
 
 .live-commander-hidden {
@@ -4415,7 +4444,9 @@ a.settings-link-button {
    thin rule under it; text color reflects tracker state (green running /
    red stopped). No animation — it should read, not blink. */
 .sidebar-live-block {
-  margin-bottom: -10px;
+  /* Even breathing room: the gap above the link visually equals the gap
+     between the link and its rule below. */
+  margin: -10px 0;
 }
 
 .sidebar-live-link {
@@ -4469,8 +4500,9 @@ a.settings-link-button {
   padding: 8px 0;
 }
 
-/* The sidebar Deck Finder entry is a route link now, not a button. */
+/* The sidebar Deck Finder entry is a route link now, not a button. Keep it
+   flex — `display: block` here used to defeat the icon/text gap. */
 a.sidebar-deck-finder {
-  display: block;
+  display: flex;
   text-decoration: none;
 }

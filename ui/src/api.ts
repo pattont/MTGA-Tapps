@@ -1470,6 +1470,9 @@ export interface LiveNow {
   game_started_at: string | null;
   player_commanders: string[];
   opponent_commanders: string[];
+  /** WUBRG letters revealed so far this game (from cards actually played). */
+  player_colors: string;
+  opponent_colors: string;
 }
 
 export interface LiveSessionInfo {
