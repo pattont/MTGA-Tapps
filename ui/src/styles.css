@@ -2142,15 +2142,20 @@ tbody tr:hover {
   list-style: none;
 }
 
+/* Turn headers run edge to edge of the section card (the -16px margins
+   cancel .timeline-wrap's side padding) with no side borders — a side
+   border touching the card edge just reads as a thicker card border. */
 .timeline-turn-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 6px;
-  padding: 6px 10px;
+  margin: 0 -16px 6px;
+  padding: 6px 16px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
   background: var(--panel-strong);
 }
 
@@ -4316,8 +4321,10 @@ a.settings-link-button {
   padding: 0;
 }
 
+/* The live feed's wrap has no side padding, so no margin trick needed. */
 .live-feed .timeline-turn-header {
-  border-radius: 0;
+  margin-right: 0;
+  margin-left: 0;
 }
 
 /* Compact variant of the /game timeline — same look, smaller type. */

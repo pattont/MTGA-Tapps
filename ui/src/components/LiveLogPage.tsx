@@ -8,7 +8,11 @@ import { DeckLink } from './DeckLink';
 import { TimelineList } from './TimelineList';
 import { gameRouteHash } from '../routes';
 
-const POLL_MS = 1000;
+/* Half a second keeps the feed feeling immediate without meaningful cost:
+   each poll is a tiny indexed delta read of local SQLite, and polling
+   pauses entirely while the tab is hidden. Much lower than this buys
+   nothing — Arena flushes its log in bursts anyway. */
+const POLL_MS = 500;
 const MAX_FEED_ROWS = 600;
 
 function commanderArtUrl(name: string): string {
