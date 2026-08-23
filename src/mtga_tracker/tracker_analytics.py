@@ -169,7 +169,31 @@ class TrackerAnalyticsMixin:
             "opponent_commanders": (
                 json.dumps(g.opponent_commanders) if g.opponent_commanders else None
             ),
+            "log_path": str(self.parser.log_path) if self.parser.log_path else None,
+            "card_db_path": self._live_card_db_path(),
+            "db_path": str(self._console_db_path),
+            "tracker_version": self._live_tracker_version(),
         }
+
+    def _live_card_db_path(self) -> Optional[str]:
+        cached = getattr(self, "_live_card_db_path_cache", "unset")
+        if cached != "unset":
+            return cached
+        resolved: Optional[str] = None
+        resolve = getattr(self.card_db, "_resolve_mtga_db_path", None)
+        if callable(resolve):
+            try:
+                path = resolve()
+                resolved = str(path) if path else None
+            except Exception:
+                resolved = None
+        self._live_card_db_path_cache = resolved
+        return resolved
+
+    def _live_tracker_version(self) -> str:
+        from . import __version__ as tracker_version
+
+        return tracker_version
 
     def _live_heartbeat(self) -> None:
         """Bump live_status.updated_at every few seconds while idle, so the

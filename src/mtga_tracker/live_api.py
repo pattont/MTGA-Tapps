@@ -246,12 +246,30 @@ def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
         }
 
 
+def build_status_payload(db_path: Path) -> Dict[str, Any]:
+    """Cheap tracker-state-only payload for the sidebar's Live Log light."""
+    db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
+    now = datetime.now()
+    with sqlite3.connect(db_uri, uri=True) as conn:
+        conn.execute("PRAGMA query_only = ON")
+        status = _live_status(conn)
+    return {
+        "tracker": {
+            "state": _tracker_state(status, now),
+            "updated_at": status.get("updated_at") if status else None,
+            "session_id": status.get("session_id") if status else None,
+        }
+    }
+
+
 def handle_get(
     path: str, query: Dict[str, List[str]], db_path: Path
 ) -> Optional[Tuple[int, Dict[str, Any]]]:
     if path != "/api/live":
         return None
     try:
+        if query.get("status", ["0"])[0] == "1":
+            return 200, build_status_payload(db_path)
         since_raw = query.get("since", ["0"])[0]
         try:
             since = max(0, int(since_raw))

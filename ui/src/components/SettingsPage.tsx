@@ -6,6 +6,7 @@ import {
   type DeckAiSettings,
   type DeckFinderCreator,
   type DeckFinderCreatorSettings,
+  type TrackerInfoSettings,
 } from '../api';
 import { Section } from './Section';
 
@@ -48,8 +49,30 @@ function saveLabel(status: SaveStatus, idle: string): string {
   return idle;
 }
 
+const TRACKER_INFO_ROWS: Array<[keyof TrackerInfoSettings, string]> = [
+  ['monitoring', 'Monitoring'],
+  ['card_db', 'Local Card DB'],
+  ['log_db', 'Log DB'],
+  ['deck_ai', 'Deck AI'],
+  ['version', 'Tracker Version'],
+];
+
+function TrackerInfo({ info }: { info: TrackerInfoSettings }) {
+  return (
+    <dl className="settings-info">
+      {TRACKER_INFO_ROWS.map(([key, label]) => (
+        <div key={key} className="settings-info-row">
+          <dt>{label}</dt>
+          <dd>{info[key] ?? 'not found (start the tracker to detect it)'}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 export function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
+  const [trackerInfo, setTrackerInfo] = useState<TrackerInfoSettings | null>(null);
   const [deckAi, setDeckAi] = useState<DeckAiSettings | null>(null);
   const [creators, setCreators] = useState<DeckFinderCreatorSettings | null>(null);
 
@@ -58,6 +81,7 @@ export function SettingsPage() {
     fetchTrackerSettings()
       .then((settings) => {
         if (!cancelled) {
+          setTrackerInfo(settings.tracker);
           setDeckAi(settings.deck_ai);
           setCreators(settings.deck_finder);
         }
@@ -74,6 +98,22 @@ export function SettingsPage() {
 
   return (
     <>
+      <Section
+        id="settings-tracker"
+        title="Tracker"
+        description="What this tracker is watching and writing. Detected when the tracker starts and refreshed on every restart."
+      >
+        {error ? (
+          <p className="empty-state deckfinder-state">{error}</p>
+        ) : trackerInfo === null ? (
+          <p className="state-panel deckfinder-state" role="status" aria-busy="true">
+            Loading...
+          </p>
+        ) : (
+          <TrackerInfo info={trackerInfo} />
+        )}
+      </Section>
+
       <Section
         id="settings-deck-ai"
         title="Deck AI"

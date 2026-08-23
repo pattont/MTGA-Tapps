@@ -12,6 +12,7 @@ Endpoints (all under /api/settings):
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 #: (internal name, display label, settings key for the key, settings key for
@@ -77,13 +78,76 @@ def _save_deck_ai(payload: Dict[str, Any]) -> Dict[str, Any]:
     return _deck_ai_payload()
 
 
-def handle_get(path: str) -> Optional[Tuple[int, Dict[str, Any]]]:
+def _tilde(value: Any) -> Optional[str]:
+    """Shorten an absolute path with the user's home directory to ~/..."""
+    if not value:
+        return None
+    text = str(value)
+    home = str(Path.home())
+    if home and text.startswith(home):
+        return "~" + text[len(home):]
+    return text
+
+
+def _deck_ai_summary() -> str:
+    from . import deck_llm
+
+    try:
+        status = deck_llm.diagnose()
+    except Exception:
+        return "unknown"
+    if not status.get("enabled"):
+        return "disabled"
+    provider_label = {
+        "openai": "OpenAI",
+        "claude": "Anthropic (Claude)",
+        "gemini": "Gemini",
+    }.get(str(status.get("provider") or ""), str(status.get("provider") or "?"))
+    if not status.get("has_api_key"):
+        return f"enabled — {provider_label} (no API key set)"
+    return f"enabled — {provider_label} ({status.get('model') or '?'})"
+
+
+def _tracker_info(db_path: Optional[Path]) -> Dict[str, Any]:
+    """Startup facts the tracker records into live_status (refreshed every
+    time the tracker starts), plus the Deck AI summary and version."""
+    from . import __version__ as tracker_version
+
+    info: Dict[str, Any] = {
+        "monitoring": None,
+        "card_db": None,
+        "log_db": _tilde(db_path),
+        "deck_ai": _deck_ai_summary(),
+        "version": tracker_version,
+    }
+    if db_path is not None and Path(db_path).is_file():
+        try:
+            import sqlite3
+
+            db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
+            with sqlite3.connect(db_uri, uri=True) as conn:
+                row = conn.execute(
+                    "SELECT log_path, card_db_path, db_path, tracker_version "
+                    "FROM live_status WHERE id = 1"
+                ).fetchone()
+            if row is not None:
+                info["monitoring"] = _tilde(row[0])
+                info["card_db"] = _tilde(row[1])
+                info["log_db"] = _tilde(row[2]) or info["log_db"]
+                info["version"] = row[3] or info["version"]
+        except Exception:
+            pass
+    return info
+
+
+def handle_get(path: str, db_path: Optional[Path] = None) -> Optional[Tuple[int, Dict[str, Any]]]:
     if path != "/api/settings":
         return None
     try:
         from .deckfinder_api import read_creator_config
 
         return 200, {
+            "tracker": _tracker_info(db_path),
             "deck_ai": _deck_ai_payload(),
             "deck_finder": read_creator_config(),
         }

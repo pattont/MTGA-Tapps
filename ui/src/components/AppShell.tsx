@@ -44,6 +44,40 @@ export function AppShell({
   }
   const [version, setVersion] = useState<string | null>(null);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  // Green when the tracker is running (live or idle), red when it is not.
+  const [trackerState, setTrackerState] = useState<'live' | 'idle' | 'offline' | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkTracker() {
+      try {
+        const response = await fetch('/api/live?status=1');
+        if (!response.ok) {
+          return;
+        }
+        const payload = (await response.json()) as {
+          tracker?: { state?: 'live' | 'idle' | 'offline' };
+        };
+        if (!cancelled && payload.tracker?.state) {
+          setTrackerState(payload.tracker.state);
+        }
+      } catch {
+        // The link just keeps its last color.
+      }
+    }
+
+    void checkTracker();
+    const id = window.setInterval(() => {
+      if (!document.hidden) {
+        void checkTracker();
+      }
+    }, 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -207,6 +241,31 @@ export function AppShell({
             </div>
           </a>
         </div>
+        )}
+        {collapsed ? null : (
+          <div className="sidebar-live-block">
+            <a
+              className={
+                trackerState === null
+                  ? 'sidebar-live-link'
+                  : trackerState === 'offline'
+                    ? 'sidebar-live-link sidebar-live-offline'
+                    : 'sidebar-live-link sidebar-live-running'
+              }
+              href="#/live"
+              title={
+                trackerState === 'offline'
+                  ? 'Tracker is not running'
+                  : trackerState
+                    ? 'Tracker is running'
+                    : 'Live Log'
+              }
+            >
+              <span aria-hidden="true" className="sidebar-live-dot" />
+              Live Log
+            </a>
+            <hr className="sidebar-live-rule" />
+          </div>
         )}
         {collapsed ? null : (
         <nav aria-label="Dashboard sections">

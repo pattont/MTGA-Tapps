@@ -610,11 +610,11 @@ export function DeckFinderPage() {
                 {copyStatus === 'copied'
                   ? 'Copied'
                   : copyStatus === 'error'
-                    ? 'Copy Failed'
-                    : 'Copy for Arena'}
+                    ? 'Export Failed'
+                    : 'Export to Arena'}
               </button>
               <a
-                className="quick-filter"
+                className="deck-neutral-button"
                 href={selectedDeck.source_url}
                 rel="noreferrer"
                 target="_blank"

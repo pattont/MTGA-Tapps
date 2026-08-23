@@ -665,9 +665,9 @@ describe('App', () => {
     const dashboardNav = screen.getByRole('navigation', { name: 'Dashboard sections' });
     expect(within(dashboardNav).getAllByRole('link').slice(0, 4).map((link) => link.textContent)).toEqual([
       'Overview',
-      'Live Log',
       'Win Rate Trend',
       'Ranked Progress',
+      'Recent Games',
     ]);
     expect(
       Array.from(document.querySelectorAll<HTMLElement>('.dashboard-main > section[id]')).map(
@@ -853,6 +853,13 @@ describe('App', () => {
 
   it('routes to the Settings page with Deck AI and creator sections', async () => {
     const settings = {
+      tracker: {
+        monitoring: '~/Library/Logs/Wizards Of The Coast/MTGA/Player.log',
+        card_db: '~/S/MTGA/Raw_CardDatabase_test.mtga',
+        log_db: '~/Repo/MTGA-Tapps/data/mtga_tracker.sqlite3',
+        deck_ai: 'enabled — Gemini (gemini-2.0-flash)',
+        version: '0.5.8',
+      },
       deck_ai: {
         enabled: true,
         provider: 'gemini',
@@ -1622,6 +1629,9 @@ describe('App', () => {
       if (String(url).includes('/api/version')) {
         return new Response(JSON.stringify({ version: '0.0.0-test' }), { status: 200 });
       }
+      if (String(url).includes('/api/live')) {
+        return new Response(JSON.stringify({ tracker: { state: 'idle' } }), { status: 200 });
+      }
       return responses.shift() ?? new Response('exhausted', { status: 500 });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -1649,6 +1659,9 @@ describe('App', () => {
     const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
       if (String(url).includes('/api/version')) {
         return new Response(JSON.stringify({ version: '0.0.0-test' }), { status: 200 });
+      }
+      if (String(url).includes('/api/live')) {
+        return new Response(JSON.stringify({ tracker: { state: 'idle' } }), { status: 200 });
       }
       return responses.shift() ?? new Response('exhausted', { status: 500 });
     });
@@ -1681,6 +1694,11 @@ describe('App', () => {
     const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
       if (String(_url).includes('/api/version')) {
         return Promise.resolve(new Response(JSON.stringify({ version: '0.0.0-test' }), { status: 200 }));
+      }
+      if (String(_url).includes('/api/live')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ tracker: { state: 'idle' } }), { status: 200 }),
+        );
       }
       callCount += 1;
       if (callCount === 1) {

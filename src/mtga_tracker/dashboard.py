@@ -5295,7 +5295,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if request_path == "/api/settings":
             from . import settings_api
 
-            handled = settings_api.handle_get(request_path)
+            handled = settings_api.handle_get(request_path, self.db_path)
             if handled is not None:
                 status, body = handled
                 _send_bytes(

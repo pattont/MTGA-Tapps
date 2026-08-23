@@ -5,9 +5,10 @@ export interface AppNavItem {
   route?: string;
 }
 
+// Live Log is not in this list: it renders as its own highlighted entry
+// above the nav in AppShell, colored by tracker state.
 export const dashboardNavItems: AppNavItem[] = [
   { id: 'overview', label: 'Overview' },
-  { id: 'live-log', label: 'Live Log', route: '#/live' },
   { id: 'trend', label: 'Win Rate Trend' },
   { id: 'rank-progress', label: 'Ranked Progress' },
   { id: 'recent-games', label: 'Recent Games' },
@@ -93,6 +94,7 @@ export const liveNavItems: AppNavItem[] = [
 
 export const settingsNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '\u2190 Back to dashboard', route: '#overview' },
+  { id: 'settings-tracker', label: 'Tracker' },
   { id: 'settings-deck-ai', label: 'Deck AI' },
   { id: 'settings-creators', label: 'Deck Finder Creators' },
   { id: 'settings-db-health', label: 'Database Health' },

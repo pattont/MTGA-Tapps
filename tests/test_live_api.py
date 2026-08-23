@@ -115,6 +115,35 @@ def test_handle_get_routes_and_parses_since(tmp_path):
     assert [event["text"] for event in body["events"]] == ["hello"]
 
 
+def test_settings_tracker_info_reads_live_status_paths(tmp_path):
+    from pathlib import Path
+
+    from mtga_tracker import settings_api
+
+    store = _store(tmp_path)
+    home = str(Path.home())
+    _log_line(
+        store,
+        "startup",
+        live=_live(
+            in_game=0,
+            log_path=f"{home}/Library/Logs/Wizards Of The Coast/MTGA/Player.log",
+            card_db_path=f"{home}/MTGA/Raw_CardDatabase_abc.mtga",
+            db_path=str(tmp_path / "tracker.sqlite3"),
+            tracker_version="9.9.9",
+        ),
+    )
+    store.close()
+
+    status, body = settings_api.handle_get("/api/settings", tmp_path / "tracker.sqlite3")
+    assert status == 200
+    info = body["tracker"]
+    assert info["monitoring"] == "~/Library/Logs/Wizards Of The Coast/MTGA/Player.log"
+    assert info["card_db"] == "~/MTGA/Raw_CardDatabase_abc.mtga"
+    assert info["version"] == "9.9.9"
+    assert isinstance(info["deck_ai"], str) and info["deck_ai"]
+
+
 def test_missing_live_status_table_is_offline(tmp_path):
     # A database that never saw the new tracker: build one and drop the table.
     store = _store(tmp_path)

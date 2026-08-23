@@ -1549,7 +1549,16 @@ export interface DeckFinderCreatorSettings {
   tcgplayer: DeckFinderCreator[];
 }
 
+export interface TrackerInfoSettings {
+  monitoring: string | null;
+  card_db: string | null;
+  log_db: string | null;
+  deck_ai: string;
+  version: string;
+}
+
 export interface TrackerSettings {
+  tracker: TrackerInfoSettings;
   deck_ai: DeckAiSettings;
   deck_finder: DeckFinderCreatorSettings;
 }

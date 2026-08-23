@@ -75,14 +75,10 @@ class TrackerRuntimeMixin:
             "🟡 🔵 ⚫ 🔴 🟢 MTGA Card Tracker - Real-time Match Analyzer 🟡 🔵 ⚫ 🔴 🟢"
         )
         self._print_line("=" * 75)
-        self._print_line(
-            f" Monitoring: {self._display_path_without_username(self.parser.log_path)}"
-        )
-        card_db_path = None
-        resolve_db_path = getattr(self.card_db, "_resolve_mtga_db_path", None)
-        if callable(resolve_db_path):
-            card_db_path = resolve_db_path()
-        self._print_line(f" Local Card DB: {self._display_path_without_username(card_db_path)}")
+        # Paths / Deck AI / version live on the dashboard's Settings page now
+        # (fed through live_status), and the color legend is rendered under
+        # the Live Log feed — neither clutters the log itself anymore.
+        card_db_path = self._live_card_db_path()
         if card_db_path is None:
             self._print_line(
                 " ⚠️  Without Arena's card database, cards appear as 'Card #NNNN'. If Arena is"
@@ -93,15 +89,6 @@ class TrackerRuntimeMixin:
             self._print_line(
                 "    its card-data folder: <Arena install>\\MTGA_Data\\Downloads\\Raw"
             )
-        self._print_line(f" Log DB: {self._display_path_without_username(self._console_db_path)}")
-        self._print_deck_ai_status()
-        from . import __version__ as tracker_version
-
-        self._print_line(f" Tracker Version: {tracker_version}")
-        self._print_line("\n")
-
-        self._print_startup_legend()
-        # self._print_event(f"Session: {self._session_stats_line()}", "turn")
 
         # Remember the state so the live loop only announces CHANGES —
         # Arena restamps it on relaunch and repeats cluttered the startup.

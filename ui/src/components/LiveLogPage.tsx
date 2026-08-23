@@ -7,6 +7,24 @@ import { gameRouteHash } from '../routes';
 const POLL_MS = 1000;
 const MAX_FEED_ROWS = 300;
 
+/** Color key rendered under the feed — same tints the rows use. */
+const FEED_LEGEND: Array<[string, string]> = [
+  ['turn', 'Turn / Session Header'],
+  ['cast', 'Cast / Spell Played'],
+  ['land', 'Land Played'],
+  ['ability', 'Ability / Trigger'],
+  ['stack_resolve', 'Stack Resolved'],
+  ['stack_fail', 'Stack Countered / Unresolved'],
+  ['attack', 'Attack'],
+  ['block', 'Block'],
+  ['combat_damage', 'Combat Damage'],
+  ['damage', 'Damage'],
+  ['life_gain', 'Life Gained'],
+  ['life_loss', 'Life Lost'],
+  ['draw', 'Draw'],
+  ['zone', 'Card Movement'],
+];
+
 /** Decorative terminal lines (separators, blank padding) that would be
     noise in the web feed. */
 function isDecorative(text: string): boolean {
@@ -368,6 +386,14 @@ export function LiveLogPage() {
               ) : null}
             </div>
           )}
+          <ul aria-label="Card event colors" className="live-legend">
+            {FEED_LEGEND.map(([style, label]) => (
+              <li key={style}>
+                <span aria-hidden="true" className={`live-legend-swatch live-style-${style}`} />
+                {label}
+              </li>
+            ))}
+          </ul>
         </section>
       </div>
 
@@ -397,7 +423,15 @@ export function LiveLogPage() {
                 <span className="live-stat-label">Runtime</span>
               </div>
               <div className="live-stat">
-                <span className="live-stat-value">{state === 'live' ? 'Live' : state === 'idle' ? 'Ready' : 'Off'}</span>
+                <span
+                  className={
+                    state === 'offline'
+                      ? 'live-stat-value live-stat-bad'
+                      : 'live-stat-value live-stat-good'
+                  }
+                >
+                  {state === 'live' ? 'Live' : state === 'idle' ? 'Ready' : 'Off'}
+                </span>
                 <span className="live-stat-label">Tracker</span>
               </div>
             </div>

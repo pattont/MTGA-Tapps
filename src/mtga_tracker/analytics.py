@@ -401,7 +401,11 @@ class AnalyticsStore:
                 mulligans INTEGER,
                 game_started_at TEXT,
                 player_commanders TEXT,
-                opponent_commanders TEXT
+                opponent_commanders TEXT,
+                log_path TEXT,
+                card_db_path TEXT,
+                db_path TEXT,
+                tracker_version TEXT
             );
 
             CREATE TABLE IF NOT EXISTS rank_snapshots (
@@ -500,6 +504,10 @@ class AnalyticsStore:
         AnalyticsStore.ensure_table_column(conn, "cards", "color_identity", "TEXT")
         AnalyticsStore.ensure_table_column(conn, "cards", "mana_cost", "TEXT")
         AnalyticsStore.ensure_table_column(conn, "cards", "mana_value", "REAL")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "log_path", "TEXT")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "card_db_path", "TEXT")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "db_path", "TEXT")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "tracker_version", "TEXT")
         AnalyticsStore.backfill_game_turn_counts(conn)
         AnalyticsStore.apply_pending_migrations(conn)
         AnalyticsStore.canonicalize_imported_deck_names(conn)
@@ -2338,6 +2346,10 @@ class AnalyticsStore:
         "game_started_at",
         "player_commanders",
         "opponent_commanders",
+        "log_path",
+        "card_db_path",
+        "db_path",
+        "tracker_version",
     )
 
     def _upsert_live_status(self, conn: sqlite3.Connection, live: Dict[str, Any]) -> None:

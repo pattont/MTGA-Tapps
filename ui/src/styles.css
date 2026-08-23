@@ -1508,6 +1508,34 @@ tbody tr:hover {
   cursor: default;
 }
 
+/* Neutral sibling of .deck-export-button — same size and shape, no gold
+   (the Deck Finder drawer's Source link). */
+.deck-neutral-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-height: 36px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 750;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.deck-neutral-button:hover {
+  border-color: color-mix(in srgb, var(--text) 30%, var(--border));
+}
+
+.deck-neutral-button svg {
+  width: 16px;
+  height: 16px;
+}
+
 .deck-export-button svg {
   width: 16px;
   height: 16px;
@@ -3811,6 +3839,33 @@ tr.deck-change-row-out .card-link {
   gap: 8px;
 }
 
+/* Tracker info block on the Settings page. */
+.settings-info {
+  display: grid;
+  gap: 8px;
+  margin: 12px 16px 16px;
+}
+
+.settings-info-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+}
+
+.settings-info-row dt {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.settings-info-row dd {
+  overflow-wrap: anywhere;
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+}
+
 /* Buttons that are really links (e.g. "Open Database Health"). */
 a.settings-link-button {
   display: inline-flex;
@@ -4185,6 +4240,36 @@ a.settings-link-button {
 .live-style-stack_fail { border-left-color: color-mix(in srgb, var(--danger) 55%, var(--muted)); color: var(--muted); }
 .live-style-plain { color: var(--muted); }
 
+/* Compact color key under the feed. */
+.live-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--border);
+  list-style: none;
+}
+
+.live-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.live-legend-swatch {
+  display: inline-block;
+  width: 0;
+  height: 11px;
+  padding: 0;
+  border-left-width: 4px;
+  border-left-style: solid;
+  border-radius: 2px;
+  background: none !important;
+}
+
 .live-jump {
   position: absolute;
   right: 20px;
@@ -4233,7 +4318,17 @@ a.settings-link-button {
   font-size: 0.75rem;
 }
 
+.live-stat-good {
+  color: var(--success);
+}
+
+.live-stat-bad {
+  color: var(--danger);
+}
+
 .live-games {
+  overflow-y: auto;
+  max-height: 470px; /* ~10 rows, then scroll */
   margin: 6px 0 0;
   padding: 0 8px 12px;
   list-style: none;
@@ -4284,6 +4379,58 @@ a.settings-link-button {
 
 .live-rail .empty-state {
   margin: 8px 16px 16px;
+}
+
+/* Sidebar Live Log entry: its own section above the nav, colored by
+   tracker state (green running / red stopped). */
+.sidebar-live-block {
+  margin: 4px 0 2px;
+}
+
+.sidebar-live-link {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.sidebar-live-link:hover {
+  background: var(--hover-tint);
+}
+
+.sidebar-live-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--subtle);
+}
+
+.sidebar-live-running {
+  color: var(--success);
+}
+
+.sidebar-live-running .sidebar-live-dot {
+  background: var(--success);
+  animation: live-dot 2s ease-in-out infinite;
+}
+
+.sidebar-live-offline {
+  color: var(--danger);
+}
+
+.sidebar-live-offline .sidebar-live-dot {
+  background: var(--danger);
+}
+
+.sidebar-live-rule {
+  margin: 10px 0 6px;
+  border: 0;
+  border-top: 1px solid var(--border);
 }
 
 /* The sidebar Deck Finder entry is a route link now, not a button. */
