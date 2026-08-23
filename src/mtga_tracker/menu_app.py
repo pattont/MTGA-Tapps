@@ -231,7 +231,13 @@ class MenuBarController(QObject):
         self.menu.addAction(self.status_action)
         self.menu.addSeparator()
 
-        self.open_dashboard_action = QAction("Open Dashboard", self)
+        # Order matters (same on macOS and Windows): Live Log, Dashboard,
+        # Deck Finder, Settings — then the utility items.
+        self.show_log_action = QAction("Live Log", self)
+        self.show_log_action.triggered.connect(self.open_live_log)
+        self.menu.addAction(self.show_log_action)
+
+        self.open_dashboard_action = QAction("Dashboard", self)
         self.open_dashboard_action.triggered.connect(lambda: self.open_dashboard())
         self.menu.addAction(self.open_dashboard_action)
 
@@ -239,17 +245,13 @@ class MenuBarController(QObject):
         self.deck_downloader_action.triggered.connect(self.open_deck_downloader)
         self.menu.addAction(self.deck_downloader_action)
 
-        self.show_log_action = QAction("Live Log", self)
-        self.show_log_action.triggered.connect(self.open_live_log)
-        self.menu.addAction(self.show_log_action)
+        self.settings_action = QAction("Settings…", self)
+        self.settings_action.triggered.connect(self.open_settings)
+        self.menu.addAction(self.settings_action)
 
         self.open_data_action = QAction("Open Data Folder", self)
         self.open_data_action.triggered.connect(self.open_data_folder)
         self.menu.addAction(self.open_data_action)
-
-        self.settings_action = QAction("Settings…", self)
-        self.settings_action.triggered.connect(self.open_settings)
-        self.menu.addAction(self.settings_action)
 
         self.menu.addSeparator()
         self.toggle_tracker_action = QAction("Stop Tracking", self)
