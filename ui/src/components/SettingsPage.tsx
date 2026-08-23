@@ -103,6 +103,20 @@ export function SettingsPage() {
           <CreatorsForm initial={creators} />
         )}
       </Section>
+
+      <Section
+        id="settings-db-health"
+        title="Database Health"
+        description="Audit the tracker database for incomplete or suspicious games, review findings, and reset data if something went wrong."
+      >
+        <div className="settings-form">
+          <div>
+            <a className="deck-export-button settings-link-button" href="#/audit">
+              Open Database Health
+            </a>
+          </div>
+        </div>
+      </Section>
     </>
   );
 }

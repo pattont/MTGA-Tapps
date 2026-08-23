@@ -117,9 +117,11 @@ class UnifiedLauncher:
         self._set_status("dashboard-running")
         return self.dashboard_url or ""
 
-    def open_dashboard(self) -> bool:
+    def open_dashboard(self, fragment: str = "") -> bool:
+        """Open the dashboard in the browser, optionally at a hash route
+        (e.g. "/#/settings" for the Settings page)."""
         url = self.dashboard_url or self.start_dashboard()
-        return webbrowser.open(url)
+        return webbrowser.open(f"{url}{fragment}" if fragment else url)
 
     def _build_tracker(self) -> CardTracker:
         if self.log_path is not None:

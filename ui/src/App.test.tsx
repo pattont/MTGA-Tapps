@@ -708,14 +708,13 @@ describe('App', () => {
     );
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0 });
 
-    // The topbar theme switch is a sun/moon pair; the gear links to Settings.
-    await user.click(screen.getByRole('button', { name: 'Light mode' }));
+    // The topbar has a single sun/moon toggle; the gear links to Settings.
+    await user.click(screen.getByRole('button', { name: 'Switch to light mode' }));
     await waitFor(() => expect(document.documentElement.dataset.theme).toBe('light'));
-    expect(screen.getByRole('button', { name: 'Light mode' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+    expect(screen.getByRole('button', { name: 'Switch to dark mode' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '#/settings');
+    // DB Health moved into Settings — it is no longer a sidebar entry.
+    expect(screen.queryByRole('link', { name: 'DB Health' })).not.toBeInTheDocument();
   });
 
   it('links every deck mention to the deck detail page', async () => {
@@ -809,6 +808,11 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Deck Finder Creators' })).toBeInTheDocument();
     expect(await screen.findByLabelText(/Enable AI deck identification/)).toBeChecked();
     expect(screen.getByDisplayValue('Ashlizzlle | Ash')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Database Health' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open Database Health' })).toHaveAttribute(
+      'href',
+      '#/audit',
+    );
   });
 
   it('routes to the deck detail page and back to the dashboard', async () => {

@@ -268,36 +268,15 @@ export function AppShell({
           <h2>{heading}</h2>
           <div className="topbar-actions">
             <CardSearch />
-            <div aria-label="Color theme" className="theme-switch" role="group">
-              <button
-                aria-label="Light mode"
-                aria-pressed={theme === 'light'}
-                className={theme === 'light' ? 'theme-switch-option theme-switch-active' : 'theme-switch-option'}
-                title={`Light mode${theme === 'light' ? ' (current)' : ''}`}
-                type="button"
-                onClick={() => {
-                  if (theme !== 'light') {
-                    onToggleTheme();
-                  }
-                }}
-              >
-                <Sun aria-hidden="true" />
-              </button>
-              <button
-                aria-label="Dark mode"
-                aria-pressed={theme === 'dark'}
-                className={theme === 'dark' ? 'theme-switch-option theme-switch-active' : 'theme-switch-option'}
-                title={`Dark mode${theme === 'dark' ? ' (current)' : ''}`}
-                type="button"
-                onClick={() => {
-                  if (theme !== 'dark') {
-                    onToggleTheme();
-                  }
-                }}
-              >
-                <Moon aria-hidden="true" />
-              </button>
-            </div>
+            <button
+              aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+              className="topbar-icon-link"
+              title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+              type="button"
+              onClick={onToggleTheme}
+            >
+              {theme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+            </button>
             <a aria-label="Settings" className="topbar-icon-link" href="#/settings" title="Settings">
               <Settings aria-hidden="true" />
             </a>

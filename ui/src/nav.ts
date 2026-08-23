@@ -17,7 +17,6 @@ export const dashboardNavItems: AppNavItem[] = [
   { id: 'formats', label: 'Formats' },
   { id: 'sessions', label: 'Sessions' },
   { id: 'all-games', label: 'All Games', route: '#/games' },
-  { id: 'db-health', label: 'DB Health', route: '#/audit' },
 ];
 
 export const gamesNavItems: AppNavItem[] = [
@@ -88,4 +87,5 @@ export const settingsNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '\u2190 Back to dashboard', route: '#overview' },
   { id: 'settings-deck-ai', label: 'Deck AI' },
   { id: 'settings-creators', label: 'Deck Finder Creators' },
+  { id: 'settings-db-health', label: 'Database Health' },
 ];

@@ -232,7 +232,7 @@ class MenuBarController(QObject):
         self.menu.addSeparator()
 
         self.open_dashboard_action = QAction("Open Dashboard", self)
-        self.open_dashboard_action.triggered.connect(self.open_dashboard)
+        self.open_dashboard_action.triggered.connect(lambda: self.open_dashboard())
         self.menu.addAction(self.open_dashboard_action)
 
         self.deck_downloader_action = QAction("Deck Finder", self)
@@ -295,20 +295,16 @@ class MenuBarController(QObject):
             self.log_window.show()
             QMessageBox.critical(self.log_window, "MTGA Tracker", str(exc))
 
-    def open_dashboard(self) -> None:
+    def open_dashboard(self, fragment: str = "") -> None:
         try:
-            self.launcher.open_dashboard()
+            self.launcher.open_dashboard(fragment)
         except Exception as exc:
             self.log_window.append_text(f"Could not open dashboard: {exc}\n")
             self.show_live_log()
 
     def open_deck_downloader(self) -> None:
-        from .deck_downloader_launcher import launch_deck_downloader
-
-        ok, message = launch_deck_downloader()
-        self.log_window.append_text(f"{'🃏' if ok else '⚠️'} {message}\n")
-        if not ok:
-            self.show_live_log()
+        """Deck Finder lives inside the dashboard now (#/deck-finder)."""
+        self.open_dashboard("/#/deck-finder")
 
     def show_live_log(self) -> None:
         self.log_window.show()
@@ -319,6 +315,14 @@ class MenuBarController(QObject):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(DATA_DIR)))
 
     def open_settings(self) -> None:
+        """Settings live in the dashboard now (#/settings); the old Qt
+        dialog stays as a fallback if the browser can't be opened."""
+        try:
+            self.launcher.open_dashboard("/#/settings")
+            return
+        except Exception as exc:
+            self.log_window.append_text(f"⚠️ Could not open Settings page: {exc}\n")
+
         from .settings_dialog import open_settings_dialog
 
         try:
