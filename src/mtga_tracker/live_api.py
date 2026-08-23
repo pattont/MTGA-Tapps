@@ -140,13 +140,20 @@ def _seat_colors(conn: sqlite3.Connection, game_id: Optional[str]) -> Dict[str, 
     except sqlite3.OperationalError:
         return out
     seen: Dict[str, set] = {"player": set(), "opponent": set()}
+    known: Dict[str, bool] = {"player": False, "opponent": False}
     for role, identity in rows:
-        if role in seen and identity:
-            for letter in str(identity):
-                if letter in "WUBRG":
-                    seen[role].add(letter)
+        if role not in seen:
+            continue
+        if identity is not None:
+            # '' is a KNOWN colorless card (Eldrazi, artifacts) — only NULL
+            # means the card's identity is unknown.
+            known[role] = True
+        for letter in str(identity or ""):
+            if letter in "WUBRG":
+                seen[role].add(letter)
     for role, letters in seen.items():
-        out[role] = "".join(letter for letter in "WUBRG" if letter in letters)
+        colored = "".join(letter for letter in "WUBRG" if letter in letters)
+        out[role] = colored or ("C" if known[role] else "")
     return out
 
 

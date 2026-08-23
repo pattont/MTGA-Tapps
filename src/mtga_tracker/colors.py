@@ -6,6 +6,11 @@ from typing import Iterable, Optional
 
 WUBRG_ORDER = "WUBRG"
 
+#: "C" is real color identity in MTG: a deck of Eldrazi and artifacts is
+#: colorless, not "no data". Producers append a C per known-colorless card;
+#: normalize_colors keeps it only when no actual color is present.
+COLORLESS = "C"
+
 COLOR_NAMES = {"W": "White", "U": "Blue", "B": "Black", "R": "Red", "G": "Green"}
 
 # Canonical keys are WUBRG-ordered strings.
@@ -42,11 +47,18 @@ ARENA_COLOR_CODES = {1: "W", 2: "U", 3: "B", 4: "R", 5: "G"}
 
 
 def normalize_colors(value: Optional[Iterable[str]]) -> str:
-    """Return the WUBRG-ordered unique color letters found in value."""
+    """Return the WUBRG-ordered unique color letters found in value.
+
+    "C" survives only on its own: a colorless marker next to real colors is
+    just noise (a Sol Ring in a Gruul deck), but with no colors at all it
+    means the thing is genuinely colorless — and that shows as "C"."""
     if not value:
         return ""
     seen = {str(ch).upper() for ch in value}
-    return "".join(letter for letter in WUBRG_ORDER if letter in seen)
+    letters = "".join(letter for letter in WUBRG_ORDER if letter in seen)
+    if letters:
+        return letters
+    return COLORLESS if COLORLESS in seen else ""
 
 
 def color_combo_label(value: Optional[Iterable[str]]) -> Optional[str]:
@@ -54,6 +66,8 @@ def color_combo_label(value: Optional[Iterable[str]]) -> Optional[str]:
     colors = normalize_colors(value)
     if not colors:
         return None
+    if colors == COLORLESS:
+        return "Colorless"
     if len(colors) == 1:
         return f"Mono-{COLOR_NAMES[colors]}"
     if len(colors) == 5:

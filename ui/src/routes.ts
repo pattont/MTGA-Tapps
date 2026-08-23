@@ -126,7 +126,8 @@ function parseFilters(query: string, includeDeck = false): SnapshotFilters {
     filters.until = until;
   }
   const colors = params.get('colors');
-  if (colors && /^[WUBRG]{1,5}$/.test(colors)) {
+  // "C" alone is the colorless filter; it never mixes with real colors.
+  if (colors && /^([WUBRG]{1,5}|C)$/.test(colors)) {
     filters.colors = colors;
   }
   const quick = params.get('q');

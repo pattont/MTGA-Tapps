@@ -1,6 +1,7 @@
-const WUBRG = 'WUBRG';
+// "C" is the colorless diamond — a real color identity (Eldrazi, artifacts).
+const WUBRG = 'WUBRGC';
 
-/** Small mana-color pips for a WUBRG letter string (e.g. "UR"). */
+/** Small mana-color pips for a WUBRG(C) letter string (e.g. "UR", "C"). */
 export function ColorPips({
   colors,
   size = 15,

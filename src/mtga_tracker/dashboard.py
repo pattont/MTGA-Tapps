@@ -242,7 +242,9 @@ def _game_draw_quality(
 
 
 def _opponent_color_letters(conn: sqlite3.Connection, game_id: str, participant_id: str) -> str:
-    """WUBRG letters seen across the opponent's revealed cards in one game."""
+    """Color letters seen across the opponent's revealed cards in one game —
+    "C" when every known card was colorless (an Eldrazi deck is colorless,
+    not colors-unknown)."""
     try:
         rows = conn.execute(
             """
@@ -250,13 +252,13 @@ def _opponent_color_letters(conn: sqlite3.Connection, game_id: str, participant_
             FROM game_card_summary s
             JOIN cards c ON c.id = s.card_id
             WHERE s.game_id = ? AND s.participant_id = ?
-              AND COALESCE(c.color_identity, '') != ''
+              AND c.color_identity IS NOT NULL
             """,
             (game_id, participant_id),
         ).fetchall()
     except sqlite3.OperationalError:
         return ""
-    return normalize_colors("".join(str(row[0] or "") for row in rows))
+    return normalize_colors("".join(str(row[0]) + "C" for row in rows))
 
 
 def _dominant_player_name(conn: sqlite3.Connection) -> Optional[str]:
@@ -788,7 +790,7 @@ def _opponent_color_rows(
               g.id,
               g.outcome,
               (
-                SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                SELECT GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
                 FROM game_card_summary s
                 JOIN cards c ON c.id = s.card_id
                 WHERE s.game_id = g.id AND s.participant_id = po.id
@@ -1862,8 +1864,11 @@ def _score_deck_colors(card_rows) -> str:
     off-color card (or a single stray dual land) never repaints the deck.
     """
     scores: Dict[str, float] = {}
+    known_cards = 0
     for type_category, mana_cost, identity, copies in card_rows:
         quantity = max(1, int(copies or 1))
+        if identity is not None or str(mana_cost or "").strip():
+            known_cards += 1
         if str(type_category or "").lower() == "land":
             for ch in str(identity or ""):
                 if ch in "WUBRG":
@@ -1871,7 +1876,12 @@ def _score_deck_colors(card_rows) -> str:
         else:
             for ch in set(_strict_pip_letters(mana_cost or "")):
                 scores[ch] = scores.get(ch, 0) + quantity
-    return normalize_colors("".join(ch for ch, score in scores.items() if score >= 3))
+    letters = normalize_colors("".join(ch for ch, score in scores.items() if score >= 3))
+    if letters:
+        return letters
+    # No color cleared the bar. If the deck's cards are actually known, it's
+    # a genuinely colorless deck (Eldrazi/artifacts) — not colors-unknown.
+    return "C" if known_cards >= 3 else ""
 
 
 def _deck_color_map(conn: sqlite3.Connection) -> Dict[str, str]:
@@ -2292,7 +2302,7 @@ def dashboard_snapshot(
                     WHERE g2.match_id = g.match_id
                   ) AS match_losses,
                   (
-                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    SELECT GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
                     FROM game_card_summary s
                     JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
                     JOIN cards c ON c.id = s.card_id
@@ -2310,13 +2320,13 @@ def dashboard_snapshot(
                     WHERE po.game_id = g.id AND po.role = 'opponent'
                   ) AS opponent_commander,
                   (
-                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    SELECT GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
                     FROM participant_commanders pc
                     JOIN cards c ON c.name = pc.card_name
                     WHERE pc.participant_id = p.id
                   ) AS player_commander_colors,
                   (
-                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    SELECT GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
                     FROM participant_commanders pc
                     JOIN participants po ON po.id = pc.participant_id
                     JOIN cards c ON c.name = pc.card_name
@@ -2904,7 +2914,7 @@ def deck_detail(
                   p.deck_size,
                   CASE p.went_first WHEN 1 THEN 'On the play' WHEN 0 THEN 'On the draw' ELSE NULL END AS play_draw,
                   (
-                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    SELECT GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
                     FROM game_card_summary s
                     JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
                     JOIN cards c ON c.id = s.card_id
@@ -2922,13 +2932,13 @@ def deck_detail(
                     WHERE po.game_id = g.id AND po.role = 'opponent'
                   ) AS opponent_commander,
                   (
-                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    SELECT GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
                     FROM participant_commanders pc
                     JOIN cards c ON c.name = pc.card_name
                     WHERE pc.participant_id = p.id
                   ) AS player_commander_colors,
                   (
-                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    SELECT GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
                     FROM participant_commanders pc
                     JOIN participants po ON po.id = pc.participant_id
                     JOIN cards c ON c.name = pc.card_name
@@ -4178,7 +4188,7 @@ def _card_opponent_playable(
         SELECT
           g.id,
           (
-            SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+            SELECT GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
             FROM game_card_summary s
             JOIN cards c ON c.id = s.card_id
             WHERE s.game_id = g.id AND s.participant_id = po.id
@@ -4458,7 +4468,7 @@ def all_games(
                     WHERE g2.match_id = g.match_id
                   ) AS match_losses,
                   (
-                    SELECT GROUP_CONCAT(COALESCE(c.color_identity, ''), '')
+                    SELECT GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
                     FROM game_card_summary s
                     JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
                     JOIN cards c ON c.id = s.card_id

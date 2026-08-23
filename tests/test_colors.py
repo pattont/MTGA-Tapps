@@ -8,6 +8,16 @@ def test_normalize_colors_orders_and_dedupes():
     assert normalize_colors("RU") == "UR"
     assert normalize_colors("GWWG") == "WG"
     assert normalize_colors("") == ""
+
+
+def test_colorless_survives_only_alone():
+    # "C" is a real identity (Eldrazi/artifact decks) — but next to actual
+    # colors it's just a stray Sol Ring and drops out.
+    assert normalize_colors("C") == "C"
+    assert normalize_colors("CCC") == "C"
+    assert normalize_colors("RC") == "R"
+    assert color_combo_label("C") == "Colorless"
+    assert color_combo_label("CC") == "Colorless"
     assert normalize_colors(None) == ""
 
 

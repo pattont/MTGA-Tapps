@@ -182,6 +182,37 @@ def test_feed_tail_and_colors_survive_game_end(tmp_path):
     assert after["now"]["opponent_colors"] == "WR"
 
 
+def test_seat_colors_reports_colorless_deck(tmp_path):
+    """An opponent whose every known card is colorless shows "C" (the
+    colorless diamond), not blank — colorless is a real identity."""
+    store = _store(tmp_path)
+    _log_line(store, "any", live=_live())
+    conn = store.connect()
+    with conn:
+        conn.execute(
+            "INSERT INTO participants (id, game_id, role) VALUES ('P1', 'G1', 'player'), ('P2', 'G1', 'opponent')"
+        )
+        conn.execute(
+            "INSERT INTO cards (name, color_identity, first_seen_at) VALUES "
+            "('Mind Stone', '', '2026-01-01'), ('Forsaken Monument', '', '2026-01-01'), ('Llanowar Elves', 'G', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO game_card_summary (game_id, participant_id, card_id, display_name, played_count) "
+            "SELECT 'G1', 'P2', id, name, 1 FROM cards WHERE color_identity = ''"
+        )
+        conn.execute(
+            "INSERT INTO game_card_summary (game_id, participant_id, card_id, display_name, played_count) "
+            "SELECT 'G1', 'P1', id, name, 1 FROM cards WHERE name = 'Llanowar Elves'"
+        )
+        # Clear live colors so the payload uses the summary fallback.
+        conn.execute("UPDATE live_status SET player_colors = NULL, opponent_colors = NULL")
+    store.close()
+
+    payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+    assert payload["now"]["player_colors"] == "G"
+    assert payload["now"]["opponent_colors"] == "C"
+
+
 def test_patched_event_text_reaches_delta_polls(tmp_path):
     """A target printed as "[ID: N]" (hidden object) gets patched in place
     once the object reveals — and the correction must reach a live page
@@ -280,8 +311,12 @@ def test_live_color_index_survives_missing_arena_color_column():
         [CardEvent("Llanowar Elves", "you"), CardEvent("Lightning Helix", "you")]
     )
     assert colors == "WRG"
-    # Colorless stays colorless; unknown names contribute nothing.
-    assert stub._live_colors_for([CardEvent("Mind Stone", "you"), CardEvent("Mystery", "you")]) == ""
+    # All known cards colorless -> "C" (a real color identity in MTG);
+    # unknown names alone contribute nothing.
+    assert stub._live_colors_for([CardEvent("Mind Stone", "you"), CardEvent("Mystery", "you")]) == "C"
+    assert stub._live_colors_for([CardEvent("Mystery", "you")]) == ""
+    # A colorless card next to colored ones never repaints the side.
+    assert stub._live_colors_for([CardEvent("Mind Stone", "you"), CardEvent("Llanowar Elves", "you")]) == "G"
 
 
 def test_offline_and_idle_states(tmp_path):

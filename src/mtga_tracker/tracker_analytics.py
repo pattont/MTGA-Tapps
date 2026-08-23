@@ -206,24 +206,27 @@ class TrackerAnalyticsMixin:
                 letters = "".join(ch for ch in "WUBRG" if ch in cost)
                 if letters:
                     index[str(name)] = letters
+                elif cost.strip():
+                    # A real cost with no colored pips ({2}, {X}{C}{C}) is a
+                    # KNOWN colorless card, not colors-unknown.
+                    index[str(name)] = "C"
         except Exception:
             pass
         try:
             conn = self._analytics_connect()
             if conn is not None:
                 rows = conn.execute(
-                    "SELECT name, color_identity FROM cards "
-                    "WHERE color_identity IS NOT NULL AND color_identity != ''"
+                    "SELECT name, color_identity FROM cards WHERE color_identity IS NOT NULL"
                 ).fetchall()
                 for name, identity in rows:
-                    if name and identity:
-                        index[str(name)] = str(identity)
+                    if name:
+                        index[str(name)] = str(identity) or "C"
         except Exception:
             pass
         try:
             for name, identity in (self.card_db.color_identity_index_by_name() or {}).items():
-                if identity:
-                    index[str(name)] = str(identity)
+                if name:
+                    index[str(name)] = str(identity) or "C"
         except Exception:
             pass
         self._live_color_index_cache = index
@@ -241,8 +244,11 @@ class TrackerAnalyticsMixin:
             name = str(getattr(event, "card_name", "") or "")
             identity = index.get(name) or index.get(name.split(" // ")[0].strip())
             if identity:
-                letters.update(ch for ch in str(identity) if ch in "WUBRG")
-        return "".join(ch for ch in "WUBRG" if ch in letters)
+                letters.update(ch for ch in str(identity) if ch in "WUBRGC")
+        colored = "".join(ch for ch in "WUBRG" if ch in letters)
+        # All known cards colorless -> the side IS colorless ("C"), which the
+        # scoreboard shows with the diamond pip.
+        return colored or ("C" if "C" in letters else "")
 
     def _live_card_db_path(self) -> Optional[str]:
         cached = getattr(self, "_live_card_db_path_cache", "unset")

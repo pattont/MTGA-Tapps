@@ -39,15 +39,21 @@ const COMBO_NAMES: Record<string, string> = {
   WUBR: 'Yore',
 };
 
-/** WUBRG-ordered unique color letters found in value. */
+/** WUBRG-ordered unique color letters found in value. "C" (colorless — a
+    real identity in MTG) survives only on its own: next to actual colors
+    it's just noise, alone it means the thing is genuinely colorless. */
 export function normalizeColors(value: string | null | undefined): string {
   if (!value) {
     return '';
   }
   const seen = new Set(Array.from(String(value).toUpperCase()));
-  return Array.from(WUBRG_ORDER)
+  const letters = Array.from(WUBRG_ORDER)
     .filter((letter) => seen.has(letter))
     .join('');
+  if (letters) {
+    return letters;
+  }
+  return seen.has('C') ? 'C' : '';
 }
 
 /** Community name for a color combination ("Dimir", "Mono-Red", "5c"), or null. */
@@ -55,6 +61,9 @@ export function colorComboLabel(value: string | null | undefined): string | null
   const colors = normalizeColors(value);
   if (!colors) {
     return null;
+  }
+  if (colors === 'C') {
+    return 'Colorless';
   }
   if (colors.length === 1) {
     return `Mono-${COLOR_NAMES[colors]}`;

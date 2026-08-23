@@ -96,12 +96,17 @@ function formatTimeOnly(value: string): string {
   return stamp.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
-/** WUBRG-ordered union of opponent color strings. */
+/** WUBRG-ordered union of opponent color strings ("C" only when everything
+    seen was colorless — it's noise next to real colors). */
 function unionColors(values: Array<string | undefined>): string {
   const seen = new Set(values.flatMap((value) => (value ? value.split('') : [])));
-  return ['W', 'U', 'B', 'R', 'G']
+  const colored = ['W', 'U', 'B', 'R', 'G']
     .filter((color) => seen.has(color))
     .join('');
+  if (colored) {
+    return colored;
+  }
+  return seen.has('C') ? 'C' : '';
 }
 
 function sumOrNull(values: Array<number | null | undefined>): number | null {
