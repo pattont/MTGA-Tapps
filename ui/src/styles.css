@@ -3206,18 +3206,27 @@ tbody tr:hover {
 
 /* ---- Timeline end-of-game banner ---- */
 
+/* Same edge-to-edge, no-side-border treatment as the turn headers — a side
+   border against the card edge just reads as a thicker card border. */
 .timeline-end {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 6px 14px;
   margin-top: 12px;
-  padding: 10px 14px;
+  padding: 10px 16px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-right: 0;
+  border-left: 0;
   background: var(--panel);
   color: var(--muted);
   font-size: 0.88rem;
+}
+
+/* On /game the banner is the section's last row — its bottom border would
+   double up against the card's own border. */
+.section-content > .timeline-end:last-child {
+  border-bottom: 0;
 }
 
 .timeline-end strong {
