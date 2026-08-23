@@ -240,6 +240,7 @@ export function LiveLogPage() {
   const [clockMs, setClockMs] = useState(() => Date.now());
   const seqRef = useRef(0);
   const feedRef = useRef<HTMLOListElement | null>(null);
+  const gameKeyRef = useRef<string | null>(null);
 
   const poll = useCallback(async () => {
     try {
@@ -247,10 +248,21 @@ export function LiveLogPage() {
       seqRef.current = next.seq;
       setPayload(next);
       setError(null);
-      if (next.events.length > 0) {
+      // A new game clears the previous one — the finished game lives in the
+      // rail's game list; the feed is the current game only.
+      const gameKey = next.now?.game_started_at ?? null;
+      const isNewGame = gameKey !== null && gameKey !== gameKeyRef.current;
+      if (gameKey !== null) {
+        gameKeyRef.current = gameKey;
+      }
+      if (isNewGame || next.events.length > 0) {
         setEvents((current) => {
-          const merged = current.length === 0 ? next.events : [...current, ...next.events];
-          return merged.length > MAX_FEED_ROWS ? merged.slice(-MAX_FEED_ROWS) : merged;
+          const base = isNewGame
+            ? next.events.filter((event) => gameKey !== null && event.at >= gameKey)
+            : current.length === 0
+              ? next.events
+              : [...current, ...next.events];
+          return base.length > MAX_FEED_ROWS ? base.slice(-MAX_FEED_ROWS) : base;
         });
       }
     } catch (exc: unknown) {
@@ -348,7 +360,13 @@ export function LiveLogPage() {
           </div>
           {visibleEvents.length === 0 ? (
             <p className="empty-state live-feed-empty">
-              Game events will stream here as they happen.
+              {state === 'offline' ? (
+                'Start the tracker and game events stream here live.'
+              ) : (
+                <>
+                  <span aria-hidden="true" className="live-pulse-dot" /> Waiting for a match…
+                </>
+              )}
             </p>
           ) : (
             <div className="live-feed-wrap">

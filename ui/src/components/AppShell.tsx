@@ -1,6 +1,45 @@
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
-import { Moon, Settings, Sun } from 'lucide-react';
+import {
+  Activity,
+  AlertTriangle,
+  ArrowLeft,
+  ArrowLeftRight,
+  Bot,
+  CalendarClock,
+  Circle,
+  Clock,
+  Database,
+  FileText,
+  GitBranch,
+  Hand,
+  Heart,
+  History,
+  Info,
+  Layers,
+  LayoutDashboard,
+  List,
+  ListOrdered,
+  Moon,
+  Mountain,
+  Palette,
+  Play,
+  Repeat,
+  Repeat2,
+  Search,
+  Settings,
+  Shapes,
+  Shield,
+  ShieldAlert,
+  Sparkles,
+  Sun,
+  Swords,
+  Timer,
+  TrendingUp,
+  Trophy,
+  Users,
+  type LucideIcon,
+} from 'lucide-react';
 import { TRACKER_NAME } from '../branding';
 import { dashboardNavItems, type AppNavItem } from '../nav';
 import type { ThemeName } from '../theme';
@@ -13,6 +52,69 @@ interface AppShellProps {
   navItems?: AppNavItem[];
   heading: string;
   children: ReactNode;
+}
+
+/** One small icon per nav entry — shown left of the label, and standing in
+    for it entirely when the sidebar is collapsed. */
+const NAV_ICONS: Record<string, LucideIcon> = {
+  'back-to-dashboard': ArrowLeft,
+  overview: LayoutDashboard,
+  trend: TrendingUp,
+  'rank-progress': Trophy,
+  'recent-games': History,
+  decks: Layers,
+  'land-drops': Mountain,
+  habits: CalendarClock,
+  'opponent-meta': Swords,
+  formats: Shapes,
+  sessions: Clock,
+  'all-games': List,
+  'all-games-list': List,
+  'audit-summary': FileText,
+  'audit-findings': AlertTriangle,
+  'audit-danger': ShieldAlert,
+  'deck-combat': Swords,
+  'deck-turn-timing': Timer,
+  'deck-draw-quality': Sparkles,
+  'deck-interaction': Shield,
+  'deck-formats': Shapes,
+  'deck-trend': TrendingUp,
+  'deck-cards': Layers,
+  'deck-mulligans': Repeat,
+  'deck-lands': Mountain,
+  'deck-opponent-colors': Palette,
+  'deck-versions': GitBranch,
+  'deck-games': History,
+  'game-summary': FileText,
+  'game-turn-timing': Timer,
+  'game-draw-quality': Sparkles,
+  'game-combat': Swords,
+  'game-life': Heart,
+  'game-opening-hand': Hand,
+  'game-draws': Repeat,
+  'game-played': Play,
+  'game-opponent-cards': Users,
+  'game-timeline': ListOrdered,
+  'card-summary': FileText,
+  'card-opener-impact': Hand,
+  'card-usage-by-side': Users,
+  'card-usage-comparison': ArrowLeftRight,
+  'card-multiplicity': Repeat,
+  'card-opponent-multiplicity': Repeat2,
+  'card-decks': Layers,
+  'opponent-summary': FileText,
+  'opponent-games': History,
+  'deck-finder-browse': Search,
+  'live-scoreboard': Activity,
+  'settings-tracker': Info,
+  'settings-deck-ai': Bot,
+  'settings-creators': Users,
+  'settings-db-health': Database,
+};
+
+function NavIcon({ id }: { id: string }) {
+  const Icon = NAV_ICONS[id] ?? Circle;
+  return <Icon aria-hidden="true" className="sidebar-nav-icon" />;
 }
 
 function scrollToSection(id: string) {
@@ -242,37 +344,37 @@ export function AppShell({
           </a>
         </div>
         )}
-        {collapsed ? null : (
-          <div className="sidebar-live-block">
-            <a
-              className={
-                trackerState === null
-                  ? 'sidebar-live-link'
-                  : trackerState === 'offline'
-                    ? 'sidebar-live-link sidebar-live-offline'
-                    : 'sidebar-live-link sidebar-live-running'
-              }
-              href="#/live"
-              title={
-                trackerState === 'offline'
-                  ? 'Tracker is not running'
-                  : trackerState
-                    ? 'Tracker is running'
-                    : 'Live Log'
-              }
-            >
-              <span aria-hidden="true" className="sidebar-live-dot" />
-              Live Log
-            </a>
-            <hr className="sidebar-live-rule" />
-          </div>
-        )}
-        {collapsed ? null : (
+        <div className="sidebar-live-block">
+          <a
+            className={
+              trackerState === null
+                ? 'sidebar-live-link'
+                : trackerState === 'offline'
+                  ? 'sidebar-live-link sidebar-live-offline'
+                  : 'sidebar-live-link sidebar-live-running'
+            }
+            href="#/live"
+            title={
+              trackerState === 'offline'
+                ? 'Live Log — tracker is not running'
+                : trackerState
+                  ? 'Live Log — tracker is running'
+                  : 'Live Log'
+            }
+          >
+            <span aria-hidden="true" className="sidebar-live-dot" />
+            <span className="sidebar-nav-label">Live Log</span>
+          </a>
+          <hr className="sidebar-live-rule" />
+        </div>
         <nav aria-label="Dashboard sections">
-          {navItems.map((item) =>
-            item.route ? (
-              <a key={item.id} className="nav-route" href={item.route}>
-                {item.label}
+          {navItems.map((item) => {
+            // Icons carry the arrow for back links; drop the text version.
+            const label = item.label.replace(/^←\s*/u, '');
+            return item.route ? (
+              <a key={item.id} className="nav-route" href={item.route} title={label}>
+                <NavIcon id={item.id} />
+                <span className="sidebar-nav-label">{label}</span>
               </a>
             ) : (
               <a
@@ -280,6 +382,7 @@ export function AppShell({
                 aria-current={activeSection === item.id ? 'true' : undefined}
                 className={activeSection === item.id ? 'active' : undefined}
                 href={`#${item.id}`}
+                title={label}
                 onClick={(event) => {
                   event.preventDefault();
                   navigateToSection(item.id);
@@ -292,12 +395,12 @@ export function AppShell({
                   }
                 }}
               >
-                {item.label}
+                <NavIcon id={item.id} />
+                <span className="sidebar-nav-label">{label}</span>
               </a>
-            ),
-          )}
+            );
+          })}
         </nav>
-        )}
         {collapsed ? null : (
           <div className="sidebar-bottom">
             {update ? (

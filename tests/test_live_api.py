@@ -67,8 +67,18 @@ def _live(now=None, **overrides):
 
 def test_live_payload_snapshot_session_and_events(tmp_path):
     store = _store(tmp_path)
-    _log_line(store, "Turn 7 - Opponent", style="turn", turn=7, live=_live())
-    _log_line(store, "Opponent: Casts Atraxa", style="cast", turn=7, lives=(18, 11), live=_live())
+    # One stable game start shared by both lines — the feed only serves the
+    # current game's lines (created_at >= game_started_at).
+    game_started = (datetime.now() - timedelta(minutes=3)).isoformat()
+    _log_line(store, "Turn 7 - Opponent", style="turn", turn=7, live=_live(game_started_at=game_started))
+    _log_line(
+        store,
+        "Opponent: Casts Atraxa",
+        style="cast",
+        turn=7,
+        lives=(18, 11),
+        live=_live(game_started_at=game_started),
+    )
     store.close()
 
     payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")

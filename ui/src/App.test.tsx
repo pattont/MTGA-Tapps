@@ -961,7 +961,7 @@ describe('App', () => {
     expect(within(sideboardTotalCells as HTMLElement).getAllByRole('cell')[0]).toHaveTextContent('1');
 
     const nav = screen.getByRole('navigation', { name: 'Dashboard sections' });
-    expect(within(nav).getByRole('link', { name: '← Back to dashboard' })).toHaveAttribute('href', '#overview');
+    expect(within(nav).getByRole('link', { name: 'Back to dashboard' })).toHaveAttribute('href', '#overview');
     ['Win Rate Trend', 'Deck List & Card Performance', 'Mulligans', 'Decklist Changes', 'Formats', 'Recent Games'].forEach(
       (label) => {
         expect(within(nav).getByRole('link', { name: label })).toBeInTheDocument();
@@ -1029,7 +1029,7 @@ describe('App', () => {
 
     expect((await screen.findAllByRole('heading', { name: 'Boros Mouse' })).length).toBeGreaterThan(0);
     expect(fetchMock).toHaveBeenCalledWith('/api/deck?name=Boros+Mouse&format=Play&days=30', expect.anything());
-    screen.getAllByRole('link', { name: '← Back to dashboard' }).forEach((link) => {
+    screen.getAllByRole('link', { name: 'Back to dashboard' }).forEach((link) => {
       expect(link).toHaveAttribute('href', '#overview?format=Play&days=30');
     });
 
@@ -1275,7 +1275,7 @@ describe('App', () => {
       await user.click(within(recentTable).getByRole('link', { name: /6\/4\/26, 12:10AM/i }));
 
       expect(await screen.findByRole('heading', { name: /Game 6\/4\/26/i })).toBeInTheDocument();
-      const backLinks = screen.getAllByRole('link', { name: '← Back to dashboard' });
+      const backLinks = screen.getAllByRole('link', { name: 'Back to dashboard' });
       backLinks.forEach((link) => expect(link).toHaveAttribute('href', '#recent-games'));
       await user.click(backLinks[0]);
 
@@ -1509,7 +1509,7 @@ describe('App', () => {
     });
     expect(screen.getByRole('region', { name: 'Opponent card impact' })).toHaveTextContent('Your Loss Rate50%');
     expect(screen.getByRole('link', { name: 'Boros Mouse' })).toHaveAttribute('href', '#/deck/Boros%20Mouse');
-    screen.getAllByRole('link', { name: '← Back to dashboard' }).forEach((link) => {
+    screen.getAllByRole('link', { name: 'Back to dashboard' }).forEach((link) => {
       expect(link).toHaveAttribute('href', '#overview');
     });
   });

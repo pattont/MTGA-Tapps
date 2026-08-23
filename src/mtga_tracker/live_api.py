@@ -150,11 +150,18 @@ def _events_payload(
     conn: sqlite3.Connection,
     session_id: Optional[str],
     since: int,
+    game_started_at: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], int]:
+    # The feed shows the CURRENT game only (the session's finished games live
+    # in the rail). Before the first game of a session there is nothing to
+    # stream — the page shows its waiting state instead of old history.
+    if not game_started_at:
+        return [], since
     params: List[Any] = []
-    where = "1=1"
+    where = "created_at >= ?"
+    params.append(game_started_at)
     if session_id:
-        where = "session_id = ?"
+        where += " AND session_id = ?"
         params.append(session_id)
     if since > 0:
         rows = _dict_rows(
@@ -231,7 +238,12 @@ def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
                 "opponent_commanders": _json_list(status.get("opponent_commanders")),
             }
 
-        events, seq = _events_payload(conn, session_id, since)
+        events, seq = _events_payload(
+            conn,
+            session_id,
+            since,
+            status.get("game_started_at") if status else None,
+        )
         return {
             "tracker": {
                 "state": state,

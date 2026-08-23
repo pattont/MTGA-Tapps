@@ -88,8 +88,6 @@ export const deckFinderNavItems: AppNavItem[] = [
 export const liveNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
   { id: 'live-scoreboard', label: 'Scoreboard' },
-  { id: 'live-feed', label: 'Live Feed' },
-  { id: 'live-session', label: 'Session' },
 ];
 
 export const settingsNavItems: AppNavItem[] = [

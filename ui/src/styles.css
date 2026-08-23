@@ -195,11 +195,40 @@ a {
 }
 
 .sidebar nav a {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   padding: 9px 10px;
   border-radius: 6px;
   color: var(--muted);
   font-size: 0.92rem;
   text-decoration: none;
+}
+
+.sidebar-nav-icon {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  opacity: 0.85;
+}
+
+.sidebar-nav-label {
+  min-width: 0;
+}
+
+/* Collapsed sidebar: icons only, centered, with tooltips as labels. */
+.app-layout-collapsed .sidebar-nav-label {
+  display: none;
+}
+
+.app-layout-collapsed .sidebar nav a {
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.app-layout-collapsed .sidebar-nav-icon {
+  width: 17px;
+  height: 17px;
 }
 
 .sidebar nav a:hover,
@@ -3044,9 +3073,14 @@ tbody tr:hover {
 }
 
 .app-layout-collapsed .sidebar {
-  align-items: center;
-  gap: 0;
-  padding: 12px 6px;
+  align-items: stretch;
+  gap: 8px;
+  /* Top padding clears the absolute collapse toggle. */
+  padding: 34px 5px 12px;
+}
+
+.app-layout-collapsed .sidebar nav {
+  gap: 2px;
 }
 
 .sidebar-toggle {
@@ -4169,6 +4203,9 @@ a.settings-link-button {
 }
 
 .live-feed-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin: 8px 16px 16px;
 }
 
@@ -4381,31 +4418,33 @@ a.settings-link-button {
   margin: 8px 16px 16px;
 }
 
-/* Sidebar Live Log entry: its own section above the nav, colored by
-   tracker state (green running / red stopped). */
+/* Sidebar Live Log entry: sits above the nav like one of its links, with a
+   thin rule under it; text color reflects tracker state (green running /
+   red stopped). No animation — it should read, not blink. */
 .sidebar-live-block {
-  margin: 4px 0 2px;
+  margin-bottom: -10px;
 }
 
 .sidebar-live-link {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  padding: 9px 10px;
+  border-radius: 6px;
   color: var(--text);
   font-size: 0.92rem;
-  font-weight: 700;
+  font-weight: 600;
   text-decoration: none;
 }
 
 .sidebar-live-link:hover {
-  background: var(--hover-tint);
+  background: var(--panel-strong);
 }
 
 .sidebar-live-dot {
-  width: 9px;
-  height: 9px;
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--subtle);
 }
@@ -4416,7 +4455,6 @@ a.settings-link-button {
 
 .sidebar-live-running .sidebar-live-dot {
   background: var(--success);
-  animation: live-dot 2s ease-in-out infinite;
 }
 
 .sidebar-live-offline {
@@ -4428,9 +4466,14 @@ a.settings-link-button {
 }
 
 .sidebar-live-rule {
-  margin: 10px 0 6px;
+  margin: 8px 0 0;
   border: 0;
   border-top: 1px solid var(--border);
+}
+
+.app-layout-collapsed .sidebar-live-link {
+  justify-content: center;
+  padding: 8px 0;
 }
 
 /* The sidebar Deck Finder entry is a route link now, not a button. */

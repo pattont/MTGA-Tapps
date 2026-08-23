@@ -368,7 +368,7 @@ export function DeckFinderPage() {
     <Section
       id="deck-finder-browse"
       title="Browse Decks"
-      description="Pick a site, then a format — and copy any list straight into Arena. No terminal needed."
+      description="Pick a site and format, then find and export any deck list to your clipboard to be imported into Arena."
     >
       <div className="deckfinder-toolbar">
         <span className="deckfinder-step-label">Site</span>
