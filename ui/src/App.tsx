@@ -33,6 +33,7 @@ import { FormatsTable } from './components/FormatsTable';
 import { GameDetailPage } from './components/GameDetailPage';
 import { GamesPage } from './components/GamesPage';
 import { DeckFinderPage } from './components/DeckFinderPage';
+import { SettingsPage } from './components/SettingsPage';
 import { MetricCard } from './components/MetricCard';
 import { AuditPage } from './components/AuditPage';
 import { OpponentDetailPage } from './components/OpponentDetailPage';
@@ -47,7 +48,8 @@ import { bestDeckMetric, formatPercent, metricCards } from './dashboardData';
 import type { MetricDefinition } from './dashboardData';
 import { formatCardName, formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone, shortFormatLabel } from './format';
 import { auditNavItems,
-  deckFinderNavItems, cardNavItems, deckNavItems, gameNavItems, gamesNavItems, opponentNavItems } from './nav';
+  deckFinderNavItems, cardNavItems, deckNavItems, gameNavItems, gamesNavItems, opponentNavItems,
+  settingsNavItems } from './nav';
 import { FORMAT_QUICK_FILTERS } from './quickFilters';
 import { RouteFiltersContext } from './routeFilters';
 import {
@@ -57,6 +59,7 @@ import {
   gamesRouteHash,
   parseAuditRoute,
   parseDeckFinderRoute,
+  parseSettingsRoute,
   parseCardRoute,
   parseGamesRoute,
   parseDashboardRouteFilters,
@@ -731,6 +734,7 @@ export default function App() {
   const opponentRoute = useMemo(() => parseOpponentRoute(routeHash), [routeHash]);
   const auditRoute = useMemo(() => parseAuditRoute(routeHash), [routeHash]);
   const deckFinderRoute = useMemo(() => parseDeckFinderRoute(routeHash), [routeHash]);
+  const settingsRoute = useMemo(() => parseSettingsRoute(routeHash), [routeHash]);
   const gamesRoute = useMemo(() => parseGamesRoute(routeHash), [routeHash]);
   const deckName = deckRoute?.name ?? null;
   const gameId = gameRoute?.id ?? null;
@@ -822,6 +826,7 @@ export default function App() {
       || opponentRoute
       || auditRoute
       || deckFinderRoute
+      || settingsRoute
       || gamesRoute
       || loadState.status !== 'loaded'
       || !routeHash.startsWith('#')
@@ -834,7 +839,7 @@ export default function App() {
     } else if (sectionId && !sectionId.startsWith('/')) {
       document.getElementById(sectionId)?.scrollIntoView?.({ block: 'start' });
     }
-  }, [auditRoute, cardRoute, deckFinderRoute, deckRoute, gameRoute, gamesRoute, loadState.status, opponentRoute, routeHash]);
+  }, [auditRoute, cardRoute, deckFinderRoute, deckRoute, gameRoute, gamesRoute, loadState.status, opponentRoute, routeHash, settingsRoute]);
 
   useEffect(() => {
     document.title = deckRoute
@@ -930,6 +935,8 @@ export default function App() {
             ? auditNavItems
           : deckFinderRoute
             ? deckFinderNavItems
+          : settingsRoute
+            ? settingsNavItems
           : cardRoute
             ? cardPageNavItems
             : gameId
@@ -940,7 +947,7 @@ export default function App() {
                   ? opponentNavItems
                   : undefined
         }
-        heading={gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckFinderRoute ? 'Deck Finder' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute?.name ?? dashboardTitle)}
+        heading={gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute?.name ?? dashboardTitle)}
       >
         {gamesRoute ? (
           <GamesPage
@@ -953,6 +960,8 @@ export default function App() {
           <AuditPage />
         ) : deckFinderRoute ? (
           <DeckFinderPage />
+        ) : settingsRoute ? (
+          <SettingsPage />
         ) : cardRoute ? (
           <CardDetailPage
             key={`${cardRoute.name}-${cardRoute.returnHash}`}

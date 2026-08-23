@@ -8,7 +8,7 @@ from mtga_deck_downloader.models import DeckEntry, DeckSource, MatchFormat
 
 @dataclass(frozen=True)
 class ResultViewConfig:
-    title: str = "Scraped Deck Results"
+    title: str = "Deck Results"
     count_label: str = "Decks found"
     name_column_label: str = "Deck"
     selection_label: str = "Deck"

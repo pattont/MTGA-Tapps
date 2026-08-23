@@ -1441,3 +1441,71 @@ export async function startDeckFinderSurprise(format: string): Promise<{ job: st
   });
   return deckFinderJson(response);
 }
+
+// ---------------------------------------------------------------------------
+// Settings page: thin client over /api/settings.
+
+export interface DeckAiProviderSettings {
+  key: string;
+  label: string;
+  api_key: string;
+  model: string;
+  default_model: string;
+}
+
+export interface DeckAiSettings {
+  enabled: boolean;
+  provider: string;
+  providers: DeckAiProviderSettings[];
+}
+
+export interface DeckFinderCreator {
+  name: string;
+  short_name: string | null;
+}
+
+export interface DeckFinderCreatorSettings {
+  path: string;
+  moxfield: DeckFinderCreator[];
+  aetherhub: DeckFinderCreator[];
+  tcgplayer: DeckFinderCreator[];
+}
+
+export interface TrackerSettings {
+  deck_ai: DeckAiSettings;
+  deck_finder: DeckFinderCreatorSettings;
+}
+
+export async function fetchTrackerSettings(signal?: AbortSignal): Promise<TrackerSettings> {
+  const response = await fetch('/api/settings', { signal });
+  return deckFinderJson(response);
+}
+
+export async function saveDeckAiSettings(payload: {
+  enabled: boolean;
+  provider: string;
+  keys: Record<string, string>;
+  models: Record<string, string>;
+}): Promise<DeckAiSettings> {
+  const response = await fetch('/api/settings/deck-ai', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body = await deckFinderJson<{ deck_ai: DeckAiSettings }>(response);
+  return body.deck_ai;
+}
+
+export async function saveDeckFinderCreators(payload: {
+  moxfield: DeckFinderCreator[];
+  aetherhub: DeckFinderCreator[];
+  tcgplayer: DeckFinderCreator[];
+}): Promise<DeckFinderCreatorSettings> {
+  const response = await fetch('/api/settings/deck-finder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body = await deckFinderJson<{ deck_finder: DeckFinderCreatorSettings }>(response);
+  return body.deck_finder;
+}

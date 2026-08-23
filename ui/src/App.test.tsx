@@ -708,8 +708,14 @@ describe('App', () => {
     );
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0 });
 
-    await user.click(screen.getByRole('button', { name: /switch to light mode/i }));
+    // The topbar theme switch is a sun/moon pair; the gear links to Settings.
+    await user.click(screen.getByRole('button', { name: 'Light mode' }));
     await waitFor(() => expect(document.documentElement.dataset.theme).toBe('light'));
+    expect(screen.getByRole('button', { name: 'Light mode' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '#/settings');
   });
 
   it('links every deck mention to the deck detail page', async () => {
@@ -764,6 +770,45 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: /Surprise Me/ })).toBeInTheDocument();
     // The sidebar entry is now a route link, not a launch button.
     expect(screen.getByRole('link', { name: 'Deck Finder' })).toHaveAttribute('href', '#/deck-finder');
+  });
+
+  it('routes to the Settings page with Deck AI and creator sections', async () => {
+    const settings = {
+      deck_ai: {
+        enabled: true,
+        provider: 'gemini',
+        providers: [
+          { key: 'openai', label: 'OpenAI', api_key: '', model: '', default_model: 'gpt-4o-mini' },
+          { key: 'claude', label: 'Anthropic (Claude)', api_key: '', model: '', default_model: 'claude-3-5-haiku-20241022' },
+          { key: 'gemini', label: 'Gemini', api_key: 'g-key', model: '', default_model: 'gemini-2.0-flash' },
+        ],
+      },
+      deck_finder: {
+        path: '/tmp/deckfinder_config.json',
+        moxfield: [{ name: 'Ashlizzlle', short_name: 'Ash' }],
+        aetherhub: [],
+        tcgplayer: [],
+      },
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).startsWith('/api/settings')) {
+        return new Response(JSON.stringify(settings), { status: 200 });
+      }
+      return new Response(JSON.stringify(snapshot), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
+
+    await act(async () => {
+      window.location.hash = '#/settings';
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Deck AI' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Deck Finder Creators' })).toBeInTheDocument();
+    expect(await screen.findByLabelText(/Enable AI deck identification/)).toBeChecked();
+    expect(screen.getByDisplayValue('Ashlizzlle | Ash')).toBeInTheDocument();
   });
 
   it('routes to the deck detail page and back to the dashboard', async () => {

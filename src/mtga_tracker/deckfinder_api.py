@@ -543,12 +543,21 @@ def _handle_surprise(payload: Dict[str, Any]) -> Dict[str, Any]:
                 continue
             if not decks:
                 continue
-            deck = provider.hydrate_deck(random.choice(decks))
-            return {
-                "provider": provider.key,
-                "deck": _serialize_deck(deck),
-            }
-        raise RuntimeError(last_error or "No provider returned any decks")
+            # A surprise without a copyable list is a dud — try a few decks
+            # from this provider before moving on (some entries only carry
+            # metadata, e.g. archetype rows or events).
+            for deck in random.sample(decks, k=min(3, len(decks))):
+                try:
+                    hydrated = provider.hydrate_deck(deck)
+                except Exception as exc:
+                    last_error = f"{provider.display_name}: {exc}"
+                    continue
+                if hydrated.deck_text:
+                    return {
+                        "provider": provider.key,
+                        "deck": _serialize_deck(hydrated),
+                    }
+        raise RuntimeError(last_error or "No provider returned a copyable deck")
 
     return {"job": _start_job(_run, note="Finding you a surprise deck…")}
 

@@ -1,5 +1,9 @@
-"""Settings dialog for the menu-bar app (Deck AI provider / key / model,
-plus the Deck Finder creator lists)."""
+"""Settings dialog for the menu-bar app.
+
+Two tabs: "Deck AI" (provider / API key / model for opponent-deck
+identification) and "Deck Finder" (the creator lists the Moxfield,
+Aetherhub, and TCGplayer sites follow).
+"""
 
 from __future__ import annotations
 
@@ -15,6 +19,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPlainTextEdit,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -28,20 +33,50 @@ _PROVIDERS = (
     ("gemini", "Gemini", "GEMINI_API_KEY", "DECK_LLM_GEMINI_MODEL", "gemini-2.0-flash"),
 )
 
+#: (config key, tab label) for the Deck Finder creator lists.
+_CREATOR_SITES = (
+    ("moxfield", "Moxfield:"),
+    ("aetherhub", "Aetherhub:"),
+    ("tcgplayer", "TCGplayer:"),
+)
+
 
 class DeckAISettingsDialog(QDialog):
-    """Configure the AI opponent-deck identification.
+    """Tracker settings: Deck AI identification and Deck Finder creators.
 
-    Saves into the "deck_ai" section of settings.json in the tracker data
-    dir; a running tracker picks the change up on the next game (no restart).
+    Deck AI values save into the "deck_ai" section of settings.json in the
+    tracker data dir; a running tracker picks the change up on the next game
+    (no restart). Creator lists save into deckfinder_config.json.
     """
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("MTGA Tracker Settings")
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(560)
 
         layout = QVBoxLayout(self)
+        tabs = QTabWidget()
+        tabs.addTab(self._build_deck_ai_tab(), "Deck AI")
+        tabs.addTab(self._build_deck_finder_tab(), "Deck Finder")
+        layout.addWidget(tabs)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._load_deck_ai_values()
+        self._creators_loaded = self._load_creator_fields()
+
+    # ------------------------------------------------------------------
+    # Deck AI tab
+
+    def _build_deck_ai_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
         intro = QLabel(
             "Identify your opponent's deck with an AI provider. One small, "
             "cheap request per completed game — tracking never waits on it."
@@ -61,9 +96,11 @@ class DeckAISettingsDialog(QDialog):
         self.key_edit = QLineEdit()
         self.key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.key_edit.setPlaceholderText("API key")
+        self.key_edit.setMinimumHeight(30)
         form.addRow("API key:", self.key_edit)
 
         self.model_edit = QLineEdit()
+        self.model_edit.setMinimumHeight(30)
         form.addRow("Model:", self.model_edit)
         layout.addLayout(form)
 
@@ -75,41 +112,10 @@ class DeckAISettingsDialog(QDialog):
         note.setWordWrap(True)
         note.setStyleSheet("color: gray; font-size: 11px;")
         layout.addWidget(note)
+        layout.addStretch(1)
+        return tab
 
-        # ---- Deck Finder creator lists ---------------------------------
-        creators_header = QLabel("<b>Deck Finder creators</b>")
-        layout.addWidget(creators_header)
-        creators_intro = QLabel(
-            "Which creators the Deck Finder's Moxfield, Aetherhub, and "
-            "TCGplayer sites follow. One creator per line; add a display "
-            "name with a pipe, e.g. “MTGMalone | Malone”."
-        )
-        creators_intro.setWordWrap(True)
-        creators_intro.setStyleSheet("color: gray; font-size: 11px;")
-        layout.addWidget(creators_intro)
-
-        creators_form = QFormLayout()
-        self._creator_edits: Dict[str, QPlainTextEdit] = {}
-        for key, label in (
-            ("moxfield", "Moxfield:"),
-            ("aetherhub", "Aetherhub:"),
-            ("tcgplayer", "TCGplayer:"),
-        ):
-            edit = QPlainTextEdit()
-            edit.setFixedHeight(64)
-            edit.setTabChangesFocus(True)
-            self._creator_edits[key] = edit
-            creators_form.addRow(label, edit)
-        layout.addLayout(creators_form)
-        self._creators_loaded = self._load_creator_fields()
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self._save)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
+    def _load_deck_ai_values(self) -> None:
         # Per-provider field values, kept while the user switches providers.
         self._keys: Dict[str, str] = {}
         self._models: Dict[str, str] = {}
@@ -145,8 +151,36 @@ class DeckAISettingsDialog(QDialog):
         self._showing = _PROVIDERS[index][0]
         self._load_provider_fields(index)
 
+    # ------------------------------------------------------------------
+    # Deck Finder tab
+
+    def _build_deck_finder_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        intro = QLabel(
+            "Which creators the Deck Finder's Moxfield, Aetherhub, and "
+            "TCGplayer sites follow. One creator per line. Add a short "
+            "display name after a pipe — “Ashlizzlle | Ash” makes imported "
+            "decks show up as “Jeskai Artifacts (Ash)” in Arena."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        form = QFormLayout()
+        self._creator_edits: Dict[str, QPlainTextEdit] = {}
+        for key, label in _CREATOR_SITES:
+            edit = QPlainTextEdit()
+            edit.setTabChangesFocus(True)
+            edit.setMinimumHeight(110)
+            edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            self._creator_edits[key] = edit
+            form.addRow(label, edit)
+        layout.addLayout(form)
+        return tab
+
     def _load_creator_fields(self) -> bool:
-        """Prefill the creator editors; False hides/disables them on error."""
+        """Prefill the creator editors; False disables them on error."""
         try:
             from .deckfinder_api import read_creator_config
 
@@ -165,6 +199,10 @@ class DeckAISettingsDialog(QDialog):
                 short = str(creator.get("short_name") or "").strip()
                 lines.append(f"{name} | {short}" if short else name)
             edit.setPlainText("\n".join(lines))
+            # Size each box to its content so nothing scrolls out of view.
+            line_count = max(len(lines) + 1, 4)
+            metrics = edit.fontMetrics()
+            edit.setMinimumHeight(min(line_count * metrics.lineSpacing() + 18, 320))
         return True
 
     def _creator_entries(self, key: str) -> List[Dict[str, Optional[str]]]:
@@ -189,6 +227,9 @@ class DeckAISettingsDialog(QDialog):
         except Exception:
             # Creator-list problems must never block saving the AI settings.
             pass
+
+    # ------------------------------------------------------------------
+    # Save
 
     def _save(self) -> None:
         self._stash_current_fields()

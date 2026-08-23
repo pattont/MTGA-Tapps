@@ -473,7 +473,7 @@ def _show_deck_table(
     selected_format: MatchFormat,
     decks: list[DeckEntry],
     selected_source: DeckSource | None = None,
-    title: str = "Scraped Deck Results",
+    title: str = "Deck Results",
     count_label: str = "Decks found",
     name_column_label: str = "Deck",
     helper_text: str | None = None,

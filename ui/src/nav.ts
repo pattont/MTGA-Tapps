@@ -83,3 +83,9 @@ export const deckFinderNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '\u2190 Back to dashboard', route: '#overview' },
   { id: 'deck-finder-browse', label: 'Browse Decks' },
 ];
+
+export const settingsNavItems: AppNavItem[] = [
+  { id: 'back-to-dashboard', label: '\u2190 Back to dashboard', route: '#overview' },
+  { id: 'settings-deck-ai', label: 'Deck AI' },
+  { id: 'settings-creators', label: 'Deck Finder Creators' },
+];

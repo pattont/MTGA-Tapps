@@ -87,6 +87,7 @@ export function DeckFinderPage() {
   const [busyNote, setBusyNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedDeck, setSelectedDeck] = useState<DeckFinderDeck | null>(null);
+  const [hydrating, setHydrating] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const requestSeq = useRef(0);
   // What produced the current results — reused by Refresh, variants context,
@@ -197,6 +198,10 @@ export function DeckFinderPage() {
       }
       const seq = beginRequest();
       setBusyNote(`Loading ${parent.name}…`);
+      // Clear the old table right away — keeping it up while the variants
+      // load makes the page look stale.
+      setResults(null);
+      setSelectedDeck(null);
       try {
         const started = await startDeckFinderVariants({
           provider: provider.key,
@@ -228,8 +233,10 @@ export function DeckFinderPage() {
       setCopyStatus('idle');
       setSelectedDeck(deck);
       if (deck.deck_text || !provider) {
+        setHydrating(false);
         return;
       }
+      setHydrating(true);
       try {
         const hydrated = await hydrateDeckFinderDeck(provider.key, deck);
         setSelectedDeck((current) =>
@@ -237,6 +244,8 @@ export function DeckFinderPage() {
         );
       } catch {
         // The drawer shows "deck list unavailable" and keeps the source link.
+      } finally {
+        setHydrating(false);
       }
     },
     [provider],
@@ -518,7 +527,8 @@ export function DeckFinderPage() {
       ) : null}
 
       {busyNote ? (
-        <p className="state-panel deckfinder-state" role="status" aria-busy="true">
+        <p className="state-panel deckfinder-state deckfinder-busy" role="status" aria-busy="true">
+          <span className="deckfinder-spinner" aria-hidden="true" />
           {busyNote}
         </p>
       ) : null}
@@ -532,11 +542,15 @@ export function DeckFinderPage() {
         <>
           <div className="section-heading">
             <div>
-              <h3>
-                {results.view.title}
-                {` · ${results.decks.length} ${results.view.count_label.toLowerCase()}`}
-              </h3>
-              {resultContext ? <p className="section-description">{resultContext}</p> : null}
+              <h3>{results.view.title}</h3>
+              <p className="section-description">
+                {[
+                  resultContext,
+                  `${results.decks.length} ${results.view.count_label.toLowerCase()}`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
               {results.view.helper_text ? (
                 <p className="section-description">{results.view.helper_text}</p>
               ) : null}
@@ -611,8 +625,16 @@ export function DeckFinderPage() {
           </div>
           {selectedDeck.deck_text ? (
             <pre className="deckfinder-decklist">{formatArenaImportText(selectedDeck.deck_text)}</pre>
+          ) : hydrating ? (
+            <p className="state-panel deckfinder-busy" role="status" aria-busy="true">
+              <span className="deckfinder-spinner" aria-hidden="true" />
+              Loading deck list…
+            </p>
           ) : (
-            <p className="empty-state deckfinder-state">Loading deck list…</p>
+            <p className="empty-state">
+              No importable deck list for this entry — use the Source link to view it on{' '}
+              {selectedDeck.source_site}.
+            </p>
           )}
         </div>
       ) : null}

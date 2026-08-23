@@ -5117,6 +5117,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
+        if parsed.path.startswith("/api/settings"):
+            # Web Settings page (Deck AI + Deck Finder creators).
+            from . import settings_api
+
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                payload = {}
+            handled = settings_api.handle_post(
+                parsed.path, payload if isinstance(payload, dict) else {}
+            )
+            if handled is not None:
+                status, body = handled
+                _send_bytes(
+                    self,
+                    status,
+                    json.dumps(body).encode("utf-8"),
+                    "application/json; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
         if parsed.path == "/api/deck-downloader/launch":
             # The dashboard server runs on the player's machine, so it can
             # open the Deck Downloader terminal app on their behalf.
@@ -5246,6 +5268,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
             from . import deckfinder_api
 
             handled = deckfinder_api.handle_get(request_path, parse_qs(parsed.query))
+            if handled is not None:
+                status, body = handled
+                _send_bytes(
+                    self,
+                    status,
+                    json.dumps(body).encode("utf-8"),
+                    "application/json; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+        if request_path == "/api/settings":
+            from . import settings_api
+
+            handled = settings_api.handle_get(request_path)
             if handled is not None:
                 status, body = handled
                 _send_bytes(

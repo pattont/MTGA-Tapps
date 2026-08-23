@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
+import { Moon, Settings, Sun } from 'lucide-react';
 import { TRACKER_NAME } from '../branding';
 import { dashboardNavItems, type AppNavItem } from '../nav';
 import type { ThemeName } from '../theme';
@@ -29,7 +30,6 @@ export function AppShell({
   heading,
   children,
 }: AppShellProps) {
-  const nextTheme = theme === 'dark' ? 'light' : 'dark';
   const [activeSection, setActiveSection] = useState<string | null>(null);
   const [showBackToTop, setShowBackToTop] = useState(false);
   // After a nav click, the clicked section stays active briefly even though
@@ -268,14 +268,39 @@ export function AppShell({
           <h2>{heading}</h2>
           <div className="topbar-actions">
             <CardSearch />
-            <button
-              aria-label={`Color theme: ${theme}. Switch to ${nextTheme} mode`}
-              className="theme-toggle"
-              type="button"
-              onClick={onToggleTheme}
-            >
-              Switch to {nextTheme} mode
-            </button>
+            <div aria-label="Color theme" className="theme-switch" role="group">
+              <button
+                aria-label="Light mode"
+                aria-pressed={theme === 'light'}
+                className={theme === 'light' ? 'theme-switch-option theme-switch-active' : 'theme-switch-option'}
+                title={`Light mode${theme === 'light' ? ' (current)' : ''}`}
+                type="button"
+                onClick={() => {
+                  if (theme !== 'light') {
+                    onToggleTheme();
+                  }
+                }}
+              >
+                <Sun aria-hidden="true" />
+              </button>
+              <button
+                aria-label="Dark mode"
+                aria-pressed={theme === 'dark'}
+                className={theme === 'dark' ? 'theme-switch-option theme-switch-active' : 'theme-switch-option'}
+                title={`Dark mode${theme === 'dark' ? ' (current)' : ''}`}
+                type="button"
+                onClick={() => {
+                  if (theme !== 'dark') {
+                    onToggleTheme();
+                  }
+                }}
+              >
+                <Moon aria-hidden="true" />
+              </button>
+            </div>
+            <a aria-label="Settings" className="topbar-icon-link" href="#/settings" title="Settings">
+              <Settings aria-hidden="true" />
+            </a>
           </div>
         </header>
         {children}

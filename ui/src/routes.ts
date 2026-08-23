@@ -223,6 +223,10 @@ export function parseDeckFinderRoute(hash: string): boolean {
   return hash === '#/deck-finder' || hash.startsWith('#/deck-finder?');
 }
 
+export function parseSettingsRoute(hash: string): boolean {
+  return hash === '#/settings' || hash.startsWith('#/settings?');
+}
+
 export function gamesRouteHash(filters: SnapshotFilters = {}): string {
   const query = routeQuery(filters, true);
   return `#/games${query ? `?${query}` : ''}`;
