@@ -245,7 +245,7 @@ class MenuBarController(QObject):
         self.deck_downloader_action.triggered.connect(self.open_deck_downloader)
         self.menu.addAction(self.deck_downloader_action)
 
-        self.settings_action = QAction("Settings…", self)
+        self.settings_action = QAction("Settings", self)
         self.settings_action.triggered.connect(self.open_settings)
         self.menu.addAction(self.settings_action)
 
