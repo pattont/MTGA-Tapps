@@ -1443,6 +1443,84 @@ export async function startDeckFinderSurprise(format: string): Promise<{ job: st
 }
 
 // ---------------------------------------------------------------------------
+// Live Log page: thin client over /api/live.
+
+export interface LiveTrackerInfo {
+  state: 'live' | 'idle' | 'offline';
+  updated_at: string | null;
+  session_id: string | null;
+}
+
+export interface LiveNow {
+  in_game: boolean;
+  match_id: string | null;
+  game_id: string | null;
+  format: string | null;
+  match_type: string | null;
+  game_number: number | null;
+  player_name: string | null;
+  opponent_name: string | null;
+  deck_name: string | null;
+  turn_number: number | null;
+  active_role: 'player' | 'opponent' | null;
+  on_play: boolean | null;
+  player_life: number | null;
+  opponent_life: number | null;
+  mulligans: number | null;
+  game_started_at: string | null;
+  player_commanders: string[];
+  opponent_commanders: string[];
+}
+
+export interface LiveSessionInfo {
+  id: string;
+  started_at: string;
+  games_played: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  runtime_seconds: number | null;
+  win_rate: number | null;
+}
+
+export interface LiveGameRow {
+  id: string;
+  started_at: string | null;
+  outcome: string | null;
+  total_turns: number | null;
+  duration_seconds: number | null;
+  game_number: number | null;
+  format: string | null;
+  best_of: number | null;
+  deck_name: string | null;
+  opponent_name: string | null;
+}
+
+export interface LiveEventRow {
+  id: number;
+  at: string;
+  turn: number | null;
+  style: string | null;
+  text: string;
+  player_life: number | null;
+  opponent_life: number | null;
+}
+
+export interface LivePayload {
+  tracker: LiveTrackerInfo;
+  now: LiveNow | null;
+  session: LiveSessionInfo | null;
+  games: LiveGameRow[];
+  events: LiveEventRow[];
+  seq: number;
+}
+
+export async function fetchLiveStatus(since: number, signal?: AbortSignal): Promise<LivePayload> {
+  const response = await fetch(`/api/live?since=${since}`, { signal });
+  return deckFinderJson(response);
+}
+
+// ---------------------------------------------------------------------------
 // Settings page: thin client over /api/settings.
 
 export interface DeckAiProviderSettings {

@@ -7,6 +7,7 @@ export interface AppNavItem {
 
 export const dashboardNavItems: AppNavItem[] = [
   { id: 'overview', label: 'Overview' },
+  { id: 'live-log', label: 'Live Log', route: '#/live' },
   { id: 'trend', label: 'Win Rate Trend' },
   { id: 'rank-progress', label: 'Ranked Progress' },
   { id: 'recent-games', label: 'Recent Games' },
@@ -81,6 +82,13 @@ export const opponentNavItems: AppNavItem[] = [
 export const deckFinderNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '\u2190 Back to dashboard', route: '#overview' },
   { id: 'deck-finder-browse', label: 'Browse Decks' },
+];
+
+export const liveNavItems: AppNavItem[] = [
+  { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
+  { id: 'live-scoreboard', label: 'Scoreboard' },
+  { id: 'live-feed', label: 'Live Feed' },
+  { id: 'live-session', label: 'Session' },
 ];
 
 export const settingsNavItems: AppNavItem[] = [

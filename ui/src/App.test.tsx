@@ -665,9 +665,9 @@ describe('App', () => {
     const dashboardNav = screen.getByRole('navigation', { name: 'Dashboard sections' });
     expect(within(dashboardNav).getAllByRole('link').slice(0, 4).map((link) => link.textContent)).toEqual([
       'Overview',
+      'Live Log',
       'Win Rate Trend',
       'Ranked Progress',
-      'Recent Games',
     ]);
     expect(
       Array.from(document.querySelectorAll<HTMLElement>('.dashboard-main > section[id]')).map(
@@ -769,6 +769,86 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: /Surprise Me/ })).toBeInTheDocument();
     // The sidebar entry is now a route link, not a launch button.
     expect(screen.getByRole('link', { name: 'Deck Finder' })).toHaveAttribute('href', '#/deck-finder');
+  });
+
+  it('routes to the Live Log page and renders the live scoreboard', async () => {
+    const live = {
+      tracker: { state: 'live', updated_at: new Date().toISOString(), session_id: 'S1' },
+      now: {
+        in_game: true,
+        match_id: 'M1',
+        game_id: 'G9',
+        format: 'Standard Brawl',
+        match_type: 'best_of_1',
+        game_number: 1,
+        player_name: 'Travis',
+        opponent_name: 'Villain#12345',
+        deck_name: 'Skellies',
+        turn_number: 7,
+        active_role: 'opponent',
+        on_play: true,
+        player_life: 18,
+        opponent_life: 11,
+        mulligans: 1,
+        game_started_at: new Date().toISOString(),
+        player_commanders: ['Wilhelt, the Rotcleaver'],
+        opponent_commanders: [],
+      },
+      session: {
+        id: 'S1',
+        started_at: new Date().toISOString(),
+        games_played: 3,
+        wins: 2,
+        losses: 1,
+        draws: 0,
+        runtime_seconds: 1200,
+        win_rate: 66.7,
+      },
+      games: [
+        {
+          id: 'G8',
+          started_at: new Date().toISOString(),
+          outcome: 'win',
+          total_turns: 9,
+          duration_seconds: 420,
+          game_number: 1,
+          format: 'Standard Brawl',
+          best_of: 1,
+          deck_name: 'Skellies',
+          opponent_name: 'PastFoe',
+        },
+      ],
+      events: [
+        { id: 1, at: new Date().toISOString(), turn: 7, style: 'turn', text: 'Turn 7 - Opponent', player_life: 18, opponent_life: 11 },
+        { id: 2, at: new Date().toISOString(), turn: 7, style: 'cast', text: 'Opponent: Casts Big Spell', player_life: 18, opponent_life: 11 },
+      ],
+      seq: 2,
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).startsWith('/api/live')) {
+        return new Response(JSON.stringify(live), { status: 200 });
+      }
+      return new Response(JSON.stringify(snapshot), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
+
+    await act(async () => {
+      window.location.hash = '#/live';
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+
+    expect(await screen.findByText('Villain#12345')).toBeInTheDocument();
+    expect(screen.getByText('Turn 7 — Opponent')).toBeInTheDocument();
+    expect(screen.getByText('Wilhelt, the Rotcleaver')).toBeInTheDocument();
+    expect(screen.getByText('Opponent: Casts Big Spell')).toBeInTheDocument();
+    expect(screen.getByText('2–1')).toBeInTheDocument();
+    // Finished game links to its game page.
+    const gameLink = screen.getByRole('link', { name: /PastFoe/ });
+    expect(gameLink.getAttribute('href')).toContain('#/game/G8');
+    // The dashboard sidebar gets the Live Log route entry.
+    window.location.hash = '#overview';
   });
 
   it('routes to the Settings page with Deck AI and creator sections', async () => {

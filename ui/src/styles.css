@@ -3822,6 +3822,470 @@ a.settings-link-button {
   flex: 1;
 }
 
+/* ------------------------------------------------------------------ */
+/* Live Log page (#/live)                                              */
+
+.live-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 12px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .live-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.live-main,
+.live-rail {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.live-layout .dashboard-section {
+  margin-top: 0;
+}
+
+/* --- Scoreboard ---------------------------------------------------- */
+
+.live-scoreboard {
+  padding: 18px 20px 16px;
+}
+
+.live-scoreboard-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-chip {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.live-chip-turn {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  color: var(--accent-strong);
+}
+
+.live-chip-quiet {
+  border-color: transparent;
+  background: transparent;
+}
+
+.live-chip-pulse {
+  animation: live-chip-pulse 2s ease-in-out infinite;
+}
+
+@keyframes live-chip-pulse {
+  50% {
+    background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  }
+}
+
+.live-versus {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 18px;
+  align-items: stretch;
+  margin-top: 16px;
+}
+
+.live-vs {
+  align-self: center;
+  color: var(--subtle);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.live-side {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  align-content: start;
+}
+
+.live-side-opponent {
+  text-align: right;
+  justify-items: end;
+}
+
+.live-side-name {
+  overflow: hidden;
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-side-detail {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  min-height: 0.9em;
+}
+
+.live-commanders {
+  display: flex;
+  gap: 10px;
+}
+
+.live-commander {
+  display: grid;
+  gap: 4px;
+  width: 132px;
+  justify-items: center;
+}
+
+.live-commander img {
+  width: 132px;
+  height: 96px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: var(--shadow);
+}
+
+.live-commander span {
+  overflow: hidden;
+  max-width: 132px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-commander-hidden {
+  width: 132px;
+}
+
+.live-commander-hidden span {
+  display: grid;
+  width: 132px;
+  height: 96px;
+  place-items: center;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background:
+    repeating-linear-gradient(
+      45deg,
+      color-mix(in srgb, var(--panel-strong) 55%, transparent) 0 10px,
+      transparent 10px 20px
+    );
+  color: var(--subtle);
+  font-size: 0.9rem;
+}
+
+.live-life {
+  display: grid;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.live-side-opponent .live-life {
+  justify-items: end;
+}
+
+.live-life-value {
+  font-size: 2.6rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  transition: color 0.35s ease;
+}
+
+.live-life-player .live-life-value {
+  color: var(--accent-strong);
+}
+
+.live-life-up {
+  animation: live-life-tick 0.7s ease;
+  color: var(--success) !important;
+}
+
+.live-life-down {
+  animation: live-life-tick 0.7s ease;
+  color: var(--danger) !important;
+}
+
+@keyframes live-life-tick {
+  30% {
+    transform: scale(1.18);
+  }
+}
+
+.live-life-bar {
+  display: block;
+  overflow: hidden;
+  width: 100%;
+  max-width: 220px;
+  height: 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 65%, transparent);
+}
+
+.live-life-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+  transition: width 0.45s ease;
+}
+
+.live-side-opponent .live-life-fill {
+  background: linear-gradient(90deg, var(--subtle), var(--muted));
+}
+
+.live-scoreboard-footnote {
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+/* --- Waiting / offline states -------------------------------------- */
+
+.live-waiting {
+  display: grid;
+  gap: 6px;
+  padding: 34px 20px;
+  text-align: center;
+}
+
+.live-waiting-title {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.live-waiting-detail {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.live-pulse-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: live-dot 1.6s ease-in-out infinite;
+}
+
+@keyframes live-dot {
+  50% {
+    opacity: 0.25;
+    transform: scale(0.7);
+  }
+}
+
+.live-error {
+  margin: 0 16px 16px;
+}
+
+/* --- Feed ----------------------------------------------------------- */
+
+.live-feed-wrap {
+  position: relative;
+}
+
+.live-feed {
+  overflow-y: auto;
+  max-height: 56vh;
+  margin: 8px 0 0;
+  padding: 4px 16px 14px;
+  list-style: none;
+}
+
+.live-feed-empty {
+  margin: 8px 16px 16px;
+}
+
+.live-feed-turn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 6px;
+  color: var(--subtle);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.live-feed-turn::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+
+.live-feed-row {
+  margin: 2px 0;
+  padding: 3px 10px;
+  border-left: 3px solid transparent;
+  border-radius: 4px;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  animation: live-row-in 0.16s ease;
+}
+
+@keyframes live-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-feed-row,
+  .live-chip-pulse,
+  .live-life-up,
+  .live-life-down {
+    animation: none;
+  }
+}
+
+.live-feed-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Event tints: same semantics as the old terminal legend. */
+.live-style-turn { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); font-weight: 600; }
+.live-style-cast,
+.live-style-stack,
+.live-style-stack_resolve { border-left-color: var(--draw); }
+.live-style-ability { border-left-color: color-mix(in srgb, var(--draw) 55%, var(--muted)); }
+.live-style-draw,
+.live-style-zone { border-left-color: color-mix(in srgb, var(--draw) 40%, transparent); color: var(--muted); }
+.live-style-land { border-left-color: var(--success); }
+.live-style-life_gain { border-left-color: var(--success); background: color-mix(in srgb, var(--success) 7%, transparent); }
+.live-style-life_loss,
+.live-style-damage,
+.live-style-combat_damage { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, transparent); }
+.live-style-attack,
+.live-style-block { border-left-color: color-mix(in srgb, var(--accent) 70%, var(--danger)); }
+.live-style-counter,
+.live-style-stack_fail { border-left-color: color-mix(in srgb, var(--danger) 55%, var(--muted)); color: var(--muted); }
+.live-style-plain { color: var(--muted); }
+
+.live-jump {
+  position: absolute;
+  right: 20px;
+  bottom: 12px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.live-jump:hover {
+  border-color: var(--accent);
+}
+
+/* --- Session rail --------------------------------------------------- */
+
+.live-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 10px 16px 16px;
+}
+
+.live-stat {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.live-stat-value {
+  font-size: 1.25rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-stat-label {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.live-games {
+  margin: 6px 0 0;
+  padding: 0 8px 12px;
+  list-style: none;
+}
+
+.live-game-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.live-game-row:hover {
+  background: var(--row-hover-bg);
+}
+
+.live-game-main {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 1px;
+}
+
+.live-game-deck {
+  overflow: hidden;
+  font-size: 0.86rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-game-meta {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-game-time {
+  color: var(--subtle);
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.live-rail .empty-state {
+  margin: 8px 16px 16px;
+}
+
 /* The sidebar Deck Finder entry is a route link now, not a button. */
 a.sidebar-deck-finder {
   display: block;

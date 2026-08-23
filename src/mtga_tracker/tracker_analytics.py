@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import sys
@@ -119,8 +120,68 @@ class TrackerAnalyticsMixin:
                 text=text,
                 player_life=self.game_state.player_life,
                 opponent_life=self.game_state.opponent_life,
+                live=self._live_status_snapshot(now),
             )
         except (OSError, sqlite3.Error, TypeError, ValueError):
+            return
+
+    def _live_status_snapshot(self, now: Optional[datetime] = None) -> Dict[str, Any]:
+        """Current-state row for live_status (the dashboard's Live Log page)."""
+        g = self.game_state
+        in_game = bool(g.in_match and g.game_start_time and not g.match_complete)
+        active_role: Optional[str] = None
+        if g.active_player is not None:
+            if g.active_player == g.player_seat_id:
+                active_role = "player"
+            elif g.active_player == g.opponent_seat_id:
+                active_role = "opponent"
+        on_play: Optional[int] = None
+        if g.first_player_seat is not None and g.player_seat_id is not None:
+            on_play = 1 if g.first_player_seat == g.player_seat_id else 0
+        game_id: Optional[str] = None
+        match_id: Optional[str] = None
+        if in_game:
+            try:
+                match_id = self._current_match_id()
+                game_id = self._current_game_id()
+            except Exception:
+                pass
+        return {
+            "session_id": self.session_id,
+            "updated_at": (now or self._now()).isoformat(),
+            "in_game": 1 if in_game else 0,
+            "match_id": match_id,
+            "game_id": game_id,
+            "format": g.format_str if g.format_str != "Unknown" else None,
+            "match_type": g.match_type,
+            "game_number": g.game_number,
+            "player_name": g.player_display_name,
+            "opponent_name": g.opponent_display_name,
+            "deck_name": g.player_deck_name,
+            "turn_number": g.turn_number or None,
+            "active_role": active_role,
+            "on_play": on_play,
+            "player_life": g.player_life,
+            "opponent_life": g.opponent_life,
+            "mulligans": g.mulligan_count or 0,
+            "game_started_at": g.game_start_time.isoformat() if g.game_start_time else None,
+            "player_commanders": json.dumps(g.player_commanders) if g.player_commanders else None,
+            "opponent_commanders": (
+                json.dumps(g.opponent_commanders) if g.opponent_commanders else None
+            ),
+        }
+
+    def _live_heartbeat(self) -> None:
+        """Bump live_status.updated_at every few seconds while idle, so the
+        dashboard can tell a quiet tracker from a stopped one."""
+        now_monotonic = time.monotonic()
+        last = getattr(self, "_last_live_heartbeat", 0.0)
+        if now_monotonic - last < 5.0:
+            return
+        self._last_live_heartbeat = now_monotonic
+        try:
+            self._analytics_store().touch_live_status(self.session_id, datetime.now())
+        except (OSError, sqlite3.Error):
             return
 
     def _record_raw_payload_snapshot(self, payload_type: str, payload_text: str) -> None:

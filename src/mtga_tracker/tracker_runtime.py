@@ -149,6 +149,7 @@ class TrackerRuntimeMixin:
                         self.waiting_start_time = None
 
                 self._process_new_events()
+                self._live_heartbeat()
                 time.sleep(0.5)
         except KeyboardInterrupt:
             self._print_line("\n" + "=" * 75)

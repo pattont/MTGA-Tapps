@@ -322,7 +322,11 @@ Important tables:
   distinguishes exact `live` rows, exact `recovered_previous_turn_logs` rows restored from
   durable console headers, and `estimated_header_events` historical backfills.
 - `game_events`: structured event history where available.
-- `console_logs`: rendered console log lines for later dashboard/query work.
+- `console_logs`: rendered console log lines for later dashboard/query work. Also feeds the
+  dashboard's Live Log page (`/api/live` in `live_api.py`, `since` = `console_logs.id`).
+- `live_status`: single-row (id=1) "what is happening right now" snapshot the tracker upserts
+  with every console line plus a ~5s idle heartbeat; drives the Live Log scoreboard. The old
+  Qt live-log window is a buried debug fallback (`MTGA_TRACKER_QT_LOG=1`).
 - `raw_game_payloads`: sanitized raw payload archive. `payload_json` is stored
   **zlib-compressed** (migration v11 converted legacy rows) — always read it through
   `payload_codec.decode_payload`, or use `python -m mtga_tracker.payload_dump <game_id>`;

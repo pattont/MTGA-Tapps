@@ -5278,6 +5278,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
+        if request_path == "/api/live":
+            from . import live_api
+
+            handled = live_api.handle_get(request_path, parse_qs(parsed.query), self.db_path)
+            if handled is not None:
+                status, body = handled
+                _send_bytes(
+                    self,
+                    status,
+                    json.dumps(body).encode("utf-8"),
+                    "application/json; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
         if request_path == "/api/settings":
             from . import settings_api
 

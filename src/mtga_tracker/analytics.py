@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from .log_sanitize import scrub_raw_log
 from .payload_codec import compress_payload
@@ -374,6 +374,34 @@ class AnalyticsStore:
                 payload_type TEXT,
                 payload_json TEXT NOT NULL,
                 FOREIGN KEY(session_id) REFERENCES tracker_sessions(id)
+            );
+
+            -- Single-row "what is happening right now" snapshot for the
+            -- dashboard's Live Log page. The tracker upserts it alongside
+            -- every console line (same transaction) plus an idle heartbeat,
+            -- so the dashboard can serve /api/live from SQLite alone.
+            CREATE TABLE IF NOT EXISTS live_status (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                session_id TEXT,
+                updated_at TEXT NOT NULL,
+                in_game INTEGER NOT NULL DEFAULT 0,
+                match_id TEXT,
+                game_id TEXT,
+                format TEXT,
+                match_type TEXT,
+                game_number INTEGER,
+                player_name TEXT,
+                opponent_name TEXT,
+                deck_name TEXT,
+                turn_number INTEGER,
+                active_role TEXT,
+                on_play INTEGER,
+                player_life INTEGER,
+                opponent_life INTEGER,
+                mulligans INTEGER,
+                game_started_at TEXT,
+                player_commanders TEXT,
+                opponent_commanders TEXT
             );
 
             CREATE TABLE IF NOT EXISTS rank_snapshots (
@@ -2246,6 +2274,7 @@ class AnalyticsStore:
         text: str,
         player_life: Optional[int],
         opponent_life: Optional[int],
+        live: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Persist one rendered console line using the persistent connection."""
         conn = self.connect()
@@ -2255,6 +2284,8 @@ class AnalyticsStore:
         # a failed write can never leave the WAL write lock held while idle.
         with conn:
             self.upsert_session_row(conn, session, now=created_at)
+            if live is not None:
+                self._upsert_live_status(conn, live)
             conn.execute(
                 """
                 INSERT INTO console_logs (
@@ -2284,6 +2315,57 @@ class AnalyticsStore:
                     opponent_life,
                 ),
             )
+
+    #: Columns of live_status that _upsert_live_status accepts (id excluded).
+    _LIVE_STATUS_COLUMNS = (
+        "session_id",
+        "updated_at",
+        "in_game",
+        "match_id",
+        "game_id",
+        "format",
+        "match_type",
+        "game_number",
+        "player_name",
+        "opponent_name",
+        "deck_name",
+        "turn_number",
+        "active_role",
+        "on_play",
+        "player_life",
+        "opponent_life",
+        "mulligans",
+        "game_started_at",
+        "player_commanders",
+        "opponent_commanders",
+    )
+
+    def _upsert_live_status(self, conn: sqlite3.Connection, live: Dict[str, Any]) -> None:
+        """Replace the single live_status row (id=1) inside `conn`'s txn."""
+        values = {column: live.get(column) for column in self._LIVE_STATUS_COLUMNS}
+        columns = ", ".join(values)
+        placeholders = ", ".join(f":{column}" for column in values)
+        conn.execute(
+            f"INSERT OR REPLACE INTO live_status (id, {columns}) VALUES (1, {placeholders})",
+            values,
+        )
+
+    def touch_live_status(self, session_id: str, now: datetime) -> None:
+        """Idle heartbeat: bump updated_at so the dashboard can tell a quiet
+        tracker from a stopped one. Creates the row if it doesn't exist."""
+        conn = self.connect()
+        if conn is None:
+            return
+        with conn:
+            updated = conn.execute(
+                "UPDATE live_status SET updated_at = ?, session_id = ? WHERE id = 1",
+                (now.isoformat(), session_id),
+            )
+            if updated.rowcount == 0:
+                self._upsert_live_status(
+                    conn,
+                    {"session_id": session_id, "updated_at": now.isoformat(), "in_game": 0},
+                )
 
     def record_raw_payload(
         self,

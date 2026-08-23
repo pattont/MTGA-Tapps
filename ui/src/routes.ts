@@ -227,6 +227,10 @@ export function parseSettingsRoute(hash: string): boolean {
   return hash === '#/settings' || hash.startsWith('#/settings?');
 }
 
+export function parseLiveRoute(hash: string): boolean {
+  return hash === '#/live' || hash.startsWith('#/live?');
+}
+
 export function gamesRouteHash(filters: SnapshotFilters = {}): string {
   const query = routeQuery(filters, true);
   return `#/games${query ? `?${query}` : ''}`;

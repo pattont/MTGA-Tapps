@@ -239,8 +239,8 @@ class MenuBarController(QObject):
         self.deck_downloader_action.triggered.connect(self.open_deck_downloader)
         self.menu.addAction(self.deck_downloader_action)
 
-        self.show_log_action = QAction("Show Live Tracker Log", self)
-        self.show_log_action.triggered.connect(self.show_live_log)
+        self.show_log_action = QAction("Live Log", self)
+        self.show_log_action.triggered.connect(self.open_live_log)
         self.menu.addAction(self.show_log_action)
 
         self.open_data_action = QAction("Open Data Folder", self)
@@ -283,7 +283,10 @@ class MenuBarController(QObject):
 
     def start(self) -> None:
         self.tray.show()
-        self.show_live_log()
+        # The live log now lives in the dashboard (#/live). The Qt window is
+        # a buried debug fallback: set MTGA_TRACKER_QT_LOG=1 to get it back.
+        if os.environ.get("MTGA_TRACKER_QT_LOG") == "1":
+            self.show_live_log()
         try:
             url = self.launcher.start_dashboard()
             self.log_window.append_text(f"Dashboard: {url}\n")
@@ -306,7 +309,12 @@ class MenuBarController(QObject):
         """Deck Finder lives inside the dashboard now (#/deck-finder)."""
         self.open_dashboard("/#/deck-finder")
 
+    def open_live_log(self) -> None:
+        """The live log lives in the dashboard now (#/live)."""
+        self.open_dashboard("/#/live")
+
     def show_live_log(self) -> None:
+        """Show the legacy Qt log window (debug fallback; see start())."""
         self.log_window.show()
         self.log_window.raise_()
         self.log_window.activateWindow()
