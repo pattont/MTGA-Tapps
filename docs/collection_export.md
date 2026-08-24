@@ -1,9 +1,9 @@
 # Collection Export — Plan
 
 Add "Export MTGA Collection" to the Settings page (above Database Health):
-two buttons — **Export to .json** and **Export to .txt** — producing files
-importable into Moxfield and similar sites. The extraction technique is
-adapted from NthPhantom10's
+three buttons — **Export to .json**, **Export to .csv**, and **Export to
+.txt** — producing files importable into Moxfield and similar sites. The
+extraction technique is adapted from NthPhantom10's
 [MTGA-collection-exporter](https://github.com/NthPhantom10/MTGA-collection-exporter),
 credited in the UI.
 
@@ -122,6 +122,30 @@ MTGA-collection-exporter, MIT — https://github.com/NthPhantom10/MTGA-collectio
 - `score_and_validate(blocks, anchors, known_ids)` — the v3.4 scoring
   function unchanged in spirit.
 
+### What we reuse instead of porting — the cleanup map
+
+Roughly 60 % of mtg.py duplicates infrastructure MTGA-Tapps already has.
+Piece by piece:
+
+| mtg.py piece (lines) | Fate | Replaced by |
+| --- | --- | --- |
+| `DatabaseLoader._find_mtga_raw_path` (~60 lines of per-OS path guessing) | **drop** | `paths.py` already resolves Raw_CardDatabase across Steam/Epic/macOS/Windows incl. multi-drive Steam libraries — strictly better than the original's |
+| `DatabaseLoader._parse_sqlite` + `_load_localizations` (~90 lines) | **drop** | `card_database.py` already opens the Arena DB, probes schema variants, and joins Localizations_enUS; we add one method (below) instead of a second parser |
+| `DatabaseLoader._fetch_scryfall` + ETag cache + `requests` session/retry (~120 lines, 200 MB bulk download) | **drop** | `card_database.py`'s existing per-card Scryfall fallback over `urllib` — only ids the local DB misses get fetched, no bulk file on disk |
+| `MacOSMem` (Mach VM reader) | **port** | kept nearly verbatim in `collection_export.py` (it's already pure ctypes) |
+| `pymem` usage (Windows) | **rewrite** | ~60 lines of ctypes (`OpenProcess`/`VirtualQueryEx`/`ReadProcessMemory`) mirroring the macOS reader's interface — drops the dependency |
+| `psutil` PID lookup (macOS) | **rewrite** | `pgrep -x MTGA` via subprocess (already the stdlib-only pattern used elsewhere in the repo) |
+| `AnchorManager` interactive prompts + fuzzy matching + saved-anchor file (~120 lines) | **drop** | automatic anchors from `game_deck_cards` playsets (see above) |
+| `MemoryScanner` scan/extract/score/validate core (~300 lines) | **port** | the valuable part — kept faithful, refactored into pure functions so it's unit-testable |
+| `ProgressBar`/`ScanProgressBar` + ANSI console handling (~90 lines) | **drop** | progress goes through the job-status endpoint; the web UI renders it |
+| `CollectionWriter._aggregate` + `A-` normalization + blank-set merge | **port** | same logic, minus the interactive `include_descriptions` prompt |
+| JSON / txt / Moxfield-CSV writers | **port (3 of 6)** | Deckbox, Goldfish, Cardsphere CSVs and the stats file dropped; writer stays table-driven for later additions |
+| `main()` argparse CLI, auto-open-explorer, log files | **drop** | replaced by the API endpoints; a minimal `python -m mtga_tracker.collection_export --scan-json <file>` entry remains solely as the elevated macOS helper |
+
+Net effect: mtg.py's 1,578 lines become roughly 400 new lines here, none
+of them third-party, and the card metadata comes from the same database
+the rest of the tracker already trusts.
+
 ### Anchors without typing: derive them from our own database
 
 The tracker already knows cards the user provably owns:
@@ -167,48 +191,92 @@ probe like the existing color/cost columns). Scryfall per-card fallback
 only for ids the local DB misses. `A-` prefix normalization kept
 (default on, as in v3.4).
 
-### Formats — exactly two buttons
+### Formats — three buttons
 
 - **`.json`** — same shape as the original's JSON (export_date, totals,
-  cards[] with count/name/set/collector_number/arena_ids). It's a good
-  format; keeping it means files from either tool interchange.
+  cards[] with count/name/set/collector_number/rarity/arena_ids). It's a
+  good format; keeping it means files from either tool interchange, and it
+  is the lossless record the other two derive from.
+- **`.csv`** — the Moxfield CSV dialect, column-for-column what the
+  original's `_write_moxfield` emits ("Count", "Name", "Edition",
+  "Collector Number" — the columns Moxfield's collection importer maps
+  automatically). One dialect only: Moxfield is the target site, and its
+  CSV also imports into most other tools. The writer table stays
+  format-keyed, so a Deckbox/Goldfish/Cardsphere dialect later is a
+  ~15-line function each, not a redesign.
 - **`.txt`** — Arena/Moxfield deck-line format, no header:
-  `4 Lightning Helix (STA) 42` (set/number only when known). Header and
-  stats move into the JSON and the UI, so the txt pastes clean into any
-  importer.
+  `4 Lightning Helix (STA) 42` (set/number only when known). The
+  original's txt leads with a 5-line stats banner; ours doesn't — the
+  stats live in the JSON and the UI status line, so the txt pastes clean
+  into any importer.
 
-The CSV dialects (Deckbox/Goldfish/Cardsphere) are dropped for now; the
-writer stays table-driven so adding one later is a 15-line function.
+All three run through the same pipeline — scan once, aggregate once,
+format last — so clicking two buttons back-to-back reuses the scan result
+(cached in memory for ~5 minutes, see the API section) instead of
+attaching to Arena twice.
 
-### API + Settings UI
+### API
 
-- `POST /api/collection/export` `{format: "json"|"txt"}` — starts a scan
-  in a background thread (a scan takes seconds to a minute); returns a job
-  id. `GET /api/collection/export?job=<id>` — `{state: running|done|error,
-  detail, file?}`. Output written to `DATA_DIR/exports/mtga_collection_<date>.<ext>`.
-- `GET /api/collection/download?file=<name>` — serves the finished file
-  (name validated against the exports dir).
-- **Settings page**: new "Export MTGA Collection" section above Database
-  Health. Two buttons with the existing fetch-spinner treatment, a status
-  line ("Scanning Arena's memory…", "Exported 1,842 unique cards →
-  download"), a requirements note ("Arena must be running — open the Decks
-  tab once so the collection is loaded"), and the credit line:
-  "Extraction technique by
+- `POST /api/collection/export` `{format: "json"|"csv"|"txt"}` — starts a
+  scan in a background thread (a scan takes seconds to a minute); returns
+  a job id. `GET /api/collection/export?job=<id>` —
+  `{state: running|done|error, detail, file?, unique?, total?}` so the UI
+  can show live phase text ("Attaching to Arena…", "Scanning memory…",
+  "Mapping 1,842 cards…").
+- The raw scan result (`{arena_id: qty}`) is cached in the dashboard
+  process for ~5 minutes: exporting a second format inside that window
+  formats from cache instantly — no second attach, no second macOS
+  password prompt. `{refresh: true}` forces a rescan.
+- Output written to `DATA_DIR/exports/mtga_collection_<date>.<ext>`;
+  `GET /api/collection/download?file=<name>` serves it (name validated
+  against the exports dir, no path traversal).
+
+### Settings UI — the box itself
+
+New "Export MTGA Collection" section above Database Health:
+
+- **Intro line**: "Read your full card collection from the running game
+  and export it for Moxfield and similar sites."
+- **Requirements callout** (always visible, styled like the existing
+  helper notes): "MTG Arena must be running, and your collection must be
+  loaded — open the **Decks** tab in Arena once before exporting."
+- **macOS warning** (shown only when the dashboard detects macOS — the
+  server includes `platform` in the settings payload): "macOS will show an
+  **administrator password prompt** when you export — reading another
+  app's memory requires elevated access. The password is used only to run
+  the scan; nothing is installed or changed." Shown in the box *and*
+  repeated in the status line at the moment the prompt is about to appear,
+  so it never feels like a surprise dialog.
+- **Fine-print caveats** (small muted text): "Unofficial: Arena doesn't
+  expose your collection, so this reads it from the game's memory — the
+  game is never modified. An Arena update can temporarily break this
+  until the tool is adjusted. Quantities come straight from the game's
+  own data."
+- **Three buttons**: "Export to .json", "Export to .csv", "Export to
+  .txt" — existing fetch-spinner treatment; all three disabled while a
+  job runs; status line beneath ("Scanning Arena's memory…", "Exported
+  1,842 unique cards (7,310 total) → Download"), with the Download link
+  pointing at `/api/collection/download`.
+- **Credit line**: "Extraction technique by
   [NthPhantom10's MTGA-collection-exporter](https://github.com/NthPhantom10/MTGA-collection-exporter)."
-- Errors surface as plain sentences: Arena not running / permission
-  declined / no valid collection block found (with the open-Decks-tab
-  hint).
+- Errors surface as plain sentences mapped from the job's error code:
+  Arena not running → "MTG Arena isn't running — launch it and open the
+  Decks tab, then try again."; permission declined → "The administrator
+  prompt was cancelled — the scan can't run without it."; no valid block →
+  "Couldn't find the collection in Arena's memory — open the Decks tab in
+  Arena so it loads, then try again."
 
 ### Files touched
 
 | File | Change |
 | --- | --- |
-| `src/mtga_tracker/collection_export.py` | new — reader, extractor, anchors, formats, CLI entry for the elevated helper |
-| `src/mtga_tracker/card_database.py` | `export_index_by_arena_id()` |
-| `src/mtga_tracker/dashboard.py` | route the three endpoints |
-| `ui/src/components/SettingsPage.tsx` | Export section + credit |
-| `ui/src/api.ts` | export/status/download clients |
-| `tests/test_collection_export.py` | new — extractor on synthetic memory, scoring, format writers, endpoint round-trip with a stubbed scanner |
+| `src/mtga_tracker/collection_export.py` | new — memory readers, extractor, auto-anchors, scan cache, json/csv/txt writers, CLI entry for the elevated macOS helper |
+| `src/mtga_tracker/card_database.py` | `export_index_by_arena_id()` (name, set code, collector number by arena id) |
+| `src/mtga_tracker/settings_api.py` | include `platform` in the settings payload (drives the macOS warning) |
+| `src/mtga_tracker/dashboard.py` | route the export/status/download endpoints |
+| `ui/src/components/SettingsPage.tsx` | Export section: callouts, macOS warning, three buttons, status line, credit |
+| `ui/src/api.ts` | export/status/download clients + settings platform field |
+| `tests/test_collection_export.py` | new — extractor on synthetic memory, scoring, all three format writers, endpoint round-trip with a stubbed scanner, scan-cache reuse |
 
 ### Verification
 
@@ -216,9 +284,10 @@ writer stays table-driven so adding one later is a 15-line function.
    duplicates, stride-3 layout, garbage) through `extract_blocks` +
    `score_and_validate`; format writers against a fixture collection;
    endpoints with the scanner stubbed.
-2. Live on Travis's Mac: Arena running → both buttons → import the .txt
-   into Moxfield and spot-check ~10 known quantities (including an
-   Alchemy `A-` card and a card owned >4×).
+2. Live on Travis's Mac: Arena running → all three buttons → import the
+   .txt and the .csv into Moxfield and spot-check ~10 known quantities
+   (including an Alchemy `A-` card and a card owned >4×); confirm the
+   second export inside the cache window skips the password prompt.
 3. Failure paths: Arena closed; password prompt cancelled; Arena on the
    login screen (collection not in memory yet).
 
