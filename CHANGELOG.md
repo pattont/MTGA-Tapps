@@ -2,6 +2,33 @@
 
 ## 0.5.8
 
+- **Live Log is now the Scoreboard** — the old Qt play-by-play window is
+  replaced by a live page in the dashboard (`#/live`): a hero scoreboard with
+  both life totals, color pips, and deck name, a friendly format chip, the turn
+  and game clock, and Brawl commander art with hover previews. Below it, a Live
+  Feed that renders through the exact same timeline component as the `/game`
+  page (so it reads identically), the current game's play-by-play, a retained
+  "Previous Game" between matches with a closing "Game ended" banner, a session
+  rail (record, runtime, live/ready status), and a scrolling Today's Games list.
+  The Qt window is now a buried debug fallback (`MTGA_TRACKER_QT_LOG=1`).
+- **Deck Finder moved into the dashboard** — no more separate terminal window.
+  Pick a site then a format, browse a per-site results table (win rates for
+  untapped.gg, event placings for tournament sites, and so on), open any deck to
+  export it to Arena or jump to the source, or hit "Surprise Me". Creator lists
+  moved to the Settings page.
+- **Settings is now a dashboard page** (`#/settings`, gear icon on every page):
+  Deck AI configuration, Deck Finder creators, a tracker-status readout
+  (monitoring/card DB/log DB/version), a single sun/moon theme toggle, and the
+  Database Health link — all in the web UI. The old Qt dialog remains as a
+  fallback.
+- **Colorless is a color**: the colorless diamond ("C") now shows wherever
+  colors do — Recent Games, the Decks table, deck and game pages, and the live
+  scoreboard — for decks and opponents whose known cards are all colorless
+  (Eldrazi, artifact decks), instead of showing nothing.
+- **Sidebar & navigation**: a Live Log entry above Overview that turns green
+  while the tracker runs and red when it's stopped, an icon on every nav item
+  (icon-only when the rail is collapsed), a Deck Finder button with a magnifier,
+  and a global search that finds cards or decks.
 - **Deck colors everywhere**: color pips on the deck page header, a Colors
   column on the overview Decks table, and a Colors column in Recent Games
   (between Deck and Format). Colors are judged lands-first from real casting

@@ -10,6 +10,9 @@ data, your disk.
 ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)
 ![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows-lightgrey)
 
+> 💬 **Join the community on [Discord](https://discord.gg/ExfW3HaZgb)** — for
+> discussion, bug reports, and feature requests.
+
 ![Performance Overview dashboard](docs/images/overview.png)
 
 ## What it does
@@ -17,9 +20,11 @@ data, your disk.
 **Live tracking.** One lightweight app — menu bar on macOS, system tray on
 Windows — runs everything: it follows your game in real time (casts, draws,
 lands, combat, life totals, stack resolution), writes every game to the local
-analytics database, serves the dashboard, and shows a readable play-by-play
-log window with a full per-game timeline saved for later. Prefer a terminal?
-The same tracker runs as a plain console command.
+analytics database, and serves the dashboard. The **Live Log** is a live
+**Scoreboard** page right in the dashboard: both players' life, colors, and
+deck, the turn clock, session record, today's games, and a play-by-play feed
+that reads exactly like the per-game timeline — no separate window to manage.
+Prefer a terminal? The same tracker runs as a plain console command.
 
 **Deck analytics.** Every deck gets a drill-down page tinted with its signature
 card's art: per-game combat and resource averages for both players, turn-pace
@@ -73,8 +78,15 @@ backfill your old games.
 
 ## Screenshots
 
-**Recent Games** — outcomes, formats, Brawl commander matchups, draw status, and
-game pace at a glance:
+**Live Log — the Scoreboard** — while you play: both life totals with color
+pips and deck, the turn and game clock, your live session record, today's
+finished games, and a play-by-play feed identical to the per-game timeline:
+
+![Live Log Scoreboard](docs/images/live-log.png)
+
+**Recent Games** — outcomes, deck and opponent colors (including the colorless
+diamond), formats, Brawl commander matchups, draw status, and game pace at a
+glance:
 
 ![Recent Games](docs/images/recent-games.png)
 
@@ -130,7 +142,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_windows_app.ps1
 ```bash
 python3 -m venv venv && source venv/bin/activate
 pip install -e '.[dev,gui]'
-mtga-tracker-app        # tracker + live log window + dashboard, one command
+mtga-tracker-app        # tracker + dashboard (with the live Scoreboard), one command
 ```
 
 See [QUICKSTART.md](QUICKSTART.md) for the full walkthrough, including the
@@ -183,23 +195,30 @@ names the opponent's deck — the Game Detail page shows it as the Opponent Deck
 Type, falling back to plain colors when there's no guess. The call runs in the
 background after the game ends, so tracking never waits on it.
 
-Configure it from the menu bar: **Settings…** → enable, pick a provider
-(OpenAI, Anthropic, or Gemini), paste your key, optionally set a model. The
-choice is saved to `settings.json` at the top level of the project folder
-(installed builds keep it in the app data folder), and your key is only ever
-sent to the provider you chose. Without a key the feature simply stays off.
+Configure it on the dashboard's **Settings** page (gear icon, top right — or
+the "Settings" menu-bar entry): enable, pick a provider (OpenAI, Anthropic, or
+Gemini), paste your key, optionally set a model. The Settings page also holds
+your Deck Finder creators, a tracker-status readout, and the Database Health
+link. The choice is saved to `settings.json` at the top level of the project
+folder (installed builds keep it in the app data folder), and your key is only
+ever sent to the provider you chose. Without a key the feature simply stays off.
 
 ## Deck Finder
 
-The bundled Deck Finder opens in its own terminal window from the menu bar
-("Deck Finder") or the button at the bottom of the dashboard sidebar. Browse
-featured creators or search the supported sites, then copy any decklist in
-Arena's import format. Its creator lists live in `deckfinder_config.json` at
-the top level of the project folder — edit it to add your own Moxfield,
-AetherHub, or TCGplayer creators. Everything it needs installs with the
-tracker; no separate setup.
+The Deck Finder now lives **right inside the dashboard** — open it from the
+"Deck Finder" button at the bottom of the sidebar or the menu bar entry (no
+separate terminal window anymore). Pick a site (AetherHub, magic.gg, Moxfield,
+MTGO, TCGplayer, or untapped.gg) and a format, and it lists matching decks in a
+table tuned to each site — win rates and matches for untapped.gg archetypes,
+event placings for tournament sites, and so on. Open any deck to see its list,
+then **Export to Arena** copies it in Arena's import format (or **Source**
+opens the original page). "Surprise Me" pulls a random importable deck. Your
+own featured creators for AetherHub, Moxfield, and TCGplayer are managed on the
+**Settings** page (or in `deckfinder_config.json` at the top level of the
+project folder). Everything it needs installs with the tracker; no separate
+setup.
 
-![Deck Finder & Downloader](docs/images/deck-finder.png)
+![Deck Finder in the dashboard](docs/images/deck-finder.png)
 
 ## What isn't tracked
 

@@ -2,6 +2,9 @@
 
 Get MTGA Tracker running in a few minutes.
 
+> 💬 Questions, bugs, or feature requests? Join the community on
+> **[Discord](https://discord.gg/ExfW3HaZgb)**.
+
 ## Prerequisites
 
 - MTGA installed and run at least once (the tracker reads Arena's `Player.log`)
@@ -19,8 +22,8 @@ Program Files. Prefer a no-install portable copy? Grab the `-windows.zip` instea
 run `MTGA Tracker.exe` from anywhere.
 
 On macOS it's a DMG — drag **MTGA Tracker** to Applications and you're done. The
-**Deck Finder** companion tool is bundled inside the app on both platforms (launch it
-from the menu bar or the dashboard sidebar); there is nothing separate to install.
+**Deck Finder** is built into the dashboard on both platforms (open it from the
+menu bar or the sidebar button); there is nothing separate to install.
 
 **Build it yourself on macOS:**
 
@@ -31,10 +34,12 @@ open "dist/MTGA Tracker.app"
 scripts/build_macos_installer.sh
 ```
 
-The app lives in the menu bar: it starts tracking, opens the Live Tracker Log window,
-serves the dashboard locally, and opens it in your browser. Menu items: **Open
-Dashboard**, **Deck Finder**, **Show Live Tracker Log**, **Open Data Folder**,
-**Settings…** (AI deck identification), **Start/Stop Tracking**, **Quit**. Installed builds keep their database under
+The app lives in the menu bar: it starts tracking, serves the dashboard locally,
+and opens it in your browser. The tracker's status line at the top of the menu
+shows a green dot while it's running and red when it's stopped. Menu items, in
+order: **Live Log** (the live Scoreboard page), **Dashboard**, **Deck Finder**,
+**Settings** (Deck AI, creators, tracker status), **Open Data Folder**,
+**Start/Stop Tracking**, **Quit**. Installed builds keep their database under
 `~/Library/Application Support/MTGA Tracker` (macOS) or
 `%LOCALAPPDATA%\MTGA Tracker` (Windows).
 
@@ -54,9 +59,7 @@ Open Anyway entry never appears, the Terminal fallback always works:
 xattr -cr "/Applications/MTGA Tracker.app"
 ```
 
-The first Deck Finder launch from a downloaded build may prompt separately (it's its
-own executable inside the app) — same Open Anyway dance if so. On Windows, use
-SmartScreen's **More info → Run anyway** on the setup.exe or zip.
+On Windows, use SmartScreen's **More info → Run anyway** on the setup.exe or zip.
 
 ## Option 2 — Run from source (development)
 
@@ -79,11 +82,14 @@ venv/bin/python -m mtga_tracker.dashboard      # http://127.0.0.1:8765
 
 ## What to expect
 
-Start the tracker, then play Arena. The console / Live Tracker Log shows real card
-names as the game unfolds — casts, draws, lands, combat, stack resolution, life
-totals — and each finished game is saved to the local SQLite database. The dashboard
-(auto-refreshing) has the overview, per-deck pages, per-game detail with timeline and
-draw-quality analysis, and per-card pages. Everything is local; no account, no cloud.
+Start the tracker, then play Arena. Open **Live Log** for the live Scoreboard —
+both life totals with color pips, the turn and game clock, your session record,
+today's games, and a play-by-play feed (casts, draws, lands, combat, stack
+resolution, life totals) that reads just like the per-game timeline. Each
+finished game is saved to the local SQLite database. The rest of the dashboard
+(auto-refreshing) has the overview, per-deck pages, per-game detail with timeline
+and draw-quality analysis, and per-card pages. Everything is local; no account,
+no cloud.
 
 Tips:
 
