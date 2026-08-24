@@ -264,6 +264,13 @@ export function LiveLogPage() {
       const isNewGame = gameKey !== null && gameKey !== gameKeyRef.current;
       if (gameKey !== null) {
         gameKeyRef.current = gameKey;
+      } else if (gameKeyRef.current !== null && next.tracker.state !== 'offline') {
+        // The server stopped serving a game entirely — a fresh tracker
+        // session with nothing played yet. Drop the previous session's
+        // feed and scoreboard instead of showing them forever.
+        gameKeyRef.current = null;
+        setLastGameNow(null);
+        setEvents((current) => (current.length > 0 ? [] : current));
       }
       if (next.now?.in_game) {
         setLastGameNow(next.now);

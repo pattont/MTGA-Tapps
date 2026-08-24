@@ -157,15 +157,27 @@ def _seat_colors(conn: sqlite3.Connection, game_id: Optional[str]) -> Dict[str, 
     return out
 
 
-def _latest_event_game_id(conn: sqlite3.Connection) -> Optional[str]:
-    """game_id of the newest game_events row — the game whose feed the page
-    should keep showing between games. The tracker clears live_status.game_id
-    the moment a match completes, and Arena flushes the endgame log lines in
-    the same burst, so without this fallback the final turns of a game would
-    never be served (the client polls once a second and misses the window)."""
+def _latest_event_game_id(
+    conn: sqlite3.Connection, session_id: Optional[str]
+) -> Optional[str]:
+    """game_id of the newest game_events row in the CURRENT tracker session —
+    the game whose feed the page should keep showing between games. The
+    tracker clears live_status.game_id the moment a match completes, and
+    Arena flushes the endgame log lines in the same burst, so without this
+    fallback the final turns of a game would never be served (the client
+    polls twice a second and misses the window).
+
+    Scoped to the current session on purpose: a fresh tracker session (a
+    restart, the next day) starts with a clean feed instead of resurrecting
+    a previous session's last game — this also keeps the feed consistent
+    with the empty Today's Games rail after a date rollover, while a session
+    that plays across midnight keeps its previous game visible."""
+    if not session_id:
+        return None
     try:
         row = conn.execute(
-            "SELECT game_id FROM game_events ORDER BY id DESC LIMIT 1"
+            "SELECT game_id FROM game_events WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+            (session_id,),
         ).fetchone()
     except sqlite3.OperationalError:
         return None
@@ -297,7 +309,9 @@ def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
         # The game the feed should show: the live one, or — between games —
         # the game the last events belong to, so the feed's tail still lands
         # and the previous game stays on screen until the next one starts.
-        feed_game_id = (status.get("game_id") if status else None) or _latest_event_game_id(conn)
+        feed_game_id = (status.get("game_id") if status else None) or _latest_event_game_id(
+            conn, session_id
+        )
 
         now_payload: Optional[Dict[str, Any]] = None
         if status is not None:

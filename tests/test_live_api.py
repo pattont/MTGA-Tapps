@@ -182,6 +182,28 @@ def test_feed_tail_and_colors_survive_game_end(tmp_path):
     assert after["now"]["opponent_colors"] == "WR"
 
 
+def test_fresh_session_starts_with_a_clean_feed(tmp_path):
+    """A new tracker session (restart, next day) must not resurrect the
+    previous session's last game: retention is scoped to the current
+    session, so the feed and scoreboard stay consistent with an empty
+    Today's Games rail after a date rollover."""
+    store = _store(tmp_path)
+    # Yesterday's session left events behind (helper writes session "S1").
+    _game_event(store, "G1", "Opponent: cast [Boros Charm]", "cast", turn=9, actor="opponent")
+    # The tracker restarted under a new session, nothing played yet.
+    _log_line(
+        store,
+        "startup",
+        live=_live(session_id="S2", in_game=0, game_id=None, match_id=None),
+    )
+    store.close()
+
+    payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+    assert payload["tracker"]["state"] == "idle"
+    assert payload["events"] == []
+    assert payload["now"]["game_id"] is None
+
+
 def test_seat_colors_reports_colorless_deck(tmp_path):
     """An opponent whose every known card is colorless shows "C" (the
     colorless diamond), not blank — colorless is a real identity."""
