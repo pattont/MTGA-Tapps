@@ -4156,6 +4156,25 @@ def _card_opponent_multiplicity(
     return {"games": total_games, "buckets": bucket_rows}
 
 
+def _pip_color_options(mana_cost: str) -> List[Set[str]]:
+    """One entry per colored pip: the set of colors that can pay it.
+
+    {R} -> {R}; hybrid {R/W} -> {R, W} (either color works); twobrid {2/W}
+    and plain generic/X/C pips are payable without colored mana, so they
+    contribute nothing; Phyrexian {W/P} keeps its color requirement (life is
+    technically an option, but decks don't plan around it)."""
+    options: List[Set[str]] = []
+    for pip in _MANA_PIP_RE.findall(str(mana_cost or "")):
+        parts = pip.split("/")
+        letters = {part for part in parts if part in "WUBRG"}
+        if not letters:
+            continue
+        if any(part.isdigit() for part in parts):
+            continue
+        options.append(letters)
+    return options
+
+
 def _card_opponent_playable(
     conn: sqlite3.Connection,
     variants: List[str],
@@ -4164,12 +4183,13 @@ def _card_opponent_playable(
 ) -> Optional[Dict[str, Any]]:
     """How often opponents COULD have cast this card, judged by revealed colors.
 
-    A game counts as "possible" when the colors the opponent revealed cover
-    every color the card's cost strictly requires (hybrid pips require
-    nothing), plus any game where they actually played it. Cards with no
-    color requirement (artifacts, lands) count every game — technically true,
-    flagged in the UI. Returns None when the card's cost is unknown, since a
-    guessed requirement would make the percentage meaningless.
+    A game counts as "possible" when every colored pip in the card's cost has
+    at least one payable color among those the opponent revealed — a strict
+    pip needs its color, a hybrid pip ({R/W}) needs either of its colors —
+    plus any game where they actually played it. Cards with no colored pips
+    (artifacts, lands) count every game — technically true, flagged in the
+    UI. Returns None when the card's cost is unknown, since a guessed
+    requirement would make the percentage meaningless.
     """
     if not _table_exists(conn, "cards"):
         return None
@@ -4182,7 +4202,7 @@ def _card_opponent_playable(
     ).fetchone()
     if cost_row is None:
         return None
-    required = set(_strict_pip_letters(str(cost_row[0] or "")))
+    pip_options = _pip_color_options(str(cost_row[0] or ""))
     rows = conn.execute(
         f"""
         SELECT
@@ -4208,12 +4228,17 @@ def _card_opponent_playable(
     games_played = 0
     for _game_id, letters, played_it in rows:
         shown = {ch for ch in str(letters or "") if ch in "WUBRG"}
-        if played_it or required <= shown:
+        castable = all(options & shown for options in pip_options)
+        if played_it or castable:
             games_possible += 1
             if played_it:
                 games_played += 1
     return {
-        "required_colors": normalize_colors("".join(required)),
+        # Union of every color that appears in a colored pip — "WR" for a
+        # hybrid {R/W} cost — so the UI knows the card is not free to cast.
+        "required_colors": normalize_colors(
+            "".join(letter for options in pip_options for letter in options)
+        ),
         "games_possible": games_possible,
         "games_played": games_played,
         "pct": (

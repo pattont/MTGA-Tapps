@@ -1015,7 +1015,8 @@ export interface CardMultiplicity {
 }
 
 export interface CardOpponentPlayable {
-  /** WUBRG letters the card's cost strictly requires ("" = none). */
+  /** Every color appearing in the cost's colored pips, hybrids included
+      ("WR" for {R/W}); "" = no colored mana needed at all. */
   required_colors: string;
   games_possible: number;
   games_played: number;

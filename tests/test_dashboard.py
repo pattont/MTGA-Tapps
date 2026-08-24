@@ -2918,6 +2918,57 @@ def test_card_detail_opponent_playable_counts_color_covered_games(tmp_path):
     assert playable["pct"] == 100.0
 
 
+def test_card_detail_opponent_playable_hybrid_costs(tmp_path):
+    """A hybrid pip is castable off EITHER of its colors: Boros Reckoner
+    ({R/W}{R/W}{R/W}) counts for white opponents, red opponents, and both —
+    and it is NOT 'no colored mana needed'."""
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            "insert into cards (name, first_seen_at, mana_cost, color_identity) values (?, ?, ?, ?)",
+            [
+                ("Boros Reckoner", "2026-06-01T00:00:00", "{R/W}{R/W}{R/W}", "WR"),
+                ("Plains", "2026-06-01T00:00:00", "", "W"),
+                ("Shock", "2026-06-01T00:00:00", "{R}", "R"),
+                ("Duress", "2026-06-01T00:00:00", "{B}", "B"),
+            ],
+        )
+        card_ids = {
+            name: card_id for card_id, name in conn.execute("select id, name from cards")
+        }
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            ) values (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                # game-1 opponent showed white and cast the Reckoner.
+                ("game-1", "opponent-1", card_ids["Plains"], "Plains", "Land", 3),
+                ("game-1", "opponent-1", card_ids["Boros Reckoner"], "Boros Reckoner", "Creature", 1),
+                # game-2 opponent showed only red — {R/W} pips still payable.
+                ("game-2", "opponent-2", card_ids["Shock"], "Shock", "Instant", 2),
+            ],
+        )
+
+    playable = card_detail(db_path, "Boros Reckoner")["opponent_playable"]
+    # Both colors of the hybrid pips are reported, so the UI never claims
+    # the card needs no colored mana.
+    assert playable["required_colors"] == "WR"
+    assert playable["games_possible"] == 2  # white-only AND red-only both count
+
+    # A mono-black opponent could not cast it: rewrite game-2 to black. If
+    # hybrids were treated as "no colored mana", this game would still count.
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "update game_card_summary set card_id = ?, display_name = 'Duress' "
+            "where game_id = 'game-2'",
+            (card_ids["Duress"],),
+        )
+    playable = card_detail(db_path, "Boros Reckoner")["opponent_playable"]
+    assert playable["games_possible"] == 1
+
+
 def test_deck_color_scoring_rules():
     """Lands lead; hybrids never force a color; single-card colors drop."""
     from mtga_tracker.dashboard import _score_deck_colors
