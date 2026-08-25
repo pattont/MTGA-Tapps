@@ -501,6 +501,90 @@ def test_migration_v22_is_idempotent_across_reruns(tmp_path):
     assert forests == 1
 
 
+def test_migration_v23_tags_ramped_lands_source(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute("insert into tracker_sessions (id, started_at) values ('s', '2026-08-01T00:00:00')")
+        conn.execute("insert into matches (id, session_id) values ('m', 's')")
+        conn.execute("insert into games (id, session_id, match_id, started_at) values ('g', 's', 'm', '2026-08-01T01:00:00')")
+        conn.execute("insert into participants (id, game_id, role) values ('p', 'g', 'player')")
+        conn.execute("insert into game_participant_stats (game_id, participant_id, cards_drawn) values ('g', 'p', 3)")
+        # A land drawn naturally on turn 2, plus a Forest that v22 backfilled
+        # from a turn-6 "put onto battlefield" event (source left NULL).
+        conn.executemany(
+            "insert into game_drawn_cards (game_id, participant_id, display_name, type_category, draw_position, turn_number, copy_number) values (?,?,?,?,?,?,?)",
+            [
+                ("g", "p", "Island", "Land", 1, 2, 1),
+                ("g", "p", "Forest", "Land", 2, 6, 1),
+            ],
+        )
+        conn.execute(
+            "insert into game_events (session_id, game_id, event_time, turn_number, actor_role, event_type, text) "
+            "values ('s', 'g', '2026-08-01T01:06:00', 6, 'player', 'zone', '[1:13] You: put [Forest] onto battlefield')"
+        )
+        conn.execute("delete from schema_migrations where version = 23")
+        AnalyticsStore.apply_pending_migrations(conn)
+        rows = dict(
+            conn.execute(
+                "select display_name, source from game_drawn_cards where game_id='g' order by draw_position"
+            ).fetchall()
+        )
+    # The ramped Forest is tagged; the naturally drawn Island is untouched.
+    assert rows == {"Island": None, "Forest": "ramp"}
+
+
+def test_migration_v23_is_idempotent(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute("insert into tracker_sessions (id, started_at) values ('s', '2026-08-01T00:00:00')")
+        conn.execute("insert into matches (id, session_id) values ('m', 's')")
+        conn.execute("insert into games (id, session_id, match_id, started_at) values ('g', 's', 'm', '2026-08-01T01:00:00')")
+        conn.execute("insert into participants (id, game_id, role) values ('p', 'g', 'player')")
+        conn.execute("insert into game_participant_stats (game_id, participant_id, cards_drawn) values ('g', 'p', 1)")
+        conn.execute(
+            "insert into game_drawn_cards (game_id, participant_id, display_name, type_category, draw_position, turn_number, copy_number) "
+            "values ('g', 'p', 'Forest', 'Land', 1, 6, 1)"
+        )
+        conn.execute(
+            "insert into game_events (session_id, game_id, event_time, turn_number, actor_role, event_type, text) "
+            "values ('s', 'g', '2026-08-01T01:06:00', 6, 'player', 'zone', '[1:13] You: put [Forest] onto battlefield')"
+        )
+        conn.execute("delete from schema_migrations where version = 23")
+        AnalyticsStore.apply_pending_migrations(conn)
+        conn.execute("delete from schema_migrations where version = 23")
+        AnalyticsStore.apply_pending_migrations(conn)
+        tagged = conn.execute(
+            "select count(*) from game_drawn_cards where game_id='g' and source='ramp'"
+        ).fetchone()[0]
+    assert tagged == 1
+
+
+def test_persist_drawn_cards_records_ramp_source(tmp_path):
+    from mtga_tracker.analytics_persistence import persist_drawn_cards
+    from mtga_tracker.state import CardEvent
+
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute("insert into tracker_sessions (id, started_at) values ('s', '2026-08-01T00:00:00')")
+        conn.execute("insert into matches (id, session_id) values ('m', 's')")
+        conn.execute("insert into games (id, session_id, match_id, started_at) values ('g', 's', 'm', '2026-08-01T01:00:00')")
+        conn.execute("insert into participants (id, game_id, role) values ('p', 'g', 'player')")
+        drawn = CardEvent("Llanowar Elves", "player", card_type_category="Creature")
+        ramped = CardEvent("Forest", "player", card_type_category="Land", source="ramp")
+        persist_drawn_cards(
+            conn, "g", "p", [drawn, ramped], refresh_display_name=lambda name: name
+        )
+        rows = dict(
+            conn.execute(
+                "select display_name, source from game_drawn_cards where game_id='g'"
+            ).fetchall()
+        )
+    assert rows == {"Llanowar Elves": None, "Forest": "ramp"}
+
+
 def test_migration_v9_deletes_post_concede_ghost_games(tmp_path):
     db_path = tmp_path / "analytics.sqlite3"
     with sqlite3.connect(db_path) as conn:

@@ -13,12 +13,18 @@ class CardEvent:
         player: str,
         timestamp: Optional[datetime] = None,
         card_type_category: Optional[str] = None,
+        source: Optional[str] = None,
     ):
         """Initialize a card event."""
         self.card_name = card_name
         self.player = player
         self.timestamp = timestamp or datetime.now()
         self.card_type_category = card_type_category or "Other"
+        # How the card was seen: None/"draw" for a normal draw, "ramp" for a
+        # land forced from the library straight onto the battlefield (ramp /
+        # search). "ramp" cards stay in Lands Seen but are excluded from the
+        # flood side of the flood/screw math (see draw_quality).
+        self.source = source
 
     def __repr__(self) -> str:
         return f"CardEvent(card={self.card_name}, player={self.player}, time={self.timestamp})"

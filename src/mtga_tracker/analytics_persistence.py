@@ -365,6 +365,7 @@ def persist_drawn_cards(
         copy_counts[display_name] = copy_counts.get(display_name, 0) + 1
         type_category = event.card_type_category
         card_id = upsert_card(conn, display_name, type_category)
+        source = getattr(event, "source", None)
         conn.execute(
             """
             INSERT INTO game_drawn_cards (
@@ -375,9 +376,10 @@ def persist_drawn_cards(
                 type_category,
                 draw_position,
                 turn_number,
-                copy_number
+                copy_number,
+                source
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 game_id,
@@ -388,6 +390,7 @@ def persist_drawn_cards(
                 index,
                 getattr(event, "turn_number", None),
                 copy_counts[display_name],
+                source,
             ),
         )
 

@@ -165,3 +165,74 @@ def test_flood_counts_opening_hand_lands():
     ]
     normal = draw_quality_metrics(opener, normal_drawn, 3, 60, deck_lands=22)
     assert normal["is_flood"] is False
+
+
+def test_ramped_lands_count_as_seen_but_not_as_flood():
+    from mtga_tracker.draw_quality import draw_quality_metrics
+
+    land = {"display_name": "Forest", "type_category": "Land"}
+    ramp = {"display_name": "Forest", "type_category": "Land", "source": "ramp"}
+    spell = {"display_name": "Spell", "type_category": "Creature"}
+    opener = [dict(land) for _ in range(3)] + [dict(spell) for _ in range(4)]
+    # Post-opening: three lands FORCED out of the library, one real spell draw.
+    drawn = [
+        {**ramp, "draw_position": 1},
+        {**ramp, "draw_position": 2},
+        {**ramp, "draw_position": 3},
+        {**spell, "draw_position": 4},
+    ]
+    quality = draw_quality_metrics(opener, drawn, 4, 60, deck_lands=22)
+
+    # Every ramped land stays visible in the seen counts.
+    assert quality["ramped_lands"] == 3
+    assert quality["lands_seen"] == 6  # 3 opening + 3 ramped
+    assert quality["total_cards_seen"] == 11
+
+    # Flood ignores the ramped lands entirely: only the 3 opening lands remain
+    # among 8 flood-relevant cards, so this is not flood.
+    assert quality["flood_lands_seen"] == 3
+    assert quality["flood_cards_seen"] == 8
+    assert quality["is_flood"] is False
+    assert not any("consecutive land draws" in r for r in quality["flood_reasons"])
+
+    # The same three lands drawn naturally WOULD read as flood.
+    natural = [
+        {**land, "draw_position": 1},
+        {**land, "draw_position": 2},
+        {**land, "draw_position": 3},
+        {**spell, "draw_position": 4},
+    ]
+    natural_quality = draw_quality_metrics(opener, natural, 4, 60, deck_lands=22)
+    assert natural_quality["is_flood"] is True
+
+
+def test_ramped_lands_protect_against_screw():
+    from mtga_tracker.draw_quality import draw_quality_metrics
+
+    land = {"display_name": "Forest", "type_category": "Land"}
+    ramp = {"display_name": "Forest", "type_category": "Land", "source": "ramp"}
+    spell = {"display_name": "Spell", "type_category": "Creature"}
+    # One-land opener, a long nonland run, but a land fetched out mid-game.
+    opener = [dict(land)] + [dict(spell) for _ in range(6)]
+    drawn_screwed = [{**spell, "draw_position": i} for i in range(1, 9)]
+    screwed = draw_quality_metrics(opener, drawn_screwed, 8, 60, deck_lands=24)
+
+    drawn_ramped = [
+        {**spell, "draw_position": 1},
+        {**spell, "draw_position": 2},
+        {**ramp, "draw_position": 3},
+        {**spell, "draw_position": 4},
+        {**spell, "draw_position": 5},
+        {**spell, "draw_position": 6},
+        {**spell, "draw_position": 7},
+        {**spell, "draw_position": 8},
+    ]
+    protected = draw_quality_metrics(opener, drawn_ramped, 8, 60, deck_lands=24)
+
+    # The fetched land counts as a land you have: screw probability rises
+    # (less screwed) once a ramped land is on the board, and it still shows in
+    # Lands Seen. Screw KEEPS ramped lands, unlike flood which drops them.
+    assert protected["lands_seen"] == screwed["lands_seen"] + 1
+    assert protected["screw_probability_pct"] > screwed["screw_probability_pct"]
+    # Flood, by contrast, would not see that fetched land at all.
+    assert protected["flood_lands_seen"] == protected["lands_seen"] - 1

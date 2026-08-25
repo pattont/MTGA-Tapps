@@ -243,6 +243,7 @@ class AnalyticsStore:
                 draw_position INTEGER NOT NULL,
                 turn_number INTEGER,
                 copy_number INTEGER NOT NULL DEFAULT 1,
+                source TEXT,
                 UNIQUE(game_id, participant_id, draw_position),
                 FOREIGN KEY(game_id) REFERENCES games(id),
                 FOREIGN KEY(participant_id) REFERENCES participants(id),
@@ -627,6 +628,7 @@ class AnalyticsStore:
             (20, AnalyticsStore._migrate_v20_poison_stat),
             (21, AnalyticsStore._migrate_v21_repair_swapped_log_dates),
             (22, AnalyticsStore._migrate_v22_backfill_ramped_lands),
+            (23, AnalyticsStore._migrate_v23_tag_ramped_lands_source),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -1652,6 +1654,90 @@ class AnalyticsStore:
                 "WHERE game_id = ? AND participant_id = ?",
                 (len(put_events), game_id, participant_id),
             )
+
+    @staticmethod
+    def _migrate_v23_tag_ramped_lands_source(conn: sqlite3.Connection) -> None:
+        """Tag ramped/searched lands in game_drawn_cards with source='ramp'.
+
+        v22 recorded lands put from the library onto the battlefield into
+        game_drawn_cards, but with no way to tell them apart from lands that
+        were actually drawn. This adds the ``source`` column (older databases
+        lack it) and marks those ramped lands so the flood/screw math can keep
+        them in Lands Seen while excluding them from the flood side — a land
+        searched out on purpose is not a land drawn against your will.
+
+        Ramped rows are re-identified from the same "put [Land] onto
+        battlefield" timeline events v22 used, matched to their drawn rows by
+        base card name and turn (v22 stamped each inserted row with the event's
+        turn). This also covers games a newer tracker had already recorded live
+        (which v22 skipped), so every historical ramped land is tagged.
+        """
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(game_drawn_cards)").fetchall()
+        }
+        if "source" not in columns:
+            conn.execute("ALTER TABLE game_drawn_cards ADD COLUMN source TEXT")
+
+        put_pattern = re.compile(r"put \[([^\]]+)\] onto battlefield\b")
+
+        def base_name(name: str) -> str:
+            return str(name or "").split(" (")[0].strip().casefold()
+
+        games = conn.execute(
+            """
+            SELECT DISTINCT game_id FROM game_events
+            WHERE actor_role = 'player' AND text LIKE '%onto battlefield%'
+              AND game_id IS NOT NULL
+            """
+        ).fetchall()
+        for (game_id,) in games:
+            participant_row = conn.execute(
+                "SELECT id FROM participants WHERE game_id = ? AND role = 'player'",
+                (game_id,),
+            ).fetchone()
+            if not participant_row:
+                continue
+            participant_id = str(participant_row[0])
+            # Multiset of (base name, turn) for each land put onto the battlefield.
+            wanted: dict = {}
+            for event_id, text in conn.execute(
+                """
+                SELECT id, text FROM game_events
+                WHERE game_id = ? AND actor_role = 'player'
+                  AND text LIKE '%put [%] onto battlefield%'
+                """,
+                (game_id,),
+            ):
+                match = put_pattern.search(str(text or ""))
+                if not match:
+                    continue
+                name = match.group(1).strip()
+                if not AnalyticsStore._name_is_land(conn, name):
+                    continue
+                turn_row = conn.execute(
+                    "SELECT turn_number FROM game_events WHERE id = ?", (event_id,)
+                ).fetchone()
+                turn = turn_row[0] if turn_row else None
+                key = (base_name(name), turn)
+                wanted[key] = wanted.get(key, 0) + 1
+            if not wanted:
+                continue
+            for row_id, display_name, turn_number in conn.execute(
+                """
+                SELECT id, display_name, turn_number
+                FROM game_drawn_cards
+                WHERE game_id = ? AND participant_id = ? AND source IS NULL
+                ORDER BY draw_position
+                """,
+                (game_id, participant_id),
+            ).fetchall():
+                key = (base_name(display_name), turn_number)
+                if wanted.get(key, 0) > 0:
+                    conn.execute(
+                        "UPDATE game_drawn_cards SET source = 'ramp' WHERE id = ?",
+                        (row_id,),
+                    )
+                    wanted[key] -= 1
 
     @staticmethod
     def _migrate_v8_backfill_library_to_hand_draws(conn: sqlite3.Connection) -> None:

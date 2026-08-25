@@ -64,6 +64,10 @@ data/backups/
 *.sqlite3-wal
 *.sqlite3-shm
 
+# FUSE bridge leftovers (deleted-but-open files on mounted folders)
+.fuse_hidden*
+**/.fuse_hidden*
+
 # Session scratch
 fable_src.tar.gz
 _to_delete/

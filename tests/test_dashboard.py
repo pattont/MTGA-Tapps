@@ -990,6 +990,7 @@ def test_game_detail_reports_header_cards_and_timeline(tmp_path):
             "turn_number": 2,
             "draw_position": 1,
             "copy_number": 1,
+            "source": None,
         }
     ]
     quality = detail["draw_quality"]

@@ -172,6 +172,16 @@ def is_land_row(row) -> bool:
     )
 
 
+def is_ramped_row(row) -> bool:
+    """True for a land searched/ramped from the library onto the battlefield.
+
+    These are recorded with source='ramp'. They stay in Lands Seen but are
+    excluded from the flood side of the flood/screw math: a land forced out on
+    purpose was not drawn against your will, so it should not read as flood.
+    """
+    return str(row.get("source") or "").casefold() == "ramp"
+
+
 def longest_land_run(flags) -> int:
     """Longest run of consecutive land draws."""
     longest = 0
@@ -234,6 +244,18 @@ def draw_quality_metrics(
     land_seen_pct = (
         round(100.0 * lands_seen / total_cards_seen, 1) if total_cards_seen else None
     )
+    # Lands searched/ramped from the library onto the battlefield. They stay in
+    # every visible count above, but the flood side below drops them: a land
+    # forced out on purpose was not drawn against your will, so it must not read
+    # as flood. Screw keeps them — a land you got, even a fetched one, still
+    # protects you from a mana-screw reading.
+    ramped_lands = sum(1 for row in drawn if is_ramped_row(row) and is_land_row(row))
+    natural_land_draws = land_draws - ramped_lands
+    # Flood-only view with the ramped lands removed entirely (from both the
+    # lands counted and the cards drawn).
+    flood_lands_seen = lands_seen - ramped_lands
+    flood_cards_seen = total_cards_seen - ramped_lands
+    flood_total_draws = total_draws - ramped_lands
     if deck_lands is not None and deck_size > 0:
         expected_land_rate = deck_lands / deck_size
         land_rate_source = "decklist"
@@ -243,12 +265,25 @@ def draw_quality_metrics(
         land_rate_source = "estimate"
         expected_deck_lands = max(0, min(deck_size, round(deck_size * expected_land_rate)))
     expected_lands_seen = round(total_cards_seen * expected_land_rate, 1)
+    expected_flood_lands_seen = round(flood_cards_seen * expected_land_rate, 1)
     flood_probability_pct = None
     screw_probability_pct = None
-    if total_cards_seen:
+    if flood_cards_seen:
         flood_probability_pct = round(
             100.0
             * hypergeom_tail_at_least(
+                flood_lands_seen,
+                population_size=deck_size,
+                success_count=expected_deck_lands,
+                draw_count=min(flood_cards_seen, deck_size),
+            ),
+            1,
+        )
+    if total_cards_seen and len(drawn) == total_draws:
+        # Screw keeps the ramped lands: they are lands you have.
+        screw_probability_pct = round(
+            100.0
+            * hypergeom_tail_at_most(
                 lands_seen,
                 population_size=deck_size,
                 success_count=expected_deck_lands,
@@ -256,57 +291,73 @@ def draw_quality_metrics(
             ),
             1,
         )
-        if len(drawn) == total_draws:
-            screw_probability_pct = round(
-                100.0
-                * hypergeom_tail_at_most(
-                    lands_seen,
-                    population_size=deck_size,
-                    success_count=expected_deck_lands,
-                    draw_count=min(total_cards_seen, deck_size),
-                ),
-                1,
-            )
 
+    # Screw/drought flags keep every land (ramped included), so a fetched land
+    # correctly ends a drought.
     land_by_position = {
         int(row.get("draw_position") or 0): is_land_row(row)
         for row in drawn
         if int(row.get("draw_position") or 0) > 0
     }
-    draw_land_flags = [
-        land_by_position.get(position, False) for position in range(1, total_draws + 1)
-    ]
     known_draw_land_flags = [
         land_by_position.get(position) for position in range(1, total_draws + 1)
     ]
-    longest_streak = longest_land_run(draw_land_flags)
-    max_lands_eight = max_lands_in_window(draw_land_flags)
     drought, drought_lands = longest_low_land_drought(
         known_draw_land_flags,
         opening_lands,
     )
+    # Flood streak/window flags drop the ramped lands: a ramped land's slot is
+    # removed from the draw sequence entirely (it was never a draw), so it is
+    # neither a "land draw" nor a gap. Unidentified real draws stay as False
+    # gaps exactly as before.
+    ramped_positions = {
+        int(row.get("draw_position") or 0)
+        for row in drawn
+        if is_ramped_row(row) and int(row.get("draw_position") or 0) > 0
+    }
+    natural_land_flags = [
+        land_by_position.get(position, False)
+        for position in range(1, total_draws + 1)
+        if position not in ramped_positions
+    ]
+    longest_streak = longest_land_run(natural_land_flags)
+    max_lands_eight = max_lands_in_window(natural_land_flags)
+    natural_land_draw_pct = (
+        round(100.0 * natural_land_draws / flood_total_draws, 1)
+        if flood_total_draws
+        else None
+    )
     flood_reasons = []
     # The percentage rule needs a real sample: "2 of 2 draws were lands" in a
     # short game is ordinary variance, not flood.
-    if land_draw_pct is not None and land_draw_pct > 50.0 and total_draws >= 6:
-        flood_reasons.append(f"{land_draws} of {total_draws} post-opening draws were lands")
+    if (
+        natural_land_draw_pct is not None
+        and natural_land_draw_pct > 50.0
+        and flood_total_draws >= 6
+    ):
+        flood_reasons.append(
+            f"{natural_land_draws} of {flood_total_draws} post-opening draws were lands"
+        )
     # Combined rule counting the opening hand: a 3-land keep followed by
     # land-heavy draws floods even when no single post-opening rule fires.
     # Requires being clearly above the deck's own expected land count so a
     # normal land share never triggers it.
+    flood_land_seen_pct = (
+        round(100.0 * flood_lands_seen / flood_cards_seen, 1) if flood_cards_seen else None
+    )
     if (
-        total_cards_seen >= 9
-        and land_seen_pct is not None
-        and land_seen_pct >= max(50.0, expected_land_rate * 100.0 + 12.0)
-        and lands_seen - expected_lands_seen >= 1.2
+        flood_cards_seen >= 9
+        and flood_land_seen_pct is not None
+        and flood_land_seen_pct >= max(50.0, expected_land_rate * 100.0 + 12.0)
+        and flood_lands_seen - expected_flood_lands_seen >= 1.2
     ):
         flood_reasons.append(
-            f"{lands_seen} of {total_cards_seen} cards seen were lands "
+            f"{flood_lands_seen} of {flood_cards_seen} cards seen were lands "
             "(opening hand included)"
         )
     if flood_probability_pct is not None and flood_probability_pct <= 10.0:
         flood_reasons.append(
-            f"Only a {flood_probability_pct:g}% chance of seeing at least {lands_seen} lands"
+            f"Only a {flood_probability_pct:g}% chance of seeing at least {flood_lands_seen} lands"
         )
     if longest_streak >= 4:
         flood_reasons.append(f"{longest_streak} consecutive land draws")
@@ -336,6 +387,10 @@ def draw_quality_metrics(
         "opening_lands": opening_lands,
         "lands_seen": lands_seen,
         "land_seen_pct": land_seen_pct,
+        "ramped_lands": ramped_lands,
+        "natural_land_draws": natural_land_draws,
+        "flood_lands_seen": flood_lands_seen,
+        "flood_cards_seen": flood_cards_seen,
         "expected_land_rate": round(expected_land_rate * 100.0, 1),
         "land_rate_source": land_rate_source,
         "deck_lands": deck_lands,
@@ -415,7 +470,7 @@ def analyze_draw_quality(
             draw_rows = _rows(
                 conn,
                 """
-                SELECT display_name, type_category
+                SELECT display_name, type_category, source
                 FROM game_drawn_cards
                 WHERE participant_id = ?
                 ORDER BY draw_position
@@ -434,16 +489,25 @@ def analyze_draw_quality(
                 game_land_rate = default_expected_land_rate(deck_size)
             cards_seen = len(seen_rows)
             lands_seen = sum(1 for row in seen_rows if _is_land(row))
+            # Ramped lands stay in Lands Seen (screw) but leave the flood view.
+            ramped_lands = sum(
+                1
+                for row in draw_rows
+                if str(row["source"] or "").casefold() == "ramp" and _is_land(row)
+            )
+            flood_lands_seen = lands_seen - ramped_lands
+            flood_cards_seen = cards_seen - ramped_lands
             expected_lands = max(0, min(deck_size, round(deck_size * game_land_rate)))
             flood_probability = None
             screw_probability = None
-            if cards_seen:
+            if flood_cards_seen:
                 flood_probability = hypergeom_tail_at_least(
-                    lands_seen,
+                    flood_lands_seen,
                     population_size=deck_size,
                     success_count=expected_lands,
-                    draw_count=cards_seen,
+                    draw_count=flood_cards_seen,
                 )
+            if cards_seen:
                 screw_probability = hypergeom_tail_at_most(
                     lands_seen,
                     population_size=deck_size,

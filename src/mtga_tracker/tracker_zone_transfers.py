@@ -786,17 +786,26 @@ class TrackerZoneTransferMixin:
         )
         source_type = source_zone.get("type") if isinstance(source_zone, dict) else None
         if source_type == "ZoneType_Library" and self._is_tracked_seat(determining_seat):
-            self._record_library_card_access(card_obj, determining_seat, turn_for_display)
+            self._record_library_card_access(
+                card_obj, determining_seat, turn_for_display, to_battlefield=True
+            )
 
     def _record_library_card_access(
         self,
         card_obj: Dict[str, Any],
         owner_seat: Optional[int],
         turn_for_display: int,
+        *,
+        to_battlefield: bool = False,
     ) -> None:
         """Count a non-draw library access (to hand or straight to the
         battlefield) as a drawn card, so ramped/tutored/explored cards feed
-        the drawn-cards table and flood/screw math."""
+        the drawn-cards table and flood/screw math.
+
+        A land forced from the library straight onto the battlefield
+        (to_battlefield=True) is tagged source="ramp": it still counts toward
+        Lands Seen, but the flood side of the flood/screw math excludes it,
+        because it was searched out on purpose, not drawn."""
         if owner_seat not in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
             return
         stats = self._seat_stats(owner_seat)
@@ -816,11 +825,17 @@ class TrackerZoneTransferMixin:
             resolve_type = getattr(self.card_db, "get_card_type_category", None)
             if callable(resolve_type):
                 type_category = resolve_type(grp_id) or "Other"
+        # A land searched from the library straight onto the battlefield is
+        # "ramp": still counted in Lands Seen, but kept out of the flood math.
+        # Restricted to lands (as the historical backfill is) so non-land
+        # library cheats keep counting as ordinary accesses.
+        source = "ramp" if (to_battlefield and type_category == "Land") else None
         draw_event = CardEvent(
             card_name,
             "player" if seat_id == self.game_state.player_seat_id else "opponent",
             timestamp=self._now(),
             card_type_category=type_category,
+            source=source,
         )
         draw_event.turn_number = turn_for_display if turn_for_display > 0 else None
         self.game_state.drawn_card_events.setdefault(seat_id, []).append(draw_event)

@@ -211,7 +211,8 @@ def _game_draw_quality(
     drawn = _dict_rows(
         conn.execute(
             """
-            SELECT display_name, COALESCE(type_category, 'Other') AS type_category, draw_position
+            SELECT display_name, COALESCE(type_category, 'Other') AS type_category,
+                   draw_position, source
             FROM game_drawn_cards
             WHERE game_id = ? AND participant_id = ?
             ORDER BY draw_position
@@ -3514,7 +3515,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         drawn = _dict_rows(
             conn.execute(
                 """
-                SELECT display_name, COALESCE(type_category, 'Other') AS type_category, turn_number, draw_position, copy_number
+                SELECT display_name, COALESCE(type_category, 'Other') AS type_category, turn_number, draw_position, copy_number, source
                 FROM game_drawn_cards
                 WHERE game_id = ? AND participant_id = ?
                 ORDER BY draw_position

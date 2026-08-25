@@ -2,6 +2,17 @@
 
 ## 0.5.9
 
+- **Ramped and searched lands now count in Lands Seen.** A land pulled from
+  your library straight onto the battlefield — Lumbering Worldwagon fetching a
+  basic, Cultivate, fetch lands, and the like — used to vanish from every land
+  count because it was never "drawn." It now shows up in Total Lands Seen for
+  both live games and, via a one-time backfill of your history, past ones.
+- **Fetched lands no longer read as flood, but still protect against screw.**
+  A land you searched out on purpose was not drawn against your will, so it is
+  excluded from the flood side of the flood/screw math — ramp-heavy decks stop
+  reading as flooded just for doing what they do. Screw keeps those lands,
+  because a land you have (even a fetched one) is still mana in play and makes
+  a mana-screw reading correctly less likely.
 - **Export your MTGA collection** from the Settings page — three buttons
   (`.json`, `.csv`, `.txt`) that read your full card collection out of the
   running game and write a file you can import into Moxfield and similar
