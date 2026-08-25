@@ -178,6 +178,11 @@ function CollectionExport({ platform }: { platform: PlatformSettings }) {
             changed.
           </li>
         ) : null}
+        <li>
+          Reading the collection out of memory can take a few minutes (rarely up to ~10).{' '}
+          <span className="collection-export-flag">Stay on this page while it runs</span> — leaving
+          cancels the export.
+        </li>
       </ul>
 
       <div className="collection-export-buttons">

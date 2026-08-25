@@ -390,44 +390,56 @@ def score_and_validate(
         reverse=True,
     )
     best_block, _score, _exact, _known, best_dupes = scored[0]
-    if _validate_block(best_block, best_dupes, known_ids, strict=strict):
+    if _validate_block(best_block, best_dupes, known_ids, anchor_ids, strict=strict):
         return best_block
     return None
 
 
 def _validate_block(
-    block: Dict[int, int], duplicates: int, known_ids: Set[int], *, strict: bool
+    block: Dict[int, int],
+    duplicates: int,
+    known_ids: Set[int],
+    anchor_ids: Set[int] = frozenset(),
+    *,
+    strict: bool,
 ) -> bool:
     if not block:
         return False
     min_entries = 500 if strict else 10
     if len(block) < min_entries or len(block) > 100_000:
         return False
-    known = sum(1 for k in block if k in known_ids)
-    ratio = known / len(block)
-    if ratio < (0.60 if strict else 0.30):
-        return False
     if sum(block.values()) > 500_000:
         return False
     if duplicates > max(25, int(len(block) * 0.05)):
         return False
-    return True
+    # Several of the player's OWN cards clustered in one block is decisive
+    # even when the block is mostly cards the tracker has never seen played —
+    # which is the normal shape of a full collection (lots of unplayed junk),
+    # and exactly what made the old 30%-known-ratio bar reject the real block.
+    anchors_present = sum(1 for k in block if k in anchor_ids)
+    if not strict and anchors_present >= 3:
+        return True
+    known = sum(1 for k in block if k in known_ids)
+    ratio = known / len(block)
+    return ratio >= (0.60 if strict else 0.18)
 
 
 # --- Anchors from the tracker's own decklists -------------------------------
 
 
-def derive_anchors(conn, limit: int = 8) -> List[Anchor]:
-    """Locator ``(arena_id, 4)`` anchors from the player's recorded decklists.
+def derive_anchors(conn, limit: int = 16) -> List[Anchor]:
+    """Locator arena_ids from cards the player's decklists prove they own.
 
-    Cards that appear as 4-ofs in the player's submitted decklists are almost
-    always owned at exactly four copies, which makes them reliable memory
-    locators — no typing, no saved-anchor file. Ranked by how many distinct
-    decks agree, so the most confidently-owned playsets are tried first.
+    Cards that appear as 4-ofs in the player's submitted decklists are cards
+    they definitely own — reliable memory locators, no typing, no saved
+    file. Ranked by how many distinct decks agree, so the most confidently
+    owned cards are tried first.
 
-    Unlike the original tool the quantity is NOT forced into the result: a
-    4-of is a good place to look, but the scanned quantity is the truth (a
-    card can be run as a 4-of while owned in a different amount).
+    The scan matches on the arena_id ALONE (checking that a plausible
+    quantity follows), so it locates the card at whatever quantity it's
+    actually owned — a card run as a 4-of but owned as a full playset of 4,
+    or opened six times, is found either way. The quantity here is only a
+    hint for the (unused) exact-match scoring bonus.
     """
     try:
         rows = conn.execute(
@@ -503,40 +515,56 @@ def scan_collection(
 
     known = known_arena_ids(conn)
     anchors = derive_anchors(conn)
-    patterns = [struct.pack("<II", a.arena_id, a.quantity) for a in anchors]
+    # Match on the 4-byte arena_id alone — the collection stores it followed
+    # by the owned quantity, so verifying a plausible qty in the next 4 bytes
+    # finds the card at whatever amount it's owned (not just as a 4-of).
+    id_patterns = [struct.pack("<I", a.arena_id) for a in anchors]
 
     progress("Reading Arena's memory…")
     regions = [(addr, size) for addr, size in mem.readable_regions() if 0 < size <= MAX_REGION_BYTES]
     total = len(regions) or 1
 
-    # Pass 1: locate the collection near an anchor hit.
+    # Pass 1: locate the collection near where the player's own cards cluster,
+    # validating region-by-region so a hit returns without scanning the rest.
     blocks: List[Tuple[Dict[int, int], int]] = []
     for index, (addr, size) in enumerate(regions):
-        if index % 8 == 0:
+        if index % 4 == 0:
             progress(f"Scanning Arena's memory… {int(100 * index / total)}%")
         try:
             data = mem.read_bytes(addr, size)
         except OSError:
             continue
-        for pattern in patterns:
+        hits: List[int] = []
+        for pattern in id_patterns:
             start = 0
             while True:
                 pos = data.find(pattern, start)
                 if pos == -1:
                     break
-                lo = max(0, pos - SCAN_WINDOW_BYTES // 2)
-                hi = min(len(data), pos + SCAN_WINDOW_BYTES // 2)
-                blocks.extend(extract_blocks(data[lo:hi]))
+                # Only count it if a plausible quantity follows — that's what
+                # distinguishes a real (id, qty) pair from a coincidental int.
+                if pos + 8 <= len(data):
+                    qty = int.from_bytes(data[pos + 4 : pos + 8], "little")
+                    if MIN_QTY <= qty <= MAX_QTY:
+                        hits.append(pos)
                 start = pos + 1
-    result = score_and_validate(blocks, anchors, known)
-    if result is not None:
-        progress(f"Mapping {len(result)} cards…")
-        return result
+        if not hits:
+            continue
+        for pos in _cluster_positions(hits):
+            lo = max(0, pos - SCAN_WINDOW_BYTES // 2)
+            hi = min(len(data), pos + SCAN_WINDOW_BYTES // 2)
+            blocks.extend(extract_blocks(data[lo:hi]))
+        result = score_and_validate(blocks, anchors, known)
+        if result is not None:
+            progress(f"Mapping {len(result)} cards…")
+            return result
 
-    # Pass 2: anchorless full sweep (slower, stricter bar).
+    # Pass 2: anchorless full sweep — only reached when nothing matched an
+    # anchor (e.g. no recorded decklists). Slow; the UI warns it can take a
+    # while.
     blocks = []
     for index, (addr, size) in enumerate(regions):
-        if index % 8 == 0:
+        if index % 4 == 0:
             progress(f"Deep scan of Arena's memory… {int(100 * index / total)}%")
         try:
             data = mem.read_bytes(addr, size)
@@ -549,6 +577,15 @@ def scan_collection(
         return result
 
     raise CollectionNotFound()
+
+
+def _cluster_positions(positions: List[int]) -> List[int]:
+    """Collapse hit offsets within one read window — one extract covers them."""
+    out: List[int] = []
+    for pos in sorted(set(positions)):
+        if not out or pos - out[-1] > SCAN_WINDOW_BYTES // 2:
+            out.append(pos)
+    return out
 
 
 class CollectionNotFound(RuntimeError):

@@ -227,8 +227,9 @@ def _scan_macos_elevated(db_path: Optional[Path], progress) -> Dict[int, int]:
         raise _ExportError("scan_failed", "Couldn't launch the elevated scan.")
 
     # Poll the sidecar the helper writes so the UI shows real progress while
-    # the (blocking) elevated command runs.
-    deadline = time.monotonic() + 240.0
+    # the (blocking) elevated command runs. A full deep scan of a large
+    # collection can genuinely take several minutes.
+    deadline = time.monotonic() + 900.0
     last = None
     while proc.poll() is None:
         line = _read_text(progress_name)

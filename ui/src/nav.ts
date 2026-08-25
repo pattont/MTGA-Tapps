@@ -91,10 +91,9 @@ export const liveNavItems: AppNavItem[] = [
 ];
 
 export const settingsNavItems: AppNavItem[] = [
+  // The Settings page is short and fits on one screen, so the sidebar is just
+  // the way back plus a single "Settings" label \u2014 no per-section anchors that
+  // wouldn't scroll anywhere anyway.
   { id: 'back-to-dashboard', label: '\u2190 Back to dashboard', route: '#overview' },
-  { id: 'settings-tracker', label: 'Tracker' },
-  { id: 'settings-deck-ai', label: 'Deck AI' },
-  { id: 'settings-creators', label: 'Deck Finder Creators' },
-  { id: 'settings-collection-export', label: 'Export MTGA Collection' },
-  { id: 'settings-db-health', label: 'Database Health' },
+  { id: 'settings-tracker', label: 'Settings' },
 ];

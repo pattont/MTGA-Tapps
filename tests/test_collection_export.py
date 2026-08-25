@@ -71,6 +71,23 @@ def test_score_and_validate_rejects_high_duplicates():
     assert ce.score_and_validate([(block, 999)], [], known) is None
 
 
+def test_score_and_validate_accepts_low_known_ratio_when_anchors_cluster():
+    # The real-collection shape: a big block that's mostly cards the tracker
+    # has NEVER seen played (low known-ratio), but with several of the
+    # player's own cards present. This is what timed out before.
+    anchors = [ce.Anchor(2000, 4), ce.Anchor(2001, 4), ce.Anchor(2002, 4), ce.Anchor(2003, 4)]
+    known = {2000, 2001, 2002, 2003}  # only the anchors are "known"
+    block = {i: (i % 4) + 1 for i in range(2000, 2600)}  # 600 cards, 4 known
+    # 4/600 ≈ 0.7% known — far below any ratio bar, but 4 anchors present.
+    assert ce.score_and_validate([(block, 0)], anchors, known) == block
+
+
+def test_score_and_validate_still_needs_evidence_without_anchors():
+    known = {2000, 2001}
+    block = {i: 1 for i in range(2000, 2600)}  # 2/600 known, no anchors
+    assert ce.score_and_validate([(block, 0)], [], known) is None
+
+
 def _tracker_db(tmp_path):
     path = tmp_path / "tracker.sqlite3"
     conn = sqlite3.connect(path)
