@@ -626,6 +626,7 @@ class AnalyticsStore:
             (19, AnalyticsStore._migrate_v19_backfill_stats_from_events),
             (20, AnalyticsStore._migrate_v20_poison_stat),
             (21, AnalyticsStore._migrate_v21_repair_swapped_log_dates),
+            (22, AnalyticsStore._migrate_v22_backfill_ramped_lands),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -1466,6 +1467,190 @@ class AnalyticsStore:
                 WHERE id = ?
                 """,
                 (session_id,),
+            )
+
+    #: Basic land names, recognized even when the local card DB predates them.
+    _BASIC_LAND_NAMES = frozenset(
+        {"Plains", "Island", "Swamp", "Mountain", "Forest", "Wastes"}
+    )
+
+    @staticmethod
+    def _name_is_land(conn: sqlite3.Connection, name: str) -> bool:
+        """True when a card name is a land — the only 'put onto battlefield'
+        cards a historical backfill can safely attribute to library ramp.
+
+        The stored timeline never recorded the source zone, so a creature
+        'put onto battlefield' is ambiguous (reanimation, blink, a library
+        cheat, a token). Lands are not: a land entering play this way is
+        overwhelmingly a ramp/search from the library, so restricting to
+        lands keeps the backfill honest.
+        """
+        base = name.split(" (")[0].strip()
+        if base in AnalyticsStore._BASIC_LAND_NAMES:
+            return True
+        row = conn.execute(
+            "SELECT type_line, primary_type FROM cards WHERE name = ? OR name LIKE ? LIMIT 1",
+            (name, f"{base} (%"),
+        ).fetchone()
+        if not row:
+            return False
+        type_line = str(row[0] or "")
+        primary = str(row[1] or "")
+        return "land" in type_line.casefold() or primary.casefold() == "land"
+
+    @staticmethod
+    def _migrate_v22_backfill_ramped_lands(conn: sqlite3.Connection) -> None:
+        """Count historical lands ramped/searched onto the battlefield.
+
+        A land pulled from the library straight onto the battlefield (Lumbering
+        Worldwagon, Cultivate, fetch lands, …) printed a "put [Land] onto
+        battlefield" timeline event but was never recorded in game_drawn_cards,
+        so it was invisible to Lands Seen and flood/screw detection. This is
+        the battlefield twin of v8's library-to-hand backfill, restricted to
+        lands because the stored events did not keep the source zone.
+        """
+        put_pattern = re.compile(r"put \[([^\]]+)\] onto battlefield\b")
+        games = conn.execute(
+            """
+            SELECT DISTINCT game_id FROM game_events
+            WHERE actor_role = 'player' AND text LIKE '%onto battlefield%'
+              AND game_id IS NOT NULL
+            """
+        ).fetchall()
+        for (game_id,) in games:
+            participant_row = conn.execute(
+                "SELECT id FROM participants WHERE game_id = ? AND role = 'player'",
+                (game_id,),
+            ).fetchone()
+            if not participant_row:
+                continue
+            participant_id = str(participant_row[0])
+            put_events = []
+            for event_time, event_id, text in conn.execute(
+                """
+                SELECT event_time, id, text FROM game_events
+                WHERE game_id = ? AND actor_role = 'player'
+                  AND text LIKE '%put [%] onto battlefield%'
+                ORDER BY event_time, id
+                """,
+                (game_id, ),
+            ):
+                match = put_pattern.search(str(text or ""))
+                if not match:
+                    continue
+                name = match.group(1).strip()
+                if not AnalyticsStore._name_is_land(conn, name):
+                    continue  # only lands can be safely attributed to ramp
+                turn_row = conn.execute(
+                    "SELECT turn_number FROM game_events WHERE id = ?", (event_id,)
+                ).fetchone()
+                put_events.append(
+                    {"name": name, "turn": turn_row[0] if turn_row else None}
+                )
+            if not put_events:
+                continue
+            drawn_rows = [
+                {"id": row[0], "name": str(row[1] or ""), "turn": row[2], "position": int(row[3] or 0)}
+                for row in conn.execute(
+                    """
+                    SELECT id, display_name, turn_number, draw_position
+                    FROM game_drawn_cards
+                    WHERE game_id = ? AND participant_id = ?
+                    ORDER BY draw_position
+                    """,
+                    (game_id, participant_id),
+                )
+            ]
+            already_counted = {(e["name"], e["turn"]) for e in put_events} & {
+                (row["name"], row["turn"]) for row in drawn_rows
+            }
+            if already_counted:
+                # A tracker new enough to record these already counted them.
+                continue
+            # Slot each ramped land after the last draw of the same-or-earlier
+            # turn, so draw order stays sensible.
+            merged = list(drawn_rows)
+            for entry in put_events:
+                insert_at = len(merged)
+                for index in range(len(merged) - 1, -1, -1):
+                    row_turn = merged[index].get("turn")
+                    if row_turn is not None and entry["turn"] is not None and int(row_turn) <= int(entry["turn"]):
+                        insert_at = index + 1
+                        break
+                    if row_turn is not None and entry["turn"] is not None:
+                        insert_at = index
+                merged.insert(insert_at, {"name": entry["name"], "turn": entry["turn"], "id": None})
+            # Move existing rows clear of the UNIQUE(draw_position) constraint,
+            # then renumber everything and insert the ramped lands.
+            conn.execute(
+                "UPDATE game_drawn_cards SET draw_position = draw_position + 1000 "
+                "WHERE game_id = ? AND participant_id = ?",
+                (game_id, participant_id),
+            )
+            copy_counts: dict = {}
+            for position, item in enumerate(merged, start=1):
+                copy_counts[item["name"]] = copy_counts.get(item["name"], 0) + 1
+                if item["id"] is not None:
+                    conn.execute(
+                        "UPDATE game_drawn_cards SET draw_position = ?, copy_number = ? WHERE id = ?",
+                        (position, copy_counts[item["name"]], item["id"]),
+                    )
+                    continue
+                card_row = conn.execute(
+                    "SELECT id, primary_type FROM cards WHERE name = ? OR name LIKE ? LIMIT 1",
+                    (item["name"], f"{item['name'].split(' (')[0]} (%"),
+                ).fetchone()
+                conn.execute(
+                    """
+                    INSERT INTO game_drawn_cards (
+                        game_id, participant_id, card_id, display_name,
+                        type_category, draw_position, turn_number, copy_number
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        game_id,
+                        participant_id,
+                        card_row[0] if card_row else None,
+                        item["name"],
+                        card_row[1] if card_row else "Land",
+                        position,
+                        item["turn"],
+                        copy_counts[item["name"]],
+                    ),
+                )
+                summary = conn.execute(
+                    """
+                    SELECT id FROM game_card_summary
+                    WHERE game_id = ? AND participant_id = ?
+                      AND (display_name = ? OR display_name LIKE ?)
+                    """,
+                    (game_id, participant_id, item["name"], f"{item['name'].split(' (')[0]} (%"),
+                ).fetchone()
+                if summary:
+                    conn.execute(
+                        "UPDATE game_card_summary SET drawn_count = drawn_count + 1 WHERE id = ?",
+                        (summary[0],),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        INSERT INTO game_card_summary (
+                            game_id, participant_id, card_id, display_name,
+                            type_category, played_count, drawn_count
+                        ) VALUES (?, ?, ?, ?, ?, 0, 1)
+                        """,
+                        (
+                            game_id,
+                            participant_id,
+                            card_row[0] if card_row else None,
+                            item["name"],
+                            card_row[1] if card_row else "Land",
+                        ),
+                    )
+            conn.execute(
+                "UPDATE game_participant_stats SET cards_drawn = cards_drawn + ? "
+                "WHERE game_id = ? AND participant_id = ?",
+                (len(put_events), game_id, participant_id),
             )
 
     @staticmethod

@@ -414,6 +414,93 @@ def test_migration_v8_merges_explored_cards_into_draw_order(tmp_path):
     assert stats == (3,)
 
 
+def test_migration_v22_backfills_ramped_lands_only(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            "insert into tracker_sessions (id, started_at) values ('session-1', '2026-08-01T00:00:00')"
+        )
+        conn.execute("insert into matches (id, session_id) values ('match-1', 'session-1')")
+        conn.execute(
+            "insert into games (id, session_id, match_id, started_at) values ('game-1', 'session-1', 'match-1', '2026-08-01T01:00:00')"
+        )
+        conn.execute(
+            "insert into participants (id, game_id, role) values ('participant-1', 'game-1', 'player')"
+        )
+        conn.execute(
+            "insert into game_participant_stats (game_id, participant_id, cards_drawn) values ('game-1', 'participant-1', 1)"
+        )
+        conn.execute(
+            "insert into game_drawn_cards (game_id, participant_id, display_name, type_category, draw_position, turn_number, copy_number) "
+            "values ('game-1', 'participant-1', 'Forsaken Miner', 'Creature', 1, 2, 1)"
+        )
+        # A nonbasic land in the card DB, so the land filter can resolve it.
+        conn.execute(
+            "insert into cards (name, type_line, primary_type, first_seen_at) "
+            "values ('Realm of Koh', 'Land', 'Land', '2026-01-01')"
+        )
+        conn.executemany(
+            """
+            insert into game_events (session_id, game_id, event_time, turn_number, actor_role, event_type, text)
+            values ('session-1', 'game-1', ?, ?, 'player', 'zone', ?)
+            """,
+            [
+                ("2026-08-01T01:01:00", 2, "[0:20] You: drew [Forsaken Miner]"),
+                # Turn 3: a basic ramped in, plus a nonbasic land searched in.
+                ("2026-08-01T01:02:00", 3, "[1:10] You: put [Forest] onto battlefield"),
+                ("2026-08-01T01:02:30", 3, "[1:20] You: put [Realm of Koh] onto battlefield"),
+                # A creature cheated into play must NOT be counted (source zone
+                # is unknown from stored events).
+                ("2026-08-01T01:03:00", 4, "[2:00] You: put [Desolation Prowler] onto battlefield"),
+            ],
+        )
+        conn.execute("delete from schema_migrations where version = 22")
+        AnalyticsStore.apply_pending_migrations(conn)
+
+    with sqlite3.connect(db_path) as check:
+        names = [
+            r[0]
+            for r in check.execute(
+                "select display_name from game_drawn_cards where game_id='game-1' order by draw_position"
+            )
+        ]
+        stats = check.execute(
+            "select cards_drawn from game_participant_stats where game_id='game-1'"
+        ).fetchone()
+
+    # Both lands are backfilled; the creature put onto the battlefield is not.
+    assert "Forest" in names
+    assert "Realm of Koh" in names
+    assert "Desolation Prowler" not in names
+    assert names.count("Forest") == 1  # not double-counted
+    assert stats == (3,)  # 1 original + 2 ramped lands
+
+
+def test_migration_v22_is_idempotent_across_reruns(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute("insert into tracker_sessions (id, started_at) values ('s', '2026-08-01T00:00:00')")
+        conn.execute("insert into matches (id, session_id) values ('m', 's')")
+        conn.execute("insert into games (id, session_id, match_id, started_at) values ('g', 's', 'm', '2026-08-01T01:00:00')")
+        conn.execute("insert into participants (id, game_id, role) values ('p', 'g', 'player')")
+        conn.execute("insert into game_participant_stats (game_id, participant_id, cards_drawn) values ('g', 'p', 0)")
+        conn.execute(
+            "insert into game_events (session_id, game_id, event_time, turn_number, actor_role, event_type, text) "
+            "values ('s', 'g', '2026-08-01T01:02:00', 3, 'player', 'zone', '[1:10] You: put [Forest] onto battlefield')"
+        )
+        conn.execute("delete from schema_migrations where version = 22")
+        AnalyticsStore.apply_pending_migrations(conn)
+        # Force a second run: the per-game already-counted guard must skip it.
+        conn.execute("delete from schema_migrations where version = 22")
+        AnalyticsStore.apply_pending_migrations(conn)
+        forests = conn.execute(
+            "select count(*) from game_drawn_cards where game_id='g' and display_name='Forest'"
+        ).fetchone()[0]
+    assert forests == 1
+
+
 def test_migration_v9_deletes_post_concede_ghost_games(tmp_path):
     db_path = tmp_path / "analytics.sqlite3"
     with sqlite3.connect(db_path) as conn:
