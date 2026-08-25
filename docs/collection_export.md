@@ -183,13 +183,16 @@ prompt before it appears.
 
 ### Card metadata for export lines
 
-Extend `card_database.py` with one more cached index:
-`export_index_by_arena_id() -> {arena_id: (name, set_code, collector_number)}`
-from Raw_CardDatabase (`Cards` joined to `Localizations_enUS`; set and
-collector columns exist across client versions under a couple of names —
-probe like the existing color/cost columns). Scryfall per-card fallback
-only for ids the local DB misses. `A-` prefix normalization kept
-(default on, as in v3.4).
+**Primary source: the shared `arena_cards` table** from the format-legality
+plan (`valid_cards_per_format.md`) — Scryfall's `default_cards` bulk file,
+ingested once in the background, gives `arena_id → (name, set_code,
+collector_number)` for every Arena printing. That's exactly the export
+index, already maintained, with a Force Refresh button on Settings.
+
+Fallback when the bulk ingest hasn't run yet (fresh install, offline):
+`card_database.py`'s Raw_CardDatabase lookup for names (set/collector may be
+blank on those lines — Moxfield matches by name regardless). `A-` prefix
+normalization kept (default on, as in v3.4).
 
 ### Formats — three buttons
 
