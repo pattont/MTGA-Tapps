@@ -489,40 +489,55 @@ def scan_collection(
 ) -> Dict[int, int]:
     """Attach to MTGA and return the collection as ``{arena_id: quantity}``.
 
-    Derives anchors from the tracker DB, pattern-scans memory for each in
-    turn (reading a window around every hit and extracting candidate blocks),
-    and returns the first block that validates. Falls back to an anchorless
-    full-region sweep with a stricter bar. Raises ProcessNotFound when MTGA
-    is not running, PermissionError when memory can't be read, and
-    CollectionNotFound when no valid block is found.
+    Single pass over memory: each readable region is read once, searched for
+    every anchor pattern, and — around any hit — has candidate blocks
+    extracted. The best block that validates wins. If no anchor hits (or none
+    validates), an anchorless full-region sweep with a stricter bar runs as
+    a fallback. Reports percentage progress so the UI can show real motion.
+
+    Raises ProcessNotFound when MTGA is not running, PermissionError when its
+    memory can't be read, and CollectionNotFound when no valid block is found.
     """
     progress("Attaching to MTG Arena…")
     mem = memory if memory is not None else open_process_memory()
 
     known = known_arena_ids(conn)
     anchors = derive_anchors(conn)
+    patterns = [struct.pack("<II", a.arena_id, a.quantity) for a in anchors]
 
-    ordered = sorted(anchors, key=lambda a: -a.quantity)
-    for index, anchor in enumerate(ordered, start=1):
-        progress(f"Scanning memory ({index}/{len(ordered)})…")
-        hits = _scan_for_anchor(mem, anchor)
-        if not hits:
+    progress("Reading Arena's memory…")
+    regions = [(addr, size) for addr, size in mem.readable_regions() if 0 < size <= MAX_REGION_BYTES]
+    total = len(regions) or 1
+
+    # Pass 1: locate the collection near an anchor hit.
+    blocks: List[Tuple[Dict[int, int], int]] = []
+    for index, (addr, size) in enumerate(regions):
+        if index % 8 == 0:
+            progress(f"Scanning Arena's memory… {int(100 * index / total)}%")
+        try:
+            data = mem.read_bytes(addr, size)
+        except OSError:
             continue
-        blocks: List[Tuple[Dict[int, int], int]] = []
-        for addr in _dedupe_hits(hits):
-            blocks.extend(_extract_around(mem, addr))
-        result = score_and_validate(blocks, anchors, known)
-        if result is not None:
-            _apply_scanned_quantities(result)
-            progress(f"Mapping {len(result)} cards…")
-            return result
+        for pattern in patterns:
+            start = 0
+            while True:
+                pos = data.find(pattern, start)
+                if pos == -1:
+                    break
+                lo = max(0, pos - SCAN_WINDOW_BYTES // 2)
+                hi = min(len(data), pos + SCAN_WINDOW_BYTES // 2)
+                blocks.extend(extract_blocks(data[lo:hi]))
+                start = pos + 1
+    result = score_and_validate(blocks, anchors, known)
+    if result is not None:
+        progress(f"Mapping {len(result)} cards…")
+        return result
 
-    # Anchorless fallback: sweep every readable region (slower, stricter bar).
-    progress("Scanning memory (full sweep)…")
+    # Pass 2: anchorless full sweep (slower, stricter bar).
     blocks = []
-    for addr, size in mem.readable_regions():
-        if size > MAX_REGION_BYTES:
-            continue
+    for index, (addr, size) in enumerate(regions):
+        if index % 8 == 0:
+            progress(f"Deep scan of Arena's memory… {int(100 * index / total)}%")
         try:
             data = mem.read_bytes(addr, size)
         except OSError:
@@ -530,7 +545,6 @@ def scan_collection(
         blocks.extend(extract_blocks(data))
     result = score_and_validate(blocks, anchors, known, strict=True)
     if result is not None:
-        _apply_scanned_quantities(result)
         progress(f"Mapping {len(result)} cards…")
         return result
 
@@ -539,51 +553,6 @@ def scan_collection(
 
 class CollectionNotFound(RuntimeError):
     """No valid collection block was found in MTGA's memory."""
-
-
-def _apply_scanned_quantities(block: Dict[int, int]) -> None:
-    """Hook kept for clarity: the scanned quantities stand as-is (unlike the
-    original, which force-wrote anchor quantities back over the scan)."""
-    return None
-
-
-def _scan_for_anchor(mem, anchor: Anchor) -> List[int]:
-    """Addresses where the anchor's little-endian (id, qty) pattern appears."""
-    pattern = struct.pack("<II", anchor.arena_id, anchor.quantity)
-    results: List[int] = []
-    for addr, size in mem.readable_regions():
-        if size > MAX_REGION_BYTES:
-            continue
-        try:
-            data = mem.read_bytes(addr, size)
-        except OSError:
-            continue
-        start = 0
-        while True:
-            found = data.find(pattern, start)
-            if found == -1:
-                break
-            results.append(addr + found)
-            start = found + 1
-    return results
-
-
-def _dedupe_hits(addresses: List[int]) -> List[int]:
-    """Collapse hits within 1 MB of each other — one read window covers them."""
-    out: List[int] = []
-    for addr in sorted(set(addresses)):
-        if not out or addr - out[-1] > 1024 * 1024:
-            out.append(addr)
-    return out
-
-
-def _extract_around(mem, addr: int) -> List[Tuple[Dict[int, int], int]]:
-    start = max(0, addr - SCAN_WINDOW_BYTES // 2)
-    try:
-        data = mem.read_bytes(start, SCAN_WINDOW_BYTES)
-    except OSError:
-        return []
-    return extract_blocks(data)
 
 
 # --- Formatting -------------------------------------------------------------
@@ -731,13 +700,24 @@ def run_scan_cli(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
     db_path, out_path = args.scan_json
 
+    # Progress goes to a sidecar file the (unprivileged) dashboard polls while
+    # this elevated helper runs — osascript's blocking call hides our stdout.
+    progress_path = out_path + ".progress"
+
+    def progress(message: str) -> None:
+        try:
+            with open(progress_path, "w", encoding="utf-8") as handle:
+                handle.write(message)
+        except OSError:
+            pass
+
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     except sqlite3.Error:
         print("ERROR db_unreadable", file=sys.stderr)
         return 3
     try:
-        collection = scan_collection(conn)
+        collection = scan_collection(conn, progress=progress)
     except ProcessNotFound:
         print("ERROR arena_not_running", file=sys.stderr)
         return 4

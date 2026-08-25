@@ -82,10 +82,20 @@ const EXPORT_FORMATS: Array<[CollectionExportFormat, string]> = [
   ['txt', 'Export to .txt'],
 ];
 
+function triggerDownload(fileName: string): void {
+  const link = document.createElement('a');
+  link.href = collectionDownloadUrl(fileName);
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 function CollectionExport({ platform }: { platform: PlatformSettings }) {
   const [job, setJob] = useState<CollectionExportJob | null>(null);
   const [running, setRunning] = useState(false);
   const pollRef = useRef<number | null>(null);
+  const deliveredRef = useRef<string | null>(null);
 
   useEffect(
     () => () => {
@@ -96,69 +106,79 @@ function CollectionExport({ platform }: { platform: PlatformSettings }) {
     [],
   );
 
+  const settle = (next: CollectionExportJob) => {
+    setJob(next);
+    setRunning(false);
+    // Deliver the file straight to the browser's downloads once, so it
+    // "pops up" the way a Save dialog would.
+    if (next.state === 'done' && next.file && deliveredRef.current !== next.file) {
+      deliveredRef.current = next.file;
+      triggerDownload(next.file);
+    }
+  };
+
+  const fail = (format: CollectionExportFormat, message: string) =>
+    setJob({
+      state: 'error',
+      detail: message,
+      format,
+      file: null,
+      unique: null,
+      total: null,
+      error_code: 'scan_failed',
+    });
+
   const poll = (jobId: string) => {
     fetchCollectionExportJob(jobId)
       .then((next) => {
-        setJob(next);
         if (next.state === 'running') {
-          pollRef.current = window.setTimeout(() => poll(jobId), 700);
+          setJob(next);
+          pollRef.current = window.setTimeout(() => poll(jobId), 600);
         } else {
-          setRunning(false);
+          settle(next);
         }
       })
       .catch((exc: unknown) => {
-        setJob({
-          state: 'error',
-          detail: exc instanceof Error ? exc.message : 'Export failed',
-          format: 'json',
-          file: null,
-          unique: null,
-          total: null,
-          error_code: 'scan_failed',
-        });
+        fail('json', exc instanceof Error ? exc.message : 'Export failed');
         setRunning(false);
       });
   };
 
   const runExport = (format: CollectionExportFormat) => {
     setRunning(true);
+    deliveredRef.current = null;
     setJob({ state: 'running', detail: 'Starting…', format, file: null, unique: null, total: null, error_code: null });
     startCollectionExport(format)
       .then((started) => {
-        setJob(started);
         if (started.job && started.state === 'running') {
-          pollRef.current = window.setTimeout(() => poll(started.job as string), 700);
+          setJob(started);
+          pollRef.current = window.setTimeout(() => poll(started.job as string), 600);
         } else {
-          setRunning(false);
+          settle(started);
         }
       })
       .catch((exc: unknown) => {
-        setJob({
-          state: 'error',
-          detail: exc instanceof Error ? exc.message : 'Export failed',
-          format,
-          file: null,
-          unique: null,
-          total: null,
-          error_code: 'scan_failed',
-        });
+        fail(format, exc instanceof Error ? exc.message : 'Export failed');
         setRunning(false);
       });
   };
 
   return (
-    <div className="settings-form collection-export">
-      <p className="settings-callout">
-        MTG Arena must be running, and your collection must be loaded — open the{' '}
-        <strong>Decks</strong> tab in Arena once before exporting.
-      </p>
-      {platform.system === 'macos' ? (
-        <p className="settings-callout settings-callout-warn">
-          macOS will show an <strong>administrator password prompt</strong> when you export —
-          reading another app's memory needs elevated access. The password only runs the scan;
-          nothing is installed or changed.
-        </p>
-      ) : null}
+    <div className="collection-export">
+      <ul className="collection-export-reqs">
+        <li>
+          MTG Arena must be <strong>running</strong>, with your collection loaded —{' '}
+          <span className="collection-export-flag">open the Decks tab in Arena once</span> before you
+          export.
+        </li>
+        {platform.system === 'macos' ? (
+          <li>
+            macOS will show an <strong>administrator password prompt</strong> — reading another app's
+            memory needs elevated access. The password only runs the scan; nothing is installed or
+            changed.
+          </li>
+        ) : null}
+      </ul>
 
       <div className="collection-export-buttons">
         {EXPORT_FORMATS.map(([format, label]) => (
@@ -169,34 +189,37 @@ function CollectionExport({ platform }: { platform: PlatformSettings }) {
             disabled={running}
             onClick={() => runExport(format)}
           >
-            {running && job?.format === format ? 'Exporting…' : label}
+            {label}
           </button>
         ))}
       </div>
 
-      {job ? (
-        <p
-          className={
-            job.state === 'error'
-              ? 'settings-export-status settings-export-error'
-              : 'settings-export-status'
-          }
-          role="status"
-        >
-          {job.state === 'done' && job.file ? (
-            <>
-              {job.detail}{' '}
-              <a className="settings-export-download" href={collectionDownloadUrl(job.file)}>
-                Download
-              </a>
-            </>
-          ) : (
-            job.detail
-          )}
+      {job && job.state === 'running' ? (
+        <p className="collection-export-status" role="status" aria-busy="true">
+          <span className="collection-export-spinner" aria-hidden="true" />
+          {job.detail}
         </p>
       ) : null}
 
-      <p className="settings-fineprint">
+      {job && job.state === 'done' ? (
+        <p className="collection-export-status collection-export-done" role="status">
+          ✓ {job.detail} Your download should start automatically —{' '}
+          {job.file ? (
+            <a className="collection-export-download" href={collectionDownloadUrl(job.file)}>
+              download again
+            </a>
+          ) : null}
+          . A copy is also saved in your MTGA Tracker data folder.
+        </p>
+      ) : null}
+
+      {job && job.state === 'error' ? (
+        <p className="collection-export-status collection-export-fail" role="alert">
+          {job.detail}
+        </p>
+      ) : null}
+
+      <p className="collection-export-fineprint">
         Unofficial: Arena doesn't expose your collection, so this reads it from the game's memory —
         the game is never modified. An Arena update can temporarily break this until the tool is
         adjusted. Quantities come straight from the game's own data. Extraction technique by{' '}

@@ -207,21 +207,49 @@ def _scan_macos_elevated(db_path: Optional[Path], progress) -> Dict[int, int]:
         'do shell script "' + (env_prefix + inner).replace("\\", "\\\\").replace('"', '\\"')
         + '" with administrator privileges'
     )
+    progress_name = out_name + ".progress"
+    try:
+        open(progress_name, "w").close()
+    except OSError:
+        pass
+
     progress("Waiting for the macOS administrator prompt…")
     try:
-        proc = subprocess.run(
-            ["osascript", "-e", script], capture_output=True, text=True, timeout=180
+        proc = subprocess.Popen(
+            ["osascript", "-e", script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
-    except subprocess.TimeoutExpired:
+    except OSError:
         _cleanup(out_name)
-        raise _ExportError("scan_failed", "The scan timed out.")
+        _cleanup(progress_name)
+        raise _ExportError("scan_failed", "Couldn't launch the elevated scan.")
+
+    # Poll the sidecar the helper writes so the UI shows real progress while
+    # the (blocking) elevated command runs.
+    deadline = time.monotonic() + 240.0
+    last = None
+    while proc.poll() is None:
+        line = _read_text(progress_name)
+        if line and line != last:
+            last = line
+            progress(line)
+        if time.monotonic() > deadline:
+            proc.kill()
+            _cleanup(out_name)
+            _cleanup(progress_name)
+            raise _ExportError("scan_failed", "The scan timed out.")
+        time.sleep(0.3)
+    stdout, stderr = proc.communicate()
 
     if proc.returncode != 0:
         _cleanup(out_name)
-        combined = f"{proc.stdout}\n{proc.stderr}".lower()
+        _cleanup(progress_name)
+        combined = f"{stdout}\n{stderr}".lower()
         if "-128" in combined or "user canceled" in combined or "cancelled" in combined:
             raise _ExportError("permission_denied", _ERROR_TEXT["permission_denied"])
-        code = _parse_helper_error(proc.stderr)
+        code = _parse_helper_error(stderr)
         raise _ExportError(code, _ERROR_TEXT.get(code, "The scan failed."))
 
     progress("Reading the scan result…")
@@ -230,9 +258,19 @@ def _scan_macos_elevated(db_path: Optional[Path], progress) -> Dict[int, int]:
             raw = json.load(handle)
     except (OSError, ValueError):
         _cleanup(out_name)
+        _cleanup(progress_name)
         raise _ExportError("scan_failed", "The scan produced no readable output.")
     _cleanup(out_name)
+    _cleanup(progress_name)
     return {int(k): int(v) for k, v in raw.items()}
+
+
+def _read_text(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
 
 
 def _parse_helper_error(stderr: str) -> str:
