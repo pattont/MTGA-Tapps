@@ -730,7 +730,7 @@ class TrackerZoneTransferMixin:
                 source_zone.get("type") if isinstance(source_zone, dict) else None
             )
             if source_type == "ZoneType_Library":
-                self._record_library_card_to_hand(
+                self._record_library_card_access(
                     card_obj, determining_seat, turn_for_display
                 )
             return
@@ -775,13 +775,28 @@ class TrackerZoneTransferMixin:
                 "zone",
             )
 
-    def _record_library_card_to_hand(
+        # A card pulled from the player's own LIBRARY straight onto the
+        # battlefield — ramp/search (Lumbering Worldwagon fetching a basic),
+        # a creature cheated into play, etc. — was accessed from the deck
+        # exactly like a draw, so it must count toward cards/lands seen and
+        # the draw-quality math. This mirrors the library → hand rule above;
+        # without it, lands ramped into play vanish from every land count.
+        source_zone = (
+            (zones_by_id or {}).get(int(zone_src)) if zone_src is not None else None
+        )
+        source_type = source_zone.get("type") if isinstance(source_zone, dict) else None
+        if source_type == "ZoneType_Library" and self._is_tracked_seat(determining_seat):
+            self._record_library_card_access(card_obj, determining_seat, turn_for_display)
+
+    def _record_library_card_access(
         self,
         card_obj: Dict[str, Any],
         owner_seat: Optional[int],
         turn_for_display: int,
     ) -> None:
-        """Count a non-draw library-to-hand transfer as a drawn card."""
+        """Count a non-draw library access (to hand or straight to the
+        battlefield) as a drawn card, so ramped/tutored/explored cards feed
+        the drawn-cards table and flood/screw math."""
         if owner_seat not in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
             return
         stats = self._seat_stats(owner_seat)

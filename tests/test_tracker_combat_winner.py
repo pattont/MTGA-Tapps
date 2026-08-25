@@ -7315,3 +7315,70 @@ def test_contradicted_identity_stays_unresolved_without_matching_candidate():
     tracker.game_state.submitted_deck_cards = list(range(500, 560))
     tracker._resolve_player_deck_from_candidates()
     assert tracker.game_state.player_deck_name is None
+
+
+def test_land_searched_from_library_to_battlefield_counts_as_seen():
+    """A land ramped/searched straight onto the battlefield (e.g. Lumbering
+    Worldwagon fetching a basic) is accessed from the library just like a
+    draw, so it must feed the drawn-cards table and land counts — not vanish
+    the way it did before."""
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.last_player_turn_number = 3  # mid-game, not pre-turn noise
+    tracker.card_db.names[555] = "Forest"
+    tracker._print_event = lambda *args, **kwargs: None  # silence output/persistence
+
+    card_obj = {
+        "grpId": 555,
+        "instanceId": 700,
+        "ownerSeatId": 1,
+        "controllerSeatId": 1,
+        "cardTypes": ["CardType_Land"],
+    }
+    zones = {10: {"type": "ZoneType_Library"}, 20: {"type": "ZoneType_Battlefield"}}
+
+    tracker._handle_return_or_put_zone_transfer(
+        "Put",
+        700,
+        card_obj,
+        {},  # annotation
+        {700: card_obj},  # game_objects_by_id
+        zones,
+        10,  # zone_src -> Library
+        20,  # zone_dest -> Battlefield
+        None,
+        None,
+    )
+
+    drawn = tracker.game_state.drawn_card_events.get(1, [])
+    assert [event.card_name for event in drawn] == ["Forest"]
+    assert drawn[0].card_type_category == "Land"
+
+
+def test_permanent_reanimated_from_graveyard_does_not_count_as_seen():
+    """Only LIBRARY access counts — a creature returning from the graveyard to
+    the battlefield (reanimation) was never in the deck to be 'seen'."""
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.last_player_turn_number = 5
+    tracker.card_db.names[888] = "Some Creature"
+    tracker._print_event = lambda *args, **kwargs: None
+
+    card_obj = {
+        "grpId": 888,
+        "instanceId": 900,
+        "ownerSeatId": 1,
+        "controllerSeatId": 1,
+        "cardTypes": ["CardType_Creature"],
+    }
+    zones = {30: {"type": "ZoneType_Graveyard"}, 20: {"type": "ZoneType_Battlefield"}}
+
+    tracker._handle_return_or_put_zone_transfer(
+        "Put", 900, card_obj, {}, {900: card_obj}, zones, 30, 20, None, None
+    )
+
+    assert tracker.game_state.drawn_card_events.get(1, []) == []
