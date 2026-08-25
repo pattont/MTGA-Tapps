@@ -396,6 +396,9 @@ def test_settings_tracker_info_reads_live_status_paths(tmp_path):
     assert info["card_db"] == "~/MTGA/Raw_CardDatabase_abc.mtga"
     assert info["version"] == "9.9.9"
     assert isinstance(info["deck_ai"], str) and info["deck_ai"]
+    # Platform block drives the collection-export section + macOS warning.
+    assert body["platform"]["system"] in {"macos", "windows", "other"}
+    assert isinstance(body["platform"]["collection_export"], bool)
 
 
 def test_missing_live_status_table_is_offline(tmp_path):

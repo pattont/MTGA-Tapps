@@ -3948,6 +3948,51 @@ a.settings-link-button {
   flex: 1;
 }
 
+/* ---- Collection export ---- */
+
+.settings-callout {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.settings-callout-warn {
+  border-color: color-mix(in srgb, var(--warning, #f0b400) 55%, var(--border));
+  background: color-mix(in srgb, var(--warning, #f0b400) 12%, var(--panel));
+}
+
+.collection-export-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.settings-export-status {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.92rem;
+}
+
+.settings-export-error {
+  color: var(--danger);
+}
+
+.settings-export-download {
+  font-weight: 600;
+}
+
+.settings-fineprint {
+  margin: 0;
+  color: var(--subtle);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
 /* ------------------------------------------------------------------ */
 /* Live Log page (#/live)                                              */
 

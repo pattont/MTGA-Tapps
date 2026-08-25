@@ -5174,6 +5174,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
+        if parsed.path.startswith("/api/collection/"):
+            from . import collection_api
+
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                payload = {}
+            handled = collection_api.handle_post(
+                parsed.path, payload if isinstance(payload, dict) else {}, self.db_path
+            )
+            if handled is not None:
+                status, body = handled
+                _send_bytes(
+                    self,
+                    status,
+                    json.dumps(body).encode("utf-8"),
+                    "application/json; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
         if parsed.path == "/api/deck-downloader/launch":
             # The dashboard server runs on the player's machine, so it can
             # open the Deck Downloader terminal app on their behalf.
@@ -5296,6 +5317,35 @@ class DashboardHandler(BaseHTTPRequestHandler):
         )
         return
 
+    def _send_export_file(self, path: Path) -> None:
+        """Stream a collection-export file as a download attachment."""
+        try:
+            body = path.read_bytes()
+        except OSError:
+            _send_bytes(
+                self,
+                404,
+                b'{"error": "file not found"}',
+                "application/json; charset=utf-8",
+                {"Cache-Control": "no-store"},
+            )
+            return
+        content_type = {
+            ".json": "application/json; charset=utf-8",
+            ".csv": "text/csv; charset=utf-8",
+            ".txt": "text/plain; charset=utf-8",
+        }.get(path.suffix, "application/octet-stream")
+        _send_bytes(
+            self,
+            200,
+            body,
+            content_type,
+            {
+                "Cache-Control": "no-store",
+                "Content-Disposition": f'attachment; filename="{path.name}"',
+            },
+        )
+
     def do_GET(self) -> None:  # noqa: N802 - http.server API
         parsed = urlparse(self.path)
         request_path = parsed.path
@@ -5333,6 +5383,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
             handled = settings_api.handle_get(request_path, self.db_path)
             if handled is not None:
                 status, body = handled
+                _send_bytes(
+                    self,
+                    status,
+                    json.dumps(body).encode("utf-8"),
+                    "application/json; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+        if request_path.startswith("/api/collection/"):
+            from . import collection_api
+
+            handled = collection_api.handle_get(
+                request_path, parse_qs(parsed.query), self.db_path
+            )
+            if handled is not None:
+                status, body = handled
+                if status == 200 and isinstance(body, dict) and "_file" in body:
+                    self._send_export_file(Path(body["_file"]))
+                    return
                 _send_bytes(
                     self,
                     status,

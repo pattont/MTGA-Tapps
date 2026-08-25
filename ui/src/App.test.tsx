@@ -886,6 +886,7 @@ describe('App', () => {
         aetherhub: [],
         tcgplayer: [],
       },
+      platform: { system: 'macos', collection_export: true },
     };
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).startsWith('/api/settings')) {
@@ -911,6 +912,11 @@ describe('App', () => {
       'href',
       '#/audit',
     );
+    // Collection export section renders on a supported platform.
+    expect(
+      screen.getByRole('heading', { name: 'Export MTGA Collection' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Export to .csv' })).toBeInTheDocument();
   });
 
   it('routes to the deck detail page and back to the dashboard', async () => {

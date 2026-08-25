@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.9
+
+- **Export your MTGA collection** from the Settings page — three buttons
+  (`.json`, `.csv`, `.txt`) that read your full card collection out of the
+  running game and write a file you can import into Moxfield and similar
+  sites. Arena must be running with the collection loaded (open the Decks
+  tab once); on macOS an administrator prompt appears, since reading another
+  app's memory needs elevated access. Anchors are derived automatically from
+  your own tracked decklists — nothing to type — and a second export within
+  a few minutes reuses the first scan (no repeat prompt). Extraction
+  technique adapted from
+  [NthPhantom10's MTGA-collection-exporter](https://github.com/NthPhantom10/MTGA-collection-exporter).
+
 ## 0.5.8
 
 - **Live Log is now the Scoreboard** — the old Qt play-by-play window is

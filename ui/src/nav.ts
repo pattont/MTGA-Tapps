@@ -95,5 +95,6 @@ export const settingsNavItems: AppNavItem[] = [
   { id: 'settings-tracker', label: 'Tracker' },
   { id: 'settings-deck-ai', label: 'Deck AI' },
   { id: 'settings-creators', label: 'Deck Finder Creators' },
+  { id: 'settings-collection-export', label: 'Export MTGA Collection' },
   { id: 'settings-db-health', label: 'Database Health' },
 ];

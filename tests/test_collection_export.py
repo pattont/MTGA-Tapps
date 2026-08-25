@@ -1,0 +1,255 @@
+"""Tests for the collection exporter's pure core and format writers.
+
+The memory readers themselves need a running MTGA process and can only be
+smoke-tested on a real machine; everything reachable without process access —
+block extraction, scoring/validation, anchor derivation, aggregation, and the
+three writers — is covered here with synthetic inputs.
+"""
+
+import json
+import sqlite3
+import struct
+
+import pytest
+
+from mtga_tracker import collection_export as ce
+
+
+def _pack_pairs(pairs):
+    return b"".join(struct.pack("<II", k, v) for k, v in pairs)
+
+
+def test_extract_blocks_finds_a_clean_stride2_block():
+    pairs = [(2000 + i, (i % 4) + 1) for i in range(80)]
+    data = b"\x00" * 40 + _pack_pairs(pairs) + b"\xff" * 400
+    blocks = ce.extract_blocks(data)
+    assert blocks
+    biggest = max(blocks, key=lambda b: len(b[0]))
+    block, dupes = biggest
+    assert len(block) == 80
+    assert dupes == 0
+    assert block[2000] == 1
+
+
+def test_extract_blocks_counts_duplicates_as_dirty_signal():
+    # 55 distinct ids (clears MIN_BLOCK_SIZE) with 8 of them repeated once.
+    pairs = [(3000 + i, 4) for i in range(55)] + [(3000 + i, 4) for i in range(8)]
+    data = _pack_pairs(pairs)
+    blocks = ce.extract_blocks(data)
+    dirty = max(blocks, key=lambda b: b[1])
+    assert len(dirty[0]) >= ce.MIN_BLOCK_SIZE
+    assert dirty[1] == 8
+
+
+def test_extract_blocks_ignores_out_of_range_pairs():
+    # ids/quantities outside the plausible windows never form a block.
+    pairs = [(10, 9999) for _ in range(200)]
+    assert ce.extract_blocks(_pack_pairs(pairs)) == []
+
+
+def test_score_and_validate_prefers_the_known_heavy_block():
+    known = set(range(2000, 2100))
+    clean = {i: 4 for i in range(2000, 2080)}  # 80 known ids
+    junk = {i: 1 for i in range(500000, 500060)}  # 60 unknown ids
+    anchors = [ce.Anchor(2000, 4), ce.Anchor(2001, 4)]
+    result = ce.score_and_validate(
+        [(clean, 0), (junk, 0)], anchors, known
+    )
+    assert result == clean
+
+
+def test_score_and_validate_rejects_low_known_ratio():
+    known = set(range(2000, 2005))
+    mostly_unknown = {i: 1 for i in range(400000, 400060)}
+    assert ce.score_and_validate([(mostly_unknown, 0)], [], known) is None
+
+
+def test_score_and_validate_rejects_high_duplicates():
+    known = set(range(2000, 2100))
+    block = {i: 4 for i in range(2000, 2080)}
+    # duplicates far above the 5%/25 threshold
+    assert ce.score_and_validate([(block, 999)], [], known) is None
+
+
+def _tracker_db(tmp_path):
+    path = tmp_path / "tracker.sqlite3"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE participants (id TEXT PRIMARY KEY, game_id TEXT, role TEXT);
+        CREATE TABLE game_deck_cards (
+            game_id TEXT, participant_id TEXT, arena_id INTEGER,
+            display_name TEXT, deck_zone TEXT, quantity INTEGER
+        );
+        CREATE TABLE cards (arena_id INTEGER, name TEXT);
+        """
+    )
+    conn.executemany(
+        "INSERT INTO participants VALUES (?, ?, ?)",
+        [("p1", "g1", "player"), ("p2", "g1", "opponent"), ("p3", "g2", "player")],
+    )
+    conn.executemany(
+        "INSERT INTO game_deck_cards VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            # player playsets across two decks — 90573 appears in both
+            ("g1", "p1", 90573, "Sheoldred", "deck", 4),
+            ("g2", "p3", 90573, "Sheoldred", "deck", 4),
+            ("g1", "p1", 91234, "Bloodtithe Harvester", "deck", 4),
+            ("g1", "p1", 60001, "Swamp", "deck", 12),  # not a 4-of
+            # opponent cards must be ignored by the anchor query
+            ("g1", "p2", 88888, "Opponent Card", "deck", 4),
+        ],
+    )
+    conn.commit()
+    return conn
+
+
+def test_derive_anchors_from_player_playsets(tmp_path):
+    conn = _tracker_db(tmp_path)
+    anchors = ce.derive_anchors(conn)
+    ids = [a.arena_id for a in anchors]
+    # Only the player's 4-ofs; the two-deck card ranks first; no opponent card.
+    assert ids[0] == 90573
+    assert 91234 in ids
+    assert 60001 not in ids  # 12-of, not an anchor
+    assert 88888 not in ids  # opponent's
+    assert all(a.quantity == 4 for a in anchors)
+
+
+def test_known_arena_ids_unions_tables(tmp_path):
+    conn = _tracker_db(tmp_path)
+    conn.execute("INSERT INTO cards VALUES (70000, 'Some Card')")
+    conn.commit()
+    ids = ce.known_arena_ids(conn)
+    assert {90573, 91234, 60001, 88888, 70000} <= ids
+
+
+class FakeMemory:
+    """A single readable region holding a collection block at a known offset."""
+
+    def __init__(self, pairs, *, base=0x1000):
+        self.base = base
+        self._data = b"\x11" * 256 + _pack_pairs(pairs) + b"\x22" * 256
+        self.process_id = 4242
+
+    def readable_regions(self):
+        yield self.base, len(self._data)
+
+    def read_bytes(self, address, length):
+        offset = address - self.base
+        if offset < 0:
+            # ±window reads can start before the region; clamp like a real read.
+            length += offset
+            offset = 0
+        if length <= 0:
+            return b""
+        return self._data[offset : offset + length]
+
+
+def test_scan_collection_end_to_end_with_fake_memory(tmp_path):
+    conn = _tracker_db(tmp_path)
+    # A collection that includes the derived anchor id (90573) so the pattern
+    # scan locates the block.
+    collection = {90573: 4, 91234: 3, 60001: 20}
+    collection.update({4000 + i: (i % 3) + 1 for i in range(80)})
+    # The tracker has seen most of the collection (its `cards` table), which
+    # is what the scan scores candidate blocks against.
+    conn.executemany(
+        "INSERT INTO cards VALUES (?, ?)", [(aid, f"card {aid}") for aid in collection]
+    )
+    conn.commit()
+    mem = FakeMemory(list(collection.items()))
+
+    result = ce.scan_collection(conn, memory=mem)
+    assert result[90573] == 4
+    assert result[91234] == 3
+    assert len(result) == len(collection)
+
+
+def test_scan_collection_raises_when_no_block(tmp_path):
+    conn = _tracker_db(tmp_path)
+    mem = FakeMemory([(999999, 1)])  # nothing resembling a collection
+    with pytest.raises(ce.CollectionNotFound):
+        ce.scan_collection(conn, memory=mem)
+
+
+# --- Aggregation & writers --------------------------------------------------
+
+METADATA = {
+    90573: ("Sheoldred, the Apocalypse", "DMU", "107"),
+    91234: ("Bloodtithe Harvester", "VOW", "232"),
+    60001: ("Swamp", "SLD", "1"),
+    70500: ("A-Vivi Ornitier", "FIN", "999"),
+    70501: ("Vivi Ornitier", "FIN", "999"),
+}
+
+
+def test_aggregate_maps_names_and_collapses_alchemy_prefix():
+    collection = {90573: 3, 91234: 4, 70500: 1, 70501: 2, 12345: 9}
+    entries = ce.aggregate(collection, METADATA)
+    by_name = {e.name: e for e in entries}
+    assert by_name["Sheoldred, the Apocalypse"].count == 3
+    # A-Vivi collapses onto Vivi Ornitier (base name known): 1 + 2 = 3
+    assert "A-Vivi Ornitier" not in by_name
+    assert by_name["Vivi Ornitier"].count == 3
+    # Unknown id 12345 is skipped (no name to import).
+    assert 12345 not in {aid for e in entries for aid in e.arena_ids}
+
+
+def test_aggregate_keeps_a_prefix_when_requested():
+    entries = ce.aggregate({70500: 1}, METADATA, keep_a_prefix=True)
+    assert entries[0].name == "A-Vivi Ornitier"
+
+
+def test_writers_produce_importable_files(tmp_path):
+    entries = ce.aggregate({90573: 3, 91234: 4}, METADATA)
+
+    json_path = tmp_path / "c.json"
+    ce.write_json(entries, json_path, database_size=5, now="2026-08-25T00:00:00")
+    data = json.loads(json_path.read_text())
+    assert data["total_unique"] == 2
+    assert data["total_cards"] == 7
+    assert {c["name"] for c in data["cards"]} == {
+        "Sheoldred, the Apocalypse",
+        "Bloodtithe Harvester",
+    }
+
+    csv_path = tmp_path / "c.csv"
+    ce.write_csv(entries, csv_path)
+    import csv as _csv
+
+    with open(csv_path, newline="") as handle:
+        rows = list(_csv.reader(handle))
+    assert rows[0] == ["Count", "Name", "Edition", "Condition", "Language", "Foil", "Tag"]
+    sheoldred = next(r for r in rows[1:] if r[1].startswith("Sheoldred"))
+    assert sheoldred[0] == "3" and sheoldred[2] == "DMU"
+
+    txt_path = tmp_path / "c.txt"
+    ce.write_txt(entries, txt_path)
+    txt = txt_path.read_text()
+    assert "4 Bloodtithe Harvester (VOW) 232" in txt
+    assert not txt.startswith("MTGA Collection")  # no header banner
+
+
+def test_run_scan_cli_reports_arena_not_running(tmp_path, monkeypatch, capsys):
+    db = tmp_path / "tracker.sqlite3"
+    sqlite3.connect(db).close()
+    out = tmp_path / "out.json"
+
+    def boom(*_args, **_kwargs):
+        raise ce.ProcessNotFound("MTGA")
+
+    monkeypatch.setattr(ce, "scan_collection", boom)
+    code = ce.run_scan_cli(["--scan-json", str(db), str(out)])
+    assert code == 4
+    assert "arena_not_running" in capsys.readouterr().err
+
+
+def test_run_scan_cli_writes_result(tmp_path, monkeypatch):
+    db = tmp_path / "tracker.sqlite3"
+    sqlite3.connect(db).close()
+    out = tmp_path / "out.json"
+    monkeypatch.setattr(ce, "scan_collection", lambda *_a, **_k: {90573: 4, 91234: 3})
+    code = ce.run_scan_cli(["--scan-json", str(db), str(out)])
+    assert code == 0
+    assert json.loads(out.read_text()) == {"90573": 4, "91234": 3}

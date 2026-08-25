@@ -1559,15 +1559,63 @@ export interface TrackerInfoSettings {
   version: string;
 }
 
+export interface PlatformSettings {
+  system: 'macos' | 'windows' | 'other';
+  /** Whether the collection exporter can run here (needs a memory reader). */
+  collection_export: boolean;
+}
+
 export interface TrackerSettings {
   tracker: TrackerInfoSettings;
   deck_ai: DeckAiSettings;
   deck_finder: DeckFinderCreatorSettings;
+  platform: PlatformSettings;
 }
 
 export async function fetchTrackerSettings(signal?: AbortSignal): Promise<TrackerSettings> {
   const response = await fetch('/api/settings', { signal });
   return deckFinderJson(response);
+}
+
+// --- Collection export -----------------------------------------------------
+
+export type CollectionExportFormat = 'json' | 'csv' | 'txt';
+
+export interface CollectionExportJob {
+  job?: string;
+  state: 'running' | 'done' | 'error';
+  detail: string;
+  format: CollectionExportFormat;
+  file: string | null;
+  unique: number | null;
+  total: number | null;
+  error_code: string | null;
+}
+
+export async function startCollectionExport(
+  format: CollectionExportFormat,
+  options: { refresh?: boolean } = {},
+): Promise<CollectionExportJob> {
+  const response = await fetch('/api/collection/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ format, refresh: Boolean(options.refresh) }),
+  });
+  return deckFinderJson<CollectionExportJob>(response);
+}
+
+export async function fetchCollectionExportJob(
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<CollectionExportJob> {
+  const response = await fetch(`/api/collection/export?job=${encodeURIComponent(jobId)}`, {
+    signal,
+  });
+  return deckFinderJson<CollectionExportJob>(response);
+}
+
+export function collectionDownloadUrl(fileName: string): string {
+  return `/api/collection/download?file=${encodeURIComponent(fileName)}`;
 }
 
 export async function saveDeckAiSettings(payload: {

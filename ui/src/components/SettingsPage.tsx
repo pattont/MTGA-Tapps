@@ -1,11 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  collectionDownloadUrl,
+  fetchCollectionExportJob,
   fetchTrackerSettings,
   saveDeckAiSettings,
   saveDeckFinderCreators,
+  startCollectionExport,
+  type CollectionExportFormat,
+  type CollectionExportJob,
   type DeckAiSettings,
   type DeckFinderCreator,
   type DeckFinderCreatorSettings,
+  type PlatformSettings,
   type TrackerInfoSettings,
 } from '../api';
 import { Section } from './Section';
@@ -70,11 +76,149 @@ function TrackerInfo({ info }: { info: TrackerInfoSettings }) {
   );
 }
 
+const EXPORT_FORMATS: Array<[CollectionExportFormat, string]> = [
+  ['json', 'Export to .json'],
+  ['csv', 'Export to .csv'],
+  ['txt', 'Export to .txt'],
+];
+
+function CollectionExport({ platform }: { platform: PlatformSettings }) {
+  const [job, setJob] = useState<CollectionExportJob | null>(null);
+  const [running, setRunning] = useState(false);
+  const pollRef = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (pollRef.current !== null) {
+        window.clearTimeout(pollRef.current);
+      }
+    },
+    [],
+  );
+
+  const poll = (jobId: string) => {
+    fetchCollectionExportJob(jobId)
+      .then((next) => {
+        setJob(next);
+        if (next.state === 'running') {
+          pollRef.current = window.setTimeout(() => poll(jobId), 700);
+        } else {
+          setRunning(false);
+        }
+      })
+      .catch((exc: unknown) => {
+        setJob({
+          state: 'error',
+          detail: exc instanceof Error ? exc.message : 'Export failed',
+          format: 'json',
+          file: null,
+          unique: null,
+          total: null,
+          error_code: 'scan_failed',
+        });
+        setRunning(false);
+      });
+  };
+
+  const runExport = (format: CollectionExportFormat) => {
+    setRunning(true);
+    setJob({ state: 'running', detail: 'Starting…', format, file: null, unique: null, total: null, error_code: null });
+    startCollectionExport(format)
+      .then((started) => {
+        setJob(started);
+        if (started.job && started.state === 'running') {
+          pollRef.current = window.setTimeout(() => poll(started.job as string), 700);
+        } else {
+          setRunning(false);
+        }
+      })
+      .catch((exc: unknown) => {
+        setJob({
+          state: 'error',
+          detail: exc instanceof Error ? exc.message : 'Export failed',
+          format,
+          file: null,
+          unique: null,
+          total: null,
+          error_code: 'scan_failed',
+        });
+        setRunning(false);
+      });
+  };
+
+  return (
+    <div className="settings-form collection-export">
+      <p className="settings-callout">
+        MTG Arena must be running, and your collection must be loaded — open the{' '}
+        <strong>Decks</strong> tab in Arena once before exporting.
+      </p>
+      {platform.system === 'macos' ? (
+        <p className="settings-callout settings-callout-warn">
+          macOS will show an <strong>administrator password prompt</strong> when you export —
+          reading another app's memory needs elevated access. The password only runs the scan;
+          nothing is installed or changed.
+        </p>
+      ) : null}
+
+      <div className="collection-export-buttons">
+        {EXPORT_FORMATS.map(([format, label]) => (
+          <button
+            key={format}
+            className="deck-export-button"
+            type="button"
+            disabled={running}
+            onClick={() => runExport(format)}
+          >
+            {running && job?.format === format ? 'Exporting…' : label}
+          </button>
+        ))}
+      </div>
+
+      {job ? (
+        <p
+          className={
+            job.state === 'error'
+              ? 'settings-export-status settings-export-error'
+              : 'settings-export-status'
+          }
+          role="status"
+        >
+          {job.state === 'done' && job.file ? (
+            <>
+              {job.detail}{' '}
+              <a className="settings-export-download" href={collectionDownloadUrl(job.file)}>
+                Download
+              </a>
+            </>
+          ) : (
+            job.detail
+          )}
+        </p>
+      ) : null}
+
+      <p className="settings-fineprint">
+        Unofficial: Arena doesn't expose your collection, so this reads it from the game's memory —
+        the game is never modified. An Arena update can temporarily break this until the tool is
+        adjusted. Quantities come straight from the game's own data. Extraction technique by{' '}
+        <a
+          href="https://github.com/NthPhantom10/MTGA-collection-exporter"
+          rel="noreferrer"
+          target="_blank"
+        >
+          NthPhantom10's MTGA-collection-exporter
+        </a>
+        .
+      </p>
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [trackerInfo, setTrackerInfo] = useState<TrackerInfoSettings | null>(null);
   const [deckAi, setDeckAi] = useState<DeckAiSettings | null>(null);
   const [creators, setCreators] = useState<DeckFinderCreatorSettings | null>(null);
+  const [platform, setPlatform] = useState<PlatformSettings | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,6 +228,7 @@ export function SettingsPage() {
           setTrackerInfo(settings.tracker);
           setDeckAi(settings.deck_ai);
           setCreators(settings.deck_finder);
+          setPlatform(settings.platform);
         }
       })
       .catch((exc: unknown) => {
@@ -143,6 +288,16 @@ export function SettingsPage() {
           <CreatorsForm initial={creators} />
         )}
       </Section>
+
+      {platform?.collection_export ? (
+        <Section
+          id="settings-collection-export"
+          title="Export MTGA Collection"
+          description="Read your full card collection from the running game and export it for Moxfield and similar sites."
+        >
+          <CollectionExport platform={platform} />
+        </Section>
+      ) : null}
 
       <Section
         id="settings-db-health"

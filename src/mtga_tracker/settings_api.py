@@ -140,6 +140,18 @@ def _tracker_info(db_path: Optional[Path]) -> Dict[str, Any]:
     return info
 
 
+def _platform_info() -> Dict[str, Any]:
+    import sys
+
+    system = "macos" if sys.platform == "darwin" else "windows" if sys.platform == "win32" else "other"
+    return {
+        "system": system,
+        # Collection export reads process memory, which only the macOS/Windows
+        # readers implement.
+        "collection_export": system in {"macos", "windows"},
+    }
+
+
 def handle_get(path: str, db_path: Optional[Path] = None) -> Optional[Tuple[int, Dict[str, Any]]]:
     if path != "/api/settings":
         return None
@@ -150,6 +162,10 @@ def handle_get(path: str, db_path: Optional[Path] = None) -> Optional[Tuple[int,
             "tracker": _tracker_info(db_path),
             "deck_ai": _deck_ai_payload(),
             "deck_finder": read_creator_config(),
+            # Drives the collection-export section: the macOS admin-prompt
+            # warning shows only on darwin, and export is offered only where
+            # a memory reader exists.
+            "platform": _platform_info(),
         }
     except Exception as exc:  # pragma: no cover - defensive surface
         return 500, {"error": f"{type(exc).__name__}: {exc}"}

@@ -475,6 +475,70 @@ class CardDatabase:
         self._color_index_by_name = index
         return index
 
+    #: Cards-table column names for set code / collector number, newest
+    #: client naming first. Schema drifts across Arena versions, so we probe.
+    _SET_CODE_COLUMN_CANDIDATES = ("ExpansionCode", "Set", "SetCode", "SetId")
+    _COLLECTOR_COLUMN_CANDIDATES = (
+        "CollectorNumber",
+        "CollectorNum",
+        "CollectorNumberPrefix",
+        "Number",
+    )
+
+    def export_index_by_arena_id(self) -> Dict[int, Tuple[str, str, str]]:
+        """Build ``arena_id -> (name, set_code, collector_number)`` from
+        Arena's local card DB, for the collection exporter's output lines.
+
+        Names come from Localizations_enUS (same join the rest of the class
+        uses); set and collector columns are probed because their names vary
+        by client version, and are left blank when the DB doesn't expose them
+        (Moxfield and Arena import by name regardless). Returns an empty dict
+        when the Arena database is unavailable.
+        """
+        if getattr(self, "_export_index_by_arena_id", None) is not None:
+            return self._export_index_by_arena_id
+        import sqlite3
+
+        index: Dict[int, Tuple[str, str, str]] = {}
+        db_path = self._resolve_mtga_db_path()
+        if db_path:
+            try:
+                conn = self._connect_mtga_db(db_path)
+                cur = conn.cursor()
+                cur.execute('PRAGMA table_info("Cards")')
+                columns = {str(row[1]) for row in cur.fetchall()}
+                set_col = next(
+                    (c for c in self._SET_CODE_COLUMN_CANDIDATES if c in columns), None
+                )
+                num_col = next(
+                    (c for c in self._COLLECTOR_COLUMN_CANDIDATES if c in columns), None
+                )
+                set_expr = f'c."{set_col}"' if set_col else "''"
+                num_expr = f'c."{num_col}"' if num_col else "''"
+                cur.execute(
+                    f'SELECT c."GrpId", l."loc", {set_expr}, {num_expr} FROM "Cards" c '
+                    'JOIN "Localizations_enUS" l ON c."TitleId" = l."LocId" '
+                    'WHERE c."GrpId" IS NOT NULL'
+                )
+                for grp_id, name, set_code, collector in cur.fetchall():
+                    try:
+                        arena_id = int(grp_id)
+                    except (TypeError, ValueError):
+                        continue
+                    clean_name = str(name or "").strip()
+                    if not clean_name or arena_id in index:
+                        continue
+                    index[arena_id] = (
+                        clean_name,
+                        str(set_code or "").strip().upper(),
+                        str(collector or "").strip(),
+                    )
+                conn.close()
+            except Exception:
+                index = {}
+        self._export_index_by_arena_id = index
+        return index
+
     def get_card_ability_texts(self, grp_id: int) -> List[str]:
         """Return every localized ability text for a card (for role classification)."""
         if grp_id is None:
