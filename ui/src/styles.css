@@ -3968,7 +3968,8 @@ a.settings-link-button {
 .collection-export-reqs {
   margin: 0;
   padding-left: 20px;
-  max-width: 78ch;
+  /* Span the full width of the export box, like the rest of the section. */
+  max-width: none;
   display: grid;
   gap: 6px;
   color: var(--muted);
