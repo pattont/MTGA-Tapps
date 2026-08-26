@@ -68,6 +68,9 @@ data/backups/
 .fuse_hidden*
 **/.fuse_hidden*
 
+# Exported collection files (generated on demand)
+data/exports/
+
 # Session scratch
 fable_src.tar.gz
 _to_delete/

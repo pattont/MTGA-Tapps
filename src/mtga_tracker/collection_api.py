@@ -80,6 +80,8 @@ def start_export(db_path: Optional[Path], fmt: str, *, refresh: bool) -> str:
         _prune_jobs(now)
         _JOBS[job_id] = {
             "created": now,
+            "started_at": time.monotonic(),
+            "duration_seconds": None,
             "state": "running",
             "detail": "Starting…",
             "format": fmt,
@@ -148,6 +150,9 @@ def _run_export(
         writer(entries, out_path)
 
     total = sum(e.count for e in entries)
+    with _JOBS_LOCK:
+        started = _JOBS.get(job_id, {}).get("started_at")
+    duration = round(time.monotonic() - started, 1) if started is not None else None
     _set(
         job_id,
         state="done",
@@ -155,6 +160,7 @@ def _run_export(
         file=out_path.name,
         unique=len(entries),
         total=total,
+        duration_seconds=duration,
     )
 
 
@@ -400,6 +406,7 @@ def _job_payload(job_id: str) -> Optional[Dict[str, Any]]:
             "file": job["file"],
             "unique": job["unique"],
             "total": job["total"],
+            "duration_seconds": job.get("duration_seconds"),
             "error_code": job["error_code"],
         }
 

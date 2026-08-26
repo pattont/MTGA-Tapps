@@ -82,6 +82,15 @@ const EXPORT_FORMATS: Array<[CollectionExportFormat, string]> = [
   ['txt', 'Export to .txt'],
 ];
 
+function formatDuration(seconds: number | null): string | null {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return null;
+  const whole = Math.max(1, Math.round(seconds));
+  if (whole < 60) return `${whole}s`;
+  const minutes = Math.floor(whole / 60);
+  const rest = whole % 60;
+  return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+}
+
 function triggerDownload(fileName: string): void {
   const link = document.createElement('a');
   link.href = collectionDownloadUrl(fileName);
@@ -125,6 +134,7 @@ function CollectionExport({ platform }: { platform: PlatformSettings }) {
       file: null,
       unique: null,
       total: null,
+      duration_seconds: null,
       error_code: 'scan_failed',
     });
 
@@ -147,7 +157,7 @@ function CollectionExport({ platform }: { platform: PlatformSettings }) {
   const runExport = (format: CollectionExportFormat) => {
     setRunning(true);
     deliveredRef.current = null;
-    setJob({ state: 'running', detail: 'Starting…', format, file: null, unique: null, total: null, error_code: null });
+    setJob({ state: 'running', detail: 'Starting…', format, file: null, unique: null, total: null, duration_seconds: null, error_code: null });
     startCollectionExport(format)
       .then((started) => {
         if (started.job && started.state === 'running') {
@@ -208,13 +218,25 @@ function CollectionExport({ platform }: { platform: PlatformSettings }) {
 
       {job && job.state === 'done' ? (
         <p className="collection-export-status collection-export-done" role="status">
-          ✓ {job.detail} Your download should start automatically —{' '}
-          {job.file ? (
-            <a className="collection-export-download" href={collectionDownloadUrl(job.file)}>
-              download again
-            </a>
-          ) : null}
-          . A copy is also saved in your MTGA Tracker data folder.
+          <span aria-hidden="true">✓</span>{' '}
+          <span>
+            Exported <strong>{(job.unique ?? 0).toLocaleString()}</strong> unique cards (
+            {(job.total ?? 0).toLocaleString()} total)
+            {formatDuration(job.duration_seconds)
+              ? ` in ${formatDuration(job.duration_seconds)}`
+              : ''}
+            . Your download should start on its own
+            {job.file ? (
+              <>
+                {' '}
+                — if it doesn&rsquo;t,{' '}
+                <a className="collection-export-download" href={collectionDownloadUrl(job.file)}>
+                  download it here
+                </a>
+              </>
+            ) : null}
+            . A copy was also saved to your MTGA&nbsp;Tracker data folder.
+          </span>
         </p>
       ) : null}
 
