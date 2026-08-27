@@ -220,6 +220,26 @@ setup.
 
 ![Deck Finder in the dashboard](docs/images/deck-finder.png)
 
+## Export your collection
+
+Arena never exposes your card collection, so the Settings page can read it
+straight out of the running game's memory and export it as `.json`, `.csv`, or
+`.txt` — ready to import into [Moxfield](https://moxfield.com) and similar
+sites. Open Arena's Decks tab once so the collection is loaded, pick a format,
+and the file downloads when the scan finishes (a copy also lands in the
+tracker's data folder). On macOS an administrator prompt appears, since reading
+another app's memory needs elevated access; the game itself is never modified.
+Everything runs locally — no card database is downloaded and nothing leaves
+your machine.
+
+![Export MTGA Collection on the Settings page](docs/images/export-collection.png)
+
+The memory-extraction technique is adapted from
+[NthPhantom10](https://github.com/NthPhantom10)'s
+[MTGA-collection-exporter](https://github.com/NthPhantom10/MTGA-collection-exporter)
+— full credit to them for working out how to find the collection in Arena's
+process memory.
+
 ## What isn't tracked
 
 Some game modes are intentionally excluded from your saved stats, because
