@@ -39,8 +39,13 @@ $ExePath = Join-Path $AppDir "MTGA Tracker.exe"
 if (-not (Test-Path $ExePath)) { throw "Build finished but $ExePath is missing" }
 
 Write-Host "==> Zipping release archive"
-$VersionMatch = Select-String -Path (Join-Path $RootDir "src\mtga_tracker\__init__.py") -Pattern '__version__ = "(.+)"'
-$Version = if ($VersionMatch) { $VersionMatch.Matches[0].Groups[1].Value } else { "dev" }
+# Version is derived from the git tag (setuptools-scm) and registered by the
+# `pip install -e .` above. Anything that doesn't look like a version
+# (errors, empty output) falls back to "dev" rather than poisoning filenames.
+$Version = try {
+    ("$(& $Python -c "from importlib.metadata import version; print(version('mtga-tracker'))" 2>&1)").Trim()
+} catch { "" }
+if ($Version -notmatch '^\d+(\.\d+)+') { $Version = "dev" }
 $ZipPath = Join-Path $RootDir "dist\MTGA-Tracker-$Version-windows.zip"
 if (Test-Path $ZipPath) { Remove-Item $ZipPath }
 Compress-Archive -Path $AppDir -DestinationPath $ZipPath

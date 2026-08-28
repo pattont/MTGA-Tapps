@@ -35,7 +35,11 @@ jobs:
       # The build scripts prefer a repo venv; on CI use the runner's python.
       PYTHON: python3
     steps:
+      # Full history + tags: the app version is derived from the git tag by
+      # setuptools-scm, and a shallow checkout would leave it guessing.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:

@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=68.0", "setuptools-scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "mtga-tracker"
-version = "0.5.8"
+dynamic = ["version"]
 description = "Track cards played in Magic: The Gathering Arena"
 readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}
@@ -45,6 +45,15 @@ mtga-tracker-app = "mtga_tracker.app:main"
 mtga-tracker-audit-db = "mtga_tracker.db_audit:main"
 mtga-tracker-dashboard = "mtga_tracker.dashboard:main"
 mtga-tracker-draw-quality = "mtga_tracker.draw_quality:main"
+
+# The release tag IS the version: `git tag v0.5.9.1` and every artifact,
+# API payload, and UI readout derives from it. Nothing to edit per release.
+# From a git checkout the version comes from the nearest v* tag (dev builds
+# between tags get 0.5.9.2.devN+g<sha>); a tarball without git history falls
+# back to 0.0.0+unknown rather than failing to install.
+[tool.setuptools_scm]
+version_file = "src/mtga_tracker/_version.py"
+fallback_version = "0.0.0+unknown"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.9.1
+
+- **Fixed: collection export crashed on Windows** with "int() argument must
+  be a string … not 'NoneType'". Windows reports the first memory region at
+  address zero, which the scanner mishandled before reading a single byte —
+  the export never worked on Windows until now. macOS was unaffected.
+- **Release versions now come from the git tag** (setuptools-scm). The app,
+  installers, and dashboard all derive their version from the `v*` tag the
+  release was built from — no hand-edited version strings anywhere.
+
 ## 0.5.9
 
 - **Ramped and searched lands now count in Lands Seen.** A land pulled from

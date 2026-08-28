@@ -13,9 +13,25 @@ runtime_assets = project_root / "src" / "mtga_tracker" / "assets"
 is_macos = sys.platform == "darwin"
 is_windows = sys.platform == "win32"
 
-version_source = (project_root / "src" / "mtga_tracker" / "__init__.py").read_text()
-version_match = re.search(r'__version__\s*=\s*"([^"]+)"', version_source)
-app_version = version_match.group(1) if version_match else "0.0.0"
+# Version comes from the git tag via setuptools-scm: the build scripts run
+# `pip install -e .` first, which writes src/mtga_tracker/_version.py and
+# registers the dist metadata — read whichever is available.
+def _resolve_app_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("mtga-tracker")
+    except Exception:
+        pass
+    version_file = project_root / "src" / "mtga_tracker" / "_version.py"
+    if version_file.is_file():
+        match = re.search(r"version\s*=\s*['\"]([^'\"]+)['\"]", version_file.read_text())
+        if match:
+            return match.group(1)
+    return "0.0.0"
+
+
+app_version = _resolve_app_version()
 
 if not (ui_dist / "index.html").is_file():
     raise SystemExit("ui/dist is missing. Run `cd ui && npm run build` first.")
