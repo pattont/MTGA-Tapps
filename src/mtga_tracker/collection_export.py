@@ -213,13 +213,19 @@ class WindowsMemory:
             )
             if not got:
                 break
-            region_size = int(info.RegionSize)
+            # ctypes reads a NULL c_void_p back as None (not 0), and the very
+            # first VirtualQueryEx at address 0 describes a region based at
+            # NULL — so int(info.BaseAddress) would crash with
+            # "int() argument must be ... not 'NoneType'" before the scan
+            # ever read a byte.
+            base = int(info.BaseAddress or 0)
+            region_size = int(info.RegionSize or 0)
             if (
                 info.State == self._MEM_COMMIT
                 and (info.Protect & self._PAGE_READABLE)
             ):
-                yield int(info.BaseAddress), region_size
-            address = int(info.BaseAddress) + max(region_size, 0x1000)
+                yield base, region_size
+            address = base + max(region_size, 0x1000)
 
 
 class _MemoryBasicInformation(ctypes.Structure):

@@ -270,3 +270,38 @@ def test_run_scan_cli_writes_result(tmp_path, monkeypatch):
     code = ce.run_scan_cli(["--scan-json", str(db), str(out)])
     assert code == 0
     assert json.loads(out.read_text()) == {"90573": 4, "91234": 3}
+
+
+def test_windows_readable_regions_survives_null_base_address():
+    """ctypes reads a NULL c_void_p back as None; the first VirtualQueryEx at
+    address 0 reports a NULL-based region, which crashed the whole Windows
+    scan with "int() argument must be ... not 'NoneType'" before this fix."""
+    import ctypes
+
+    mem = ce.WindowsMemory.__new__(ce.WindowsMemory)
+    mem._handle = 1
+    regions = [
+        # (BaseAddress as ctypes reads it back, RegionSize, State, Protect)
+        (None, 0x1000, ce.WindowsMemory._MEM_COMMIT, 0x04),  # NULL base, readable
+        (0x1000, 0x2000, 0, 0),  # free region, skipped
+        (0x3000, 0x1000, ce.WindowsMemory._MEM_COMMIT, 0x02),  # readable
+    ]
+    calls = {"n": 0}
+
+    class FakeK32:
+        @staticmethod
+        def VirtualQueryEx(_handle, _addr, info_ref, _size):
+            if calls["n"] >= len(regions):
+                return 0
+            base, size, state, protect = regions[calls["n"]]
+            info = info_ref._obj
+            info.BaseAddress = base
+            info.RegionSize = size
+            info.State = state
+            info.Protect = protect
+            calls["n"] += 1
+            return ctypes.sizeof(info)
+
+    mem._k32 = FakeK32()
+    got = list(mem.readable_regions())
+    assert got == [(0, 0x1000), (0x3000, 0x1000)]
