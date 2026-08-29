@@ -351,7 +351,7 @@ export function SettingsPage() {
         <Section
           id="settings-collection-export"
           title="Export MTGA Collection"
-          description="Read your full card collection from the running game and export it for Moxfield and similar sites."
+          description="Read your full card collection from the running game and export it for Moxfield, Archidekt, and similar sites."
         >
           <CollectionExport platform={platform} />
         </Section>

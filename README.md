@@ -223,14 +223,22 @@ setup.
 ## Export your collection
 
 Arena never exposes your card collection, so the Settings page can read it
-straight out of the running game's memory and export it as `.json`, `.csv`, or
-`.txt` — ready to import into [Moxfield](https://moxfield.com) and similar
-sites. Open Arena's Decks tab once so the collection is loaded, pick a format,
-and the file downloads when the scan finishes (a copy also lands in the
-tracker's data folder). On macOS an administrator prompt appears, since reading
-another app's memory needs elevated access; the game itself is never modified.
-Everything runs locally — no card database is downloaded and nothing leaves
-your machine.
+straight out of the running game's memory and export it as `.json`, `.csv`,
+`.txt`, or an Archidekt-format `.csv` — ready to import into
+[Moxfield](https://moxfield.com), [Archidekt](https://archidekt.com), and
+similar sites. Open Arena's Decks tab once so the collection is loaded, pick a
+format, and the file downloads when the scan finishes (a copy also lands in
+the tracker's data folder). On macOS an administrator prompt appears, since
+reading another app's memory needs elevated access; the game itself is never
+modified. Everything runs locally — no card database is downloaded and nothing
+leaves your machine.
+
+The **Archidekt export** adds a Scryfall ID column, which removes all
+ambiguity about exactly which printing you own (Moxfield reads this format
+too). IDs are resolved through Scryfall's batch API the first time — a few
+seconds for a full collection — then cached locally, so later exports are
+instant and offline; rows for cards too new to resolve still import by name
+and set.
 
 ![Export MTGA Collection on the Settings page](docs/images/export-collection.png)
 
