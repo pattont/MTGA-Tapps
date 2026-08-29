@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.9.2
+
+- **Fixed: exports could grab a deck instead of your collection.** Arena keeps
+  deck objects in memory that look exactly like a collection block, and the
+  scanner could return one (34 cards exported instead of thousands). Candidate
+  blocks are now gathered across all of Arena's memory and the largest valid
+  one wins; deck-sized blocks are rejected outright.
+- **Fixed: missing set codes on non-default installs.** The export now finds
+  Arena's card database via the install path Arena announces in its own log,
+  so set codes fill in on any install location — and if the database still
+  can't be found, the export says so instead of quietly shrinking.
+- **New: Export for Archidekt.** A fourth export format whose Scryfall ID
+  column removes all import ambiguity (Moxfield reads it too). IDs resolve
+  through Scryfall's batch API with fallbacks for Arena's mismatched
+  collector numbers (Alchemy sets, special prints), then cache locally so
+  repeat exports are instant and offline.
+- Card names no longer carry Arena's `<nobr>` markup in exports.
+
 ## 0.5.9.1
 
 - **Fixed: collection export crashed on Windows** with "int() argument must
