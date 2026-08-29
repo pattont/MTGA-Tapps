@@ -513,6 +513,15 @@ class AnalyticsStore:
         AnalyticsStore.ensure_table_column(conn, "live_status", "tracker_version", "TEXT")
         AnalyticsStore.ensure_table_column(conn, "live_status", "player_colors", "TEXT")
         AnalyticsStore.ensure_table_column(conn, "live_status", "opponent_colors", "TEXT")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "player_lands", "INTEGER")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "opponent_lands", "INTEGER")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "turn_started_at", "TEXT")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "lands_seen", "INTEGER")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "cards_seen", "INTEGER")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "ramped_lands", "INTEGER")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "deck_size", "INTEGER")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "deck_lands", "INTEGER")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "opponent_cards", "TEXT")
         AnalyticsStore.backfill_game_turn_counts(conn)
         AnalyticsStore.apply_pending_migrations(conn)
         AnalyticsStore.canonicalize_imported_deck_names(conn)
@@ -2627,6 +2636,15 @@ class AnalyticsStore:
         "tracker_version",
         "player_colors",
         "opponent_colors",
+        "player_lands",
+        "opponent_lands",
+        "turn_started_at",
+        "lands_seen",
+        "cards_seen",
+        "ramped_lands",
+        "deck_size",
+        "deck_lands",
+        "opponent_cards",
     )
 
     def _upsert_live_status(self, conn: sqlite3.Connection, live: Dict[str, Any]) -> None:

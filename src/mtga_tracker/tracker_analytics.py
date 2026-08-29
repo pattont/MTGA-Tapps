@@ -154,6 +154,8 @@ class TrackerAnalyticsMixin:
                 format_label = self._friendly_format_label()
             except Exception:
                 format_label = g.format_str
+        draw_stats = self._live_draw_stats() if in_game else None
+        deck_stats = self._live_deck_land_stats() if in_game else None
         return {
             "session_id": self.session_id,
             "updated_at": (now or self._now()).isoformat(),
@@ -161,6 +163,25 @@ class TrackerAnalyticsMixin:
             "player_colors": self._live_colors_for(self.player_cards) if in_game else None,
             "opponent_colors": (
                 self._live_colors_for(self.opponent_cards) if in_game else None
+            ),
+            # Live scoreboard extras: lands played per side, when the current
+            # turn started (for the turn timer), the player's live land/draw
+            # numbers (for the draw-quality strip), and the opponent's
+            # revealed cards (for the archetype guess).
+            "player_lands": self._live_lands_played(self.player_cards) if in_game else None,
+            "opponent_lands": (
+                self._live_lands_played(self.opponent_cards) if in_game else None
+            ),
+            "turn_started_at": (
+                g.turn_started_at.isoformat() if in_game and g.turn_started_at else None
+            ),
+            "lands_seen": draw_stats[0] if draw_stats else None,
+            "cards_seen": draw_stats[1] if draw_stats else None,
+            "ramped_lands": draw_stats[2] if draw_stats else None,
+            "deck_size": deck_stats[0] if deck_stats else None,
+            "deck_lands": deck_stats[1] if deck_stats else None,
+            "opponent_cards": (
+                self._live_opponent_card_names() if in_game else None
             ),
             "match_id": match_id,
             "game_id": game_id,
@@ -249,6 +270,74 @@ class TrackerAnalyticsMixin:
         # All known cards colorless -> the side IS colorless ("C"), which the
         # scoreboard shows with the diamond pip.
         return colored or ("C" if "C" in letters else "")
+
+    @staticmethod
+    def _live_event_is_land(event) -> bool:
+        return str(getattr(event, "card_type_category", "") or "").casefold() == "land"
+
+    def _live_lands_played(self, cards) -> int:
+        """Lands a side has played this game — the scoreboard's lands readout."""
+        return sum(1 for event in cards or [] if self._live_event_is_land(event))
+
+    def _live_draw_stats(self) -> tuple:
+        """(lands_seen, cards_seen, ramped_lands) for the player, live.
+
+        Mirrors draw_quality's counting: opening hand plus recorded draws,
+        with lands ramped from the library tagged so the strip can keep them
+        out of the flood side, exactly like the game page's math.
+        """
+        g = self.game_state
+        opening = g.starting_hand_events or []
+        drawn = []
+        if g.player_seat_id is not None:
+            drawn = (g.drawn_card_events or {}).get(g.player_seat_id, []) or []
+        lands_seen = sum(1 for e in opening if self._live_event_is_land(e)) + sum(
+            1 for e in drawn if self._live_event_is_land(e)
+        )
+        ramped = sum(
+            1
+            for e in drawn
+            if getattr(e, "source", None) == "ramp" and self._live_event_is_land(e)
+        )
+        return lands_seen, len(opening) + len(drawn), ramped
+
+    def _live_deck_land_stats(self) -> Optional[tuple]:
+        """(deck_size, deck_lands) from the submitted decklist, cached per
+        deck — feeds the live draw-quality strip's expected-lands math."""
+        ids = list(self.game_state.submitted_deck_cards or [])
+        if not ids:
+            return None
+        cache_key = (len(ids), ids[0], ids[-1])
+        cached = getattr(self, "_live_deck_land_cache", None)
+        if cached and cached[0] == cache_key:
+            return cached[1]
+        lands = 0
+        resolve = getattr(self.card_db, "get_card_type_category", None)
+        if not callable(resolve):
+            return None
+        for arena_id in ids:
+            try:
+                if str(resolve(arena_id) or "").casefold() == "land":
+                    lands += 1
+            except Exception:
+                continue
+        result = (len(ids), lands)
+        self._live_deck_land_cache = (cache_key, result)
+        return result
+
+    def _live_opponent_card_names(self) -> Optional[str]:
+        """JSON list of distinct opponent card names revealed this game —
+        the archetype guesser's input. Capped to keep the row small."""
+        names: List[str] = []
+        seen: set = set()
+        for event in getattr(self, "opponent_cards", []) or []:
+            name = str(getattr(event, "card_name", "") or "").strip()
+            if name and name not in seen:
+                seen.add(name)
+                names.append(name)
+            if len(names) >= 60:
+                break
+        return json.dumps(names) if names else None
 
     def _live_card_db_path(self) -> Optional[str]:
         cached = getattr(self, "_live_card_db_path_cache", "unset")

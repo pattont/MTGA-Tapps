@@ -1474,6 +1474,38 @@ export interface LiveNow {
   /** WUBRG letters revealed so far this game (from cards actually played). */
   player_colors: string;
   opponent_colors: string;
+  /** Live scoreboard extras — null on old trackers/databases. */
+  player_lands?: number | null;
+  opponent_lands?: number | null;
+  turn_started_at?: string | null;
+  lands_seen?: number | null;
+  cards_seen?: number | null;
+  ramped_lands?: number | null;
+  deck_size?: number | null;
+  deck_lands?: number | null;
+  head_to_head?: { wins: number; losses: number } | null;
+  deck_record?: {
+    wins: number;
+    losses: number;
+    win_rate: number;
+    today_wins: number;
+    today_losses: number;
+  } | null;
+  rank?: {
+    rank_format: string;
+    rank_class: string;
+    rank_level: number;
+    rank_step: number;
+    rank_steps: number;
+    mythic_percentile: number | null;
+    mythic_rank: number | null;
+  } | null;
+  archetype_guess?: {
+    archetype: string;
+    matched_cards: number;
+    wins: number;
+    losses: number;
+  } | null;
 }
 
 export interface LiveSessionInfo {

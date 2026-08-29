@@ -58,6 +58,27 @@ function gameClock(startedAt: string | null, nowMs: number): string | null {
   return formatDuration(Math.max(0, Math.floor((nowMs - started) / 1000)));
 }
 
+function recordText(wins: number, losses: number): string {
+  return `${wins}–${losses}`;
+}
+
+/** "Platinum 2 · 3/6", or Mythic with rank/percentile when available. */
+function rankText(rank: NonNullable<LiveNow['rank']>): string {
+  if (rank.rank_class === 'Mythic') {
+    if (rank.mythic_rank) return `Mythic #${rank.mythic_rank}`;
+    if (rank.mythic_percentile != null) return `Mythic ${rank.mythic_percentile}%`;
+    return 'Mythic';
+  }
+  return `${rank.rank_class} ${rank.rank_level} · ${rank.rank_step}/${rank.rank_steps}`;
+}
+
+/** Expected lands among the cards seen, from the submitted decklist. */
+function expectedLands(now: LiveNow): number | null {
+  if (!now.cards_seen || !now.deck_size || now.deck_lands == null) return null;
+  if (now.deck_size <= 0) return null;
+  return Math.round((now.cards_seen * now.deck_lands * 10) / now.deck_size) / 10;
+}
+
 function LifeReadout({ life, side }: { life: number | null; side: 'player' | 'opponent' }) {
   const previous = useRef<number | null>(null);
   const [pulse, setPulse] = useState<'up' | 'down' | null>(null);
@@ -126,12 +147,18 @@ function Scoreboard({
 }) {
   const isBrawl = now.player_commanders.length > 0 || now.opponent_commanders.length > 0;
   const clock = waiting ? null : gameClock(now.game_started_at, clockMs);
+  // Time spent on the current turn, ticking off the same clock as the game
+  // timer; resets whenever the tracker stamps a new turn_started_at.
+  const turnTimer = waiting ? null : gameClock(now.turn_started_at ?? null, clockMs);
   const turnChip =
     now.turn_number && now.active_role
-      ? `Turn ${now.turn_number} — ${now.active_role === 'player' ? 'You' : 'Opponent'}`
+      ? `Turn ${now.turn_number} — ${now.active_role === 'player' ? 'You' : 'Opponent'}${
+          turnTimer ? ` · ${turnTimer}` : ''
+        }`
       : now.turn_number
-        ? `Turn ${now.turn_number}`
+        ? `Turn ${now.turn_number}${turnTimer ? ` · ${turnTimer}` : ''}`
         : 'Starting up…';
+  const expected = expectedLands(now);
 
   return (
     <div className="live-scoreboard">
@@ -158,6 +185,7 @@ function Scoreboard({
             {turnChip}
           </span>
         )}
+        {now.rank ? <span className="live-chip live-chip-rank">{rankText(now.rank)}</span> : null}
       </div>
 
       <div className="live-versus">
@@ -167,6 +195,33 @@ function Scoreboard({
             {isBrawl || !now.deck_name ? null : <DeckLink deckName={now.deck_name} />}
             <ColorPips colors={now.player_colors} />
           </p>
+          {now.deck_record ? (
+            <p className="live-side-stat">
+              {recordText(now.deck_record.wins, now.deck_record.losses)} with this deck (
+              {now.deck_record.win_rate}%)
+              {now.deck_record.today_wins + now.deck_record.today_losses > 0
+                ? ` · ${recordText(now.deck_record.today_wins, now.deck_record.today_losses)} today`
+                : ''}
+            </p>
+          ) : null}
+          {now.player_lands != null ? (
+            <p className="live-side-stat">
+              {now.player_lands} {now.player_lands === 1 ? 'land' : 'lands'} played
+            </p>
+          ) : null}
+          {now.lands_seen != null && now.cards_seen ? (
+            <p
+              className={`live-side-stat${
+                expected != null && Math.abs(now.lands_seen - expected) >= 2.5
+                  ? ' live-side-stat-warn'
+                  : ''
+              }`}
+            >
+              {now.lands_seen} of {now.cards_seen} cards seen were lands
+              {expected != null ? ` · expected ~${expected}` : ''}
+              {now.ramped_lands ? ` (${now.ramped_lands} ramped)` : ''}
+            </p>
+          ) : null}
           {isBrawl ? (
             <div className="live-commanders">
               {(now.player_commanders.length > 0 ? now.player_commanders : [null]).map(
@@ -189,6 +244,24 @@ function Scoreboard({
           <p className="live-side-detail">
             <ColorPips colors={now.opponent_colors} />
           </p>
+          {now.head_to_head ? (
+            <p className="live-side-stat">
+              {recordText(now.head_to_head.wins, now.head_to_head.losses)} vs this player
+            </p>
+          ) : null}
+          {now.archetype_guess ? (
+            <p className="live-side-stat">
+              Looks like <strong>{now.archetype_guess.archetype}</strong>
+              {now.archetype_guess.wins + now.archetype_guess.losses > 0
+                ? ` · you're ${recordText(now.archetype_guess.wins, now.archetype_guess.losses)} vs it`
+                : ''}
+            </p>
+          ) : null}
+          {now.opponent_lands != null ? (
+            <p className="live-side-stat">
+              {now.opponent_lands} {now.opponent_lands === 1 ? 'land' : 'lands'} played
+            </p>
+          ) : null}
           {isBrawl ? (
             <div className="live-commanders">
               {(now.opponent_commanders.length > 0 ? now.opponent_commanders : [null]).map(

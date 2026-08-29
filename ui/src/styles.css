@@ -4242,6 +4242,29 @@ a.settings-link-button {
   gap: 3px;
 }
 
+/* Small stat lines under each player: deck record, lands, draw quality,
+   head-to-head, archetype guess. */
+.live-side-stat {
+  margin: -4px 0 0;
+  color: var(--subtle);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.live-side-stat strong {
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.live-side-stat-warn {
+  color: var(--warning, #d9a53f);
+}
+
+.live-chip-rank {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  color: var(--accent-strong);
+}
+
 .live-commanders {
   display: flex;
   gap: 10px;

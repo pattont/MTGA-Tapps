@@ -157,6 +157,173 @@ def _seat_colors(conn: sqlite3.Connection, game_id: Optional[str]) -> Dict[str, 
     return out
 
 
+def _head_to_head(
+    conn: sqlite3.Connection,
+    opponent_name: Optional[str],
+    current_game_id: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Lifetime record vs this opponent name (the current game excluded)."""
+    name = str(opponent_name or "").strip()
+    if not name:
+        return None
+    try:
+        row = conn.execute(
+            """
+            SELECT
+              SUM(g.outcome = 'win') AS wins,
+              SUM(g.outcome = 'loss') AS losses
+            FROM games g
+            JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
+            WHERE o.display_name = ? AND g.id IS NOT ? AND g.outcome IN ('win', 'loss')
+            """,
+            (name, current_game_id),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    wins, losses = int(row[0] or 0), int(row[1] or 0)
+    if wins + losses == 0:
+        return None
+    return {"wins": wins, "losses": losses}
+
+
+def _deck_record(
+    conn: sqlite3.Connection,
+    deck_name: Optional[str],
+    current_game_id: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Lifetime + today's record with this deck (the current game excluded)."""
+    name = str(deck_name or "").strip()
+    if not name:
+        return None
+    today = datetime.now().strftime("%Y-%m-%d")
+    try:
+        row = conn.execute(
+            """
+            SELECT
+              SUM(g.outcome = 'win') AS wins,
+              SUM(g.outcome = 'loss') AS losses,
+              SUM(g.outcome = 'win' AND date(g.started_at) = ?) AS today_wins,
+              SUM(g.outcome = 'loss' AND date(g.started_at) = ?) AS today_losses
+            FROM games g
+            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            WHERE p.deck_name = ? AND g.id IS NOT ? AND g.outcome IN ('win', 'loss')
+            """,
+            (today, today, name, current_game_id),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    wins, losses = int(row[0] or 0), int(row[1] or 0)
+    if wins + losses == 0:
+        return None
+    return {
+        "wins": wins,
+        "losses": losses,
+        "win_rate": round(100.0 * wins / (wins + losses), 1),
+        "today_wins": int(row[2] or 0),
+        "today_losses": int(row[3] or 0),
+    }
+
+
+def _rank_context(
+    conn: sqlite3.Connection, format_label: Optional[str]
+) -> Optional[Dict[str, Any]]:
+    """Latest rank snapshot for the game's ladder — shown for ranked games.
+
+    Limited queues read from the limited ladder; everything else ranked reads
+    from constructed. Non-ranked formats return None.
+    """
+    label = str(format_label or "")
+    if "rank" not in label.casefold():
+        return None
+    is_limited = any(word in label.casefold() for word in ("draft", "sealed", "limited"))
+    rank_format = "limited" if is_limited else "constructed"
+    try:
+        cursor = conn.execute(
+            """
+            SELECT rank_class, rank_level, rank_step, rank_steps,
+                   mythic_percentile, mythic_rank
+            FROM rank_snapshots
+            WHERE rank_format = ?
+            ORDER BY captured_at DESC, id DESC
+            LIMIT 1
+            """,
+            (rank_format,),
+        )
+    except sqlite3.OperationalError:
+        return None
+    row = _dict_row(cursor)
+    if row is None:
+        return None
+    row["rank_format"] = rank_format
+    return row
+
+
+#: An archetype guess needs at least this many of the opponent's revealed
+#: cards matching the historical archetype's played cards.
+ARCHETYPE_GUESS_MIN_MATCHES = 2
+
+
+def _archetype_guess(
+    conn: sqlite3.Connection,
+    opponent_cards_json: Any,
+    current_game_id: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Guess the opponent's archetype from their revealed cards, using past
+    games whose opponents were identified (Deck AI) — no network, no model:
+    the archetype whose historical played-cards overlap this game's revealed
+    cards the most wins, with your record against it attached.
+    """
+    revealed = set(_json_list(opponent_cards_json))
+    if len(revealed) < ARCHETYPE_GUESS_MIN_MATCHES:
+        return None
+    try:
+        rows = conn.execute(
+            """
+            SELECT o.deck_archetype, s.display_name
+            FROM participants o
+            JOIN game_card_summary s ON s.participant_id = o.id
+            WHERE o.role = 'opponent' AND o.deck_archetype IS NOT NULL
+              AND o.game_id IS NOT ? AND s.played_count > 0
+            """,
+            (current_game_id,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return None
+    # Base card names, so "(Land)" suffixes and split faces still match.
+    def base(name: str) -> str:
+        return str(name or "").split(" (")[0].split(" // ")[0].strip().casefold()
+
+    revealed_bases = {base(name) for name in revealed}
+    matches: Dict[str, set] = {}
+    for archetype, card_name in rows:
+        if base(card_name) in revealed_bases:
+            matches.setdefault(str(archetype), set()).add(base(card_name))
+    if not matches:
+        return None
+    archetype, matched = max(matches.items(), key=lambda item: len(item[1]))
+    if len(matched) < ARCHETYPE_GUESS_MIN_MATCHES:
+        return None
+    try:
+        record = conn.execute(
+            """
+            SELECT SUM(g.outcome = 'win'), SUM(g.outcome = 'loss')
+            FROM games g
+            JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
+            WHERE o.deck_archetype = ? AND g.id IS NOT ?
+              AND g.outcome IN ('win', 'loss')
+            """,
+            (archetype, current_game_id),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        record = None
+    return {
+        "archetype": archetype,
+        "matched_cards": len(matched),
+        "wins": int(record[0] or 0) if record else 0,
+        "losses": int(record[1] or 0) if record else 0,
+    }
+
+
 def _latest_event_game_id(
     conn: sqlite3.Connection, session_id: Optional[str]
 ) -> Optional[str]:
@@ -346,6 +513,25 @@ def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
                 "game_started_at": status.get("game_started_at"),
                 "player_commanders": _json_list(status.get("player_commanders")),
                 "opponent_commanders": _json_list(status.get("opponent_commanders")),
+                # Live scoreboard extras (columns absent in old DBs read None).
+                "player_lands": status.get("player_lands"),
+                "opponent_lands": status.get("opponent_lands"),
+                "turn_started_at": status.get("turn_started_at"),
+                "lands_seen": status.get("lands_seen"),
+                "cards_seen": status.get("cards_seen"),
+                "ramped_lands": status.get("ramped_lands"),
+                "deck_size": status.get("deck_size"),
+                "deck_lands": status.get("deck_lands"),
+                "head_to_head": _head_to_head(
+                    conn, status.get("opponent_name"), feed_game_id
+                ),
+                "deck_record": _deck_record(conn, status.get("deck_name"), feed_game_id),
+                "rank": _rank_context(conn, status.get("format")),
+                "archetype_guess": (
+                    _archetype_guess(conn, status.get("opponent_cards"), feed_game_id)
+                    if status.get("in_game")
+                    else None
+                ),
             }
 
         events, seq = _events_payload(conn, feed_game_id, since)

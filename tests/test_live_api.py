@@ -412,3 +412,129 @@ def test_missing_live_status_table_is_offline(tmp_path):
     payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
     assert payload["tracker"]["state"] == "offline"
     assert payload["now"] is None
+
+
+def _seed_history(conn, games):
+    """Insert finished games: (game_id, deck, opponent, archetype, outcome, date)."""
+    conn.execute(
+        "INSERT OR IGNORE INTO tracker_sessions (id, started_at) VALUES ('SH', '2026-08-01T00:00:00')"
+    )
+    for game_id, deck, opponent, archetype, outcome, day in games:
+        conn.execute(
+            "INSERT INTO matches (id, session_id) VALUES (?, 'SH')", (f"m-{game_id}",)
+        )
+        conn.execute(
+            "INSERT INTO games (id, session_id, match_id, started_at, outcome) VALUES (?, 'SH', ?, ?, ?)",
+            (game_id, f"m-{game_id}", f"{day}T10:00:00", outcome),
+        )
+        conn.execute(
+            "INSERT INTO participants (id, game_id, role, deck_name) VALUES (?, ?, 'player', ?)",
+            (f"{game_id}-p", game_id, deck),
+        )
+        conn.execute(
+            "INSERT INTO participants (id, game_id, role, display_name, deck_archetype) "
+            "VALUES (?, ?, 'opponent', ?, ?)",
+            (f"{game_id}-o", game_id, opponent, archetype),
+        )
+    conn.commit()
+
+
+def test_live_payload_head_to_head_and_deck_record(tmp_path):
+    store = _store(tmp_path)
+    conn = store.connect()
+    today = datetime.now().strftime("%Y-%m-%d")
+    _seed_history(
+        conn,
+        [
+            ("h1", "Skellies", "Villain#12345", None, "win", "2026-08-01"),
+            ("h2", "Skellies", "Villain#12345", None, "loss", "2026-08-02"),
+            ("h3", "Skellies", "Someone Else", None, "win", today),
+            ("h4", "Other Deck", "Villain#12345", None, "win", "2026-08-03"),
+        ],
+    )
+    _log_line(store, "x", live=_live())  # in_game vs Villain#12345 with Skellies
+    store.close()
+
+    payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+    now = payload["now"]
+    # vs Villain: h1 win, h2 loss, h4 win (deck doesn't matter for h2h).
+    assert now["head_to_head"] == {"wins": 2, "losses": 1}
+    # Skellies lifetime: h1 win, h2 loss, h3 win; today: h3 only.
+    assert now["deck_record"]["wins"] == 2
+    assert now["deck_record"]["losses"] == 1
+    assert now["deck_record"]["today_wins"] == 1
+    assert now["deck_record"]["today_losses"] == 0
+
+
+def test_live_payload_rank_context_only_for_ranked(tmp_path):
+    store = _store(tmp_path)
+    conn = store.connect()
+    conn.execute(
+        "INSERT OR IGNORE INTO tracker_sessions (id, started_at) VALUES ('SH', '2026-08-01T00:00:00')"
+    )
+    conn.execute(
+        """
+        INSERT INTO rank_snapshots (
+            session_id, captured_at, season_ordinal, rank_format,
+            rank_class, rank_level, rank_step, rank_steps
+        ) VALUES ('SH', '2026-08-28T10:00:00', 40, 'constructed', 'Platinum', 2, 3, 6)
+        """
+    )
+    conn.commit()
+    _log_line(store, "x", live=_live(format="Standard BO1 (Ranked)"))
+    store.close()
+
+    payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+    rank = payload["now"]["rank"]
+    assert rank["rank_class"] == "Platinum"
+    assert rank["rank_level"] == 2
+    assert rank["rank_format"] == "constructed"
+
+    # Unranked format: no rank block.
+    store2 = _store(tmp_path)
+    _log_line(store2, "y", live=_live(format="Standard Brawl"))
+    store2.close()
+    payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+    assert payload["now"]["rank"] is None
+
+
+def test_live_payload_archetype_guess_from_revealed_cards(tmp_path):
+    import json as _json
+
+    store = _store(tmp_path)
+    conn = store.connect()
+    _seed_history(
+        conn,
+        [
+            ("a1", "Skellies", "Foe1", "Izzet Prowess", "loss", "2026-08-01"),
+            ("a2", "Skellies", "Foe2", "Izzet Prowess", "win", "2026-08-02"),
+            ("a3", "Skellies", "Foe3", "Mono Green Stompy", "win", "2026-08-03"),
+        ],
+    )
+    # Historical played cards per archetype.
+    for pid, cards in (
+        ("a1-o", ["Slickshot Show-Off", "Stormchaser's Talent", "Mountain"]),
+        ("a2-o", ["Slickshot Show-Off", "Opt"]),
+        ("a3-o", ["Llanowar Elves", "Forest"]),
+    ):
+        for name in cards:
+            conn.execute(
+                "INSERT INTO game_card_summary (game_id, participant_id, display_name, played_count) "
+                "VALUES (?, ?, ?, 1)",
+                (pid.split("-")[0], pid, name),
+            )
+    conn.commit()
+    _log_line(
+        store,
+        "x",
+        live=_live(
+            opponent_cards=_json.dumps(["Slickshot Show-Off", "Stormchaser's Talent", "Island"])
+        ),
+    )
+    store.close()
+
+    payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+    guess = payload["now"]["archetype_guess"]
+    assert guess["archetype"] == "Izzet Prowess"
+    assert guess["matched_cards"] == 2
+    assert guess["wins"] == 1 and guess["losses"] == 1
