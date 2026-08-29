@@ -801,11 +801,18 @@ def resolve_scryfall_ids(
 ) -> Dict[str, str]:
     """Map each entry's cache key -> Scryfall UUID via the batch endpoint.
 
-    Identifiers use set+collector_number when both are known (unambiguous),
-    falling back to the card name. Results are cached to ``cache_path`` so
-    repeat exports resolve entirely offline and only newly-opened cards are
-    ever fetched. Network failures degrade to blank ids, never an exception —
-    the CSV still exports, importable by name+set.
+    Resolution runs in up to three passes, because Arena's printing data and
+    Scryfall's frequently disagree at the collector-number level (Alchemy
+    sets, special printings with collector number "0", crossover numbering):
+
+    1. set + collector_number — exact printing, when both look sane;
+    2. name + set — right set, whatever printing Scryfall lists first;
+    3. name alone — any printing, which is all a collection import needs.
+
+    Results are cached to ``cache_path`` so repeat exports resolve entirely
+    offline and only newly-opened cards are ever fetched. Network failures
+    degrade to blank ids, never an exception — the CSV still exports,
+    importable by name+set.
     """
     if progress is None:
         progress = _noop
@@ -822,61 +829,91 @@ def resolve_scryfall_ids(
         except Exception:
             cache = {}
 
-    pending: List[Tuple[str, Dict[str, str], CollectionEntry]] = []
+    def build_identifier(entry: CollectionEntry, mode: str) -> Optional[Dict[str, str]]:
+        collector = entry.collector_number.strip()
+        set_code = entry.set.lower().strip()
+        if mode == "set_collector":
+            # Collector "0" is Arena's placeholder for special prints and
+            # never matches Scryfall — skip straight to the name passes.
+            if set_code and collector and collector != "0":
+                return {"set": set_code, "collector_number": collector}
+            return None
+        if mode == "name_set":
+            if entry.name and set_code:
+                return {"name": entry.name, "set": set_code}
+            return None
+        return {"name": entry.name} if entry.name else None
+
+    # De-duplicated worklist of entries not already cached.
+    pending: List[CollectionEntry] = []
     seen_keys: Set[str] = set()
     for entry in entries:
         key = _entry_cache_key(entry)
         if key in cache or key in seen_keys:
             continue
         seen_keys.add(key)
-        if entry.set and entry.collector_number:
-            identifier = {
-                "set": entry.set.lower(),
-                "collector_number": entry.collector_number,
-            }
-        else:
-            identifier = {"name": entry.name}
-        pending.append((key, identifier, entry))
+        pending.append(entry)
 
-    batches = [
-        pending[i : i + SCRYFALL_BATCH_SIZE]
-        for i in range(0, len(pending), SCRYFALL_BATCH_SIZE)
-    ]
-    for index, batch in enumerate(batches):
-        progress(
-            f"Looking up Scryfall IDs… {int(100 * index / len(batches))}% "
-            f"({len(pending)} new cards)"
-        )
-        try:
-            payload = fetch([identifier for _key, identifier, _e in batch])
-        except Exception:
-            break  # keep whatever resolved; the writer leaves the rest blank
-        found: Dict[Tuple[str, str], str] = {}
-        found_names: Dict[str, str] = {}
-        for card in payload.get("data") or []:
-            set_code = str(card.get("set") or "").lower()
-            collector = str(card.get("collector_number") or "")
-            card_id = str(card.get("id") or "")
-            if not card_id:
-                continue
-            found[(set_code, collector)] = card_id
-            name = str(card.get("name") or "")
-            if name:
-                found_names.setdefault(name.lower(), card_id)
-                # Double-faced names resolve by their front face too.
-                found_names.setdefault(name.split("//")[0].strip().lower(), card_id)
-        for key, identifier, entry in batch:
-            card_id = None
-            if "collector_number" in identifier:
-                card_id = found.get(
-                    (identifier["set"], identifier["collector_number"])
-                )
-            if card_id is None:
-                card_id = found_names.get(entry.name.lower())
-            if card_id:
-                cache[key] = card_id
-        if index + 1 < len(batches):
+    total_new = len(pending)
+    requests_done = 0
+
+    def run_pass(work: List[CollectionEntry], mode: str) -> List[CollectionEntry]:
+        """Resolve what this pass can; return the entries still unresolved."""
+        nonlocal requests_done
+        items = [
+            (entry, identifier)
+            for entry in work
+            if (identifier := build_identifier(entry, mode)) is not None
+        ]
+        skipped = [e for e in work if build_identifier(e, mode) is None]
+        unresolved: List[CollectionEntry] = list(skipped)
+        batches = [
+            items[i : i + SCRYFALL_BATCH_SIZE]
+            for i in range(0, len(items), SCRYFALL_BATCH_SIZE)
+        ]
+        for batch in batches:
+            progress(
+                f"Looking up Scryfall IDs… ({total_new} new cards, "
+                f"request {requests_done + 1})"
+            )
+            try:
+                payload = fetch([identifier for _e, identifier in batch])
+            except Exception:
+                unresolved.extend(entry for entry, _i in batch)
+                continue  # one bad batch must not strand the rest
+            requests_done += 1
+            found: Dict[Tuple[str, str], str] = {}
+            found_names: Dict[str, str] = {}
+            for card in payload.get("data") or []:
+                set_code = str(card.get("set") or "").lower()
+                collector = str(card.get("collector_number") or "")
+                card_id = str(card.get("id") or "")
+                if not card_id:
+                    continue
+                found[(set_code, collector)] = card_id
+                name = str(card.get("name") or "")
+                if name:
+                    found_names.setdefault(name.lower(), card_id)
+                    # Double-faced names resolve by their front face too.
+                    found_names.setdefault(name.split("//")[0].strip().lower(), card_id)
+            for entry, identifier in batch:
+                card_id = None
+                if "collector_number" in identifier:
+                    card_id = found.get((identifier["set"], identifier["collector_number"]))
+                if card_id is None:
+                    card_id = found_names.get(entry.name.lower())
+                if card_id:
+                    cache[_entry_cache_key(entry)] = card_id
+                else:
+                    unresolved.append(entry)
             _time.sleep(SCRYFALL_REQUEST_DELAY)
+        return unresolved
+
+    remaining = pending
+    for mode in ("set_collector", "name_set", "name"):
+        if not remaining:
+            break
+        remaining = run_pass(remaining, mode)
 
     if cache_path is not None and pending:
         try:

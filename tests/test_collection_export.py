@@ -479,3 +479,57 @@ def test_write_archidekt_csv_includes_scryfall_ids(tmp_path):
     assert '4,"Sheoldred, the Apocalypse",dmu,107,8c1ffe10-fc26-4e43-b9ba-d4a53a6ac9f9,NM,English,' in lines[1]
     # Unresolved rows keep name+set so they still import.
     assert lines[2].startswith("2,Mystery Card,zzz,9,,")
+
+
+def test_resolve_scryfall_ids_falls_back_to_name_when_collector_mismatches(tmp_path):
+    """Arena's collector numbers often disagree with Scryfall (Alchemy sets,
+    special prints numbered "0", crossover numbering) — those must resolve by
+    name instead of exporting blank (the 4,553-blank-rows report)."""
+    calls = []
+
+    def fake_fetch(identifiers):
+        calls.append(list(identifiers))
+        data = []
+        for ident in identifiers:
+            if "name" in ident:  # name passes always hit
+                data.append(
+                    {"id": f"uuid-{ident['name']}", "set": ident.get("set", "xxx"),
+                     "collector_number": "1", "name": ident["name"]}
+                )
+            # set+collector identifiers all miss (the mismatch case)
+        return {"data": data}
+
+    entries = [
+        ce.CollectionEntry(1, "Ant-Man, Scott Lang", "MSC", "513", [1]),
+        ce.CollectionEntry(3, "Archmage Emeritus", "SPG", "0", [2]),  # skips pass 1
+        ce.CollectionEntry(2, "Argivian Welcome", "Y23", "16", [3]),
+    ]
+    ids = ce.resolve_scryfall_ids(entries, cache_path=tmp_path / "c.json", fetch=fake_fetch)
+    assert ids[ce._entry_cache_key(entries[0])] == "uuid-Ant-Man, Scott Lang"
+    assert ids[ce._entry_cache_key(entries[1])] == "uuid-Archmage Emeritus"
+    assert ids[ce._entry_cache_key(entries[2])] == "uuid-Argivian Welcome"
+    # Pass 1 only carried sane set+collector identifiers ("0" skipped it).
+    first_pass = calls[0]
+    assert all("collector_number" in i for i in first_pass)
+    assert len(first_pass) == 2
+
+
+def test_resolve_scryfall_ids_one_failed_batch_does_not_strand_the_rest(tmp_path):
+    calls = {"n": 0}
+
+    def flaky_fetch(identifiers):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("blip")  # first batch fails
+        return {
+            "data": [
+                {"id": f"uuid-{i['collector_number']}", "set": i["set"],
+                 "collector_number": i["collector_number"], "name": f"Card {int(i['collector_number']) - 1}"}
+                for i in identifiers if "collector_number" in i
+            ]
+        }
+
+    entries = _entries(100)  # two batches in pass 1
+    ids = ce.resolve_scryfall_ids(entries, cache_path=tmp_path / "c.json", fetch=flaky_fetch)
+    # Batch 2 of pass 1 resolved 25; the failed batch's 75 retried in pass 2+.
+    assert len(ids) >= 25
