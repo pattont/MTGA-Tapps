@@ -112,11 +112,14 @@ function Scoreboard({
   now,
   clockMs,
   waiting,
+  previousOutcome = null,
 }: {
   now: LiveNow;
   clockMs: number;
   /** Game over: keep showing the final scoreboard, flagged as waiting. */
   waiting: boolean;
+  /** Outcome of the finished game shown while waiting ('win' | 'loss' | 'draw'). */
+  previousOutcome?: string | null;
 }) {
   const isBrawl = now.player_commanders.length > 0 || now.opponent_commanders.length > 0;
   const clock = waiting ? null : gameClock(now.game_started_at, clockMs);
@@ -135,7 +138,13 @@ function Scoreboard({
           <span className="live-chip">Game {now.game_number ?? 1} of 3</span>
         ) : null}
         {waiting ? (
-          <span className="live-chip live-chip-previous">Previous Game</span>
+          <span
+            className={`live-chip live-chip-previous${
+              previousOutcome ? ` live-chip-previous-${previousOutcome}` : ''
+            }`}
+          >
+            Previous Game{previousOutcome ? ` — ${outcomeLabel(previousOutcome)}` : ''}
+          </span>
         ) : (
           <span
             className={
@@ -388,7 +397,14 @@ export function LiveLogPage() {
           ) : lastGameNow ? (
             // Between games: the previous game's final scoreboard stays up,
             // flagged as waiting, so a break doesn't blank the page.
-            <Scoreboard clockMs={clockMs} now={lastGameNow} waiting />
+            <Scoreboard
+              clockMs={clockMs}
+              now={lastGameNow}
+              waiting
+              previousOutcome={
+                payload?.games.find((game) => game.id === lastGameNow.game_id)?.outcome ?? null
+              }
+            />
           ) : (
             <div className="live-waiting">
               <p className="live-waiting-title">
@@ -421,6 +437,13 @@ export function LiveLogPage() {
             <p className="empty-state live-feed-empty">
               {state === 'offline' ? (
                 'Start the tracker and game events stream here live.'
+              ) : now?.in_game ? (
+                // A match is loading (the scoreboard already shows both
+                // players) — don't claim to still be looking for one.
+                <>
+                  <span aria-hidden="true" className="live-pulse-dot" /> Waiting for the match to
+                  begin…
+                </>
               ) : (
                 <>
                   <span aria-hidden="true" className="live-pulse-dot" /> Waiting for a match…

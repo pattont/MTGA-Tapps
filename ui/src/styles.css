@@ -4161,6 +4161,17 @@ a.settings-link-button {
   color: var(--danger);
 }
 
+/* The chip carries the finished game's outcome — color it to match. */
+.live-chip-previous-win {
+  border-color: color-mix(in srgb, var(--success) 50%, var(--border));
+  color: var(--success);
+}
+
+.live-chip-previous-draw {
+  border-color: var(--border);
+  color: var(--muted);
+}
+
 .live-chip .live-pulse-dot {
   display: inline-block;
   margin-right: 2px;
