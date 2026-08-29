@@ -116,3 +116,15 @@ def test_targeted_bounce_is_bounce():
     assert classify_ability_texts(
         ["Return target creature card from your graveyard to your hand."]
     ) == frozenset()
+
+
+def test_graveyard_hate_is_not_removal():
+    """"Exile target card from a graveyard" counted as removal for months —
+    battlefield removal never targets a "card", only zone effects do."""
+    from mtga_tracker.removal_classifier import classify_ability_texts
+
+    assert classify_ability_texts(["{2}: Exile target card from a graveyard."]) == frozenset()
+    assert classify_ability_texts(["Destroy target card in a graveyard."]) == frozenset()
+    # Real battlefield removal still classifies.
+    assert "removal" in classify_ability_texts(["Exile target creature."])
+    assert "removal" in classify_ability_texts(["Destroy target nonblack creature."])

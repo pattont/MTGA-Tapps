@@ -76,10 +76,14 @@ _COUNTER_PATTERNS = tuple(
 _REMOVAL_PATTERNS = tuple(
     re.compile(pattern)
     for pattern in (
-        r"destroys? (?:up to \w+ )?target (?!land)",
-        r"destroys? another target",
-        r"exiles? (?:up to \w+ )?target (?!land)",
-        r"exiles? another target",
+        # "(?!land)" keeps land destruction out; "(?!card\b)" keeps
+        # graveyard/hand/library effects out — battlefield removal targets a
+        # creature/permanent/artifact/..., never a "card" ("exile target card
+        # from a graveyard" is graveyard hate, not removal).
+        r"destroys? (?:up to \w+ )?target (?!land|card\b)",
+        r"destroys? another target (?!card\b)",
+        r"exiles? (?:up to \w+ )?target (?!land|card\b)",
+        r"exiles? another target (?!card\b)",
         r"deals? \d+ damage to any target",
         r"deals? \d+ damage(?:,| to) (?:up to \w+ )?target creature",
         r"deals? \d+ damage to target (?:attacking|blocking|tapped)",

@@ -760,7 +760,7 @@ export function GameDetailPage({
           <div>
             <div className="game-title-row">
               <h2>Game {formatDateTime(detail.game.started_at)}</h2>
-              {isFlood ? <Badge tone="draw">Flood</Badge> : null}
+              {isFlood ? <Badge tone="flood">Flood</Badge> : null}
               {!isFlood && isScrew ? <Badge tone="screw">Mana Screw</Badge> : null}
             </div>
             <p>
@@ -895,7 +895,7 @@ export function GameDetailPage({
         </section>
         {isFlood && floodReasons.length > 0 ? (
           <p className="draw-quality-reason">
-            <Badge tone="draw">Flood evidence</Badge>
+            <Badge tone="flood">Flood evidence</Badge>
             <span>{floodReasons.join(' · ')}</span>
           </p>
         ) : null}

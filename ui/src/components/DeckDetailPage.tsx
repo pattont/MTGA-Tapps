@@ -409,7 +409,7 @@ const gameColumns: Column<DeckGameRow>[] = [
     header: 'Draw Status',
     render: (row) =>
       row.is_flood ? (
-        <Badge tone="draw">Flood</Badge>
+        <Badge tone="flood">Flood</Badge>
       ) : row.is_screw ? (
         <Badge tone="screw">Mana Screw</Badge>
       ) : (

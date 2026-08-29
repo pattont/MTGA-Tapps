@@ -727,3 +727,100 @@ def test_persist_submitted_deck_groups_main_deck_and_sideboard(tmp_path):
         (2, "Unholy Annex // Ritual Chamber", "deck", 1),
         (3, "Duress", "sideboard", 1),
     ]
+
+
+class _FakeCardDb:
+    """Ability texts for the v24 reclassification test."""
+
+    TEXTS = {
+        101: ["{2}: Exile target card from a graveyard."],  # graveyard hate
+        102: ["Destroy target nonblack creature."],  # real removal
+        103: ["Exile all creatures."],  # wipe
+    }
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def get_card_ability_texts(self, grp_id):
+        return self.TEXTS.get(int(grp_id), [])
+
+
+def _seed_removal_game(conn):
+    conn.execute("insert into tracker_sessions (id, started_at) values ('s', '2026-08-01T00:00:00')")
+    conn.execute("insert into matches (id, session_id) values ('m', 's')")
+    conn.execute(
+        "insert into games (id, session_id, match_id, started_at) values ('g', 's', 'm', '2026-08-01T01:00:00')"
+    )
+    conn.executemany(
+        "insert into participants (id, game_id, role) values (?, 'g', ?)",
+        [("p", "player"), ("o", "opponent")],
+    )
+    conn.executemany(
+        "insert into cards (name, arena_id, first_seen_at) values (?, ?, '2026-01-01')",
+        [("Grave Robber", 101), ("Doom Blade", 102), ("Farewell", 103)],
+    )
+    # Opponent played graveyard hate twice (miscounted as removal=2 before);
+    # player played one real removal and drew one wipe.
+    conn.executemany(
+        "insert into game_card_summary (game_id, participant_id, display_name, played_count) "
+        "values ('g', ?, ?, ?)",
+        [
+            ("o", "Grave Robber (Creature 2/2)", 2),
+            ("p", "Doom Blade (Sorcery)", 1),
+        ],
+    )
+    conn.execute(
+        "insert into game_drawn_cards (game_id, participant_id, display_name, draw_position) "
+        "values ('g', 'p', 'Farewell', 1)"
+    )
+    # The corrupted historical numbers the migration must correct.
+    conn.executemany(
+        "insert into game_participant_stats (game_id, participant_id, removal_played, removal_drawn, wipes_drawn) "
+        "values ('g', ?, ?, 0, 0)",
+        [("p", 0), ("o", 2)],
+    )
+    conn.commit()
+
+
+def test_migration_v24_reclassifies_removal_stats(tmp_path, monkeypatch):
+    import mtga_tracker.card_database as card_database_module
+
+    monkeypatch.setattr(card_database_module, "CardDatabase", _FakeCardDb)
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        _seed_removal_game(conn)
+        conn.execute("delete from schema_migrations where version = 24")
+        AnalyticsStore.apply_pending_migrations(conn)
+        rows = {
+            pid: dict(removal_played=rp, removal_drawn=rd, wipes_drawn=wd)
+            for pid, rp, rd, wd in conn.execute(
+                "select participant_id, removal_played, removal_drawn, wipes_drawn "
+                "from game_participant_stats where game_id='g'"
+            )
+        }
+    # Graveyard hate no longer counts as removal; real removal now does.
+    assert rows["o"]["removal_played"] == 0
+    assert rows["p"]["removal_played"] == 1
+    # The drawn wipe is picked up too.
+    assert rows["p"]["wipes_drawn"] == 1
+
+
+def test_migration_v24_leaves_stats_alone_without_card_texts(tmp_path, monkeypatch):
+    import mtga_tracker.card_database as card_database_module
+
+    class _EmptyDb(_FakeCardDb):
+        TEXTS = {}
+
+    monkeypatch.setattr(card_database_module, "CardDatabase", _EmptyDb)
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        _seed_removal_game(conn)
+        conn.execute("delete from schema_migrations where version = 24")
+        AnalyticsStore.apply_pending_migrations(conn)
+        row = conn.execute(
+            "select removal_played from game_participant_stats where participant_id='o'"
+        ).fetchone()
+    # No ability texts readable -> zeroing everything would be data loss.
+    assert row[0] == 2

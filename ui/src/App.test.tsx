@@ -1189,7 +1189,7 @@ describe('App', () => {
     expect(within(recentTable).queryByRole('columnheader', { name: /Your Avg Turn/i })).not.toBeInTheDocument();
     expect(within(recentTable).queryByRole('columnheader', { name: /Opp\. Avg Turn/i })).not.toBeInTheDocument();
     const recentGameRow = within(recentTable).getAllByRole('row')[1];
-    expect(within(recentGameRow).getByText('Flood')).toHaveClass('badge-draw');
+    expect(within(recentGameRow).getByText('Flood')).toHaveClass('badge-flood');
     expect(within(recentGameRow).getAllByText('10')).toHaveLength(2);
     expect(within(recentGameRow).getByText('7 (71%)')).toBeInTheDocument();
   });
@@ -1339,11 +1339,11 @@ describe('App', () => {
     const drawStatus = screen.getByText('Draw Status').closest('.metric-card');
     expect(drawStatus).toHaveClass('metric-card-info');
     expect(within(drawStatus as HTMLElement).getByText('Flood')).toBeInTheDocument();
-    expect(screen.getByText('Flood evidence')).toHaveClass('badge-draw');
+    expect(screen.getByText('Flood evidence')).toHaveClass('badge-flood');
     screen
       .getAllByText('Flood')
       .filter((element) => element.classList.contains('badge'))
-      .forEach((badge) => expect(badge).toHaveClass('badge-draw'));
+      .forEach((badge) => expect(badge).toHaveClass('badge-flood'));
     expect(screen.queryByText('Turn 1 begins')).not.toBeInTheDocument();
     const timelineFilters = screen.getByRole('group', { name: 'Timeline filters' });
     expect(within(timelineFilters).queryByRole('option', { name: 'turn' })).not.toBeInTheDocument();

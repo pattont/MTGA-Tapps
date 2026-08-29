@@ -638,6 +638,7 @@ class AnalyticsStore:
             (21, AnalyticsStore._migrate_v21_repair_swapped_log_dates),
             (22, AnalyticsStore._migrate_v22_backfill_ramped_lands),
             (23, AnalyticsStore._migrate_v23_tag_ramped_lands_source),
+            (24, AnalyticsStore._migrate_v24_reclassify_removal_stats),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -1662,6 +1663,116 @@ class AnalyticsStore:
                 "UPDATE game_participant_stats SET cards_drawn = cards_drawn + ? "
                 "WHERE game_id = ? AND participant_id = ?",
                 (len(put_events), game_id, participant_id),
+            )
+
+    @staticmethod
+    def _migrate_v24_reclassify_removal_stats(conn: sqlite3.Connection) -> None:
+        """Recompute removal/wipe/bounce/counter stats with the fixed classifier.
+
+        The removal patterns used to match graveyard hate ("exile target card
+        from a graveyard"), so cards like Intrepid Paleontologist counted as
+        removal played in every historical game. These counts derive purely
+        from played/drawn cards x the text classifier, so they can be rebuilt
+        exactly. Requires Arena's card database for ability texts; when it
+        isn't available (Arena not installed on this machine) the migration
+        leaves the stats untouched — the next launch that can read it will
+        not rerun, but live games count correctly either way.
+        """
+        try:
+            from .card_database import CardDatabase
+            from .removal_classifier import RemovalClassifier
+        except Exception:
+            return
+        try:
+            card_db = CardDatabase()
+            classifier = RemovalClassifier(card_db)
+        except Exception:
+            return
+
+        def base(name: str) -> str:
+            return str(name or "").split(" (")[0].strip()
+
+        # name -> arena_id from the analytics DB's own cards table.
+        name_to_id: dict = {}
+        try:
+            for name, arena_id in conn.execute(
+                "SELECT name, arena_id FROM cards WHERE arena_id IS NOT NULL"
+            ):
+                if name:
+                    name_to_id.setdefault(base(str(name)), int(arena_id))
+        except sqlite3.OperationalError:
+            return
+
+        roles_cache: dict = {}
+        texts_seen = 0
+
+        def roles_for_name(display_name: str):
+            nonlocal texts_seen
+            key = base(display_name)
+            if key in roles_cache:
+                return roles_cache[key]
+            arena_id = name_to_id.get(key)
+            roles = frozenset()
+            if arena_id is not None:
+                roles = classifier.roles_for(arena_id)
+                try:
+                    if card_db.get_card_ability_texts(arena_id):
+                        texts_seen += 1
+                except Exception:
+                    pass
+            roles_cache[key] = roles
+            return roles
+
+        role_to_played = {
+            "removal": "removal_played",
+            "wipe": "wipes_played",
+            "bounce": "bounces_played",
+            "counter": "counters_played",
+        }
+        role_to_drawn = {
+            "removal": "removal_drawn",
+            "wipe": "wipes_drawn",
+            "bounce": "bounces_drawn",
+            "counter": "counters_drawn",
+        }
+
+        updates = []
+        for (participant_id,) in conn.execute(
+            "SELECT participant_id FROM game_participant_stats"
+        ).fetchall():
+            played = {column: 0 for column in role_to_played.values()}
+            for display_name, count in conn.execute(
+                "SELECT display_name, played_count FROM game_card_summary "
+                "WHERE participant_id = ? AND played_count > 0",
+                (participant_id,),
+            ):
+                for role in roles_for_name(str(display_name or "")):
+                    column = role_to_played.get(role)
+                    if column:
+                        played[column] += int(count or 0)
+            drawn = {column: 0 for column in role_to_drawn.values()}
+            for (display_name,) in conn.execute(
+                "SELECT display_name FROM game_drawn_cards WHERE participant_id = ?",
+                (participant_id,),
+            ):
+                for role in roles_for_name(str(display_name or "")):
+                    column = role_to_drawn.get(role)
+                    if column:
+                        drawn[column] += 1
+            updates.append((participant_id, played, drawn))
+
+        # Sample check: if the card DB yielded no ability texts at all, the
+        # classifier saw nothing and every count would collapse to zero —
+        # that is data loss, not a fix. Leave history alone in that case.
+        if texts_seen == 0:
+            return
+
+        for participant_id, played, drawn in updates:
+            assignments = {**played, **drawn}
+            set_clause = ", ".join(f"{column} = ?" for column in assignments)
+            conn.execute(
+                f"UPDATE game_participant_stats SET {set_clause} WHERE participant_id = ?",
+                (*assignments.values(), participant_id),
             )
 
     @staticmethod

@@ -333,7 +333,7 @@ const deckColumns: Column<DeckWithCombatRow>[] = [
     render: (row) =>
       row.aggression_profile ? (
         <span title={row.damage_per_turn ? `${row.damage_per_turn} damage per turn` : undefined}>
-          <Badge tone="draw">{row.aggression_profile}</Badge>
+          <Badge tone="flood">{row.aggression_profile}</Badge>
         </span>
       ) : (
         '—'
@@ -656,7 +656,7 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
     header: 'Draw Status',
     render: (row) =>
       row.is_flood ? (
-        <Badge tone="draw">Flood</Badge>
+        <Badge tone="flood">Flood</Badge>
       ) : row.is_screw ? (
         <Badge tone="screw">Mana Screw</Badge>
       ) : (

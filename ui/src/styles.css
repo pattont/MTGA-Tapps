@@ -18,6 +18,7 @@
   --draw: #8ab4f8;
   --on-play: #5fd4c4;
   --on-draw: #b79df7;
+  --tie: #d48fe8;
   --shadow: 0 16px 40px rgb(0 0 0 / 24%);
   --row-alt-bg: color-mix(in srgb, var(--panel-strong) 34%, transparent);
   --thead-bg: color-mix(in srgb, var(--panel-strong) 72%, transparent);
@@ -51,6 +52,7 @@
   --draw: #155fd0;
   --on-play: #0b7d6e;
   --on-draw: #6b46c1;
+  --tie: #9333b8;
   --shadow: 0 6px 18px rgb(15 23 42 / 8%);
   --row-alt-bg: rgb(15 23 42 / 4%);
   --thead-bg: rgb(15 23 42 / 6%);
@@ -1924,6 +1926,12 @@ tbody tr:hover {
 }
 
 .badge-draw {
+  /* A tied game — purple, distinct from wins, losses, and flood-blue. */
+  border-color: color-mix(in srgb, var(--tie) 55%, var(--border));
+  color: var(--tie);
+}
+
+.badge-flood {
   border-color: color-mix(in srgb, var(--draw) 55%, var(--border));
   color: var(--draw);
 }
