@@ -1179,7 +1179,7 @@ describe('App', () => {
       'Outcome',
       'Opp',
       'Draw Status',
-      'Mulligan(s)',
+      'Play/Draw',
       'Cards Seen',
       'Lands Seen',
       'Turns',

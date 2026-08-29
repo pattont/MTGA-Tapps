@@ -538,3 +538,25 @@ def test_live_payload_archetype_guess_from_revealed_cards(tmp_path):
     assert guess["archetype"] == "Izzet Prowess"
     assert guess["matched_cards"] == 2
     assert guess["wins"] == 1 and guess["losses"] == 1
+
+
+def test_live_payload_rank_hidden_for_unranked(tmp_path):
+    store = _store(tmp_path)
+    conn = store.connect()
+    conn.execute(
+        "INSERT OR IGNORE INTO tracker_sessions (id, started_at) VALUES ('SH', '2026-08-01T00:00:00')"
+    )
+    conn.execute(
+        """
+        INSERT INTO rank_snapshots (
+            session_id, captured_at, season_ordinal, rank_format,
+            rank_class, rank_level, rank_step, rank_steps
+        ) VALUES ('SH', '2026-08-28T10:00:00', 40, 'constructed', 'Platinum', 3, 3, 6)
+        """
+    )
+    conn.commit()
+    # "Unranked" contains the substring "rank" — must NOT show the rank chip.
+    _log_line(store, "x", live=_live(format="Standard BO1 (Unranked)"))
+    store.close()
+    payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+    assert payload["now"]["rank"] is None

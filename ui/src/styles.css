@@ -1929,6 +1929,11 @@ tbody tr:hover {
   color: var(--accent-strong);
 }
 
+.badge-play {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--accent-strong);
+}
+
 .state-panel,
 .empty-state {
   margin: 0;
@@ -4202,10 +4207,16 @@ a.settings-link-button {
 }
 
 .live-side {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
   min-width: 0;
-  align-content: start;
+}
+
+/* Pin both life totals to the same baseline regardless of how many stat
+   lines stack above them on either side. */
+.live-side .live-life {
+  margin-top: auto;
 }
 
 .live-side-opponent {
@@ -4258,6 +4269,19 @@ a.settings-link-button {
 
 .live-side-stat-warn {
   color: var(--warning, #d9a53f);
+}
+
+/* Right-aligned chip group: rank + format live at the row's far right. */
+.live-chips-right {
+  display: inline-flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.live-scoreboard-badges {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .live-chip-rank {

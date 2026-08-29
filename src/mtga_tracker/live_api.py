@@ -232,10 +232,11 @@ def _rank_context(
     Limited queues read from the limited ladder; everything else ranked reads
     from constructed. Non-ranked formats return None.
     """
-    label = str(format_label or "")
-    if "rank" not in label.casefold():
+    label = str(format_label or "").casefold()
+    # "Unranked" contains "rank" — require the ranked marker without it.
+    if "rank" not in label or "unranked" in label:
         return None
-    is_limited = any(word in label.casefold() for word in ("draft", "sealed", "limited"))
+    is_limited = any(word in label for word in ("draft", "sealed", "limited"))
     rank_format = "limited" if is_limited else "constructed"
     try:
         cursor = conn.execute(

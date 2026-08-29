@@ -2294,6 +2294,7 @@ def dashboard_snapshot(
                   m.best_of,
                   COALESCE(p.deck_name, '(unknown)') AS deck_name,
                   p.mulligans,
+                  p.went_first,
                   (
                     SELECT SUM(g2.outcome = 'win') FROM games g2
                     WHERE g2.match_id = g.match_id
@@ -4485,6 +4486,7 @@ def all_games(
                   m.best_of,
                   COALESCE(p.deck_name, '(unknown)') AS deck_name,
                   p.mulligans,
+                  p.went_first,
                   (
                     SELECT SUM(g2.outcome = 'win') FROM games g2
                     WHERE g2.match_id = g.match_id

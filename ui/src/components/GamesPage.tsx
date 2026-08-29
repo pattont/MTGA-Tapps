@@ -77,11 +77,14 @@ const columns: Column<AllGamesRow>[] = [
     center: true,
   },
   {
-    key: 'mulligans',
-    header: 'Mulligan(s)',
-    render: (row) => formatNumber(row.mulligans),
-    sortValue: (row) => row.mulligans,
-    numeric: true,
+    key: 'went_first',
+    header: 'Play/Draw',
+    render: (row) =>
+      row.went_first == null ? null : (
+        <Badge tone={row.went_first ? 'play' : 'draw'}>{row.went_first ? 'Play' : 'Draw'}</Badge>
+      ),
+    sortValue: (row) => row.went_first ?? -1,
+    center: true,
   },
   { key: 'cards_seen', header: 'Cards Seen', numeric: true },
   {

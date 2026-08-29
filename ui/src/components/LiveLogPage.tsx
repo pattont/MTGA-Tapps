@@ -163,7 +163,6 @@ function Scoreboard({
   return (
     <div className="live-scoreboard">
       <div className="live-scoreboard-meta">
-        {now.format ? <span className="live-chip">{shortFormatLabel(now.format)}</span> : null}
         {now.match_type === 'best_of_3' ? (
           <span className="live-chip">Game {now.game_number ?? 1} of 3</span>
         ) : null}
@@ -185,7 +184,10 @@ function Scoreboard({
             {turnChip}
           </span>
         )}
-        {now.rank ? <span className="live-chip live-chip-rank">{rankText(now.rank)}</span> : null}
+        <span className="live-chips-right">
+          {now.rank ? <span className="live-chip live-chip-rank">{rankText(now.rank)}</span> : null}
+          {now.format ? <span className="live-chip">{shortFormatLabel(now.format)}</span> : null}
+        </span>
       </div>
 
       <div className="live-versus">
@@ -276,15 +278,21 @@ function Scoreboard({
       </div>
 
       <div className="live-scoreboard-footer">
-        <p className="live-scoreboard-footnote">
-          {[
-            now.on_play === null ? null : now.on_play ? 'On the play' : 'On the draw',
-            now.mulligans ? `${now.mulligans} mulligan${now.mulligans === 1 ? '' : 's'}` : 'No mulligans',
-            now.deck_name && isBrawl ? now.deck_name : null,
-          ]
-            .filter(Boolean)
-            .join(' · ')}
-        </p>
+        <span className="live-scoreboard-badges">
+          {now.on_play !== null ? (
+            <Badge tone={now.on_play ? 'play' : 'draw'}>{now.on_play ? 'Play' : 'Draw'}</Badge>
+          ) : null}
+          {now.mulligans != null ? (
+            <Badge tone={now.mulligans ? 'loss' : 'win'}>
+              {now.mulligans
+                ? `${now.mulligans} mulligan${now.mulligans === 1 ? '' : 's'}`
+                : 'No mulligans'}
+            </Badge>
+          ) : null}
+          {now.deck_name && isBrawl ? (
+            <span className="live-scoreboard-footnote">{now.deck_name}</span>
+          ) : null}
+        </span>
         {clock ? <span className="live-scoreboard-clock">{clock}</span> : null}
       </div>
     </div>

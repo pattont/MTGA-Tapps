@@ -248,6 +248,7 @@ export interface RecentGameRow {
   match_losses?: number | null;
   outcome: string | null;
   mulligans: number | null;
+  went_first?: number | null;
   duration_seconds: number | null;
   total_turns: number | null;
   flood_reasons: string[];
