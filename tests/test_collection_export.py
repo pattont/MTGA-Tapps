@@ -416,3 +416,66 @@ def test_export_index_falls_back_to_single_localizations_table(tmp_path):
     db = CardDatabase(cache_path=str(tmp_path / "cache.json"), mtga_data_dir=str(raw_dir))
     index = db.export_index_by_arena_id()
     assert index[90573] == ("Sheoldred, the Apocalypse", "DMU", "107")
+
+
+def _entries(n):
+    return [
+        ce.CollectionEntry(4, f"Card {i}", "DMU", str(i + 1), [10_000 + i]) for i in range(n)
+    ]
+
+
+def test_resolve_scryfall_ids_batches_and_caches(tmp_path):
+    cache_file = tmp_path / "scryfall_ids.json"
+    calls = []
+
+    def fake_fetch(identifiers):
+        calls.append(len(identifiers))
+        return {
+            "data": [
+                {
+                    "id": f"uuid-{ident['collector_number']}",
+                    "set": ident["set"],
+                    "collector_number": ident["collector_number"],
+                    "name": f"Card {int(ident['collector_number']) - 1}",
+                }
+                for ident in identifiers
+            ]
+        }
+
+    entries = _entries(100)
+    ids = ce.resolve_scryfall_ids(entries, cache_path=cache_file, fetch=fake_fetch)
+    # 100 cards → one batch of 75 and one of 25, never one request per card.
+    assert calls == [75, 25]
+    assert ids[ce._entry_cache_key(entries[0])] == "uuid-1"
+    assert len(ids) == 100
+
+    # Second run resolves entirely from the cache — zero requests.
+    calls.clear()
+    again = ce.resolve_scryfall_ids(entries, cache_path=cache_file, fetch=fake_fetch)
+    assert calls == []
+    assert again == ids
+
+
+def test_resolve_scryfall_ids_survives_network_failure(tmp_path):
+    def broken_fetch(identifiers):
+        raise OSError("offline")
+
+    ids = ce.resolve_scryfall_ids(
+        _entries(3), cache_path=tmp_path / "c.json", fetch=broken_fetch
+    )
+    assert ids == {}  # degraded, not raised — the CSV still exports by name
+
+
+def test_write_archidekt_csv_includes_scryfall_ids(tmp_path):
+    entries = [
+        ce.CollectionEntry(4, "Sheoldred, the Apocalypse", "DMU", "107", [90573]),
+        ce.CollectionEntry(2, "Mystery Card", "ZZZ", "9", [11111]),  # unresolved
+    ]
+    ids = {ce._entry_cache_key(entries[0]): "8c1ffe10-fc26-4e43-b9ba-d4a53a6ac9f9"}
+    out = tmp_path / "collection.csv"
+    ce.write_archidekt_csv(entries, out, scryfall_ids=ids)
+    lines = out.read_text().splitlines()
+    assert lines[0] == "Quantity,Name,Edition Code,Collector Number,Scryfall ID,Condition,Language,Foil"
+    assert '4,"Sheoldred, the Apocalypse",dmu,107,8c1ffe10-fc26-4e43-b9ba-d4a53a6ac9f9,NM,English,' in lines[1]
+    # Unresolved rows keep name+set so they still import.
+    assert lines[2].startswith("2,Mystery Card,zzz,9,,")

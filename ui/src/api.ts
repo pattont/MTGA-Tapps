@@ -1579,7 +1579,7 @@ export async function fetchTrackerSettings(signal?: AbortSignal): Promise<Tracke
 
 // --- Collection export -----------------------------------------------------
 
-export type CollectionExportFormat = 'json' | 'csv' | 'txt';
+export type CollectionExportFormat = 'json' | 'csv' | 'txt' | 'archidekt';
 
 export interface CollectionExportJob {
   job?: string;

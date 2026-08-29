@@ -753,10 +753,189 @@ def write_txt(entries: List[CollectionEntry], path) -> None:
             handle.write(" ".join(parts) + "\n")
 
 
+# --- Scryfall ID resolution (for the Archidekt CSV) -------------------------
+
+SCRYFALL_COLLECTION_URL = "https://api.scryfall.com/cards/collection"
+SCRYFALL_BATCH_SIZE = 75  # documented per-request identifier cap
+SCRYFALL_REQUEST_DELAY = 0.12  # Scryfall asks for 50-100ms between requests
+
+
+def _entry_cache_key(entry: CollectionEntry) -> str:
+    if entry.set and entry.collector_number:
+        return f"{entry.set.lower()}|{entry.collector_number}"
+    return f"name|{entry.name.lower()}"
+
+
+def _default_scryfall_fetch(identifiers: List[Dict[str, str]]) -> Dict[str, Any]:
+    """POST one batch to Scryfall's /cards/collection endpoint."""
+    import time as _time
+    import urllib.request
+
+    request = urllib.request.Request(
+        SCRYFALL_COLLECTION_URL,
+        data=json.dumps({"identifiers": identifiers}).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "MTGA-Tracker collection export",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception as exc:  # one polite retry on rate limiting
+        status = getattr(exc, "code", None)
+        if status == 429:
+            _time.sleep(1.0)
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode("utf-8"))
+        raise
+
+
+def resolve_scryfall_ids(
+    entries: List[CollectionEntry],
+    *,
+    cache_path=None,
+    fetch: Optional[Callable[[List[Dict[str, str]]], Dict[str, Any]]] = None,
+    progress: "ProgressFn" = None,
+) -> Dict[str, str]:
+    """Map each entry's cache key -> Scryfall UUID via the batch endpoint.
+
+    Identifiers use set+collector_number when both are known (unambiguous),
+    falling back to the card name. Results are cached to ``cache_path`` so
+    repeat exports resolve entirely offline and only newly-opened cards are
+    ever fetched. Network failures degrade to blank ids, never an exception —
+    the CSV still exports, importable by name+set.
+    """
+    if progress is None:
+        progress = _noop
+    fetch = fetch or _default_scryfall_fetch
+    import time as _time
+
+    cache: Dict[str, str] = {}
+    if cache_path is not None:
+        try:
+            with open(cache_path, "r", encoding="utf-8") as handle:
+                loaded = json.load(handle)
+            if isinstance(loaded, dict):
+                cache = {str(k): str(v) for k, v in loaded.items()}
+        except Exception:
+            cache = {}
+
+    pending: List[Tuple[str, Dict[str, str], CollectionEntry]] = []
+    seen_keys: Set[str] = set()
+    for entry in entries:
+        key = _entry_cache_key(entry)
+        if key in cache or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        if entry.set and entry.collector_number:
+            identifier = {
+                "set": entry.set.lower(),
+                "collector_number": entry.collector_number,
+            }
+        else:
+            identifier = {"name": entry.name}
+        pending.append((key, identifier, entry))
+
+    batches = [
+        pending[i : i + SCRYFALL_BATCH_SIZE]
+        for i in range(0, len(pending), SCRYFALL_BATCH_SIZE)
+    ]
+    for index, batch in enumerate(batches):
+        progress(
+            f"Looking up Scryfall IDs… {int(100 * index / len(batches))}% "
+            f"({len(pending)} new cards)"
+        )
+        try:
+            payload = fetch([identifier for _key, identifier, _e in batch])
+        except Exception:
+            break  # keep whatever resolved; the writer leaves the rest blank
+        found: Dict[Tuple[str, str], str] = {}
+        found_names: Dict[str, str] = {}
+        for card in payload.get("data") or []:
+            set_code = str(card.get("set") or "").lower()
+            collector = str(card.get("collector_number") or "")
+            card_id = str(card.get("id") or "")
+            if not card_id:
+                continue
+            found[(set_code, collector)] = card_id
+            name = str(card.get("name") or "")
+            if name:
+                found_names.setdefault(name.lower(), card_id)
+                # Double-faced names resolve by their front face too.
+                found_names.setdefault(name.split("//")[0].strip().lower(), card_id)
+        for key, identifier, entry in batch:
+            card_id = None
+            if "collector_number" in identifier:
+                card_id = found.get(
+                    (identifier["set"], identifier["collector_number"])
+                )
+            if card_id is None:
+                card_id = found_names.get(entry.name.lower())
+            if card_id:
+                cache[key] = card_id
+        if index + 1 < len(batches):
+            _time.sleep(SCRYFALL_REQUEST_DELAY)
+
+    if cache_path is not None and pending:
+        try:
+            with open(cache_path, "w", encoding="utf-8") as handle:
+                json.dump(cache, handle)
+        except Exception:
+            pass
+    return cache
+
+
+def write_archidekt_csv(
+    entries: List[CollectionEntry],
+    path,
+    *,
+    scryfall_ids: Optional[Dict[str, str]] = None,
+) -> None:
+    """Archidekt-style collection CSV, keyed by Scryfall ID.
+
+    The Scryfall ID column alone removes all ambiguity in Archidekt's
+    importer (Moxfield reads this shape too); name/set/collector remain so
+    rows with an unresolved id still import by name.
+    """
+    import csv
+
+    ids = scryfall_ids or {}
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "Quantity",
+                "Name",
+                "Edition Code",
+                "Collector Number",
+                "Scryfall ID",
+                "Condition",
+                "Language",
+                "Foil",
+            ]
+        )
+        for e in entries:
+            writer.writerow(
+                [
+                    e.count,
+                    e.name,
+                    e.set.lower(),
+                    e.collector_number,
+                    ids.get(_entry_cache_key(e), ""),
+                    "NM",
+                    "English",
+                    "",
+                ]
+            )
+
+
 WRITERS: Dict[str, Tuple[Callable[..., None], str]] = {
     "json": (write_json, "json"),
     "csv": (write_csv, "csv"),
     "txt": (write_txt, "txt"),
+    "archidekt": (write_archidekt_csv, "csv"),
 }
 
 

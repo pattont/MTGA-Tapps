@@ -36,7 +36,7 @@ _SCAN_CACHE: Dict[str, Any] = {"collection": None, "at": 0.0}
 _SCAN_CACHE_LOCK = threading.Lock()
 _SCAN_CACHE_TTL = 300.0  # seconds
 
-_VALID_FORMATS = ("json", "csv", "txt")
+_VALID_FORMATS = ("json", "csv", "txt", "archidekt")
 _JOB_TTL = 900.0
 
 
@@ -144,9 +144,24 @@ def _run_export(
     writer, ext = ce.WRITERS[fmt]
     out_dir = _exports_dir()
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    out_path = out_dir / f"mtga_collection_{stamp}.{ext}"
+    suffix = "_archidekt" if fmt == "archidekt" else ""
+    out_path = out_dir / f"mtga_collection_{stamp}{suffix}.{ext}"
+    unresolved_ids = 0
     if fmt == "json":
         writer(entries, out_path, database_size=len(metadata), now=datetime.now().isoformat())
+    elif fmt == "archidekt":
+        # Resolve Scryfall IDs through the batch endpoint (75 cards/request,
+        # ~10 requests/sec) with a local cache, so a full collection is a few
+        # seconds of lookups once and offline afterwards.
+        scryfall_ids = ce.resolve_scryfall_ids(
+            entries,
+            cache_path=DATA_DIR / "scryfall_id_cache.json",
+            progress=progress,
+        )
+        unresolved_ids = sum(
+            1 for e in entries if not scryfall_ids.get(ce._entry_cache_key(e))
+        )
+        writer(entries, out_path, scryfall_ids=scryfall_ids)
     else:
         writer(entries, out_path)
 
@@ -154,16 +169,23 @@ def _run_export(
     with _JOBS_LOCK:
         started = _JOBS.get(job_id, {}).get("started_at")
     duration = round(time.monotonic() - started, 1) if started is not None else None
-    warning = None
+    warnings = []
+    if unresolved_ids:
+        warnings.append(
+            f"{unresolved_ids:,} of {len(entries):,} cards have no Scryfall ID "
+            "(new cards, or Scryfall was unreachable) — those rows still "
+            "import by name and set."
+        )
     if not arena_db_found:
         # Without Arena's card DB the export is silently degraded: no set
         # codes, and cards the tracker has never seen are dropped for want of
         # a name. Say so instead of presenting a fraction as the whole.
-        warning = (
+        warnings.append(
             "Arena's card database wasn't found, so set codes are missing "
             "and only cards this tracker has seen could be named — the scan "
             f"itself found {len(collection):,} cards."
         )
+    warning = " ".join(warnings) or None
     _set(
         job_id,
         state="done",

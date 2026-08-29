@@ -80,6 +80,7 @@ const EXPORT_FORMATS: Array<[CollectionExportFormat, string]> = [
   ['json', 'Export to .json'],
   ['csv', 'Export to .csv'],
   ['txt', 'Export to .txt'],
+  ['archidekt', 'Export for Archidekt (.csv)'],
 ];
 
 function formatDuration(seconds: number | null): string | null {
