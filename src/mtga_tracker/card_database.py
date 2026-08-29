@@ -497,7 +497,10 @@ class CardDatabase:
         """
         if getattr(self, "_export_index_by_arena_id", None) is not None:
             return self._export_index_by_arena_id
-        import sqlite3
+
+        # Arena wraps hyphenated names in markup ("<nobr>All-Out</nobr>
+        # Assault") that import sites don't recognize — strip any tags.
+        tag_pattern = re.compile(r"<[^>]+>")
 
         index: Dict[int, Tuple[str, str, str]] = {}
         db_path = self._resolve_mtga_db_path()
@@ -515,17 +518,46 @@ class CardDatabase:
                 )
                 set_expr = f'c."{set_col}"' if set_col else "''"
                 num_expr = f'c."{num_col}"' if num_col else "''"
-                cur.execute(
-                    f'SELECT c."GrpId", l."loc", {set_expr}, {num_expr} FROM "Cards" c '
-                    'JOIN "Localizations_enUS" l ON c."TitleId" = l."LocId" '
-                    'WHERE c."GrpId" IS NOT NULL'
-                )
-                for grp_id, name, set_code, collector in cur.fetchall():
+                # The English titles table has changed name across client
+                # versions: newer DBs split per-locale (Localizations_enUS),
+                # older ones keep one Localizations table with a Format/locale
+                # column. Try each shape until one yields rows.
+                cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = {str(row[0]) for row in cur.fetchall()}
+                queries = []
+                if "Localizations_enUS" in tables:
+                    queries.append(
+                        f'SELECT c."GrpId", l."loc", {set_expr}, {num_expr} FROM "Cards" c '
+                        'JOIN "Localizations_enUS" l ON c."TitleId" = l."LocId" '
+                        'WHERE c."GrpId" IS NOT NULL'
+                    )
+                if "Localizations" in tables:
+                    # Single-table shape: rows carry a locale/Format column
+                    # (the original exporter filters it with LIKE '%en-US%').
+                    queries.append(
+                        f'SELECT c."GrpId", l."Loc", {set_expr}, {num_expr} FROM "Cards" c '
+                        'JOIN "Localizations" l ON c."TitleId" = l."LocId" '
+                        "WHERE c.\"GrpId\" IS NOT NULL AND l.\"Format\" LIKE '%en-US%'"
+                    )
+                    queries.append(
+                        f'SELECT c."GrpId", l."Loc", {set_expr}, {num_expr} FROM "Cards" c '
+                        'JOIN "Localizations" l ON c."TitleId" = l."LocId" '
+                        'WHERE c."GrpId" IS NOT NULL'
+                    )
+                rows = []
+                for query in queries:
+                    try:
+                        rows = cur.execute(query).fetchall()
+                    except Exception:
+                        continue
+                    if rows:
+                        break
+                for grp_id, name, set_code, collector in rows:
                     try:
                         arena_id = int(grp_id)
                     except (TypeError, ValueError):
                         continue
-                    clean_name = str(name or "").strip()
+                    clean_name = tag_pattern.sub("", str(name or "")).strip()
                     if not clean_name or arena_id in index:
                         continue
                     index[arena_id] = (

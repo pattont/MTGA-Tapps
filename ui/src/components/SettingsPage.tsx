@@ -135,6 +135,7 @@ function CollectionExport({ platform }: { platform: PlatformSettings }) {
       unique: null,
       total: null,
       duration_seconds: null,
+      warning: null,
       error_code: 'scan_failed',
     });
 
@@ -157,7 +158,7 @@ function CollectionExport({ platform }: { platform: PlatformSettings }) {
   const runExport = (format: CollectionExportFormat) => {
     setRunning(true);
     deliveredRef.current = null;
-    setJob({ state: 'running', detail: 'Starting…', format, file: null, unique: null, total: null, duration_seconds: null, error_code: null });
+    setJob({ state: 'running', detail: 'Starting…', format, file: null, unique: null, total: null, duration_seconds: null, warning: null, error_code: null });
     startCollectionExport(format)
       .then((started) => {
         if (started.job && started.state === 'running') {
@@ -237,6 +238,12 @@ function CollectionExport({ platform }: { platform: PlatformSettings }) {
             ) : null}
             . A copy was also saved to your MTGA&nbsp;Tracker data folder.
           </span>
+        </p>
+      ) : null}
+
+      {job && job.state === 'done' && job.warning ? (
+        <p className="collection-export-status collection-export-warning" role="status">
+          ⚠ {job.warning}
         </p>
       ) : null}
 

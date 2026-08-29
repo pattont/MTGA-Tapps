@@ -48,9 +48,9 @@ def test_extract_blocks_ignores_out_of_range_pairs():
 
 
 def test_score_and_validate_prefers_the_known_heavy_block():
-    known = set(range(2000, 2100))
-    clean = {i: 4 for i in range(2000, 2080)}  # 80 known ids
-    junk = {i: 1 for i in range(500000, 500060)}  # 60 unknown ids
+    known = set(range(2000, 2400))
+    clean = {i: 4 for i in range(2000, 2300)}  # 300 known ids
+    junk = {i: 1 for i in range(500000, 500160)}  # 160 unknown ids
     anchors = [ce.Anchor(2000, 4), ce.Anchor(2001, 4)]
     result = ce.score_and_validate(
         [(clean, 0), (junk, 0)], anchors, known
@@ -65,8 +65,8 @@ def test_score_and_validate_rejects_low_known_ratio():
 
 
 def test_score_and_validate_rejects_high_duplicates():
-    known = set(range(2000, 2100))
-    block = {i: 4 for i in range(2000, 2080)}
+    known = set(range(2000, 2400))
+    block = {i: 4 for i in range(2000, 2300)}
     # duplicates far above the 5%/25 threshold
     assert ce.score_and_validate([(block, 999)], [], known) is None
 
@@ -168,7 +168,7 @@ def test_scan_collection_end_to_end_with_fake_memory(tmp_path):
     # A collection that includes the derived anchor id (90573) so the pattern
     # scan locates the block.
     collection = {90573: 4, 91234: 3, 60001: 20}
-    collection.update({4000 + i: (i % 3) + 1 for i in range(80)})
+    collection.update({4000 + i: (i % 3) + 1 for i in range(300)})
     # The tracker has seen most of the collection (its `cards` table), which
     # is what the scan scores candidate blocks against.
     conn.executemany(
@@ -305,3 +305,114 @@ def test_windows_readable_regions_survives_null_base_address():
     mem._k32 = FakeK32()
     got = list(mem.readable_regions())
     assert got == [(0, 0x1000), (0x3000, 0x1000)]
+
+
+def test_deck_sized_block_is_never_the_collection():
+    """The 34-cards-exported bug: Arena keeps deck objects in memory that are
+    indistinguishable from a collection except by size — all owned cards,
+    quantities 1-4, anchors included (anchors ARE deck 4-ofs). They must be
+    rejected outright, even at a perfect known-ratio with anchors present."""
+    anchors = [ce.Anchor(2000, 4), ce.Anchor(2001, 4), ce.Anchor(2002, 4), ce.Anchor(2003, 4)]
+    deck = {i: (i % 4) + 1 for i in range(2000, 2060)}  # 60 uniques, a Bo1 deck
+    known = set(deck)  # the tracker knows every card in it
+    assert ce.score_and_validate([(deck, 0)], anchors, known) is None
+
+
+def test_collection_beats_deck_block_when_both_present():
+    """When a deck object AND the real collection are both in memory, the
+    collection must win regardless of the deck's (deceptively perfect) score."""
+    anchors = [ce.Anchor(2000, 4), ce.Anchor(2001, 4), ce.Anchor(2002, 4), ce.Anchor(2003, 4)]
+    deck = {i: (i % 4) + 1 for i in range(2000, 2060)}
+    collection = {i: (i % 4) + 1 for i in range(2000, 8000)}  # 6000 uniques
+    known = set(deck)  # tracker only knows the played cards
+    result = ce.score_and_validate([(deck, 0), (collection, 0)], anchors, known)
+    assert result == collection
+
+
+def test_scan_does_not_return_early_on_a_deck_block(tmp_path):
+    """Region order must not decide the result: a deck-shaped region arriving
+    before the collection region (the Windows report) must not end the scan."""
+    conn = _tracker_db(tmp_path)
+    # Two more player 4-ofs so the anchor set is >= 3 (the override's floor).
+    conn.executemany(
+        "INSERT INTO game_deck_cards VALUES (?, ?, ?, ?, ?, ?)",
+        [("g1", "p1", 70000, "Anchor Three", "deck", 4),
+         ("g1", "p1", 70001, "Anchor Four", "deck", 4)],
+    )
+    # The tracker knows the deck's cards (they've all been played).
+    conn.executemany(
+        "INSERT INTO cards VALUES (?, ?)",
+        [(2000 + i, f"card {i}") for i in range(58)] + [(90573, "Sheoldred"), (91234, "Bloodtithe")],
+    )
+    conn.commit()
+
+    # Both blocks contain the anchor cards (90573/91234) — a deck object
+    # always does, which is exactly why anchors alone can't identify the
+    # collection.
+    deck_pairs = [(90573, 4), (91234, 4), (70000, 4), (70001, 4)] + [(2000 + i, (i % 4) + 1) for i in range(56)]
+    collection_pairs = [(90573, 4), (91234, 4), (70000, 4), (70001, 4)] + [
+        (2000 + i, (i % 4) + 1) for i in range(5996)
+    ]
+
+    class FakeMemory:
+        def readable_regions(self):
+            yield 0x1000, len(deck_pairs) * 8
+            yield 0x2000, len(collection_pairs) * 8
+
+        def read_bytes(self, address, length):
+            pairs = deck_pairs if address == 0x1000 else collection_pairs
+            return _pack_pairs(pairs)
+
+    result = ce.scan_collection(conn, memory=FakeMemory())
+    assert len(result) == 6000
+    assert result[90573] == 4
+    conn.close()
+
+
+def _fake_arena_db(tmp_path, *, loc_table: str):
+    """A minimal Raw_CardDatabase with either localization-table shape."""
+    raw_dir = tmp_path / "Raw"
+    raw_dir.mkdir()
+    db = raw_dir / "Raw_CardDatabase_fake.mtga"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        'CREATE TABLE "Cards" (GrpId INTEGER, TitleId INTEGER, '
+        "ExpansionCode TEXT, CollectorNumber TEXT)"
+    )
+    conn.execute('INSERT INTO "Cards" VALUES (90573, 1, "DMU", "107")')
+    conn.execute('INSERT INTO "Cards" VALUES (91234, 2, "VOW", "232")')
+    if loc_table == "Localizations_enUS":
+        conn.execute('CREATE TABLE "Localizations_enUS" (LocId INTEGER, Loc TEXT)')
+        conn.execute(
+            'INSERT INTO "Localizations_enUS" VALUES (1, "<nobr>Sheoldred</nobr>, the Apocalypse")'
+        )
+        conn.execute('INSERT INTO "Localizations_enUS" VALUES (2, "Bloodtithe Harvester")')
+    else:
+        conn.execute('CREATE TABLE "Localizations" (LocId INTEGER, Loc TEXT, Format TEXT)')
+        conn.execute(
+            'INSERT INTO "Localizations" VALUES (1, "<nobr>Sheoldred</nobr>, the Apocalypse", "en-US")'
+        )
+        conn.execute('INSERT INTO "Localizations" VALUES (2, "Bloodtithe Harvester", "en-US")')
+    conn.commit()
+    conn.close()
+    return raw_dir
+
+
+def test_export_index_strips_markup_and_reads_set_codes(tmp_path):
+    from mtga_tracker.card_database import CardDatabase
+
+    raw_dir = _fake_arena_db(tmp_path, loc_table="Localizations_enUS")
+    db = CardDatabase(cache_path=str(tmp_path / "cache.json"), mtga_data_dir=str(raw_dir))
+    index = db.export_index_by_arena_id()
+    # <nobr> markup is stripped — Moxfield can't import "<nobr>…</nobr>" names.
+    assert index[90573] == ("Sheoldred, the Apocalypse", "DMU", "107")
+    assert index[91234] == ("Bloodtithe Harvester", "VOW", "232")
+
+
+def test_export_index_falls_back_to_single_localizations_table(tmp_path):
+    from mtga_tracker.card_database import CardDatabase
+
+    raw_dir = _fake_arena_db(tmp_path, loc_table="Localizations")
+    db = CardDatabase(cache_path=str(tmp_path / "cache.json"), mtga_data_dir=str(raw_dir))
+    index = db.export_index_by_arena_id()
+    assert index[90573] == ("Sheoldred, the Apocalypse", "DMU", "107")

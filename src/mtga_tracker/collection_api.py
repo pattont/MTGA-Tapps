@@ -82,6 +82,7 @@ def start_export(db_path: Optional[Path], fmt: str, *, refresh: bool) -> str:
             "created": now,
             "started_at": time.monotonic(),
             "duration_seconds": None,
+            "warning": None,
             "state": "running",
             "detail": "Starting…",
             "format": fmt,
@@ -131,7 +132,7 @@ def _run_export(
         progress("Using the last scan…")
 
     progress(f"Mapping {len(collection)} cards…")
-    metadata = _load_metadata(db_path)
+    metadata, arena_db_found = _load_metadata(db_path)
     entries = ce.aggregate(collection, metadata)
     if not entries:
         raise _ExportError(
@@ -153,6 +154,16 @@ def _run_export(
     with _JOBS_LOCK:
         started = _JOBS.get(job_id, {}).get("started_at")
     duration = round(time.monotonic() - started, 1) if started is not None else None
+    warning = None
+    if not arena_db_found:
+        # Without Arena's card DB the export is silently degraded: no set
+        # codes, and cards the tracker has never seen are dropped for want of
+        # a name. Say so instead of presenting a fraction as the whole.
+        warning = (
+            "Arena's card database wasn't found, so set codes are missing "
+            "and only cards this tracker has seen could be named — the scan "
+            f"itself found {len(collection):,} cards."
+        )
     _set(
         job_id,
         state="done",
@@ -161,6 +172,7 @@ def _run_export(
         unique=len(entries),
         total=total,
         duration_seconds=duration,
+        warning=warning,
     )
 
 
@@ -297,14 +309,34 @@ _ERROR_TEXT = {
 }
 
 
-def _load_metadata(db_path: Optional[Path]) -> Dict[int, Tuple[str, str, str]]:
+def _load_metadata(
+    db_path: Optional[Path],
+) -> Tuple[Dict[int, Tuple[str, str, str]], bool]:
     """arena_id -> (name, set, collector) from Arena's card DB, plus a
-    display-name fallback from the tracker's own recorded cards."""
+    display-name fallback from the tracker's own recorded cards.
+
+    Returns (metadata, arena_db_found). Passing the Player.log path matters:
+    Arena announces its own install directory in the log head, which is the
+    only discovery signal that works for every install location (custom
+    drives, standalone installs) — without it, a non-default Windows install
+    silently exports with no set codes and only tracker-seen names.
+    """
     from .card_database import CardDatabase
 
-    metadata: Dict[int, Tuple[str, str, str]] = {}
+    log_path = None
     try:
-        metadata.update(CardDatabase().export_index_by_arena_id())
+        from .log_parser import MTGALogParser
+
+        log_path = MTGALogParser._find_log_path()
+    except Exception:
+        log_path = None
+
+    metadata: Dict[int, Tuple[str, str, str]] = {}
+    arena_db_found = False
+    try:
+        arena_index = CardDatabase(log_path=log_path).export_index_by_arena_id()
+        arena_db_found = bool(arena_index)
+        metadata.update(arena_index)
     except Exception:
         pass
 
@@ -314,7 +346,7 @@ def _load_metadata(db_path: Optional[Path]) -> Dict[int, Tuple[str, str, str]]:
     try:
         conn = _readonly_conn(db_path)
     except sqlite3.Error:
-        return metadata
+        return metadata, arena_db_found
     try:
         for arena_id, name in conn.execute(
             "SELECT DISTINCT arena_id, display_name FROM game_deck_cards WHERE arena_id IS NOT NULL"
@@ -329,7 +361,7 @@ def _load_metadata(db_path: Optional[Path]) -> Dict[int, Tuple[str, str, str]]:
         pass
     finally:
         conn.close()
-    return metadata
+    return metadata, arena_db_found
 
 
 def _resolve_db_path(db_path: Optional[Path]) -> Path:
@@ -407,6 +439,7 @@ def _job_payload(job_id: str) -> Optional[Dict[str, Any]]:
             "unique": job["unique"],
             "total": job["total"],
             "duration_seconds": job.get("duration_seconds"),
+            "warning": job.get("warning"),
             "error_code": job["error_code"],
         }
 

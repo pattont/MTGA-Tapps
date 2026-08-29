@@ -1590,6 +1590,7 @@ export interface CollectionExportJob {
   unique: number | null;
   total: number | null;
   duration_seconds: number | null;
+  warning: string | null;
   error_code: string | null;
 }
 

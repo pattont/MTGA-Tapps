@@ -4021,6 +4021,10 @@ a.settings-link-button {
   color: var(--danger);
 }
 
+.collection-export-warning {
+  color: var(--warning, #d9a53f);
+}
+
 .collection-export-download,
 .collection-export-done a {
   color: inherit;

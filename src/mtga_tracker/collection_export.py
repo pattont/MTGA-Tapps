@@ -44,6 +44,18 @@ MAX_QTY = 400
 MIN_BLOCK_SIZE = 50
 MAX_GAP = 64
 STRIDES_WORDS = (2, 3, 4)
+#: A real collection is hundreds-to-thousands of unique cards; Arena's deck
+#: objects top out around ~110 uniques (Commander) and look exactly like a
+#: collection block — same (id, qty 1-4) pairs, all cards the player owns.
+#: Size is the one honest discriminator, so blocks below this are never
+#: accepted as "the collection" (the UI then says to open the Decks tab).
+MIN_COLLECTION_SIZE = 150
+#: The anchors-clustered shortcut (accept on the player's own cards alone,
+#: ignoring known-ratio) needs to be clear of deck-object size entirely.
+ANCHOR_OVERRIDE_MIN_SIZE = 250
+#: A validated block this big is unambiguously the collection — safe to stop
+#: scanning early instead of reading the rest of Arena's memory.
+EARLY_ACCEPT_MIN_SIZE = 1000
 SCAN_WINDOW_BYTES = 8 * 1024 * 1024  # ±4 MB read around each anchor hit
 MAX_REGION_BYTES = 256 * 1024 * 1024  # skip huge regions to bound the scan
 
@@ -391,13 +403,20 @@ def score_and_validate(
     if not scored:
         return None
 
+    # Bigger blocks first, then score. A deck object scores deceptively well
+    # (it is 100% the player's own known cards, anchors included), so raw
+    # score must never outrank collection-scale size — the original exporter's
+    # max(candidates, key=len) had this right.
     scored.sort(
-        key=lambda x: (x[4] == 0, x[1], x[2], x[3], len(x[0])),
+        key=lambda x: (len(x[0]), x[4] == 0, x[1], x[2], x[3]),
         reverse=True,
     )
-    best_block, _score, _exact, _known, best_dupes = scored[0]
-    if _validate_block(best_block, best_dupes, known_ids, anchor_ids, strict=strict):
-        return best_block
+    # The top block can be a false positive (a deck, a dirty overlap) while a
+    # lower-ranked candidate is the real collection — validate down the list
+    # instead of giving only the winner a chance.
+    for block, _score, _exact, _known, dupes in scored:
+        if _validate_block(block, dupes, known_ids, anchor_ids, strict=strict):
+            return block
     return None
 
 
@@ -411,7 +430,12 @@ def _validate_block(
 ) -> bool:
     if not block:
         return False
-    min_entries = 500 if strict else 10
+    # Deck objects in Arena's memory are indistinguishable from a collection
+    # except by size (≤ ~110 uniques, all owned, anchors included — they ARE
+    # the decklists the anchors came from). Anything deck-sized is rejected
+    # outright; a scan that finds nothing bigger reports "collection not
+    # found" and the UI tells the player to open the Decks tab.
+    min_entries = 500 if strict else MIN_COLLECTION_SIZE
     if len(block) < min_entries or len(block) > 100_000:
         return False
     if sum(block.values()) > 500_000:
@@ -423,7 +447,7 @@ def _validate_block(
     # which is the normal shape of a full collection (lots of unplayed junk),
     # and exactly what made the old 30%-known-ratio bar reject the real block.
     anchors_present = sum(1 for k in block if k in anchor_ids)
-    if not strict and anchors_present >= 3:
+    if not strict and anchors_present >= 3 and len(block) >= ANCHOR_OVERRIDE_MIN_SIZE:
         return True
     known = sum(1 for k in block if k in known_ids)
     ratio = known / len(block)
@@ -530,8 +554,12 @@ def scan_collection(
     regions = [(addr, size) for addr, size in mem.readable_regions() if 0 < size <= MAX_REGION_BYTES]
     total = len(regions) or 1
 
-    # Pass 1: locate the collection near where the player's own cards cluster,
-    # validating region-by-region so a hit returns without scanning the rest.
+    # Pass 1: locate the collection near where the player's own cards cluster.
+    # Candidates accumulate across ALL regions and the winner is chosen at the
+    # end — Arena also keeps deck objects in memory, which contain the same
+    # anchor cards, so the first validated block is often a decklist, not the
+    # collection (the 34-cards-exported bug). Only an unambiguously
+    # collection-sized block ends the scan early.
     blocks: List[Tuple[Dict[int, int], int]] = []
     for index, (addr, size) in enumerate(regions):
         if index % 4 == 0:
@@ -556,14 +584,23 @@ def scan_collection(
                 start = pos + 1
         if not hits:
             continue
+        found_new = False
         for pos in _cluster_positions(hits):
             lo = max(0, pos - SCAN_WINDOW_BYTES // 2)
             hi = min(len(data), pos + SCAN_WINDOW_BYTES // 2)
-            blocks.extend(extract_blocks(data[lo:hi]))
-        result = score_and_validate(blocks, anchors, known)
-        if result is not None:
-            progress(f"Mapping {len(result)} cards…")
-            return result
+            extracted = extract_blocks(data[lo:hi])
+            if extracted:
+                blocks.extend(extracted)
+                found_new = True
+        if found_new:
+            result = score_and_validate(blocks, anchors, known)
+            if result is not None and len(result) >= EARLY_ACCEPT_MIN_SIZE:
+                progress(f"Mapping {len(result)} cards…")
+                return result
+    result = score_and_validate(blocks, anchors, known)
+    if result is not None:
+        progress(f"Mapping {len(result)} cards…")
+        return result
 
     # Pass 2: anchorless full sweep — only reached when nothing matched an
     # anchor (e.g. no recorded decklists). Slow; the UI warns it can take a
