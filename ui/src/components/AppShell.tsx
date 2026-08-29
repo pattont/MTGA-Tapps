@@ -257,20 +257,11 @@ export function AppShell({
         return;
       }
       const marker = 120;
-      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) {
-        // At the page bottom several sections may be unreachable at the top;
-        // highlight whichever section's top sits closest to the marker
-        // rather than blindly forcing the last one.
-        let closest = sections[sections.length - 1].id;
-        let closestDistance = Number.POSITIVE_INFINITY;
-        for (const section of sections) {
-          const distance = Math.abs(section.getBoundingClientRect().top - marker);
-          if (distance < closestDistance) {
-            closestDistance = distance;
-            closest = section.id;
-          }
-        }
-        setActiveSection(closest);
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 8) {
+        // Scrolled to the very bottom: highlight the last section. A short
+        // final section (Sessions) can never win a "closest to the marker"
+        // contest, so distance-based picking left it permanently unlit.
+        setActiveSection(sections[sections.length - 1].id);
         return;
       }
 

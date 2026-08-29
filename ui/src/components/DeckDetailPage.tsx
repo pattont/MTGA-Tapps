@@ -395,7 +395,14 @@ const gameColumns: Column<DeckGameRow>[] = [
   {
     key: 'play_draw',
     header: 'Play / Draw',
-    render: (row) => row.play_draw ?? 'Unknown',
+    render: (row) =>
+      row.play_draw === 'On the play' ? (
+        <span className="text-play">Play</span>
+      ) : row.play_draw === 'On the draw' ? (
+        <span className="text-drawside">Draw</span>
+      ) : (
+        (row.play_draw ?? 'Unknown')
+      ),
     sortValue: (row) => row.play_draw,
   },
   {

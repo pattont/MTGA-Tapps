@@ -639,6 +639,11 @@ class AnalyticsStore:
             (22, AnalyticsStore._migrate_v22_backfill_ramped_lands),
             (23, AnalyticsStore._migrate_v23_tag_ramped_lands_source),
             (24, AnalyticsStore._migrate_v24_reclassify_removal_stats),
+            # v25 is the same recount, re-run because the classifier's rules
+            # changed after v24 shipped (edicts, Split Up, airbend, O-Ring,
+            # land-destruction lookahead). Any future rules change should add
+            # another version pointing at the same function.
+            (25, AnalyticsStore._migrate_v24_reclassify_removal_stats),
         )
         ran: list = []
         for version, migrate in migrations:

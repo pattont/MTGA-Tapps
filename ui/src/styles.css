@@ -477,6 +477,7 @@ a {
 }
 
 .filter-bar select,
+.table-filter select,
 .filter-bar input[type="date"],
 .deck-select-trigger {
   min-height: 34px;
@@ -490,6 +491,8 @@ a {
 
 .filter-bar select:hover,
 .filter-bar select:focus-visible,
+.table-filter select:hover,
+.table-filter select:focus-visible,
 .filter-bar input[type="date"]:hover,
 .filter-bar input[type="date"]:focus-visible,
 .deck-select-trigger:hover,
@@ -1939,6 +1942,17 @@ tbody tr:hover {
 .badge-screw {
   border-color: color-mix(in srgb, var(--accent-strong) 55%, var(--border));
   color: var(--accent-strong);
+}
+
+/* Plain-text Play/Draw labels (the split tables) — pill colors, no pill. */
+.text-play {
+  color: var(--on-play);
+  font-weight: 650;
+}
+
+.text-drawside {
+  color: var(--on-draw);
+  font-weight: 650;
 }
 
 .badge-play {

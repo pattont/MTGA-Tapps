@@ -34,10 +34,11 @@ def test_board_wipes():
     assert classify_ability_texts(["Destroy all creatures."]) == {ROLE_WIPE}
     # Avengers Disassembled-style sweeper
     assert classify_ability_texts(["Deals 3 damage to each creature."]) == {ROLE_WIPE}
-    # Split Up: partial sweeper still classifies as a wipe.
+    # Split Up: a state-qualified sweeper usually kills half a board, not the
+    # board — ruled REMOVAL, not wipe (2026-08-29 design review).
     assert classify_ability_texts(
         ["Choose one — Destroy all tapped creatures. Destroy all untapped creatures."]
-    ) == {ROLE_WIPE}
+    ) == {ROLE_REMOVAL}
     # Mass exile clears the board no matter the destination zone.
     assert classify_ability_texts(["Exile all creatures."]) == {ROLE_WIPE}
     assert classify_ability_texts(["All creatures get -2/-2 until end of turn."]) == {ROLE_WIPE}
@@ -128,3 +129,31 @@ def test_graveyard_hate_is_not_removal():
     # Real battlefield removal still classifies.
     assert "removal" in classify_ability_texts(["Exile target creature."])
     assert "removal" in classify_ability_texts(["Destroy target nonblack creature."])
+
+
+def test_design_review_rulings_2026_08():
+    """The 2026-08-29 classification review (docs/REMOVAL_CLASSIFICATION.md)."""
+    from mtga_tracker.removal_classifier import classify_ability_texts as c
+
+    # Edicts are removal (Strategic Betrayal, Tribute to Hunger).
+    assert "removal" in c(["Target opponent exiles a creature they control and their graveyard."])
+    assert "removal" in c(["Target opponent sacrifices a creature of their choice."])
+    assert "removal" in c(["Each opponent sacrifices a nontoken creature of their choice."])
+    # State-qualified sweeps are removal, not wipes (Split Up).
+    assert c(["Choose one —\n• Destroy all tapped creatures.\n• Destroy all untapped creatures."]) == frozenset({"removal"})
+    # True wipes stay wipes, including one-sided type wipes.
+    assert "wipe" in c(["Destroy all artifacts and creatures. End the turn."])
+    assert "wipe" in c(["Desolation of Smaug deals 3 damage to each non-Dragon creature."])
+    # Land destruction stays out, even nonbasic (Demolition Field).
+    assert c(["{2}, {T}, Sacrifice this land: Destroy target nonbasic land an opponent controls."]) == frozenset()
+    # O-Ring temporary exile is removal; self-blink is not.
+    assert "removal" in c(["When this enchantment enters, exile up to one other target nonland permanent until this enchantment leaves the battlefield."])
+    assert "removal" in c(["Choose target creature an opponent controls. Exile that creature until this creature leaves the battlefield."])
+    assert c(["When this creature enters, exile up to one other target creature you control. Return that card to the battlefield at the beginning of the next end step."]) == frozenset()
+    # Airbend is bounce, targeted or mass.
+    assert "bounce" in c(["When Aang enters, airbend up to one other target creature or spell."])
+    assert "bounce" in c(["Choose up to one target creature, then airbend all other creatures."])
+    # Subset mass bounce is bounce (Aetherize).
+    assert "bounce" in c(["Return all attacking creatures to their owner's hand."])
+    # Hand disruption is not removal.
+    assert c(["Target opponent exiles a card from their hand."]) == frozenset()

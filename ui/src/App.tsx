@@ -397,7 +397,14 @@ const playDrawColumns: Column<PlayDrawRow>[] = [
     // The panel heading already says "Play / Draw" — no need to repeat it.
     header: '',
     sortable: false,
-    render: (row) => row.play_draw ?? 'Unknown',
+    render: (row) =>
+      row.play_draw === 'On the play' ? (
+        <span className="text-play">Play</span>
+      ) : row.play_draw === 'On the draw' ? (
+        <span className="text-drawside">Draw</span>
+      ) : (
+        (row.play_draw ?? 'Unknown')
+      ),
   },
   { key: 'games', header: 'Games', numeric: true },
   { key: 'wins', header: 'Wins', numeric: true },
