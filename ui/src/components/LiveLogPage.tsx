@@ -280,10 +280,10 @@ function Scoreboard({
       <div className="live-scoreboard-footer">
         <span className="live-scoreboard-badges">
           {now.on_play !== null ? (
-            <Badge tone={now.on_play ? 'play' : 'draw'}>{now.on_play ? 'Play' : 'Draw'}</Badge>
+            <Badge tone={now.on_play ? 'play' : 'drawside'}>{now.on_play ? 'Play' : 'Draw'}</Badge>
           ) : null}
           {now.mulligans != null ? (
-            <Badge tone={now.mulligans ? 'loss' : 'win'}>
+            <Badge tone={now.mulligans ? 'mull' : 'win'}>
               {now.mulligans
                 ? `${now.mulligans} mulligan${now.mulligans === 1 ? '' : 's'}`
                 : 'No mulligans'}

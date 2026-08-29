@@ -16,6 +16,8 @@
   --danger: #f28b82;
   --success: #7bd88f;
   --draw: #8ab4f8;
+  --on-play: #5fd4c4;
+  --on-draw: #b79df7;
   --shadow: 0 16px 40px rgb(0 0 0 / 24%);
   --row-alt-bg: color-mix(in srgb, var(--panel-strong) 34%, transparent);
   --thead-bg: color-mix(in srgb, var(--panel-strong) 72%, transparent);
@@ -47,6 +49,8 @@
   --danger: #d3222a;
   --success: #0d8040;
   --draw: #155fd0;
+  --on-play: #0b7d6e;
+  --on-draw: #6b46c1;
   --shadow: 0 6px 18px rgb(15 23 42 / 8%);
   --row-alt-bg: rgb(15 23 42 / 4%);
   --thead-bg: rgb(15 23 42 / 6%);
@@ -1930,8 +1934,19 @@ tbody tr:hover {
 }
 
 .badge-play {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  color: var(--accent-strong);
+  border-color: color-mix(in srgb, var(--on-play) 55%, var(--border));
+  color: var(--on-play);
+}
+
+.badge-drawside {
+  border-color: color-mix(in srgb, var(--on-draw) 55%, var(--border));
+  color: var(--on-draw);
+}
+
+/* Mulligans aren't a disaster — soft blue, not red. */
+.badge-mull {
+  border-color: color-mix(in srgb, var(--draw) 55%, var(--border));
+  color: var(--draw);
 }
 
 .state-panel,

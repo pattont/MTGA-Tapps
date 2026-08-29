@@ -81,7 +81,7 @@ const columns: Column<AllGamesRow>[] = [
     header: 'Play/Draw',
     render: (row) =>
       row.went_first == null ? null : (
-        <Badge tone={row.went_first ? 'play' : 'draw'}>{row.went_first ? 'Play' : 'Draw'}</Badge>
+        <Badge tone={row.went_first ? 'play' : 'drawside'}>{row.went_first ? 'Play' : 'Draw'}</Badge>
       ),
     sortValue: (row) => row.went_first ?? -1,
     center: true,
