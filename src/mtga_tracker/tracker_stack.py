@@ -160,10 +160,65 @@ class TrackerStackMixin:
             stats["removal_played"] += 1
         if "wipe" in roles:
             stats["wipes_played"] += 1
+        if "threshold_wipe" in roles:
+            # A conditional sweeper (Fire Magic, mass -X/-X, type-qualified
+            # destruction) is judged by its OUTCOME: snapshot the board's
+            # creatures now, decide wipe-vs-removal once the dust settles
+            # (next turn header / game end). Design ruling 2026-08-29: a
+            # wipe removes everything; killing part of the board is removal.
+            self.game_state.pending_threshold_wipes.append(
+                {
+                    "seat_id": seat_id,
+                    "turn": self.game_state.turn_number or 0,
+                    "census": self._battlefield_creature_census(),
+                }
+            )
         if "bounce" in roles:
             stats["bounces_played"] += 1
         if "counter" in roles:
             stats["counters_played"] += 1
+
+    def _battlefield_creature_census(self) -> set:
+        """Instance ids of creatures currently on the battlefield."""
+        battlefield = self.game_state.battlefield_zone_id
+        census = set()
+        for instance_id, snap in self.game_state.object_snapshots.items():
+            if not isinstance(snap, dict):
+                continue
+            if battlefield is not None and snap.get("zoneId") != battlefield:
+                continue
+            if battlefield is None and snap.get("zoneId") is None:
+                continue
+            if "CardType_Creature" in (snap.get("cardTypes") or []):
+                census.add(int(instance_id))
+        return census
+
+    def _settle_threshold_wipes(self, *, force: bool = False) -> None:
+        """Resolve pending conditional sweepers into wipe or removal.
+
+        Called at each new turn header (all of the previous turn's deaths
+        have been processed by then) and at game end. Board cleared — every
+        creature from the cast-time census gone — counts as a wipe;
+        any survivor (or an empty board at cast) counts as removal.
+        """
+        if not self.game_state.pending_threshold_wipes:
+            return
+        current_turn = self.game_state.turn_number or 0
+        still_pending = []
+        for entry in self.game_state.pending_threshold_wipes:
+            if not force and current_turn <= int(entry.get("turn") or 0):
+                still_pending.append(entry)
+                continue
+            stats = self._seat_stats(entry.get("seat_id"))
+            if stats is None:
+                continue
+            census = entry.get("census") or set()
+            survivors = census & self._battlefield_creature_census()
+            if census and not survivors:
+                stats["wipes_played"] += 1
+            else:
+                stats["removal_played"] += 1
+        self.game_state.pending_threshold_wipes = still_pending
 
     def _reconcile_deleted_stack_items(self, deleted_instance_ids: Any) -> None:
         """Infer unresolved stack exits after the payload's annotations have had a chance to resolve them."""

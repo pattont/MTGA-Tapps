@@ -27,6 +27,7 @@ ROLE_REMOVAL = "removal"
 ROLE_WIPE = "wipe"
 ROLE_BOUNCE = "bounce"
 ROLE_COUNTER = "counter"
+ROLE_THRESHOLD_WIPE = "threshold_wipe"
 
 _CREATUREISH = r"(?:creatures?|permanents?|nonland permanents?|other permanents?|artifacts? and creatures?|creatures? and planeswalkers?)"
 
@@ -35,23 +36,31 @@ _WIPE_PATTERNS = tuple(
     for pattern in (
         rf"destroys? all (?:other )?{_CREATUREISH}",
         rf"destroys? each (?:other )?{_CREATUREISH}",
-        # One-sided type wipes ("each non-Dragon creature") clear the whole
-        # board bar the caster's tribe — that is a wipe. State-qualified
-        # subsets (all TAPPED creatures) are removal instead, per design
-        # review: Split Up usually kills half a board, not the board.
-        r"destroys? (?:all|each) non-[\w-]+ creatures?",
         rf"exiles? all (?:other )?{_CREATUREISH}",
         rf"exiles? each (?:other )?{_CREATUREISH}",
+        r"each player sacrifices all",
+        rf"sacrifices? all {_CREATUREISH}",
+        r"each player sacrifices (?:all|the rest)",
+        r"destroy the rest",
+    )
+)
+
+#: Conditional sweepers: they SWEEP by wording, but whether they cleared the
+#: board depends on toughness/board makeup (Fire Magic, Desolation of Smaug,
+#: mass -X/-X, type-qualified destruction). The tracker counts these by
+#: OUTCOME — board actually cleared -> wipe, survivors -> removal (2026-08-29
+#: design ruling). Unconditional destroy/exile-all stays a plain wipe: no
+#: toughness beats Ultima (an indestructible survivor keeps it a wipe).
+_THRESHOLD_WIPE_PATTERNS = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"destroys? (?:all|each) non-[\w-]+ creatures?",
         r"deals? \d+ damage to each creature",
         r"deals? \d+ damage to each (?:other )?creature",
         r"deals? \d+ damage to each non-[\w-]+ creature",
         r"deals? damage to each creature",
         r"all creatures get -\d+/-\d+",
         r"each (?:other )?creature gets -\d+/-\d+",
-        r"each player sacrifices all",
-        rf"sacrifices? all {_CREATUREISH}",
-        r"each player sacrifices (?:all|the rest)",
-        r"destroy the rest",
     )
 )
 
@@ -132,6 +141,8 @@ def classify_ability_texts(texts: Iterable[str]) -> FrozenSet[str]:
             continue
         if any(pattern.search(lowered) for pattern in _WIPE_PATTERNS):
             roles.add(ROLE_WIPE)
+        if any(pattern.search(lowered) for pattern in _THRESHOLD_WIPE_PATTERNS):
+            roles.add(ROLE_THRESHOLD_WIPE)
         if any(pattern.search(lowered) for pattern in _BOUNCE_PATTERNS):
             roles.add(ROLE_BOUNCE)
         if any(pattern.search(lowered) for pattern in _REMOVAL_PATTERNS):
@@ -139,8 +150,12 @@ def classify_ability_texts(texts: Iterable[str]) -> FrozenSet[str]:
         if any(pattern.search(lowered) for pattern in _COUNTER_PATTERNS):
             roles.add(ROLE_COUNTER)
     # A sweeper is a sweeper; don't double-count it as spot removal
-    # (modal cards that do both keep the wipe classification).
+    # (modal cards that do both keep the wipe classification). An
+    # unconditional wipe also outranks the conditional-threshold reading.
     if ROLE_WIPE in roles:
+        roles.discard(ROLE_REMOVAL)
+        roles.discard(ROLE_THRESHOLD_WIPE)
+    if ROLE_THRESHOLD_WIPE in roles:
         roles.discard(ROLE_REMOVAL)
     return frozenset(roles)
 

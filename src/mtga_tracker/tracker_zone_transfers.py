@@ -154,7 +154,9 @@ class TrackerZoneTransferMixin:
             # Removal-in-hand stats: only the player's draws are visible.
             if grp_id and owner_seat == self.game_state.player_seat_id:
                 roles = self._card_roles(grp_id)
-                if "removal" in roles:
+                if "removal" in roles or "threshold_wipe" in roles:
+                    # A drawn conditional sweeper has no outcome to judge —
+                    # counted as removal-in-hand (the conservative default).
                     stats["removal_drawn"] += 1
                 if "wipe" in roles:
                     stats["wipes_drawn"] += 1

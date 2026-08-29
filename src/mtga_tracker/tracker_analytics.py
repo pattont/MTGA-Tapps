@@ -1344,6 +1344,11 @@ class TrackerAnalyticsMixin:
         opponent_participant_id: str,
     ) -> None:
         """Persist per-participant stats, cards, opening hand, commanders, and session aggregates."""
+        # Conditional sweepers cast on the final turn still need a verdict.
+        try:
+            self._settle_threshold_wipes(force=True)
+        except Exception:
+            pass
         self._persist_participant_stats(
             conn,
             game_id,

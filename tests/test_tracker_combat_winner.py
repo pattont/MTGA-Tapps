@@ -7382,3 +7382,59 @@ def test_permanent_reanimated_from_graveyard_does_not_count_as_seen():
     )
 
     assert tracker.game_state.drawn_card_events.get(1, []) == []
+
+
+def _threshold_setup():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.turn_number = 5
+    tracker.game_state.battlefield_zone_id = 28
+    tracker.game_state.object_snapshots = {
+        101: {"zoneId": 28, "cardTypes": ["CardType_Creature"]},
+        102: {"zoneId": 28, "cardTypes": ["CardType_Creature"]},
+        103: {"zoneId": 28, "cardTypes": ["CardType_Land"]},  # not a creature
+    }
+    tracker._card_roles = lambda grp_id: frozenset({"threshold_wipe"})
+    return tracker
+
+
+def test_threshold_sweeper_that_clears_the_board_counts_as_wipe():
+    tracker = _threshold_setup()
+    tracker._count_played_card_roles(1, 999)
+    stats = tracker._seat_stats(1)
+    assert stats["wipes_played"] == 0 and stats["removal_played"] == 0  # deferred
+    # Both creatures die before the next turn header.
+    tracker.game_state.object_snapshots.pop(101)
+    tracker.game_state.object_snapshots.pop(102)
+    tracker.game_state.turn_number = 6
+    tracker._settle_threshold_wipes()
+    assert stats["wipes_played"] == 1
+    assert stats["removal_played"] == 0
+
+
+def test_threshold_sweeper_with_a_survivor_counts_as_removal():
+    tracker = _threshold_setup()
+    tracker._count_played_card_roles(1, 999)
+    # One creature survives the sweep.
+    tracker.game_state.object_snapshots.pop(101)
+    tracker.game_state.turn_number = 6
+    tracker._settle_threshold_wipes()
+    stats = tracker._seat_stats(1)
+    assert stats["removal_played"] == 1
+    assert stats["wipes_played"] == 0
+
+
+def test_threshold_sweeper_settles_at_game_end_not_same_turn():
+    tracker = _threshold_setup()
+    tracker._count_played_card_roles(1, 999)
+    # Same turn: no verdict yet, deaths may still be streaming in.
+    tracker._settle_threshold_wipes()
+    stats = tracker._seat_stats(1)
+    assert stats["wipes_played"] == 0 and stats["removal_played"] == 0
+    # Game ends on the cast turn: force the verdict.
+    tracker.game_state.object_snapshots.pop(101)
+    tracker.game_state.object_snapshots.pop(102)
+    tracker._settle_threshold_wipes(force=True)
+    assert stats["wipes_played"] == 1

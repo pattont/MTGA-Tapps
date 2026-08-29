@@ -347,6 +347,7 @@ class TrackerTurnStateMixin:
         )
         self.game_state.pending_opponent_turn_header = None
         self.game_state.last_turn_announced = turn_num
+        self._settle_threshold_wipes()
         if active_player == self.game_state.opponent_seat_id:
             self.game_state.last_opponent_turn_number = turn_num
             self.game_state.turns_taken_by_seat.setdefault(int(active_player), set()).add(
@@ -368,6 +369,7 @@ class TrackerTurnStateMixin:
         )
         self.game_state.pending_player_turn_header = None
         self.game_state.last_turn_announced = turn_num
+        self._settle_threshold_wipes()
         if active_player == self.game_state.player_seat_id:
             self.game_state.last_player_turn_number = turn_num
             self.game_state.turns_taken_by_seat.setdefault(int(active_player), set()).add(

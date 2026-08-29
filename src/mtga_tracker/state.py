@@ -186,6 +186,14 @@ class GameState:
         #: Battlefield instance ids already counted as lost to removal /
         #: bounced to hand (dedupe across repeated annotations for one leave).
         self.counted_removal_losses: Set[int] = set()
+        #: Battlefield zone id (from the GRE zone list), for board censuses.
+        self.battlefield_zone_id: Optional[int] = None
+        #: Threshold sweepers (damage-to-each / type-qualified wipes) awaiting
+        #: an outcome verdict: each entry {"seat_id", "turn", "census"} where
+        #: census is the set of creature instance ids on the battlefield at
+        #: cast. Board cleared -> wipe; survivors -> removal (design ruling:
+        #: a wipe removes EVERYTHING; killing 2 of 4 is removal).
+        self.pending_threshold_wipes: List[Dict[str, Any]] = []
         self.counted_bounce_returns: Set[int] = set()
         #: Token instance ids already counted as created (dedupe across diffs).
         self.counted_token_creations: Set[int] = set()

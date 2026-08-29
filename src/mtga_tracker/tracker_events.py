@@ -103,6 +103,11 @@ class TrackerEventsMixin(
             if isinstance(obj, dict) and obj.get("instanceId") is not None
         }
         zones_by_id = self._zone_index(data)
+        if self.game_state.battlefield_zone_id is None:
+            for zone_id, zone in zones_by_id.items():
+                if isinstance(zone, dict) and zone.get("type") == "ZoneType_Battlefield":
+                    self.game_state.battlefield_zone_id = int(zone_id)
+                    break
         raw_players = data.get("players", [])
         self._observe_player_poison(raw_players if isinstance(raw_players, list) else [])
 

@@ -644,6 +644,9 @@ class AnalyticsStore:
             # land-destruction lookahead). Any future rules change should add
             # another version pointing at the same function.
             (25, AnalyticsStore._migrate_v24_reclassify_removal_stats),
+            # v26: threshold-sweeper ruling (outcome-based wipes; history
+            # defaults them to removal) — same recount, new rules.
+            (26, AnalyticsStore._migrate_v24_reclassify_removal_stats),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -1731,12 +1734,17 @@ class AnalyticsStore:
         role_to_played = {
             "removal": "removal_played",
             "wipe": "wipes_played",
+            # Historical games can't verify whether a conditional sweeper
+            # actually cleared the board — counted as removal (the ruling's
+            # default); live games judge these by outcome.
+            "threshold_wipe": "removal_played",
             "bounce": "bounces_played",
             "counter": "counters_played",
         }
         role_to_drawn = {
             "removal": "removal_drawn",
             "wipe": "wipes_drawn",
+            "threshold_wipe": "removal_drawn",
             "bounce": "bounces_drawn",
             "counter": "counters_drawn",
         }

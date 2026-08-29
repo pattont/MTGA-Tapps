@@ -16,7 +16,8 @@ below and raise it for a ruling.**
 | Graveyard/hand/library effects ("exile target card from a graveyard") | **Not removal** — battlefield removal never targets a "card" | 2026-08-29 |
 | Edicts ("target opponent exiles/sacrifices a creature of their choice") | **Removal** (Strategic Betrayal, Tribute to Hunger, Pick Your Poison, Sothera) | 2026-08-29 (Travis) |
 | State-qualified sweeps ("destroy all tapped/untapped/attacking creatures") | **Removal, not wipe** — Split Up usually kills half a board | 2026-08-29 (Travis) |
-| One-sided type wipes ("each non-Dragon creature") | **Wipe** — clears everything but the caster's tribe | 2026-08-29 |
+| Conditional sweepers (damage-to-each, mass -X/-X, type-qualified destruction: Fire Magic, Desolation of Smaug) | **Judged by outcome**: board actually cleared → wipe; any survivor → removal. Historical games (no outcome data) default to removal. | 2026-08-29 (Travis) |
+| Unconditional wipes vs indestructible (Ultima) | **Still a wipe** — no toughness beats "destroy all"; the survivor just doesn't appear in Creatures Lost to Removal | 2026-08-29 (Travis) |
 | Temporary exile / O-Ring shells ("exile target … until this leaves") | **Removal** (leans-yes; see open questions) | 2026-08-29 (Travis, provisional) |
 | Self-blink ("exile target creature **you control** …") | **Not counted** — protecting your own permanent | 2026-08-29 |
 | Airbend (Avatar set: exile, owner may recast for {2}) | **Bounce** on the battlefield reading | 2026-08-29 (Travis) |
@@ -35,9 +36,12 @@ below and raise it for a ruling.**
 - **Activated-ability interaction on permanents**: a card is counted when
   PLAYED, even if its removal is an activated ability that never fired
   (text-based design). Ugin's cast trigger makes this mostly right.
-- **Modal wipes that only half-fired**: Split Up counts as removal by rule;
-  a true "did it actually clear the board" reading would need event-based
-  outcome tracking, not text.
+- **Conditional sweepers drawn but not played** have no outcome to judge —
+  they count as removal-in-hand (the conservative default).
+- **Outcome detection mechanics**: the tracker snapshots the battlefield's
+  creatures when a conditional sweeper is cast and rules wipe-vs-removal at
+  the next turn header (or game end). Blinked/phased creatures returning
+  after the verdict aren't re-litigated.
 
 ## Current classification over this collection's card pool
 
