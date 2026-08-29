@@ -113,6 +113,7 @@ function Scoreboard({
   clockMs,
   waiting,
   previousOutcome = null,
+  previousReason = null,
 }: {
   now: LiveNow;
   clockMs: number;
@@ -120,6 +121,8 @@ function Scoreboard({
   waiting: boolean;
   /** Outcome of the finished game shown while waiting ('win' | 'loss' | 'draw'). */
   previousOutcome?: string | null;
+  /** How that game ended (e.g. "Opponent conceded"). */
+  previousReason?: string | null;
 }) {
   const isBrawl = now.player_commanders.length > 0 || now.opponent_commanders.length > 0;
   const clock = waiting ? null : gameClock(now.game_started_at, clockMs);
@@ -144,6 +147,7 @@ function Scoreboard({
             }`}
           >
             Previous Game{previousOutcome ? ` — ${outcomeLabel(previousOutcome)}` : ''}
+            {previousReason ? ` · ${previousReason}` : ''}
           </span>
         ) : (
           <span
@@ -403,6 +407,10 @@ export function LiveLogPage() {
               waiting
               previousOutcome={
                 payload?.games.find((game) => game.id === lastGameNow.game_id)?.outcome ?? null
+              }
+              previousReason={
+                payload?.games.find((game) => game.id === lastGameNow.game_id)?.outcome_reason ??
+                null
               }
             />
           ) : (
