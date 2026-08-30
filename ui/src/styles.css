@@ -1997,20 +1997,6 @@ tbody tr:hover {
 }
 
 /* Opponents page search box */
-.opponents-search {
-  min-height: 34px;
-  min-width: 240px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface);
-  color: var(--text);
-}
-
-.opponents-search:focus-visible {
-  border-color: var(--accent);
-}
-
 .opponents-count {
   color: var(--subtle);
   font-size: 0.82rem;
@@ -2495,13 +2481,13 @@ tbody tr:hover {
 }
 
 /* Restored focus indicators (WCAG 2.4.7): color changes alone are not enough.
-   The card-search input/button are deliberately NOT in this list: their
-   control already paints a full accent border on focus-within, and stacking
-   the outline on top doubled the gold ring. */
+   Bordered form controls (card search, filter selects/dates, table-filter
+   search inputs) are deliberately NOT in this list: they already paint a
+   full accent border on focus, and stacking the outline on top doubles the
+   gold ring. */
 .sidebar nav a:focus-visible,
 .card-search-results > a:focus-visible,
 .topbar-icon-link:focus-visible,
-.filter-bar select:focus-visible,
 .filter-clear:focus-visible,
 .table-sort:focus-visible,
 .deck-link:focus-visible,
@@ -2509,7 +2495,6 @@ tbody tr:hover {
 .table-link:focus-visible,
 .metric-link:focus-visible,
 .back-link:focus-visible,
-.table-filter input:focus-visible,
 .table-wrap:focus-visible,
 .draws-by-turn-cell:focus-visible {
   outline: 2px solid var(--accent);

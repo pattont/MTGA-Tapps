@@ -80,27 +80,26 @@ export function OpponentsPage() {
 
   return (
     <Section
+      collapsible={false}
       id="opponents-all"
-      description="Everyone you've ever been paired against, with your record. Search a name — maybe you ran into an employee or a streamer without knowing it."
+      description="Everyone you've ever been paired against and how you fared against them. Search a name — maybe you ran into a WotC employee or streamer without even knowing it."
     >
       <div className="table-filter">
         <label className="filter-field">
-          <span className="filter-field-label">Search</span>
+          <span className="filter-field-label">
+            {rows == null
+              ? 'Search'
+              : filtered.length === rows.length
+                ? `Search (${rows.length} opponents)`
+                : `Search (${filtered.length} of ${rows.length} opponents)`}
+          </span>
           <input
-            className="opponents-search"
             placeholder="Opponent name…"
             type="search"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
         </label>
-        {rows ? (
-          <span className="opponents-count">
-            {filtered.length === rows.length
-              ? `${rows.length} opponents`
-              : `${filtered.length} of ${rows.length} opponents`}
-          </span>
-        ) : null}
       </div>
       {error ? (
         <p className="state-panel error-state" role="alert">
