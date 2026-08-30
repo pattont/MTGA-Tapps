@@ -156,7 +156,7 @@ class TrackerAnalyticsMixin:
                 format_label = g.format_str
         draw_stats = self._live_draw_stats() if in_game else None
         deck_stats = self._live_deck_land_stats() if in_game else None
-        return {
+        row: Dict[str, Any] = {
             "session_id": self.session_id,
             "updated_at": (now or self._now()).isoformat(),
             "in_game": 1 if in_game else 0,
@@ -207,6 +207,17 @@ class TrackerAnalyticsMixin:
             "db_path": str(self._console_db_path),
             "tracker_version": self._live_tracker_version(),
         }
+        if in_game:
+            # Freeze the live scoreboard as it stands: /api/live serves this
+            # back between games, so loading the page after a game ends shows
+            # the previous game's final scoreboard instead of a blank panel
+            # (the client alone can only keep it while the page stays open).
+            self._last_in_game_live_row = dict(row)
+            row["last_game_json"] = None
+        else:
+            cached = getattr(self, "_last_in_game_live_row", None)
+            row["last_game_json"] = json.dumps(cached) if cached else None
+        return row
 
     def _live_color_index(self) -> Dict[str, str]:
         """Card name -> WUBRG identity for the Live Log scoreboard pips.

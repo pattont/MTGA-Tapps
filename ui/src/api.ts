@@ -1471,6 +1471,8 @@ export interface LiveTrackerInfo {
 
 export interface LiveNow {
   in_game: boolean;
+  /** Between games: these fields are the frozen final snapshot of the last game. */
+  last_game_frozen?: boolean;
   match_id: string | null;
   game_id: string | null;
   format: string | null;

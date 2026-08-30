@@ -902,6 +902,86 @@ describe('App', () => {
     window.location.hash = '#overview';
   });
 
+  it('keeps the previous game scoreboard on a fresh Live Log load between games', async () => {
+    const live = {
+      tracker: { state: 'idle', updated_at: new Date().toISOString(), session_id: 'S1' },
+      now: {
+        in_game: false,
+        // Server-frozen final snapshot of the last game (survives page loads).
+        last_game_frozen: true,
+        match_id: 'M1',
+        game_id: 'G8',
+        format: 'Standard',
+        match_type: 'best_of_1',
+        game_number: 1,
+        player_name: 'Tapps',
+        opponent_name: 'Villain#12345',
+        deck_name: 'Skellies',
+        turn_number: 7,
+        active_role: 'player',
+        on_play: true,
+        player_life: 18,
+        opponent_life: 19,
+        mulligans: 0,
+        game_started_at: new Date().toISOString(),
+        player_commanders: [],
+        opponent_commanders: [],
+        player_lands: 3,
+        opponent_lands: 2,
+      },
+      session: {
+        id: 'S1',
+        started_at: new Date().toISOString(),
+        games_played: 1,
+        wins: 1,
+        losses: 0,
+        draws: 0,
+        runtime_seconds: 180,
+        win_rate: 100,
+      },
+      games: [
+        {
+          id: 'G8',
+          started_at: new Date().toISOString(),
+          outcome: 'win',
+          outcome_reason: 'Opponent conceded',
+          total_turns: 7,
+          duration_seconds: 420,
+          game_number: 1,
+          format: 'Standard',
+          best_of: 1,
+          deck_name: 'Skellies',
+          opponent_name: 'Villain#12345',
+        },
+      ],
+      events: [],
+      seq: 0,
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).startsWith('/api/live')) {
+        return new Response(JSON.stringify(live), { status: 200 });
+      }
+      return new Response(JSON.stringify(snapshot), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
+
+    await act(async () => {
+      window.location.hash = '#/live';
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+
+    // The frozen scoreboard renders (not the "Waiting for a match" panel),
+    // with the Previous Game chip and the waiting pill beside it.
+    expect(await screen.findByText('Villain#12345')).toBeInTheDocument();
+    expect(screen.getByText(/Previous Game — Win · Opponent conceded/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Waiting for next match…/).length).toBeGreaterThan(0);
+    // The blank waiting panel ("Last game: …") must not replace the scoreboard.
+    expect(screen.queryByText(/Last game: Win with Skellies/)).not.toBeInTheDocument();
+    window.location.hash = '#overview';
+  });
+
   it('routes to the Settings page with Deck AI and creator sections', async () => {
     const settings = {
       tracker: {

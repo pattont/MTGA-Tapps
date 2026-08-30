@@ -474,22 +474,42 @@ def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
         state = _tracker_state(status, now)
         session_id = status.get("session_id") if status else None
 
+        # Between games the tracker nulls every game-scoped live_status field,
+        # but freezes the final in-game snapshot as JSON. Serving that frozen
+        # snapshot back lets a fresh page load keep the previous game's
+        # scoreboard up (the client alone can only preserve it while the page
+        # stays mounted). Restricted to the same tracker session so a restart
+        # doesn't resurrect a game from a session whose feed is gone.
+        frozen: Optional[Dict[str, Any]] = None
+        if status is not None and not status.get("in_game"):
+            try:
+                parsed = json.loads(status.get("last_game_json") or "")
+            except (TypeError, ValueError):
+                parsed = None
+            if isinstance(parsed, dict) and parsed.get("session_id") == session_id:
+                frozen = parsed
+
         # The game the feed should show: the live one, or — between games —
         # the game the last events belong to, so the feed's tail still lands
         # and the previous game stays on screen until the next one starts.
-        feed_game_id = (status.get("game_id") if status else None) or _latest_event_game_id(
-            conn, session_id
+        feed_game_id = (
+            (status.get("game_id") if status else None)
+            or (frozen.get("game_id") if frozen else None)
+            or _latest_event_game_id(conn, session_id)
         )
 
         now_payload: Optional[Dict[str, Any]] = None
         if status is not None:
+            # Game-scoped fields come from the live row during a game, and
+            # from the frozen last-game snapshot between games.
+            source = frozen if frozen else status
             # The tracker writes live colors straight into live_status (from
             # cards played, via Arena's card DB); the game_card_summary query
             # is the fallback once the game has persisted — and the only
             # source for the previous-game scoreboard.
             colors = {
-                "player": str(status.get("player_colors") or ""),
-                "opponent": str(status.get("opponent_colors") or ""),
+                "player": str(source.get("player_colors") or ""),
+                "opponent": str(source.get("opponent_colors") or ""),
             }
             if not colors["player"] and not colors["opponent"]:
                 colors = _seat_colors(conn, feed_game_id)
@@ -497,37 +517,38 @@ def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
                 "player_colors": colors["player"],
                 "opponent_colors": colors["opponent"],
                 "in_game": bool(status.get("in_game")),
-                "match_id": status.get("match_id"),
+                "last_game_frozen": frozen is not None,
+                "match_id": source.get("match_id"),
                 "game_id": feed_game_id,
-                "format": status.get("format"),
-                "match_type": status.get("match_type"),
-                "game_number": status.get("game_number"),
-                "player_name": status.get("player_name"),
-                "opponent_name": status.get("opponent_name"),
-                "deck_name": status.get("deck_name"),
-                "turn_number": status.get("turn_number"),
-                "active_role": status.get("active_role"),
-                "on_play": (None if status.get("on_play") is None else bool(status.get("on_play"))),
-                "player_life": status.get("player_life"),
-                "opponent_life": status.get("opponent_life"),
-                "mulligans": status.get("mulligans"),
-                "game_started_at": status.get("game_started_at"),
-                "player_commanders": _json_list(status.get("player_commanders")),
-                "opponent_commanders": _json_list(status.get("opponent_commanders")),
+                "format": source.get("format"),
+                "match_type": source.get("match_type"),
+                "game_number": source.get("game_number"),
+                "player_name": source.get("player_name"),
+                "opponent_name": source.get("opponent_name"),
+                "deck_name": source.get("deck_name"),
+                "turn_number": source.get("turn_number"),
+                "active_role": source.get("active_role"),
+                "on_play": (None if source.get("on_play") is None else bool(source.get("on_play"))),
+                "player_life": source.get("player_life"),
+                "opponent_life": source.get("opponent_life"),
+                "mulligans": source.get("mulligans"),
+                "game_started_at": source.get("game_started_at"),
+                "player_commanders": _json_list(source.get("player_commanders")),
+                "opponent_commanders": _json_list(source.get("opponent_commanders")),
                 # Live scoreboard extras (columns absent in old DBs read None).
-                "player_lands": status.get("player_lands"),
-                "opponent_lands": status.get("opponent_lands"),
-                "turn_started_at": status.get("turn_started_at"),
-                "lands_seen": status.get("lands_seen"),
-                "cards_seen": status.get("cards_seen"),
-                "ramped_lands": status.get("ramped_lands"),
-                "deck_size": status.get("deck_size"),
-                "deck_lands": status.get("deck_lands"),
+                "player_lands": source.get("player_lands"),
+                "opponent_lands": source.get("opponent_lands"),
+                "turn_started_at": source.get("turn_started_at"),
+                "lands_seen": source.get("lands_seen"),
+                "cards_seen": source.get("cards_seen"),
+                "ramped_lands": source.get("ramped_lands"),
+                "deck_size": source.get("deck_size"),
+                "deck_lands": source.get("deck_lands"),
                 "head_to_head": _head_to_head(
-                    conn, status.get("opponent_name"), feed_game_id
+                    conn, source.get("opponent_name"), feed_game_id
                 ),
-                "deck_record": _deck_record(conn, status.get("deck_name"), feed_game_id),
-                "rank": _rank_context(conn, status.get("format")),
+                "deck_record": _deck_record(conn, source.get("deck_name"), feed_game_id),
+                "rank": _rank_context(conn, source.get("format")),
                 "archetype_guess": (
                     _archetype_guess(conn, status.get("opponent_cards"), feed_game_id)
                     if status.get("in_game")

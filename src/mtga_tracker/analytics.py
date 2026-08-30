@@ -522,6 +522,7 @@ class AnalyticsStore:
         AnalyticsStore.ensure_table_column(conn, "live_status", "deck_size", "INTEGER")
         AnalyticsStore.ensure_table_column(conn, "live_status", "deck_lands", "INTEGER")
         AnalyticsStore.ensure_table_column(conn, "live_status", "opponent_cards", "TEXT")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "last_game_json", "TEXT")
         AnalyticsStore.backfill_game_turn_counts(conn)
         AnalyticsStore.apply_pending_migrations(conn)
         AnalyticsStore.canonicalize_imported_deck_names(conn)
@@ -2793,6 +2794,7 @@ class AnalyticsStore:
         "deck_size",
         "deck_lands",
         "opponent_cards",
+        "last_game_json",
     )
 
     def _upsert_live_status(self, conn: sqlite3.Connection, live: Dict[str, Any]) -> None:

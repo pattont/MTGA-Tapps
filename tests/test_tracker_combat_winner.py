@@ -7438,3 +7438,36 @@ def test_threshold_sweeper_settles_at_game_end_not_same_turn():
     tracker.game_state.object_snapshots.pop(102)
     tracker._settle_threshold_wipes(force=True)
     assert stats["wipes_played"] == 1
+
+
+def test_live_snapshot_freezes_last_game_between_games():
+    """The final in-game snapshot is frozen into last_game_json when the game
+    ends, so /api/live can keep the previous scoreboard up across page loads."""
+    tracker = make_tracker()
+    tracker._live_card_db_path = lambda: None
+    tracker._live_tracker_version = lambda: "test"
+    tracker._live_draw_stats = lambda: None
+    tracker._live_deck_land_stats = lambda: None
+    tracker._live_opponent_card_names = lambda: None
+    tracker._live_colors_for = lambda cards: "WB"
+    tracker._live_lands_played = lambda cards: 3
+    g = tracker.game_state
+    g.in_match = True
+    g.game_start_time = datetime.now()
+    g.match_complete = False
+    g.player_deck_name = "Skellies"
+    g.opponent_display_name = "Villain"
+
+    in_game_row = tracker._live_status_snapshot()
+    assert in_game_row["in_game"] == 1
+    assert in_game_row["last_game_json"] is None
+
+    g.match_complete = True
+    idle_row = tracker._live_status_snapshot()
+    assert idle_row["in_game"] == 0
+    frozen = json.loads(idle_row["last_game_json"])
+    assert frozen["in_game"] == 1
+    assert frozen["deck_name"] == "Skellies"
+    assert frozen["opponent_name"] == "Villain"
+    assert frozen["player_colors"] == "WB"
+    assert frozen["player_lands"] == 3

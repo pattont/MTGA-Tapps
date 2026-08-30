@@ -167,14 +167,19 @@ function Scoreboard({
           <span className="live-chip">Game {now.game_number ?? 1} of 3</span>
         ) : null}
         {waiting ? (
-          <span
-            className={`live-chip live-chip-previous${
-              previousOutcome ? ` live-chip-previous-${previousOutcome}` : ''
-            }`}
-          >
-            Previous Game{previousOutcome ? ` — ${outcomeLabel(previousOutcome)}` : ''}
-            {previousReason ? ` · ${previousReason}` : ''}
-          </span>
+          <>
+            <span
+              className={`live-chip live-chip-previous${
+                previousOutcome ? ` live-chip-previous-${previousOutcome}` : ''
+              }`}
+            >
+              Previous Game{previousOutcome ? ` — ${outcomeLabel(previousOutcome)}` : ''}
+              {previousReason ? ` · ${previousReason}` : ''}
+            </span>
+            <span className="live-chip live-chip-turn">
+              <span aria-hidden="true" className="live-pulse-dot" /> Waiting for next match…
+            </span>
+          </>
         ) : (
           <span
             className={
@@ -377,6 +382,12 @@ export function LiveLogPage() {
           .reverse()
           .find((row) => row.player_life !== null || row.opponent_life !== null);
         setLastGameNow((previous) => {
+          if (!previous && after.last_game_frozen) {
+            // Fresh page load between games: adopt the server's frozen
+            // final snapshot so navigating away and back keeps the previous
+            // game's scoreboard instead of blanking it.
+            return after;
+          }
           if (!previous || (after.game_id !== null && after.game_id !== previous.game_id)) {
             return previous;
           }

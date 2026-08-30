@@ -599,3 +599,99 @@ def test_mark_live_status_stopped_without_row_is_noop(tmp_path):
     payload = live_api.build_status_payload(tmp_path / "tracker.sqlite3")
     assert payload["tracker"]["state"] == "offline"
     store.close()
+
+
+def _frozen_row(session_id="S1"):
+    return {
+        "session_id": session_id,
+        "in_game": 1,
+        "game_id": "G1",
+        "match_id": "M1",
+        "deck_name": "Skellies",
+        "player_name": "Tapps",
+        "opponent_name": "Villain",
+        "player_colors": "WB",
+        "opponent_colors": "BR",
+        "player_life": 18,
+        "opponent_life": 19,
+        "player_lands": 3,
+        "opponent_lands": 2,
+        "mulligans": 0,
+    }
+
+
+def test_frozen_last_game_serves_between_games(tmp_path):
+    """A page load between games gets the previous game's full scoreboard
+    (the tracker nulls the live fields, but the frozen snapshot fills in)."""
+    store = _store(tmp_path)
+    conn = store.connect()
+    with conn:
+        store._upsert_live_status(
+            conn,
+            {
+                "session_id": "S1",
+                "updated_at": datetime.now().isoformat(),
+                "in_game": 0,
+                "last_game_json": json.dumps(_frozen_row()),
+            },
+        )
+
+    payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+
+    now_block = payload["now"]
+    assert now_block["in_game"] is False
+    assert now_block["last_game_frozen"] is True
+    assert now_block["deck_name"] == "Skellies"
+    assert now_block["opponent_name"] == "Villain"
+    assert now_block["player_colors"] == "WB"
+    assert now_block["player_life"] == 18
+    assert now_block["player_lands"] == 3
+    assert now_block["game_id"] == "G1"
+    store.close()
+
+
+def test_frozen_last_game_ignored_across_sessions(tmp_path):
+    """A tracker restart must not resurrect a game whose feed is gone: the
+    frozen snapshot only serves for the session that recorded it."""
+    store = _store(tmp_path)
+    conn = store.connect()
+    with conn:
+        store._upsert_live_status(
+            conn,
+            {
+                "session_id": "S2",
+                "updated_at": datetime.now().isoformat(),
+                "in_game": 0,
+                "last_game_json": json.dumps(_frozen_row(session_id="S1")),
+            },
+        )
+
+    payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+
+    now_block = payload["now"]
+    assert now_block["last_game_frozen"] is False
+    assert now_block["deck_name"] is None
+    store.close()
+
+
+def test_frozen_last_game_not_used_while_in_game(tmp_path):
+    store = _store(tmp_path)
+    conn = store.connect()
+    with conn:
+        store._upsert_live_status(
+            conn,
+            {
+                "session_id": "S1",
+                "updated_at": datetime.now().isoformat(),
+                "in_game": 1,
+                "deck_name": "Live Deck",
+                "last_game_json": json.dumps(_frozen_row()),
+            },
+        )
+
+    payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+
+    now_block = payload["now"]
+    assert now_block["last_game_frozen"] is False
+    assert now_block["deck_name"] == "Live Deck"
+    store.close()
