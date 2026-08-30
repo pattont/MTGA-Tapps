@@ -5613,7 +5613,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if request_path == "/api/opponents":
             try:
-                body = json.dumps(opponents_list(self.server.db_path)).encode("utf-8")
+                body = json.dumps(opponents_list(self.db_path)).encode("utf-8")
             except Exception as exc:  # noqa: BLE001
                 _send_bytes(
                     self,

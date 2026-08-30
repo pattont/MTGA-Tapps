@@ -386,6 +386,36 @@ def test_dashboard_handler_serves_snapshot_json(tmp_path):
     assert payload["recent"][0]["format_label"] == "Standard Best-of-1 (Unranked)"
 
 
+def test_dashboard_handler_serves_opponents_list(tmp_path):
+    """Regression: the /api/opponents dispatch read db_path off the wrong
+    object (self.server.db_path) and every request 500'd on the real server."""
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as db:
+        db.execute("update participants set display_name = 'RealPerson' where id = 'opponent-1'")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _dashboard_handler_for(db_path))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    conn = None
+    thread.start()
+    try:
+        conn = HTTPConnection("127.0.0.1", server.server_address[1])
+        conn.request("GET", "/api/opponents")
+        response = conn.getresponse()
+        body = response.read().decode("utf-8")
+    finally:
+        if conn is not None:
+            conn.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+    assert response.status == 200
+    payload = json.loads(body)
+    assert payload["total"] == 1
+    assert payload["opponents"][0]["opponent_name"] == "RealPerson"
+    assert payload["opponents"][0]["games"] == 1
+
+
 def test_dashboard_handler_reports_missing_snapshot_db(tmp_path):
     db_path = tmp_path / "missing.sqlite3"
     server = ThreadingHTTPServer(("127.0.0.1", 0), _dashboard_handler_for(db_path))

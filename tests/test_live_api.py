@@ -560,3 +560,42 @@ def test_live_payload_rank_hidden_for_unranked(tmp_path):
     store.close()
     payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
     assert payload["now"]["rank"] is None
+
+
+def test_mark_live_status_stopped_flips_state_offline(tmp_path):
+    """Stop Tracking stamps live_status stale immediately — the sidebar light
+    and /live must not keep showing "Ready" until the heartbeat ages out."""
+    store = _store(tmp_path)
+    store.touch_live_status("S1", datetime.now())
+    payload = live_api.build_status_payload(tmp_path / "tracker.sqlite3")
+    assert payload["tracker"]["state"] == "idle"
+
+    store.mark_live_status_stopped()
+
+    payload = live_api.build_status_payload(tmp_path / "tracker.sqlite3")
+    assert payload["tracker"]["state"] == "offline"
+    store.close()
+
+
+def test_mark_live_status_stopped_clears_in_game(tmp_path):
+    store = _store(tmp_path)
+    conn = store.connect()
+    with conn:
+        conn.execute(
+            "INSERT INTO live_status (id, updated_at, in_game) VALUES (1, ?, 1)",
+            (datetime.now().isoformat(),),
+        )
+
+    store.mark_live_status_stopped()
+
+    row = conn.execute("SELECT in_game FROM live_status WHERE id = 1").fetchone()
+    assert row[0] == 0
+    store.close()
+
+
+def test_mark_live_status_stopped_without_row_is_noop(tmp_path):
+    store = _store(tmp_path)
+    store.mark_live_status_stopped()  # no live_status row yet — must not raise
+    payload = live_api.build_status_payload(tmp_path / "tracker.sqlite3")
+    assert payload["tracker"]["state"] == "offline"
+    store.close()

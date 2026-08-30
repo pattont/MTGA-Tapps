@@ -161,6 +161,7 @@ class UnifiedLauncher:
             self._set_status("tracker-error")
         finally:
             self.tracker = None
+            self._mark_tracker_stopped()
             if not self._stop_requested.is_set():
                 self._set_status("tracker-stopped")
 
@@ -179,6 +180,18 @@ class UnifiedLauncher:
         )
         self.tracker_thread.start()
 
+    def _mark_tracker_stopped(self) -> None:
+        """Best-effort: stamp live_status stale so the dashboard's Live Log
+        light and /live tracker state flip off immediately on stop."""
+        try:
+            store = AnalyticsStore(self.db_path)
+            try:
+                store.mark_live_status_stopped()
+            finally:
+                store.close()
+        except Exception:
+            pass
+
     def stop_tracker(self, *, timeout: float = 3.0) -> None:
         self._stop_requested.set()
         if self.tracker is not None:
@@ -187,6 +200,7 @@ class UnifiedLauncher:
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=timeout)
         self.tracker_thread = None
+        self._mark_tracker_stopped()
         self._set_status("tracker-stopped")
 
     def stop_dashboard(self) -> None:

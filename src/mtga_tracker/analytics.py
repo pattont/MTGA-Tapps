@@ -2850,6 +2850,20 @@ class AnalyticsStore:
                     {"session_id": session_id, "updated_at": now.isoformat(), "in_game": 0},
                 )
 
+    def mark_live_status_stopped(self) -> None:
+        """Stamp live_status stale (and out of game) the moment tracking stops,
+        so the dashboard flips to "offline" immediately instead of waiting out
+        the heartbeat-recency window."""
+        conn = self.connect()
+        if conn is None:
+            return
+        stale = datetime.now() - timedelta(seconds=120)
+        with conn:
+            conn.execute(
+                "UPDATE live_status SET updated_at = ?, in_game = 0 WHERE id = 1",
+                (stale.isoformat(),),
+            )
+
     def record_raw_payload(
         self,
         *,
