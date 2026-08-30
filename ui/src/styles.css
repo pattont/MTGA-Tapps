@@ -1965,24 +1965,17 @@ tbody tr:hover {
   background: color-mix(in srgb, var(--accent) 12%, var(--panel-strong));
 }
 
+/* Footer row under the top-opponents table; mirrors .table-pagination so it
+   reads as part of the table (same inset and light top rule). */
 .opponents-tablefoot {
   display: flex;
+  min-height: 48px;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-top: 10px;
-}
-
-.subsection-title {
-  margin: 22px 0 2px;
-  color: var(--text);
-  font-size: 1rem;
-}
-
-.subsection-description {
-  margin: 0 0 10px;
-  color: var(--muted);
-  font-size: 0.86rem;
+  gap: 16px;
+  margin: 0 12px;
+  padding: 8px 0 12px;
+  border-top: 1px solid var(--border);
 }
 
 /* Opponent detail header: breathe between back link, eyebrow, and title. */

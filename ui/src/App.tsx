@@ -1658,11 +1658,15 @@ function Dashboard({
             All opponents →
           </a>
         </div>
-        <h4 className="subsection-title">Opponent Color Meta</h4>
-        <p className="subsection-description">
-          Your record by opponent color combination, inferred from every card each opponent
-          revealed. Games with no identified colored cards show as Unknown.
-        </p>
+        <div className="section-heading">
+          <div>
+            <h3>Opponent Color Meta</h3>
+            <p className="section-description">
+              Your record by opponent color combination, inferred from every card each opponent
+              revealed. Games with no identified colored cards show as Unknown.
+            </p>
+          </div>
+        </div>
         <SortableTable
           caption="Record by opponent color combination"
           columns={homeOpponentColorColumns}
