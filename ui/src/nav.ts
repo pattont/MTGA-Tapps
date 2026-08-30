@@ -16,6 +16,7 @@ export const dashboardNavItems: AppNavItem[] = [
   { id: 'land-drops', label: 'Land Statistics' },
   { id: 'habits', label: 'Habits & Schedule' },
   { id: 'opponent-meta', label: 'Opponent Meta' },
+  { id: 'opponents', label: 'Opponents' },
   { id: 'formats', label: 'Formats' },
   { id: 'sessions', label: 'Sessions' },
   { id: 'all-games', label: 'All Games', route: '#/games' },

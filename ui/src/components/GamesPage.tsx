@@ -44,6 +44,12 @@ const columns: Column<AllGamesRow>[] = [
     sortValue: (row) => row.deck_name,
   },
   {
+    key: 'deck_colors',
+    header: 'Colors',
+    render: (row) => (row.deck_colors ? <ColorPips colors={row.deck_colors} /> : null),
+    sortValue: (row) => row.deck_colors ?? '',
+  },
+  {
     key: 'format_label',
     header: 'Format',
     render: (row) => shortFormatLabel(row.format_label),

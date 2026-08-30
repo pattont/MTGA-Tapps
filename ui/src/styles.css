@@ -1944,6 +1944,31 @@ tbody tr:hover {
   color: var(--accent-strong);
 }
 
+/* Opponents page search box */
+.opponents-search {
+  min-height: 34px;
+  min-width: 240px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.opponents-search:focus-visible {
+  border-color: var(--accent);
+}
+
+.opponents-count {
+  color: var(--subtle);
+  font-size: 0.82rem;
+}
+
+.section-footnote {
+  margin: 10px 0 0;
+  font-size: 0.85rem;
+}
+
 /* Plain-text Play/Draw labels (the split tables) — pill colors, no pill. */
 .text-play {
   color: var(--on-play);

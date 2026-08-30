@@ -237,6 +237,12 @@ export function gamesRouteHash(filters: SnapshotFilters = {}): string {
   return `#/games${query ? `?${query}` : ''}`;
 }
 
+export const OPPONENTS_ROUTE_HASH = '#/opponents';
+
+export function parseOpponentsRoute(hash: string): boolean {
+  return hash === OPPONENTS_ROUTE_HASH;
+}
+
 export function parseGamesRoute(hash: string): { filters: SnapshotFilters } | null {
   if (hash !== '#/games' && !hash.startsWith('#/games?')) {
     return null;

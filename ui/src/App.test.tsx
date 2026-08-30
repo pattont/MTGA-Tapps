@@ -682,6 +682,7 @@ describe('App', () => {
       'land-drops',
       'habits',
       'opponent-meta',
+      'opponents',
       'formats',
       'sessions',
     ]);

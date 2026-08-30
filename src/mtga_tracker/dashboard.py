@@ -2226,6 +2226,27 @@ def dashboard_snapshot(
                 params,
             )
         )
+        top_opponent_rows = _dict_rows(
+            conn.execute(
+                f"""
+                SELECT
+                  o.display_name AS opponent_name,
+                  COUNT(*) AS games,
+                  SUM(g.outcome = 'win') AS wins,
+                  SUM(g.outcome = 'loss') AS losses,
+                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate,
+                  MAX(g.started_at) AS last_played
+                FROM games g
+                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
+                WHERE {where} AND o.display_name IS NOT NULL AND o.display_name NOT IN ('', 'Opponent')
+                GROUP BY o.display_name
+                ORDER BY games DESC, o.display_name
+                LIMIT 5
+                """,
+                params,
+            )
+        )
         drawn_card_rows = _dict_rows(
             conn.execute(
                 f"""
@@ -2620,6 +2641,7 @@ def dashboard_snapshot(
         "opener_lands": opener_land_rows,
         "opponent_threats": opponent_threat_rows,
         "opponent_colors": opponent_color_rows,
+        "top_opponents": top_opponent_rows,
         "brawl": brawl_summary,
         "your_commanders": your_commander_rows,
         "faced_commanders": faced_commander_rows,
@@ -4449,6 +4471,33 @@ def card_detail(
     }
 
 
+def opponents_list(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
+    """Every opponent ever faced, with record and recency — the searchable
+    Opponents page ("did I ever play a streamer without knowing?")."""
+    db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
+    with sqlite3.connect(db_uri, uri=True) as conn:
+        rows = _dict_rows(
+            conn.execute(
+                """
+                SELECT
+                  o.display_name AS opponent_name,
+                  COUNT(*) AS games,
+                  SUM(g.outcome = 'win') AS wins,
+                  SUM(g.outcome = 'loss') AS losses,
+                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate,
+                  MIN(g.started_at) AS first_played,
+                  MAX(g.started_at) AS last_played
+                FROM games g
+                JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
+                WHERE o.display_name IS NOT NULL AND o.display_name NOT IN ('', 'Opponent')
+                GROUP BY o.display_name
+                ORDER BY games DESC, o.display_name
+                """
+            )
+        )
+    return {"opponents": rows, "total": len(rows)}
+
+
 def all_games(
     db_path: Path = DEFAULT_DB_PATH,
     deck: Optional[str] = None,
@@ -4563,8 +4612,10 @@ def all_games(
                 participant_ids,
             ):
                 deck_stats[record[0]] = (int(record[1] or 0), int(record[2] or 0))
+        deck_color_map = _deck_color_map(conn)
 
     for row in rows:
+        row["deck_colors"] = deck_color_map.get(str(row.get("deck_name") or ""), "")
         participant_id = row.pop("player_participant_id", None)
         fallback_size = int(row.pop("deck_size", None) or 60)
         decklist = deck_stats.get(participant_id)
@@ -5534,6 +5585,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 )
                 return
             except Exception as exc:
+                _send_bytes(
+                    self,
+                    500,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
+        if request_path == "/api/opponents":
+            try:
+                body = json.dumps(opponents_list(self.server.db_path)).encode("utf-8")
+            except Exception as exc:  # noqa: BLE001
                 _send_bytes(
                     self,
                     500,

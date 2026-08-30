@@ -161,6 +161,19 @@ export interface OpenerLandRow {
   avg_mulligans?: number | null;
 }
 
+export interface TopOpponentRow {
+  opponent_name: string;
+  games: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  last_played: string | null;
+}
+
+export interface OpponentListRow extends TopOpponentRow {
+  first_played: string | null;
+}
+
 export interface OpponentColorRow {
   color_label: string;
   colors: string;
@@ -384,6 +397,7 @@ export interface DashboardSnapshot {
   opener_lands: OpenerLandRow[];
   opponent_threats: OpponentThreatRow[];
   opponent_colors?: OpponentColorRow[];
+  top_opponents?: TopOpponentRow[];
   brawl?: BrawlSummary;
   your_commanders?: CommanderRow[];
   faced_commanders?: CommanderRow[];
@@ -1647,6 +1661,14 @@ export async function fetchCollectionExportJob(
     signal,
   });
   return deckFinderJson<CollectionExportJob>(response);
+}
+
+export async function fetchOpponents(): Promise<{ opponents: OpponentListRow[]; total: number }> {
+  const response = await fetch('/api/opponents');
+  if (!response.ok) {
+    throw new Error(`Failed to load opponents (${response.status})`);
+  }
+  return (await response.json()) as { opponents: OpponentListRow[]; total: number };
 }
 
 export function collectionDownloadUrl(fileName: string): string {

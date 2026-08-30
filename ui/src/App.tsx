@@ -16,6 +16,7 @@ import {
   type MatchLevelSummary,
   type MomentumRow,
   type PlayDrawRow,
+  type TopOpponentRow,
   type RecentGameRow,
   type SessionRow,
   type SnapshotFilters,
@@ -38,6 +39,8 @@ import { SettingsPage } from './components/SettingsPage';
 import { MetricCard } from './components/MetricCard';
 import { AuditPage } from './components/AuditPage';
 import { OpponentDetailPage } from './components/OpponentDetailPage';
+import { OpponentsPage } from './components/OpponentsPage';
+import { OpponentLink } from './components/OpponentLink';
 import { RankProgressChart } from './components/RankProgressChart';
 import { SortableTable, type Column } from './components/SortableTable';
 import { TrendChart } from './components/TrendChart';
@@ -58,6 +61,8 @@ import {
   deckRouteHashWithFilters,
   gameRouteHash,
   gamesRouteHash,
+  parseOpponentsRoute,
+  OPPONENTS_ROUTE_HASH,
   parseAuditRoute,
   parseDeckFinderRoute,
   parseLiveRoute,
@@ -712,6 +717,32 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
   },
 ];
 
+const topOpponentColumns: Column<TopOpponentRow>[] = [
+  {
+    key: 'opponent_name',
+    header: 'Opponent',
+    render: (row) => <OpponentLink opponentName={row.opponent_name} />,
+    sortValue: (row) => row.opponent_name.toLowerCase(),
+  },
+  { key: 'games', header: 'Games', numeric: true },
+  { key: 'wins', header: 'Wins', numeric: true },
+  { key: 'losses', header: 'Losses', numeric: true },
+  {
+    key: 'win_rate',
+    header: 'Win Rate',
+    render: (row) => (row.win_rate == null ? '—' : `${row.win_rate}%`),
+    sortValue: (row) => row.win_rate ?? -1,
+    numeric: true,
+  },
+  {
+    key: 'last_played',
+    header: 'Last Played',
+    render: (row) => (row.last_played ? String(row.last_played).slice(0, 10) : '—'),
+    sortValue: (row) => row.last_played ?? '',
+    numeric: true,
+  },
+];
+
 const sessionColumns: Column<SessionRow>[] = [
   {
     key: 'started_at',
@@ -754,6 +785,7 @@ export default function App() {
   const settingsRoute = useMemo(() => parseSettingsRoute(routeHash), [routeHash]);
   const liveRoute = useMemo(() => parseLiveRoute(routeHash), [routeHash]);
   const gamesRoute = useMemo(() => parseGamesRoute(routeHash), [routeHash]);
+  const opponentsRoute = useMemo(() => parseOpponentsRoute(routeHash), [routeHash]);
   const deckName = deckRoute?.name ?? null;
   const gameId = gameRoute?.id ?? null;
   const cardName = cardRoute?.name ?? null;
@@ -847,6 +879,7 @@ export default function App() {
       || settingsRoute
       || liveRoute
       || gamesRoute
+      || opponentsRoute
       || loadState.status !== 'loaded'
       || !routeHash.startsWith('#')
     ) {
@@ -873,11 +906,13 @@ export default function App() {
               ? pageTitle('DB Health')
               : gamesRoute
                 ? pageTitle('All Games')
-                : pageTitle('Overview');
-  }, [auditRoute, deckRoute, gameRoute, gamesRoute, cardRoute, opponentRoute]);
+                : opponentsRoute
+                  ? pageTitle('Opponents')
+                  : pageTitle('Overview');
+  }, [auditRoute, deckRoute, gameRoute, gamesRoute, cardRoute, opponentRoute, opponentsRoute]);
 
   useEffect(() => {
-    if (deckName || gameId || cardName || opponentRoute || auditRoute || gamesRoute) {
+    if (deckName || gameId || cardName || opponentRoute || auditRoute || gamesRoute || opponentsRoute) {
       return;
     }
     let ignore = false;
@@ -915,7 +950,7 @@ export default function App() {
       activeController?.abort();
       window.clearInterval(refreshId);
     };
-  }, [filters, deckName, gameId, cardName, opponentRoute, auditRoute, gamesRoute]);
+  }, [filters, deckName, gameId, cardName, opponentRoute, auditRoute, gamesRoute, opponentsRoute]);
 
   const playerName =
     loadState.status === 'loaded' ? loadState.snapshot.summary.player_name : undefined;
@@ -968,10 +1003,12 @@ export default function App() {
                   ? opponentNavItems
                   : undefined
         }
-        heading={gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute?.name ?? dashboardTitle)}
+        heading={opponentsRoute ? 'Opponents' : gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute?.name ?? dashboardTitle)}
         mainClassName={liveRoute ? 'live-page-main' : undefined}
       >
-        {gamesRoute ? (
+        {opponentsRoute ? (
+          <OpponentsPage />
+        ) : gamesRoute ? (
           <GamesPage
             filters={gamesRoute.filters}
             onFiltersChange={(nextFilters) => {
@@ -1612,6 +1649,26 @@ function Dashboard({
           pageSize={10}
           rows={snapshot.opponent_colors ?? []}
         />
+      </Section>
+
+      <Section
+        id="opponents"
+        title="Opponents"
+        description="The people you've faced most, with your record against each."
+      >
+        <SortableTable
+          caption="Most-faced opponents"
+          columns={topOpponentColumns}
+          getRowKey={(row) => row.opponent_name}
+          initialSort={{ key: 'games', direction: 'desc' }}
+          pageSize={5}
+          rows={snapshot.top_opponents ?? []}
+        />
+        <p className="section-footnote">
+          <a className="deck-link" href={OPPONENTS_ROUTE_HASH}>
+            All opponents — searchable →
+          </a>
+        </p>
       </Section>
 
       <Section id="formats" title="Formats">
