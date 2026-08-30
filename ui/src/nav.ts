@@ -26,6 +26,11 @@ export const gamesNavItems: AppNavItem[] = [
   { id: 'all-games-list', label: 'All Games' },
 ];
 
+export const opponentsNavItems: AppNavItem[] = [
+  { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#opponents' },
+  { id: 'opponents-all', label: 'Opponents' },
+];
+
 export const auditNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
   { id: 'audit-summary', label: 'Summary' },

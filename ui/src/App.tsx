@@ -53,7 +53,7 @@ import type { MetricDefinition } from './dashboardData';
 import { formatCardName, formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone, shortFormatLabel } from './format';
 import { auditNavItems,
   deckFinderNavItems, cardNavItems, deckNavItems, gameNavItems, gamesNavItems, opponentNavItems,
-  liveNavItems, settingsNavItems } from './nav';
+  opponentsNavItems, liveNavItems, settingsNavItems } from './nav';
 import { FORMAT_QUICK_FILTERS } from './quickFilters';
 import { RouteFiltersContext } from './routeFilters';
 import {
@@ -983,7 +983,9 @@ export default function App() {
         theme={theme}
         onToggleTheme={toggleTheme}
         navItems={
-          gamesRoute
+          opponentsRoute
+            ? opponentsNavItems
+          : gamesRoute
             ? gamesNavItems
           : auditRoute
             ? auditNavItems

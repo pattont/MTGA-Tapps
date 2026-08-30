@@ -771,6 +771,46 @@ describe('App', () => {
     expect(screen.getByRole('link', { name: 'Deck Finder' })).toHaveAttribute('href', '#/deck-finder');
   });
 
+  it('routes to the Opponents page with its own back-to-dashboard nav', async () => {
+    const opponents = [
+      {
+        opponent_name: 'Streamer#11111',
+        games: 4,
+        wins: 3,
+        losses: 1,
+        win_rate: 75,
+        first_played: '2026-06-01T10:00:00',
+        last_played: '2026-08-20T22:00:00',
+      },
+    ];
+    const fetchMock = vi.fn(async (url: string) => {
+      const target = String(url);
+      if (target.startsWith('/api/opponents')) {
+        return new Response(JSON.stringify({ opponents, total: 1 }), { status: 200 });
+      }
+      return new Response(JSON.stringify(snapshot), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
+
+    await act(async () => {
+      window.location.hash = '#/opponents';
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+
+    expect(await screen.findByRole('table', { name: 'All opponents faced' })).toBeInTheDocument();
+    // Regression: this page fell through to the dashboard's section nav, so
+    // the sidebar was full of anchors that scroll nowhere and there was no
+    // way back. It must carry its own nav with a route back to the dashboard.
+    const nav = screen.getByRole('navigation', { name: 'Dashboard sections' });
+    expect(within(nav).getByRole('link', { name: 'Back to dashboard' })).toHaveAttribute(
+      'href',
+      '#opponents',
+    );
+    expect(within(nav).queryByRole('link', { name: 'Recent Games' })).not.toBeInTheDocument();
+  });
+
   it('routes to the Live Log page and renders the live scoreboard', async () => {
     const live = {
       tracker: { state: 'live', updated_at: new Date().toISOString(), session_id: 'S1' },

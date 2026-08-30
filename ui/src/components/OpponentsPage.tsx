@@ -81,7 +81,6 @@ export function OpponentsPage() {
   return (
     <Section
       id="opponents-all"
-      title="Opponents"
       description="Everyone you've ever been paired against, with your record. Search a name — maybe you ran into an employee or a streamer without knowing it."
     >
       <div className="table-filter">
