@@ -681,7 +681,6 @@ describe('App', () => {
       'decks',
       'land-drops',
       'habits',
-      'opponent-meta',
       'opponents',
       'formats',
       'sessions',
@@ -1447,7 +1446,8 @@ describe('App', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/opponent?name=Opponent', expect.anything());
     expect(screen.getByRole('table', { name: 'Games against Opponent' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Game History' })).toBeInTheDocument();
-    expect(screen.getAllByRole('link', { name: 'Boros Mouse' })).toHaveLength(2);
+    // The games table now shows your deck's colors, not its name.
+    expect(screen.queryByRole('link', { name: 'Boros Mouse' })).toBeNull();
   });
 
   it('searches all tracked cards and opens the selected card detail', async () => {

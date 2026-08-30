@@ -647,6 +647,7 @@ class AnalyticsStore:
             # v26: threshold-sweeper ruling (outcome-based wipes; history
             # defaults them to removal) — same recount, new rules.
             (26, AnalyticsStore._migrate_v24_reclassify_removal_stats),
+            (27, AnalyticsStore._migrate_v27_clear_self_named_opponents),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -1787,6 +1788,29 @@ class AnalyticsStore:
                 f"UPDATE game_participant_stats SET {set_clause} WHERE participant_id = ?",
                 (*assignments.values(), participant_id),
             )
+
+    @staticmethod
+    def _migrate_v27_clear_self_named_opponents(conn: sqlite3.Connection) -> None:
+        """Clear opponent names that are actually the player's own name.
+
+        A name-attribution bug briefly wrote the local player's display name
+        onto the opponent seat (opponent deck NULL, clearly another player's
+        cards), so 'you' showed up in your own opponents list. Arena names
+        are stored without discriminators, so a same-string opponent IS the
+        misattribution in practice; the real name was never captured and
+        cannot be recovered — these games fall back to the unnamed-opponent
+        placeholder behavior.
+        """
+        conn.execute(
+            """
+            UPDATE participants SET display_name = NULL
+            WHERE role = 'opponent' AND display_name IS NOT NULL
+              AND display_name = (
+                SELECT p.display_name FROM participants p
+                WHERE p.game_id = participants.game_id AND p.role = 'player'
+              )
+            """
+        )
 
     @staticmethod
     def _migrate_v23_tag_ramped_lands_source(conn: sqlite3.Connection) -> None:

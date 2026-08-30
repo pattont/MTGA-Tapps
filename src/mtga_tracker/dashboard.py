@@ -2226,6 +2226,19 @@ def dashboard_snapshot(
                 params,
             )
         )
+        opponents_total = int(
+            conn.execute(
+                f"""
+                SELECT COUNT(DISTINCT o.display_name)
+                FROM games g
+                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
+                WHERE {where} AND o.display_name IS NOT NULL AND o.display_name NOT IN ('', 'Opponent')
+                """,
+                params,
+            ).fetchone()[0]
+            or 0
+        )
         top_opponent_rows = _dict_rows(
             conn.execute(
                 f"""
@@ -2642,6 +2655,7 @@ def dashboard_snapshot(
         "opponent_threats": opponent_threat_rows,
         "opponent_colors": opponent_color_rows,
         "top_opponents": top_opponent_rows,
+        "opponents_total": opponents_total,
         "brawl": brawl_summary,
         "your_commanders": your_commander_rows,
         "faced_commanders": faced_commander_rows,
@@ -3956,7 +3970,9 @@ def opponent_detail(
                 (requested_name, *filter_params),
             )
         )
+        deck_color_map = _deck_color_map(conn)
     for row in game_rows:
+        row["deck_colors"] = deck_color_map.get(str(row.get("deck_name") or ""), "")
         row["format_label"] = format_label(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )

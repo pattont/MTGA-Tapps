@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { fetchOpponentDetail, type OpponentDetail, type OpponentGameRow, type SnapshotFilters } from '../api';
 import { formatPercent } from '../dashboardData';
-import { formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone } from '../format';
+import { formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone, shortFormatLabel } from '../format';
 import { gameRouteHash, opponentRouteHash } from '../routes';
 import { Badge } from './Badge';
-import { DeckLink } from './DeckLink';
+import { ColorPips } from './ColorPips';
 import { MetricCard } from './MetricCard';
 import { SortableTable, type Column } from './SortableTable';
 
@@ -27,19 +27,35 @@ const columns = (opponentName: string): Column<OpponentGameRow>[] => [
     sortValue: (row) => row.started_at,
   },
   {
-    key: 'deck_name',
-    header: 'Your Deck',
-    render: (row) => <DeckLink deckName={row.deck_name} />,
-    sortValue: (row) => row.deck_name,
+    key: 'deck_colors',
+    header: 'Your Colors',
+    render: (row) => (row.deck_colors ? <ColorPips colors={row.deck_colors} /> : null),
+    sortValue: (row) => row.deck_colors ?? '',
   },
-  { key: 'format_label', header: 'Format' },
+  {
+    key: 'format_label',
+    header: 'Format',
+    render: (row) => shortFormatLabel(row.format_label),
+    sortValue: (row) => row.format_label,
+  },
   {
     key: 'outcome',
     header: 'Outcome',
     render: (row) => <Badge tone={outcomeTone(row.outcome)}>{outcomeLabel(row.outcome)}</Badge>,
     sortValue: (row) => outcomeLabel(row.outcome),
   },
-  { key: 'play_draw', header: 'Play / Draw' },
+  {
+    key: 'play_draw',
+    header: 'Play/Draw',
+    render: (row) =>
+      row.play_draw === 'On the play' ? (
+        <Badge tone="play">Play</Badge>
+      ) : row.play_draw === 'On the draw' ? (
+        <Badge tone="drawside">Draw</Badge>
+      ) : null,
+    sortValue: (row) => row.play_draw,
+    center: true,
+  },
   {
     key: 'duration_seconds',
     header: 'Duration',
@@ -137,9 +153,9 @@ export function OpponentDetailPage({
         <a className="back-link" href="#recent-games">← Back to dashboard</a>
         <div className="opponent-detail-title">
           <div>
-            <p className="detail-eyebrow">HEAD-TO-HEAD</p>
+            <p className="detail-eyebrow">Head-to-Head</p>
             <h2>{detail.opponent_name}</h2>
-            <p>Your tracked match history against this Arena player.</p>
+            <p className="detail-subtitle">Your tracked match history against this Arena player.</p>
           </div>
         </div>
       </div>

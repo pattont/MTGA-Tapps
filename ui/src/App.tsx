@@ -1003,7 +1003,7 @@ export default function App() {
                   ? opponentNavItems
                   : undefined
         }
-        heading={opponentsRoute ? 'Opponents' : gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute?.name ?? dashboardTitle)}
+        heading={opponentsRoute ? 'Opponents' : gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute ? 'Opponent Information' : dashboardTitle)}
         mainClassName={liveRoute ? 'live-page-main' : undefined}
       >
         {opponentsRoute ? (
@@ -1637,24 +1637,9 @@ function Dashboard({
       ) : null}
 
       <Section
-        id="opponent-meta"
-        title="Opponent Meta"
-        description="Your record by opponent color combination, inferred from every card each opponent revealed. Games with no identified colored cards show as Unknown."
-      >
-        <SortableTable
-          caption="Record by opponent color combination"
-          columns={homeOpponentColorColumns}
-          getRowKey={(row) => row.color_label}
-          initialSort={{ key: 'games', direction: 'desc' }}
-          pageSize={10}
-          rows={snapshot.opponent_colors ?? []}
-        />
-      </Section>
-
-      <Section
         id="opponents"
         title="Opponents"
-        description="The people you've faced most, with your record against each."
+        description="The people you've faced most, and your record by opponent color combination."
       >
         <SortableTable
           caption="Most-faced opponents"
@@ -1664,11 +1649,28 @@ function Dashboard({
           pageSize={5}
           rows={snapshot.top_opponents ?? []}
         />
-        <p className="section-footnote">
-          <a className="deck-link" href={OPPONENTS_ROUTE_HASH}>
-            All opponents — searchable →
+        <div className="opponents-tablefoot">
+          <span className="opponents-count">
+            Showing 1–{Math.min(5, (snapshot.top_opponents ?? []).length)} of{' '}
+            {snapshot.opponents_total ?? (snapshot.top_opponents ?? []).length} opponents
+          </span>
+          <a className="pill-link" href={OPPONENTS_ROUTE_HASH}>
+            All opponents →
           </a>
+        </div>
+        <h4 className="subsection-title">Opponent Color Meta</h4>
+        <p className="subsection-description">
+          Your record by opponent color combination, inferred from every card each opponent
+          revealed. Games with no identified colored cards show as Unknown.
         </p>
+        <SortableTable
+          caption="Record by opponent color combination"
+          columns={homeOpponentColorColumns}
+          getRowKey={(row) => row.color_label}
+          initialSort={{ key: 'games', direction: 'desc' }}
+          pageSize={10}
+          rows={snapshot.opponent_colors ?? []}
+        />
       </Section>
 
       <Section id="formats" title="Formats">

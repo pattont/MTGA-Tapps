@@ -374,7 +374,11 @@ class TrackerOpeningDeckMixin:
                     self.game_state.player_display_name = (
                         self.game_state.player_display_name or r["name"]
                     )
-                elif r.get("seat") == self.game_state.opponent_seat_id and r.get("name"):
+                elif (
+                    r.get("seat") == self.game_state.opponent_seat_id
+                    and r.get("name")
+                    and r.get("name") != self.game_state.player_display_name
+                ):
                     self.game_state.opponent_display_name = r["name"]
 
     def _maybe_print_pregame_commander_lines(self) -> None:
@@ -464,7 +468,11 @@ class TrackerOpeningDeckMixin:
                         self.game_state.player_display_name = (
                             self.game_state.player_display_name or r["name"]
                         )
-                    elif r.get("seat") == self.game_state.opponent_seat_id and r.get("name"):
+                    elif (
+                        r.get("seat") == self.game_state.opponent_seat_id
+                        and r.get("name")
+                        and r.get("name") != self.game_state.player_display_name
+                    ):
                         self.game_state.opponent_display_name = r["name"]
             self._maybe_print_seat_resolution()
             self._sync_commander_views_from_seats()
@@ -526,7 +534,7 @@ class TrackerOpeningDeckMixin:
         self.game_state.opponent_seat_id = opponent.get("seat")
         if local.get("name"):
             self.game_state.player_display_name = local["name"]
-        if opponent.get("name"):
+        if opponent.get("name") and opponent.get("name") != self.game_state.player_display_name:
             self.game_state.opponent_display_name = opponent["name"]
 
     @staticmethod
@@ -1143,7 +1151,8 @@ class TrackerOpeningDeckMixin:
                                 self.game_state.player_display_name or r["name"]
                             )
                         elif r.get("seat") == self.game_state.opponent_seat_id and r.get("name"):
-                            self.game_state.opponent_display_name = r["name"]
+                            if r["name"] != self.game_state.player_display_name:
+                                self.game_state.opponent_display_name = r["name"]
             # Format
             fmt = (
                 config.get("eventType")

@@ -398,6 +398,7 @@ export interface DashboardSnapshot {
   opponent_threats: OpponentThreatRow[];
   opponent_colors?: OpponentColorRow[];
   top_opponents?: TopOpponentRow[];
+  opponents_total?: number;
   brawl?: BrawlSummary;
   your_commanders?: CommanderRow[];
   faced_commanders?: CommanderRow[];
@@ -948,6 +949,7 @@ export interface OpponentGameRow {
   format_label: string;
   best_of: number | null;
   deck_name: string;
+  deck_colors?: string;
   play_draw: string;
   player_final_life: number | null;
   opponent_final_life: number | null;

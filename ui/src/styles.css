@@ -1944,6 +1944,65 @@ tbody tr:hover {
   color: var(--accent-strong);
 }
 
+/* "All opponents" pill + table footer */
+.pill-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-radius: 999px;
+  background: var(--panel-strong);
+  color: var(--accent-strong);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.pill-link:hover,
+.pill-link:focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-strong));
+}
+
+.opponents-tablefoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.subsection-title {
+  margin: 22px 0 2px;
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.subsection-description {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+/* Opponent detail header: breathe between back link, eyebrow, and title. */
+.opponent-detail-title {
+  margin-top: 14px;
+}
+
+.opponent-detail-title .detail-eyebrow {
+  margin: 0 0 6px;
+}
+
+.opponent-detail-title h2 {
+  margin: 0 0 6px;
+}
+
+.opponent-detail-title .detail-subtitle {
+  margin: 0;
+  color: var(--muted);
+}
+
 /* Opponents page search box */
 .opponents-search {
   min-height: 34px;
