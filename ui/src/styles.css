@@ -4484,9 +4484,9 @@ a.settings-link-button {
   display: flex;
   align-items: center;
   gap: 6px;
-  /* Left edge lines up with the table's cell text (10px cell padding);
-     bottom margin breathes before the table starts. */
-  margin: 4px 10px 10px;
+  /* Left edge lines up with the "Opening Hand" section title (12px heading
+     padding); bottom margin breathes before the table starts. */
+  margin: 4px 12px 10px;
   font-size: 0.9rem;
 }
 
@@ -4506,10 +4506,15 @@ a.settings-link-button {
 }
 
 .commander-box-slim {
-  min-height: 72px;
-  justify-content: center;
-  gap: 2px;
-  padding: 10px 16px;
+  /* Eyebrow on its own line, then name + pips inline — shorter banner. */
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  column-gap: 8px;
+  row-gap: 2px;
+  min-height: 56px;
+  padding: 8px 16px;
   /* No fill at all: the section surface shows through (the same surface
      the metric cards sit on), and the commander art fades in from
      transparent on the right. Any painted background reads as an
@@ -4532,6 +4537,14 @@ a.settings-link-button {
 
 .commander-box-slim .commander-box-scrim {
   display: none;
+}
+
+.commander-box-slim .commander-box-eyebrow {
+  width: 100%;
+}
+
+.commander-box-slim .commander-box-pips {
+  margin-top: 0;
 }
 
 /* Text sits on the panel (not the art), so it keeps normal theme colors. */
