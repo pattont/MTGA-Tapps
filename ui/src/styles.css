@@ -4490,6 +4490,11 @@ a.settings-link-button {
   justify-content: center;
   gap: 2px;
   padding: 10px 16px;
+  /* Same translucent panel as the metric cards around it — the deck page's
+     ambient art backdrop shows through, so an opaque slab sticks out. */
+  background: var(--panel);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
 }
 
 /* Slim banner art matches the Best Deck bar: pinned to the right edge and
