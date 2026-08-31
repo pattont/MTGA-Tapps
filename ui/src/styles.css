@@ -489,6 +489,18 @@ a {
   color: var(--text);
 }
 
+/* Custom inset chevron: styled selects pin the native arrow to the very
+   edge of the control, which reads as touching the border. */
+.filter-bar select,
+.table-filter select {
+  padding-right: 30px;
+  appearance: none;
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8" viewBox="0 0 12 8"><path d="M1 1.5l5 5 5-5" fill="none" stroke="%23848f9c" stroke-width="1.8" stroke-linecap="round"/></svg>');
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px 8px;
+}
+
 .filter-bar select:hover,
 .filter-bar select:focus-visible,
 .table-filter select:hover,
@@ -758,8 +770,8 @@ a.best-deck-name:focus-visible {
 .section-content > .section-heading,
 .overview-section > .section-heading:not(:first-child) {
   border-top: 1px solid var(--border);
-  margin-top: 22px;
-  padding-top: 18px;
+  margin-top: 12px;
+  padding-top: 14px;
 }
 
 .dashboard-section > .metric-grid,
@@ -1969,12 +1981,11 @@ tbody tr:hover {
    reads as part of the table (same inset and light top rule). */
 .opponents-tablefoot {
   display: flex;
-  min-height: 48px;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   margin: 0 12px;
-  padding: 8px 0 12px;
+  padding: 6px 0 8px;
   border-top: 1px solid var(--border);
 }
 
