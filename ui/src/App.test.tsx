@@ -681,6 +681,7 @@ describe('App', () => {
       'decks',
       'land-drops',
       'habits',
+      'brawl',
       'opponents',
       'formats',
       'sessions',

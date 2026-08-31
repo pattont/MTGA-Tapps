@@ -36,6 +36,7 @@ import { Badge } from './Badge';
 import { bucketCombatGroups, CombatGroupColumns, withDrawnSuffix } from './CombatGroupColumns';
 import { CardLink } from './CardLink';
 import { ColorPips } from './ColorPips';
+import { CommanderVersus } from './CommanderPanel';
 import { Section } from './Section';
 import { LifeChart } from './LifeChart';
 import { MetricCard } from './MetricCard';
@@ -794,6 +795,14 @@ export function GameDetailPage({
           </div>
         </div>
       </div>
+
+      {(detail.player.commanders?.length ?? 0) > 0 || (detail.opponent.commanders?.length ?? 0) > 0 ? (
+        <CommanderVersus
+          opponent={detail.opponent.commanders ?? []}
+          player={detail.player.commanders ?? []}
+          returnHash={gameRouteHash(detail.game.game_id, backHref)}
+        />
+      ) : null}
 
       {matchGames.length > 0 ? (
         <div className="match-strip" aria-label="BO3 match overview">

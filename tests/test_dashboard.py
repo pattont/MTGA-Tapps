@@ -3055,3 +3055,62 @@ def test_deck_colors_fall_back_to_observed_cards(tmp_path):
     snapshot = dashboard_snapshot(db_path)
     deck_row = next(row for row in snapshot["decks"] if row["deck_name"] == "Boros Mouse")
     assert deck_row["colors"] == "WR"
+
+
+def test_deck_and_game_detail_carry_brawl_commanders(tmp_path):
+    """Brawl: the deck page gets its commander(s) + record vs each opponent
+    commander; the game page gets both seats' commanders with colors."""
+    db_path = tmp_path / "analytics.sqlite3"
+    conn = sqlite3.connect(db_path)
+    AnalyticsStore.ensure_schema(conn)
+    with conn:
+        conn.execute(
+            "INSERT INTO tracker_sessions (id, started_at) VALUES ('s1', '2026-08-12T10:00:00')"
+        )
+        conn.execute(
+            "INSERT INTO cards (name, color_identity, first_seen_at) "
+            "VALUES ('Belladonna Took', 'WB', '2026-08-12T10:00:00')"
+        )
+        for n, (outcome, theirs) in enumerate(
+            (("win", "The Unbeatable Squirrel Girl"), ("loss", "Kaalia of the Vast")), start=1
+        ):
+            conn.execute(
+                "INSERT INTO matches (id, session_id, format) VALUES (?, 's1', 'Historic Brawl')",
+                (f"m{n}",),
+            )
+            conn.execute(
+                "INSERT INTO games (id, session_id, match_id, started_at, ended_at, outcome) "
+                "VALUES (?, 's1', ?, ?, '2026-08-12T10:10:00', ?)",
+                (f"g{n}", f"m{n}", f"2026-08-12T10:0{n}:00", outcome),
+            )
+            conn.execute(
+                "INSERT INTO participants (id, game_id, role, display_name, deck_name) "
+                "VALUES (?, ?, 'player', 'Tapps', 'MWM Bella')",
+                (f"g{n}:p", f"g{n}"),
+            )
+            conn.execute(
+                "INSERT INTO participant_commanders (participant_id, card_name) "
+                "VALUES (?, 'Belladonna Took')",
+                (f"g{n}:p",),
+            )
+            conn.execute(
+                "INSERT INTO participants (id, game_id, role, display_name) "
+                "VALUES (?, ?, 'opponent', 'them')",
+                (f"g{n}:o", f"g{n}"),
+            )
+            conn.execute(
+                "INSERT INTO participant_commanders (participant_id, card_name) VALUES (?, ?)",
+                (f"g{n}:o", theirs),
+            )
+    conn.close()
+
+    detail = deck_detail(db_path, "MWM Bella")
+    assert detail["commanders"] == [{"card_name": "Belladonna Took", "colors": "WB"}]
+    faced = {row["commander"]: (row["wins"], row["losses"]) for row in detail["faced_commanders"]}
+    assert faced == {"The Unbeatable Squirrel Girl": (1, 0), "Kaalia of the Vast": (0, 1)}
+
+    game = game_detail(db_path, "g1")
+    assert game["player"]["commanders"] == [{"card_name": "Belladonna Took", "colors": "WB"}]
+    assert game["opponent"]["commanders"] == [
+        {"card_name": "The Unbeatable Squirrel Girl", "colors": ""}
+    ]

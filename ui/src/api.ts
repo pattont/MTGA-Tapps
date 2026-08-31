@@ -6,7 +6,7 @@ export interface DeckVisual {
   /** By-name Scryfall URL tried when image_url (arena-id) 404s — new sets
       often reach Scryfall before their Arena-ID mapping does. */
   image_fallback_url?: string | null;
-  source: 'local_metadata' | 'deck_name';
+  source: 'local_metadata' | 'deck_name' | 'commander';
 }
 
 export interface Summary {
@@ -650,6 +650,10 @@ export interface DeckModeSplits {
 export interface DeckDetail {
   deck_name: string;
   deck_visual: DeckVisual;
+  /** Brawl decks: the commander(s) this deck brought (most recent first). */
+  commanders?: CommanderRef[];
+  /** Brawl decks: record against each opponent commander faced. */
+  faced_commanders?: CommanderRow[];
   /** WUBRG letters from the newest decklist's casting costs (e.g. "B"). */
   deck_colors?: string;
   deck_export: DeckExport;
@@ -698,9 +702,16 @@ export interface GameHeader {
   best_of: number | null;
 }
 
+export interface CommanderRef {
+  card_name: string;
+  colors: string;
+}
+
 export interface GameParticipant {
   id?: string;
   role: string;
+  /** Brawl commander(s) this seat brought; empty/absent outside Brawl. */
+  commanders?: CommanderRef[];
   seat_id?: number | null;
   display_name?: string | null;
   deck_name?: string | null;

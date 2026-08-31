@@ -7490,3 +7490,20 @@ def test_live_color_index_retries_after_empty_build():
     tracker._live_color_index_attempt = 0.0
     assert tracker._live_color_index() == {"Dusk Rat": "B"}
     assert tracker._live_color_index_cache == {"Dusk Rat": "B"}
+
+
+def test_live_colors_seed_from_commander_identity():
+    """Brawl: the pips show the commander's full identity immediately, then
+    union in colors from cards actually played."""
+    tracker = make_tracker()
+    tracker._live_color_index_cache = {"Belladonna Took": "WB", "Llanowar Elves": "G"}
+
+    assert tracker._live_colors_with_commanders([], ["Belladonna Took"]) == "WB"
+    assert (
+        tracker._live_colors_with_commanders(
+            [CardEvent("Llanowar Elves", "you")], ["Belladonna Took"]
+        )
+        == "WBG"
+    )
+    # No commander (non-Brawl): played cards alone, unchanged behavior.
+    assert tracker._live_colors_with_commanders([CardEvent("Llanowar Elves", "you")], []) == "G"

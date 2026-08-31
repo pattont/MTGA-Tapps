@@ -913,6 +913,11 @@ def _commander_rows(
         ).fetchall()
     except sqlite3.OperationalError:
         return []
+    return _bucket_commander_outcomes(rows)
+
+
+def _bucket_commander_outcomes(rows) -> List[Dict[str, Any]]:
+    """(outcome, commander, colors) rows -> per-commander record rows."""
     buckets: Dict[str, Dict[str, Any]] = {}
     for outcome, card_name, colors in rows:
         name = str(card_name or "").strip()
@@ -3025,6 +3030,50 @@ def deck_detail(
                 mana_names.update(str(card["display_name"]) for card in seat["cards"])
         deck_card_mana = _card_mana_map(conn, mana_names)
         opponent_color_rows = _opponent_color_rows(conn, where, params)
+        # Brawl: this deck's commander(s), most recent first, and the record
+        # against each opponent commander faced with this deck. Both empty
+        # outside Brawl (no participant_commanders rows).
+        deck_commanders: List[Dict[str, Any]] = []
+        deck_faced_commanders: List[Dict[str, Any]] = []
+        try:
+            commander_name_rows = conn.execute(
+                f"""
+                SELECT
+                  pc.card_name,
+                  (SELECT c.color_identity FROM cards c WHERE c.name = pc.card_name) AS colors
+                FROM games g
+                JOIN matches m ON m.id = g.match_id
+                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                JOIN participant_commanders pc ON pc.participant_id = p.id
+                WHERE {where}
+                GROUP BY pc.card_name
+                ORDER BY MAX(g.started_at) DESC, pc.card_name
+                """,
+                params,
+            ).fetchall()
+            deck_commanders = [
+                {"card_name": str(name), "colors": normalize_colors(str(colors or ""))}
+                for name, colors in commander_name_rows
+                if name
+            ]
+            faced_outcome_rows = conn.execute(
+                f"""
+                SELECT
+                  g.outcome,
+                  pc.card_name,
+                  (SELECT c.color_identity FROM cards c WHERE c.name = pc.card_name) AS colors
+                FROM games g
+                JOIN matches m ON m.id = g.match_id
+                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
+                JOIN participant_commanders pc ON pc.participant_id = po.id
+                WHERE {where}
+                """,
+                params,
+            ).fetchall()
+            deck_faced_commanders = _bucket_commander_outcomes(faced_outcome_rows)
+        except sqlite3.OperationalError:
+            pass
         land_profile = _deck_land_profile(conn, where, params)
         account_rows = _dict_rows(
             conn.execute(
@@ -3068,6 +3117,8 @@ def deck_detail(
     return {
         "deck_name": deck_name,
         "deck_visual": deck_visuals.get(deck_name, _empty_deck_visual(deck_name)),
+        "commanders": deck_commanders,
+        "faced_commanders": deck_faced_commanders,
         "deck_colors": deck_colors,
         "deck_export": deck_export,
         "summary": {
@@ -3446,6 +3497,36 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         opponent = next((row for row in participant_rows if row.get("role") == "opponent"), None)
         player_participant_id = player.get("id") if player else None
         opponent_participant_id = opponent.get("id") if opponent else None
+
+        def _participant_commanders(participant_id: Optional[str]) -> List[Dict[str, Any]]:
+            """Brawl commanders for one seat (empty outside Brawl), with the
+            commander card's color identity when the cards table knows it."""
+            if not participant_id:
+                return []
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT
+                      pc.card_name,
+                      (SELECT c.color_identity FROM cards c WHERE c.name = pc.card_name) AS colors
+                    FROM participant_commanders pc
+                    WHERE pc.participant_id = ?
+                    ORDER BY pc.card_name
+                    """,
+                    (participant_id,),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return []
+            return [
+                {"card_name": str(name), "colors": normalize_colors(str(colors or ""))}
+                for name, colors in rows
+                if name
+            ]
+
+        if player is not None:
+            player["commanders"] = _participant_commanders(player_participant_id)
+        if opponent is not None:
+            opponent["commanders"] = _participant_commanders(opponent_participant_id)
 
         turn_timings = _dict_rows(
             conn.execute(

@@ -160,9 +160,15 @@ class TrackerAnalyticsMixin:
             "session_id": self.session_id,
             "updated_at": (now or self._now()).isoformat(),
             "in_game": 1 if in_game else 0,
-            "player_colors": self._live_colors_for(self.player_cards) if in_game else None,
+            "player_colors": (
+                self._live_colors_with_commanders(self.player_cards, g.player_commanders)
+                if in_game
+                else None
+            ),
             "opponent_colors": (
-                self._live_colors_for(self.opponent_cards) if in_game else None
+                self._live_colors_with_commanders(self.opponent_cards, g.opponent_commanders)
+                if in_game
+                else None
             ),
             # Live scoreboard extras: lands played per side, when the current
             # turn started (for the turn timer), the player's live land/draw
@@ -294,6 +300,22 @@ class TrackerAnalyticsMixin:
         colored = "".join(ch for ch in "WUBRG" if ch in letters)
         # All known cards colorless -> the side IS colorless ("C"), which the
         # scoreboard shows with the diamond pip.
+        return colored or ("C" if "C" in letters else "")
+
+    def _live_colors_with_commanders(self, cards, commanders) -> str:
+        """Colors from cards played, seeded with the commander's identity.
+
+        In Brawl the commander is visible from the opening hand, so the pips
+        can show the deck's full identity immediately instead of filling in
+        one played card at a time."""
+        letters: set = set(self._live_colors_for(cards))
+        index = self._live_color_index()
+        for name in commanders or []:
+            clean = str(name or "")
+            identity = index.get(clean) or index.get(clean.split(" // ")[0].strip())
+            if identity:
+                letters.update(ch for ch in str(identity) if ch in "WUBRGC")
+        colored = "".join(ch for ch in "WUBRG" if ch in letters)
         return colored or ("C" if "C" in letters else "")
 
     @staticmethod

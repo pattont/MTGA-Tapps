@@ -50,6 +50,8 @@ import { Badge } from './Badge';
 import { bucketCombatGroups, CombatGroupColumns, withDrawnSuffix } from './CombatGroupColumns';
 import { ColorPips } from './ColorPips';
 import { CardLink } from './CardLink';
+import { commanderArtUrl } from './CommanderPanel';
+import { makeCommanderColumns } from '../commanderColumns';
 import { DeckVisual } from './DeckVisual';
 import { FilterBar } from './FilterBar';
 import { Section } from './Section';
@@ -607,6 +609,7 @@ export function DeckDetailPage({
     };
   }, [deckName, filters]);
 
+  const deckFacedCommanderColumns = useMemo(() => makeCommanderColumns('Opponent Commander'), []);
   const deckOpponentColorColumns = useMemo(
     () => makeOpponentColorColumns((row) => gamesRouteHash({ deck: deckName, colors: row.colors })),
     [deckName],
@@ -887,15 +890,30 @@ export function DeckDetailPage({
   // Unranked, Best-of-1 vs Best-of-3, Competitive vs Casual Brawl).
   const formatCards = [...detail.formats].sort((a, b) => b.games - a.games);
 
+  // Brawl decks: the commander IS the deck's face — it replaces the
+  // signature card (the commander is card 100 and never appears in the
+  // submitted-maindeck chart, so this callout is where it lives).
+  const commanders = detail.commanders ?? [];
+  const heroVisual =
+    commanders.length > 0
+      ? {
+          card_id: null,
+          card_name: commanders[0].card_name,
+          type_category: 'Creature',
+          image_url: commanderArtUrl(commanders[0].card_name),
+          source: 'commander' as const,
+        }
+      : detail.deck_visual;
+
   return (
     <>
-      {detail.deck_visual.image_url ? (
-        // Ambient backdrop from the signature card's art: heavily blurred and
+      {heroVisual.image_url ? (
+        // Ambient backdrop from the deck's face card art: heavily blurred and
         // faded so it tints the page without fighting the content.
         <div
           aria-hidden="true"
           className="deck-art-backdrop"
-          style={{ backgroundImage: `url(${detail.deck_visual.image_url})` }}
+          style={{ backgroundImage: `url(${heroVisual.image_url})` }}
         />
       ) : null}
       {refreshError ? (
@@ -908,14 +926,28 @@ export function DeckDetailPage({
           ← Back to dashboard
         </a>
         <div className="deck-detail-title deck-detail-title-hero">
-          <DeckVisual deckName={detail.deck_name} size="large" visual={detail.deck_visual} />
+          <DeckVisual deckName={detail.deck_name} size="large" visual={heroVisual} />
           <div className="deck-detail-title-content">
             <div>
               <h2>{detail.deck_name}</h2>
               <p>
-                {detail.deck_visual.card_name && detail.deck_visual.source === 'local_metadata'
-                  ? `Signature card: ${formatCardName(detail.deck_visual.card_name)}`
-                  : 'No card data yet'}
+                {commanders.length > 0 ? (
+                  <>
+                    Commander:{' '}
+                    {commanders.map((commander, index) => (
+                      <span key={commander.card_name}>
+                        {index > 0 ? ' · ' : ''}
+                        <CardLink cardName={commander.card_name} returnHash={`#/deck/${encodeURIComponent(detail.deck_name)}`}>
+                          {formatCardName(commander.card_name)}
+                        </CardLink>
+                      </span>
+                    ))}
+                  </>
+                ) : detail.deck_visual.card_name && detail.deck_visual.source === 'local_metadata' ? (
+                  `Signature card: ${formatCardName(detail.deck_visual.card_name)}`
+                ) : (
+                  'No card data yet'
+                )}
               </p>
               {detail.deck_colors ? (
                 <div className="deck-color-pips">
@@ -1308,6 +1340,27 @@ export function DeckDetailPage({
           paginationKey={deckName}
           rows={detail.opponent_colors ?? []}
         />
+        {(detail.faced_commanders ?? []).length > 0 ? (
+          <>
+            <div className="section-heading">
+              <div>
+                <h3>Opponent Commanders</h3>
+                <p className="section-description">
+                  The commanders this deck has been paired against, and its record vs each.
+                </p>
+              </div>
+            </div>
+            <SortableTable
+              caption="Record against opponent commanders with this deck"
+              columns={deckFacedCommanderColumns}
+              getRowKey={(row) => row.commander}
+              initialSort={{ key: 'games', direction: 'desc' }}
+              pageSize={10}
+              paginationKey={`${deckName}-commanders`}
+              rows={detail.faced_commanders ?? []}
+            />
+          </>
+        ) : null}
       </Section>
 
       <Section

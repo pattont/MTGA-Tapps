@@ -4393,6 +4393,98 @@ a.settings-link-button {
   gap: 10px;
 }
 
+/* The opponent column is right-aligned; its commander card follows suit. */
+.live-side-opponent .live-commanders {
+  justify-content: flex-end;
+}
+
+/* ---- Brawl commander callout (game page, deck page) ---- */
+
+.commander-versus {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.commander-box {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 4px;
+  min-height: 128px;
+  overflow: hidden;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-strong);
+}
+
+.commander-box-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 25%;
+}
+
+/* Darkens the art so the name stays readable in either theme. */
+.commander-box-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(8, 10, 14, 0.12) 30%, rgba(8, 10, 14, 0.82) 100%);
+}
+
+.commander-box-eyebrow,
+.commander-box-name,
+.commander-box-pips {
+  position: relative;
+}
+
+.commander-box-eyebrow {
+  color: var(--subtle);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.commander-box-name,
+.commander-box-name a {
+  color: var(--text);
+  font-size: 1.05rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.commander-box-art-loaded .commander-box-eyebrow {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.commander-box-art-loaded .commander-box-name,
+.commander-box-art-loaded .commander-box-name a {
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+}
+
+.commander-box-name a:hover,
+.commander-box-name a:focus-visible {
+  text-decoration: underline;
+}
+
+.commander-box-pips {
+  display: inline-flex;
+  margin-top: 2px;
+}
+
+@media (max-width: 700px) {
+  .commander-versus {
+    grid-template-columns: 1fr;
+  }
+}
+
 .live-commander {
   display: grid;
   gap: 4px;

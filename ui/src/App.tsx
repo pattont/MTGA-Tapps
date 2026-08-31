@@ -6,6 +6,7 @@ import {
   fetchDashboardSnapshot,
   type CombatDeckRow,
   type CombatSplitRow,
+  type CommanderRow,
   type DashboardSnapshot,
   type DeckRow,
   type FatigueRow,
@@ -608,6 +609,28 @@ const homeOpponentColorColumns = makeOpponentColorColumns((row) =>
 
 const yourCommanderColumns = makeCommanderColumns('Your Commander');
 const facedCommanderColumns = makeCommanderColumns('Opponent Commander');
+
+/** Your highest-win-rate commander (ties broken by games played). */
+function bestCommander(rows: CommanderRow[]): CommanderRow | null {
+  const played = rows.filter((row) => row.games > 0);
+  if (played.length === 0) {
+    return null;
+  }
+  return [...played].sort(
+    (a, b) => (b.win_rate ?? -1) - (a.win_rate ?? -1) || b.games - a.games,
+  )[0];
+}
+
+/** The opponent commander that has beaten you most often. */
+function toughestOpponentCommander(rows: CommanderRow[]): CommanderRow | null {
+  const beatUs = rows.filter((row) => row.losses > 0);
+  if (beatUs.length === 0) {
+    return null;
+  }
+  return [...beatUs].sort(
+    (a, b) => b.losses - a.losses || (a.win_rate ?? 101) - (b.win_rate ?? 101),
+  )[0];
+}
 
 const recentColumns: Column<RecentGameWithDrawQuality>[] = [
   {
@@ -1576,67 +1599,96 @@ function Dashboard({
         />
       </Section>
 
-      {(snapshot.brawl?.games ?? 0) > 0 ||
-      (snapshot.your_commanders ?? []).length > 0 ||
-      (snapshot.faced_commanders ?? []).length > 0 ? (
-        <Section
-          id="brawl"
-          title="Brawl"
-          description="Commander win rates from your Brawl games — the commander is visible from the opening hand, so every tracked Brawl game counts."
-        >
-          {snapshot.brawl && snapshot.brawl.games > 0 ? (
-            <section className="metric-grid" aria-label="Brawl record">
-              <MetricCard label="Brawl Games" value={formatNumber(snapshot.brawl.games)} />
-              <MetricCard
-                label="Brawl Record"
-                value={`${formatNumber(snapshot.brawl.wins)} – ${formatNumber(snapshot.brawl.losses)}`}
-              />
-              <MetricCard label="Brawl Win Rate" value={formatPercent(snapshot.brawl.win_rate)} />
-              {snapshot.brawl.queues.map((queue) => (
+      <Section
+        id="brawl"
+        title="Brawl"
+        description="Commander win rates from your Brawl games — the commander is visible from the opening hand, so every tracked Brawl game counts."
+      >
+        {(snapshot.brawl?.games ?? 0) === 0 &&
+        (snapshot.your_commanders ?? []).length === 0 &&
+        (snapshot.faced_commanders ?? []).length === 0 ? (
+          <p className="empty-state">
+            No Brawl games tracked yet. Queue into Brawl or Standard Brawl and your commander
+            records show up here.
+          </p>
+        ) : (
+          <>
+            {snapshot.brawl && snapshot.brawl.games > 0 ? (
+              <section className="metric-grid" aria-label="Brawl record">
+                <MetricCard label="Brawl Games" value={formatNumber(snapshot.brawl.games)} />
                 <MetricCard
-                  key={queue.format_label}
-                  label={queue.format_label}
-                  value={`${formatNumber(queue.wins)} – ${formatNumber(queue.losses)}`}
-                  detail={formatPercent(queue.win_rate)}
+                  label="Brawl Record"
+                  value={`${formatNumber(snapshot.brawl.wins)} – ${formatNumber(snapshot.brawl.losses)}`}
                 />
-              ))}
-            </section>
-          ) : null}
-          <div className="section-heading">
-            <div>
-              <h3>Your Commanders</h3>
-              <p className="section-description">
-                Record with each commander you brought to the ladder. Partner commanders count
-                under each partner.
-              </p>
+                <MetricCard label="Brawl Win Rate" value={formatPercent(snapshot.brawl.win_rate)} />
+                {(() => {
+                  const best = bestCommander(snapshot.your_commanders ?? []);
+                  return best ? (
+                    <MetricCard
+                      label="Best Commander"
+                      tone="win"
+                      value={best.commander}
+                      detail={`${formatNumber(best.wins)} – ${formatNumber(best.losses)} · ${formatPercent(best.win_rate)}`}
+                    />
+                  ) : null;
+                })()}
+                {(() => {
+                  const toughest = toughestOpponentCommander(snapshot.faced_commanders ?? []);
+                  return toughest ? (
+                    <MetricCard
+                      label="Toughest Opponent Commander"
+                      tone="loss"
+                      value={toughest.commander}
+                      detail={`you're ${formatNumber(toughest.wins)} – ${formatNumber(toughest.losses)} vs it · ${formatPercent(toughest.win_rate)}`}
+                    />
+                  ) : null;
+                })()}
+                {snapshot.brawl.queues.map((queue) => (
+                  <MetricCard
+                    key={queue.format_label}
+                    label={queue.format_label}
+                    value={`${formatNumber(queue.wins)} – ${formatNumber(queue.losses)}`}
+                    detail={formatPercent(queue.win_rate)}
+                  />
+                ))}
+              </section>
+            ) : null}
+            <div className="section-heading">
+              <div>
+                <h3>Your Commanders</h3>
+                <p className="section-description">
+                  Record with each commander you brought to the ladder. Partner commanders count
+                  under each partner.
+                </p>
+              </div>
             </div>
-          </div>
-          <SortableTable
-            caption="Record by your commander"
-            columns={yourCommanderColumns}
-            getRowKey={(row) => row.commander}
-            initialSort={{ key: 'games', direction: 'desc' }}
-            pageSize={8}
-            rows={snapshot.your_commanders ?? []}
-          />
-          <div className="section-heading">
-            <div>
-              <h3>Faced Commanders</h3>
-              <p className="section-description">
-                The commanders your opponents brought, and your record against each.
-              </p>
+            <SortableTable
+              caption="Record by your commander"
+              columns={yourCommanderColumns}
+              getRowKey={(row) => row.commander}
+              initialSort={{ key: 'games', direction: 'desc' }}
+              pageSize={8}
+              rows={snapshot.your_commanders ?? []}
+            />
+            <div className="section-heading">
+              <div>
+                <h3>Faced Commanders</h3>
+                <p className="section-description">
+                  The commanders your opponents brought, and your record against each.
+                </p>
+              </div>
             </div>
-          </div>
-          <SortableTable
-            caption="Record against opponent commanders"
-            columns={facedCommanderColumns}
-            getRowKey={(row) => row.commander}
-            initialSort={{ key: 'games', direction: 'desc' }}
-            pageSize={8}
-            rows={snapshot.faced_commanders ?? []}
-          />
-        </Section>
-      ) : null}
+            <SortableTable
+              caption="Record against opponent commanders"
+              columns={facedCommanderColumns}
+              getRowKey={(row) => row.commander}
+              initialSort={{ key: 'games', direction: 'desc' }}
+              pageSize={8}
+              rows={snapshot.faced_commanders ?? []}
+            />
+          </>
+        )}
+      </Section>
 
       <Section
         id="opponents"
