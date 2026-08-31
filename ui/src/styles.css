@@ -4492,8 +4492,30 @@ a.settings-link-button {
   padding: 10px 16px;
 }
 
+/* Slim banner art matches the Best Deck bar: pinned to the right edge and
+   faded into the panel, instead of stretched (grainy) across the width. */
 .commander-box-slim .commander-box-art {
+  inset: 0 0 0 auto;
+  width: min(42%, 420px);
   object-position: center 30%;
+  opacity: 0.55;
+  mask-image: linear-gradient(to right, transparent, black 60%);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 60%);
+}
+
+.commander-box-slim .commander-box-scrim {
+  display: none;
+}
+
+/* Text sits on the panel (not the art), so it keeps normal theme colors. */
+.commander-box-slim.commander-box-art-loaded .commander-box-eyebrow {
+  color: var(--subtle);
+}
+
+.commander-box-slim.commander-box-art-loaded .commander-box-name,
+.commander-box-slim.commander-box-art-loaded .commander-box-name a {
+  color: var(--text);
+  text-shadow: none;
 }
 
 @media (max-width: 700px) {
