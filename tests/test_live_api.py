@@ -325,9 +325,13 @@ def test_live_color_index_survives_missing_arena_color_column():
     conn.execute("CREATE TABLE cards (name TEXT, color_identity TEXT)")
     conn.execute("INSERT INTO cards VALUES ('Llanowar Elves', 'G'), ('Mind Stone', '')")
 
+    class FakeStore:
+        def connect(self):
+            return conn
+
     stub = TrackerAnalyticsMixin.__new__(TrackerAnalyticsMixin)
     stub.card_db = FakeCardDb()
-    stub._analytics_connect = lambda: conn  # type: ignore[method-assign]
+    stub._analytics_store = lambda: FakeStore()  # type: ignore[method-assign]
 
     colors = stub._live_colors_for(
         [CardEvent("Llanowar Elves", "you"), CardEvent("Lightning Helix", "you")]

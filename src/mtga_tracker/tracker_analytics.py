@@ -255,7 +255,11 @@ class TrackerAnalyticsMixin:
         except Exception:
             pass
         try:
-            conn = self._analytics_connect()
+            # Plain read connection: _analytics_connect() also UPSERTS the
+            # session row, and that write can hit lock contention mid-game —
+            # a pure SELECT is all the color layer needs and far less likely
+            # to fail (a failed build here delays the pips by a retry cycle).
+            conn = self._analytics_store().connect()
             if conn is not None:
                 rows = conn.execute(
                     "SELECT name, color_identity FROM cards WHERE color_identity IS NOT NULL"
