@@ -1237,6 +1237,11 @@ def test_opponent_detail_reports_head_to_head_history(tmp_path):
         "losses": 1,
         "draws": 0,
         "win_rate": 50.0,
+        # The fixture keeps both games under one match row; a 1–1 split is
+        # neither a match win nor a match loss.
+        "matches": 1,
+        "match_wins": 0,
+        "match_losses": 0,
     }
     assert [row["game_id"] for row in detail["games"]] == ["game-2", "game-1"]
     assert detail["games"][0]["deck_name"] == "Boros Mouse"
@@ -3128,3 +3133,55 @@ def test_export_text_gains_commander_block_for_brawl():
     assert _with_commander_block(patched, [{"card_name": "Belladonna Took", "colors": "WB"}]) == patched
     assert _with_commander_block(text, []) == text
     assert _with_commander_block(None, [{"card_name": "X", "colors": ""}]) is None
+
+
+def test_opponents_count_bo3_matches_once(tmp_path):
+    """A Bo3 is one pairing: opponent lists count it as one match decided by
+    its games, and the opponent page carries match rollup fields."""
+    from mtga_tracker.dashboard import opponents_list
+
+    db_path = tmp_path / "analytics.sqlite3"
+    conn = sqlite3.connect(db_path)
+    AnalyticsStore.ensure_schema(conn)
+    with conn:
+        conn.execute(
+            "INSERT INTO tracker_sessions (id, started_at) VALUES ('s1', '2026-08-12T10:00:00')"
+        )
+        conn.execute(
+            "INSERT INTO matches (id, session_id, format, best_of) VALUES ('m1', 's1', 'Play', 3)"
+        )
+        for n, outcome in enumerate(("win", "loss", "win"), start=1):
+            conn.execute(
+                "INSERT INTO games (id, session_id, match_id, game_number, started_at, ended_at, outcome) "
+                "VALUES (?, 's1', 'm1', ?, ?, ?, ?)",
+                (f"g{n}", n, f"2026-08-12T10:0{n}:00", f"2026-08-12T10:0{n}:30", outcome),
+            )
+            conn.execute(
+                "INSERT INTO participants (id, game_id, role, display_name, deck_name) "
+                "VALUES (?, ?, 'player', 'Tapps', 'Deck')",
+                (f"g{n}:p", f"g{n}"),
+            )
+            conn.execute(
+                "INSERT INTO participants (id, game_id, role, display_name) "
+                "VALUES (?, ?, 'opponent', 'IvanRehder')",
+                (f"g{n}:o", f"g{n}"),
+            )
+    conn.close()
+
+    listing = opponents_list(db_path)
+    row = listing["opponents"][0]
+    assert row["opponent_name"] == "IvanRehder"
+    assert (row["games"], row["wins"], row["losses"], row["win_rate"]) == (1, 1, 0, 100.0)
+
+    snapshot = dashboard_snapshot(db_path)
+    top = snapshot["top_opponents"][0]
+    assert (top["games"], top["wins"], top["losses"]) == (1, 1, 0)
+
+    detail = opponent_detail(db_path, "IvanRehder")
+    assert detail["summary"]["games"] == 3
+    assert detail["summary"]["matches"] == 1
+    assert detail["summary"]["match_wins"] == 1
+    assert detail["summary"]["match_losses"] == 0
+    assert all(game["match_id"] == "m1" for game in detail["games"])
+    assert detail["games"][0]["match_wins"] == 2
+    assert detail["games"][0]["match_losses"] == 1

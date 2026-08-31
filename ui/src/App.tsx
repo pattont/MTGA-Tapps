@@ -748,7 +748,8 @@ const topOpponentColumns: Column<TopOpponentRow>[] = [
     render: (row) => <OpponentLink opponentName={row.opponent_name} />,
     sortValue: (row) => row.opponent_name.toLowerCase(),
   },
-  { key: 'games', header: 'Games', numeric: true },
+  // Match-level record: a Bo3 counts once, decided by its games.
+  { key: 'games', header: 'Matches', numeric: true },
   { key: 'wins', header: 'Wins', numeric: true },
   { key: 'losses', header: 'Losses', numeric: true },
   {

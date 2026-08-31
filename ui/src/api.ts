@@ -950,6 +950,10 @@ export interface GameDetail {
 
 export interface OpponentGameRow {
   game_id: string;
+  match_id?: string | null;
+  game_number?: number | null;
+  match_wins?: number | null;
+  match_losses?: number | null;
   started_at: string;
   outcome: string | null;
   duration_seconds: number | null;
@@ -968,7 +972,7 @@ export interface OpponentGameRow {
 
 export interface OpponentDetail {
   opponent_name: string;
-  summary: Summary;
+  summary: Summary & { matches?: number; match_wins?: number; match_losses?: number };
   games: OpponentGameRow[];
 }
 

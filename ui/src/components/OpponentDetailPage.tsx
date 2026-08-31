@@ -15,27 +15,108 @@ type LoadState =
   | { status: 'loaded'; detail: OpponentDetail; refreshError?: string }
   | { status: 'error'; message: string };
 
-const columns = (opponentName: string): Column<OpponentGameRow>[] => [
+type OpponentGameOrMatchRow = OpponentGameRow & {
+  /** True for a synthetic Bo3 match rollup row. */
+  match_row?: boolean;
+  /** "Game N" label on the per-game sub-rows of a match rollup. */
+  game_label?: string;
+  /** The games of a Bo3 match, nested under its rollup row. */
+  sub_games?: OpponentGameOrMatchRow[];
+};
+
+/** Time of day only — the match rollup row already shows the date. */
+function formatTimeOnly(value: string): string {
+  const stamp = new Date(value);
+  if (Number.isNaN(stamp.getTime())) {
+    return formatDateTime(value);
+  }
+  return stamp.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+function sumOrNull(values: Array<number | null | undefined>): number | null {
+  const present = values.filter((value): value is number => value !== null && value !== undefined);
+  return present.length ? present.reduce((total, value) => total + value, 0) : null;
+}
+
+/** Collapse each Bo3 match into one rollup row (you faced this opponent
+    once), with the individual games nested beneath — the same shape the
+    dashboard's Recent Games table uses. Bo1 games pass through untouched. */
+function groupOpponentGames(rows: OpponentGameRow[]): OpponentGameOrMatchRow[] {
+  const grouped: OpponentGameOrMatchRow[] = [];
+  const matchRowByMatchId = new Map<string, OpponentGameOrMatchRow>();
+  for (const row of rows) {
+    const matchId = row.match_id;
+    if (!matchId || (row.best_of ?? 1) <= 1) {
+      grouped.push(row);
+      continue;
+    }
+    const subRow: OpponentGameOrMatchRow = { ...row, game_label: `Game ${row.game_number ?? '?'}` };
+    const existing = matchRowByMatchId.get(matchId);
+    if (existing?.sub_games) {
+      existing.sub_games.push(subRow);
+      continue;
+    }
+    const matchRow: OpponentGameOrMatchRow = { ...row, match_row: true, sub_games: [subRow] };
+    matchRowByMatchId.set(matchId, matchRow);
+    grouped.push(matchRow);
+  }
+  for (const matchRow of matchRowByMatchId.values()) {
+    const games = (matchRow.sub_games ?? []).sort(
+      (a, b) => (a.game_number ?? 0) - (b.game_number ?? 0),
+    );
+    matchRow.sub_games = games;
+    const first = games[0];
+    const wins = matchRow.match_wins ?? 0;
+    const losses = matchRow.match_losses ?? 0;
+    const last = games[games.length - 1];
+    Object.assign(matchRow, {
+      game_id: first?.game_id ?? matchRow.game_id,
+      started_at: first?.started_at ?? matchRow.started_at,
+      outcome: wins === losses ? matchRow.outcome : wins > losses ? 'win' : 'loss',
+      duration_seconds: sumOrNull(games.map((game) => game.duration_seconds)),
+      total_turns: sumOrNull(games.map((game) => game.total_turns)),
+      player_final_life: last?.player_final_life ?? null,
+      opponent_final_life: last?.opponent_final_life ?? null,
+    });
+  }
+  return grouped;
+}
+
+const columns = (opponentName: string): Column<OpponentGameOrMatchRow>[] => [
   {
     key: 'started_at',
     header: 'Started',
-    render: (row) => (
-      <a className="table-link" href={gameRouteHash(row.game_id, opponentRouteHash(opponentName))}>
-        {formatDateTime(row.started_at)}
-      </a>
-    ),
+    render: (row) =>
+      row.game_label ? (
+        <a className="subrow-link" href={gameRouteHash(row.game_id, opponentRouteHash(opponentName))}>
+          <span className="subrow-game-label">{row.game_label}</span>
+          <span className="subrow-time">{formatTimeOnly(row.started_at)}</span>
+        </a>
+      ) : (
+        <a className="table-link" href={gameRouteHash(row.game_id, opponentRouteHash(opponentName))}>
+          {formatDateTime(row.started_at)}
+        </a>
+      ),
     sortValue: (row) => row.started_at,
   },
   {
     key: 'deck_colors',
     header: 'Your Colors',
-    render: (row) => (row.deck_colors ? <ColorPips colors={row.deck_colors} /> : null),
+    render: (row) =>
+      row.game_label || !row.deck_colors ? null : <ColorPips colors={row.deck_colors} />,
     sortValue: (row) => row.deck_colors ?? '',
   },
   {
     key: 'format_label',
     header: 'Format',
-    render: (row) => shortFormatLabel(row.format_label),
+    render: (row) =>
+      row.game_label
+        ? null
+        : row.match_row
+          ? `${shortFormatLabel(row.format_label)} · ${row.sub_games?.length ?? 0} game${
+              (row.sub_games?.length ?? 0) === 1 ? '' : 's'
+            }`
+          : shortFormatLabel(row.format_label),
     sortValue: (row) => row.format_label,
   },
   {
@@ -48,7 +129,7 @@ const columns = (opponentName: string): Column<OpponentGameRow>[] => [
     key: 'play_draw',
     header: 'Play/Draw',
     render: (row) =>
-      row.play_draw === 'On the play' ? (
+      row.match_row ? null : row.play_draw === 'On the play' ? (
         <Badge tone="play">Play</Badge>
       ) : row.play_draw === 'On the draw' ? (
         <Badge tone="drawside">Draw</Badge>
@@ -161,6 +242,13 @@ export function OpponentDetailPage({
       </div>
 
       <section className="metric-grid metric-grid-deck" aria-label="Opponent summary">
+        {detail.summary.matches != null ? (
+          <MetricCard
+            label="Matches"
+            value={formatNumber(detail.summary.matches)}
+            detail={`${formatNumber(detail.summary.match_wins ?? 0)} – ${formatNumber(detail.summary.match_losses ?? 0)}`}
+          />
+        ) : null}
         <MetricCard label="Games" value={formatNumber(detail.summary.games)} />
         <MetricCard label="Wins" value={formatNumber(detail.summary.wins)} />
         <MetricCard label="Losses" value={formatNumber(detail.summary.losses)} />
@@ -171,16 +259,20 @@ export function OpponentDetailPage({
         <div className="section-heading">
           <div>
             <h3>Game History</h3>
-            <p className="section-description">Every tracked game against this exact opponent name.</p>
+            <p className="section-description">
+              Every tracked pairing against this exact opponent name — a Bo3 match is one row,
+              with its games nested beneath.
+            </p>
           </div>
         </div>
         <SortableTable
           caption={`Games against ${detail.opponent_name}`}
           columns={columns(detail.opponent_name)}
-          getRowKey={(row) => row.game_id}
+          getRowKey={(row) => (row.match_row ? `match:${row.match_id}` : row.game_id)}
+          getSubRows={(row) => row.sub_games}
           initialSort={{ key: 'started_at', direction: 'desc' }}
           pageSize={15}
-          rows={detail.games}
+          rows={groupOpponentGames(detail.games)}
         />
       </section>
     </>

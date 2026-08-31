@@ -2261,22 +2261,33 @@ def dashboard_snapshot(
             ).fetchone()[0]
             or 0
         )
+        # Match-level record: a Bo3 counts once (you faced them once), with
+        # the match decided by its games — not three separate rows of record.
         top_opponent_rows = _dict_rows(
             conn.execute(
                 f"""
                 SELECT
-                  o.display_name AS opponent_name,
+                  opponent_name,
                   COUNT(*) AS games,
-                  SUM(g.outcome = 'win') AS wins,
-                  SUM(g.outcome = 'loss') AS losses,
-                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate,
-                  MAX(g.started_at) AS last_played
-                FROM games g
-                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-                JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
-                WHERE {where} AND o.display_name IS NOT NULL AND o.display_name NOT IN ('', 'Opponent')
-                GROUP BY o.display_name
-                ORDER BY games DESC, o.display_name
+                  SUM(mw > ml) AS wins,
+                  SUM(ml > mw) AS losses,
+                  ROUND(100.0 * SUM(mw > ml) / NULLIF(SUM(mw > ml) + SUM(ml > mw), 0), 1) AS win_rate,
+                  MAX(last_started) AS last_played
+                FROM (
+                  SELECT
+                    o.display_name AS opponent_name,
+                    g.match_id,
+                    SUM(g.outcome = 'win') AS mw,
+                    SUM(g.outcome = 'loss') AS ml,
+                    MAX(g.started_at) AS last_started
+                  FROM games g
+                  JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                  JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
+                  WHERE {where} AND o.display_name IS NOT NULL AND o.display_name NOT IN ('', 'Opponent')
+                  GROUP BY o.display_name, g.match_id
+                )
+                GROUP BY opponent_name
+                ORDER BY games DESC, opponent_name
                 LIMIT 5
                 """,
                 params,
@@ -4041,17 +4052,44 @@ def opponent_detail(
         ).fetchone()
         if not summary or not summary[0]:
             raise LookupError(f"No recorded games against opponent: {requested_name}")
+        # Match-level record: a Bo3 is one pairing, decided by its games.
+        match_summary = conn.execute(
+            f"""
+            SELECT
+              COUNT(*) AS matches,
+              SUM(mw > ml) AS match_wins,
+              SUM(ml > mw) AS match_losses
+            FROM (
+              SELECT g.match_id, SUM(g.outcome = 'win') AS mw, SUM(g.outcome = 'loss') AS ml
+              FROM games g
+              JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
+              WHERE o.display_name = ? COLLATE NOCASE AND {where}
+              GROUP BY g.match_id
+            )
+            """,
+            (requested_name, *filter_params),
+        ).fetchone()
         game_rows = _dict_rows(
             conn.execute(
                 f"""
                 SELECT
                   g.id AS game_id,
+                  g.match_id,
+                  g.game_number,
                   g.started_at,
                   g.outcome,
                   g.duration_seconds,
                   g.total_turns,
                   g.player_turns,
                   g.opponent_turns,
+                  (
+                    SELECT SUM(g2.outcome = 'win') FROM games g2
+                    WHERE g2.match_id = g.match_id
+                  ) AS match_wins,
+                  (
+                    SELECT SUM(g2.outcome = 'loss') FROM games g2
+                    WHERE g2.match_id = g.match_id
+                  ) AS match_losses,
                   m.format AS raw_format,
                   m.best_of,
                   COALESCE(p.deck_name, '(unknown)') AS deck_name,
@@ -4086,6 +4124,9 @@ def opponent_detail(
             "losses": int(summary[2] or 0),
             "draws": int(summary[3] or 0),
             "win_rate": summary[4],
+            "matches": int(match_summary[0] or 0) if match_summary else 0,
+            "match_wins": int(match_summary[1] or 0) if match_summary else 0,
+            "match_losses": int(match_summary[2] or 0) if match_summary else 0,
         },
         "games": game_rows,
     }
@@ -4594,22 +4635,34 @@ def opponents_list(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
     Opponents page ("did I ever play a streamer without knowing?")."""
     db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
+        # Match-level record: a Bo3 counts once (one pairing), decided by
+        # its games — see the snapshot's top_opponents for the same rule.
         rows = _dict_rows(
             conn.execute(
                 """
                 SELECT
-                  o.display_name AS opponent_name,
+                  opponent_name,
                   COUNT(*) AS games,
-                  SUM(g.outcome = 'win') AS wins,
-                  SUM(g.outcome = 'loss') AS losses,
-                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate,
-                  MIN(g.started_at) AS first_played,
-                  MAX(g.started_at) AS last_played
-                FROM games g
-                JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
-                WHERE o.display_name IS NOT NULL AND o.display_name NOT IN ('', 'Opponent')
-                GROUP BY o.display_name
-                ORDER BY games DESC, o.display_name
+                  SUM(mw > ml) AS wins,
+                  SUM(ml > mw) AS losses,
+                  ROUND(100.0 * SUM(mw > ml) / NULLIF(SUM(mw > ml) + SUM(ml > mw), 0), 1) AS win_rate,
+                  MIN(first_started) AS first_played,
+                  MAX(last_started) AS last_played
+                FROM (
+                  SELECT
+                    o.display_name AS opponent_name,
+                    g.match_id,
+                    SUM(g.outcome = 'win') AS mw,
+                    SUM(g.outcome = 'loss') AS ml,
+                    MIN(g.started_at) AS first_started,
+                    MAX(g.started_at) AS last_started
+                  FROM games g
+                  JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
+                  WHERE o.display_name IS NOT NULL AND o.display_name NOT IN ('', 'Opponent')
+                  GROUP BY o.display_name, g.match_id
+                )
+                GROUP BY opponent_name
+                ORDER BY games DESC, opponent_name
                 """
             )
         )
