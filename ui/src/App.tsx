@@ -26,6 +26,7 @@ import { Badge } from './components/Badge';
 import { CardDetailPage } from './components/CardDetailPage';
 import { ColorPips } from './components/ColorPips';
 import { makeCommanderColumns } from './commanderColumns';
+import { commanderArtUrl } from './components/CommanderPanel';
 import { makeOpponentColorColumns } from './opponentColorColumns';
 import { DeckDetailPage } from './components/DeckDetailPage';
 import { DeckLink } from './components/DeckLink';
@@ -1625,8 +1626,8 @@ function Dashboard({
                   const best = bestCommander(snapshot.your_commanders ?? []);
                   return best ? (
                     <MetricCard
+                      artUrl={commanderArtUrl(best.commander)}
                       label="Best Commander"
-                      tone="win"
                       value={best.commander}
                       detail={`${formatNumber(best.wins)} – ${formatNumber(best.losses)} · ${formatPercent(best.win_rate)}`}
                     />
@@ -1636,8 +1637,8 @@ function Dashboard({
                   const toughest = toughestOpponentCommander(snapshot.faced_commanders ?? []);
                   return toughest ? (
                     <MetricCard
+                      artUrl={commanderArtUrl(toughest.commander)}
                       label="Toughest Opponent Commander"
-                      tone="loss"
                       value={toughest.commander}
                       detail={`you're ${formatNumber(toughest.wins)} – ${formatNumber(toughest.losses)} vs it · ${formatPercent(toughest.win_rate)}`}
                     />

@@ -4479,6 +4479,32 @@ a.settings-link-button {
   margin-top: 2px;
 }
 
+/* Metric card with art fading in along the right edge (Best Deck style). */
+.metric-card-with-art {
+  position: relative;
+  overflow: hidden;
+}
+
+.metric-card-with-art > :not(.metric-card-art) {
+  position: relative;
+}
+
+.metric-card > span.metric-card-art {
+  /* Escape the card's grid areas: `.metric-card > span` assigns spans to
+     the label area, which would shrink this absolute overlay's containing
+     block to that one cell. */
+  grid-area: auto;
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: min(55%, 220px);
+  background-position: center 25%;
+  background-size: cover;
+  opacity: 0.45;
+  pointer-events: none;
+  mask-image: linear-gradient(to right, transparent, black 70%);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 70%);
+}
+
 /* Opening Hand's commander line (Brawl): name + pips above the hand table. */
 .opening-hand-commander {
   display: flex;

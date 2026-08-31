@@ -8,6 +8,8 @@ interface MetricCardProps {
   tone?: 'default' | 'danger' | 'info' | 'warning' | 'win' | 'loss';
   /** Small icon rendered top-right; inherits the card's text color. */
   icon?: ReactNode;
+  /** Card art faded in along the right edge (Best Deck style). */
+  artUrl?: string;
 }
 
 const toneClass: Record<string, string> = {
@@ -18,10 +20,18 @@ const toneClass: Record<string, string> = {
   loss: 'metric-card metric-card-loss',
 };
 
-export function MetricCard({ label, value, detail, href, tone = 'default', icon }: MetricCardProps) {
-  const className = toneClass[tone] ?? 'metric-card';
+export function MetricCard({ label, value, detail, href, tone = 'default', icon, artUrl }: MetricCardProps) {
+  const base = toneClass[tone] ?? 'metric-card';
+  const className = artUrl ? `${base} metric-card-with-art` : base;
   return (
     <article className={className}>
+      {artUrl ? (
+        <span
+          aria-hidden="true"
+          className="metric-card-art"
+          style={{ backgroundImage: `url(${artUrl})` }}
+        />
+      ) : null}
       <span>{label}</span>
       {icon ? (
         <span className="metric-card-icon" aria-hidden="true">
