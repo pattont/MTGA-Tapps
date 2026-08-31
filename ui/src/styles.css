@@ -4490,11 +4490,13 @@ a.settings-link-button {
   justify-content: center;
   gap: 2px;
   padding: 10px 16px;
-  /* Translucent so the deck page's ambient art backdrop shines through,
-     like the rest of the page — an opaque slab reads as a blue box. */
-  background: color-mix(in srgb, var(--panel) 55%, transparent);
+  /* No fill at all: the section surface shows through (the same surface
+     the metric cards sit on), and the commander art fades in from
+     transparent on the right. Any painted background reads as an
+     off-color slab next to the cards. */
+  background: transparent;
   border-radius: 8px;
-  box-shadow: var(--shadow);
+  box-shadow: none;
 }
 
 /* Slim banner art matches the Best Deck bar: pinned to the right edge and
@@ -4503,7 +4505,7 @@ a.settings-link-button {
   inset: 0 0 0 auto;
   width: min(42%, 420px);
   object-position: center 30%;
-  opacity: 0.55;
+  opacity: 0.9;
   mask-image: linear-gradient(to right, transparent, black 60%);
   -webkit-mask-image: linear-gradient(to right, transparent, black 60%);
 }
