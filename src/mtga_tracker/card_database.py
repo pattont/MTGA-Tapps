@@ -407,12 +407,12 @@ class CardDatabase:
                         None,
                     )
                 if cost_column:
-                    cur.execute(
-                        f'SELECT l."loc", c."{cost_column}" FROM "Cards" c '
-                        'JOIN "Localizations_enUS" l ON c."TitleId" = l."LocId" '
-                        f'WHERE c."{cost_column}" IS NOT NULL'
+                    rows = self._title_join_rows(
+                        cur,
+                        f'l."Loc", c."{cost_column}"',
+                        f'c."{cost_column}" IS NOT NULL',
                     )
-                    for name, raw_cost in cur.fetchall():
+                    for name, raw_cost in rows:
                         clean_name = str(name or "").strip()
                         if not clean_name or clean_name in index:
                             continue
@@ -422,8 +422,47 @@ class CardDatabase:
                 conn.close()
             except Exception:
                 index = {}
-        self._mana_index_by_name = index
+        # Cache only a populated index: an empty result can be a transient
+        # failure (Arena mid-update, DB briefly unreadable) and caching it
+        # would blank downstream consumers for the whole session.
+        if index:
+            self._mana_index_by_name = index
         return index
+
+    @staticmethod
+    def _title_join_rows(cur, select_cols: str, where: str) -> list:
+        """Rows from Cards joined to its English titles table, trying each
+        schema shape the client has shipped: newer DBs split per-locale
+        (Localizations_enUS), older ones keep a single Localizations table
+        with a Format/locale column. First shape that yields rows wins."""
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = {str(row[0]) for row in cur.fetchall()}
+        queries = []
+        if "Localizations_enUS" in tables:
+            queries.append(
+                f'SELECT {select_cols} FROM "Cards" c '
+                'JOIN "Localizations_enUS" l ON c."TitleId" = l."LocId" '
+                f"WHERE {where}"
+            )
+        if "Localizations" in tables:
+            queries.append(
+                f'SELECT {select_cols} FROM "Cards" c '
+                'JOIN "Localizations" l ON c."TitleId" = l."LocId" '
+                f"WHERE {where} AND l.\"Format\" LIKE '%en-US%'"
+            )
+            queries.append(
+                f'SELECT {select_cols} FROM "Cards" c '
+                'JOIN "Localizations" l ON c."TitleId" = l."LocId" '
+                f"WHERE {where}"
+            )
+        for query in queries:
+            try:
+                rows = cur.execute(query).fetchall()
+            except Exception:
+                continue
+            if rows:
+                return rows
+        return []
 
     def color_identity_index_by_name(self) -> Dict[str, str]:
         """Build a card-name -> WUBRG color-identity index from Arena's card DB.
@@ -455,12 +494,12 @@ class CardDatabase:
                     None,
                 )
                 if color_column:
-                    cur.execute(
-                        f'SELECT l."loc", c."{color_column}" FROM "Cards" c '
-                        'JOIN "Localizations_enUS" l ON c."TitleId" = l."LocId" '
-                        f'WHERE c."{color_column}" IS NOT NULL'
+                    rows = self._title_join_rows(
+                        cur,
+                        f'l."Loc", c."{color_column}"',
+                        f'c."{color_column}" IS NOT NULL',
                     )
-                    for name, raw_colors in cur.fetchall():
+                    for name, raw_colors in rows:
                         clean_name = str(name or "").strip()
                         if not clean_name:
                             continue
@@ -472,7 +511,9 @@ class CardDatabase:
                 conn.close()
             except Exception:
                 index = {}
-        self._color_index_by_name = index
+        # Only a populated index is cached — see mana_cost_index_by_name.
+        if index:
+            self._color_index_by_name = index
         return index
 
     #: Cards-table column names for set code / collector number, newest

@@ -227,10 +227,20 @@ class TrackerAnalyticsMixin:
         colors), the analytics DB's own cards table (filled by earlier
         backfills, so it works even when Arena's current schema hides the
         color column) refines it, and Arena's color-identity column — the
-        authoritative source — wins when it is available."""
+        authoritative source — wins when it is available.
+
+        An empty build is NOT cached for the session: one transient failure
+        (the analytics DB locked during startup migrations, Arena mid-update)
+        used to blank the scoreboard pips until the tracker restarted.
+        Instead an empty result is retried, at most every 30 seconds."""
         cached = getattr(self, "_live_color_index_cache", None)
-        if cached is not None:
+        if cached:
             return cached
+        if cached is not None:
+            last_attempt = getattr(self, "_live_color_index_attempt", 0.0)
+            if time.monotonic() - last_attempt < 30.0:
+                return cached
+        self._live_color_index_attempt = time.monotonic()
         index: Dict[str, str] = {}
         try:
             for name, parsed in (self.card_db.mana_cost_index_by_name() or {}).items():

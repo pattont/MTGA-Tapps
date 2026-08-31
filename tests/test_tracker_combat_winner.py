@@ -7471,3 +7471,22 @@ def test_live_snapshot_freezes_last_game_between_games():
     assert frozen["opponent_name"] == "Villain"
     assert frozen["player_colors"] == "WB"
     assert frozen["player_lands"] == 3
+
+
+def test_live_color_index_retries_after_empty_build():
+    """An empty color-index build (analytics DB locked at startup, Arena
+    mid-update) must not blank the scoreboard pips for the whole session —
+    it retries after the cooldown."""
+    tracker = make_tracker()
+    # Every layer fails: DummyCardDB has no index methods and there is no
+    # analytics store wired up, so the first build comes up empty.
+    assert tracker._live_color_index() == {}
+
+    # A source comes back — but inside the cooldown the cached miss holds.
+    tracker.card_db.color_identity_index_by_name = lambda: {"Dusk Rat": "B"}
+    assert tracker._live_color_index() == {}
+
+    # Past the cooldown the rebuild succeeds and is cached.
+    tracker._live_color_index_attempt = 0.0
+    assert tracker._live_color_index() == {"Dusk Rat": "B"}
+    assert tracker._live_color_index_cache == {"Dusk Rat": "B"}
