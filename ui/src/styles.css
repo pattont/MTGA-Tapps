@@ -4484,7 +4484,9 @@ a.settings-link-button {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 4px 16px 0;
+  /* Left edge lines up with the table's cell text (10px cell padding);
+     bottom margin breathes before the table starts. */
+  margin: 4px 10px 10px;
   font-size: 0.9rem;
 }
 
