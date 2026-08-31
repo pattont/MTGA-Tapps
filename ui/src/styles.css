@@ -4479,6 +4479,23 @@ a.settings-link-button {
   margin-top: 2px;
 }
 
+/* Thin banner variant: same look, less height, inset like the section's
+   metric grids so it lines up with the content around it. */
+.commander-banner {
+  margin: 0 16px 12px;
+}
+
+.commander-box-slim {
+  min-height: 72px;
+  justify-content: center;
+  gap: 2px;
+  padding: 10px 16px;
+}
+
+.commander-box-slim .commander-box-art {
+  object-position: center 30%;
+}
+
 @media (max-width: 700px) {
   .commander-versus {
     grid-template-columns: 1fr;

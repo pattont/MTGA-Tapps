@@ -15,17 +15,27 @@ function CommanderBox({
   eyebrow,
   commanders,
   returnHash,
+  slim = false,
 }: {
   eyebrow: string;
   commanders: CommanderRef[];
   returnHash: string;
+  /** Shorter banner variant (deck page decklist callout). */
+  slim?: boolean;
 }) {
   const [artFailed, setArtFailed] = useState(false);
   const artName = commanders[0]?.card_name ?? null;
   const colors = commanders.map((commander) => commander.colors).join('');
+  const className = [
+    'commander-box',
+    artName && !artFailed ? 'commander-box-art-loaded' : '',
+    slim ? 'commander-box-slim' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return (
-    <div className={artName && !artFailed ? 'commander-box commander-box-art-loaded' : 'commander-box'}>
+    <div className={className}>
       {artName && !artFailed ? (
         <>
           <img
@@ -57,6 +67,21 @@ function CommanderBox({
           <ColorPips colors={colors} />
         </span>
       ) : null}
+    </div>
+  );
+}
+
+/** Thin full-width commander banner (deck page's decklist section). */
+export function CommanderBanner({
+  commanders,
+  returnHash,
+}: {
+  commanders: CommanderRef[];
+  returnHash: string;
+}) {
+  return (
+    <div className="commander-banner">
+      <CommanderBox commanders={commanders} eyebrow="Commander" returnHash={returnHash} slim />
     </div>
   );
 }

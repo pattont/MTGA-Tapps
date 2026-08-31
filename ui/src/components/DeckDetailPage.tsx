@@ -50,7 +50,7 @@ import { Badge } from './Badge';
 import { bucketCombatGroups, CombatGroupColumns, withDrawnSuffix } from './CombatGroupColumns';
 import { ColorPips } from './ColorPips';
 import { CardLink } from './CardLink';
-import { commanderArtUrl } from './CommanderPanel';
+import { CommanderBanner, commanderArtUrl } from './CommanderPanel';
 import { makeCommanderColumns } from '../commanderColumns';
 import { DeckVisual } from './DeckVisual';
 import { FilterBar } from './FilterBar';
@@ -188,7 +188,7 @@ function deckListPerformanceRows(detail: DeckDetail): DeckListPerformanceRow[] {
     row,
     aliases: cardNameAliases(row.display_name),
   }));
-  return [
+  const exportRows = [
     ...detail.deck_export.main_deck.map((card) => ({ card, deck_section: 'Main Deck' as const })),
     ...detail.deck_export.sideboard.map((card) => ({ card, deck_section: 'Sideboard' as const })),
   ].map(({ card, deck_section }) => {
@@ -214,6 +214,39 @@ function deckListPerformanceRows(detail: DeckDetail): DeckListPerformanceRow[] {
       opener_pct: openerPct(card.display_name),
     };
   });
+  // Brawl: the commander is the deck's 100th card but Arena's submitted
+  // maindeck omits it — add it to the list so the count adds up.
+  const commanderRows = (detail.commanders ?? [])
+    .filter((commander) => {
+      const aliases = cardNameAliases(commander.card_name);
+      return !exportRows.some((row) =>
+        Array.from(cardNameAliases(row.display_name)).some((name) => aliases.has(name)),
+      );
+    })
+    .map((commander) => {
+      const aliases = cardNameAliases(commander.card_name);
+      const matchingPerformance = performance.find(({ aliases: performanceAliases }) =>
+        Array.from(aliases).some((name) => performanceAliases.has(name)),
+      )?.row;
+      const stats = compositionFor(commander.card_name);
+      return {
+        display_name: commander.card_name,
+        type_category: matchingPerformance?.type_category ?? 'Creature',
+        quantity: 1,
+        deck_section: 'Main Deck' as const,
+        games_seen: matchingPerformance?.games_seen ?? 0,
+        times_played: matchingPerformance?.times_played ?? 0,
+        times_drawn: matchingPerformance?.times_drawn ?? 0,
+        wins_when_seen: matchingPerformance?.wins_when_seen ?? 0,
+        losses_when_seen: matchingPerformance?.losses_when_seen ?? 0,
+        win_rate_when_seen: matchingPerformance?.win_rate_when_seen ?? null,
+        seen_pct: gamesPct(matchingPerformance?.games_seen ?? 0),
+        multiple_pct: stats?.multiple_pct ?? null,
+        seen_delta: stats?.seen_delta ?? null,
+        opener_pct: openerPct(commander.card_name),
+      };
+    });
+  return [...commanderRows, ...exportRows];
 }
 
 const sideboardSwapColumns: Column<SideboardSwapRow>[] = [
@@ -1193,6 +1226,12 @@ export function DeckDetailPage({
               <MetricCard key={box.category} icon={box.icon} label={box.label} value={box.count} />
             ))}
           </section>
+        ) : null}
+        {commanders.length > 0 ? (
+          <CommanderBanner
+            commanders={commanders}
+            returnHash={`#/deck/${encodeURIComponent(detail.deck_name)}`}
+          />
         ) : null}
         <SortableTable
           caption="Deck list and card performance"
