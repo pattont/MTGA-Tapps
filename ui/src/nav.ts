@@ -82,7 +82,6 @@ export const cardNavItems: AppNavItem[] = [
 
 export const opponentNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#recent-games' },
-  { id: 'opponent-summary', label: 'Summary' },
   { id: 'opponent-games', label: 'Game History' },
 ];
 
