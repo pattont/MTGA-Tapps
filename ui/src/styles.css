@@ -4413,9 +4413,9 @@ a.settings-link-button {
   flex-direction: column;
   justify-content: flex-end;
   gap: 4px;
-  min-height: 128px;
+  min-height: 90px;
   overflow: hidden;
-  padding: 14px 16px;
+  padding: 12px 16px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--panel-strong);
