@@ -228,22 +228,26 @@ function deckListPerformanceRows(detail: DeckDetail): DeckListPerformanceRow[] {
       const matchingPerformance = performance.find(({ aliases: performanceAliases }) =>
         Array.from(aliases).some((name) => performanceAliases.has(name)),
       )?.row;
-      const stats = compositionFor(commander.card_name);
       return {
         display_name: commander.card_name,
         type_category: matchingPerformance?.type_category ?? 'Creature',
         quantity: 1,
         deck_section: 'Main Deck' as const,
-        games_seen: matchingPerformance?.games_seen ?? 0,
+        // The commander starts in the command zone, visible to both players
+        // every game by definition — "seen" is 100% of this deck's games,
+        // and its when-seen record is simply the deck's record. Played
+        // counts stay real (each cast from the command zone is tracked);
+        // drawn/opener stats never apply since it is never drawn.
+        games_seen: totalGames,
         times_played: matchingPerformance?.times_played ?? 0,
         times_drawn: matchingPerformance?.times_drawn ?? 0,
-        wins_when_seen: matchingPerformance?.wins_when_seen ?? 0,
-        losses_when_seen: matchingPerformance?.losses_when_seen ?? 0,
-        win_rate_when_seen: matchingPerformance?.win_rate_when_seen ?? null,
-        seen_pct: gamesPct(matchingPerformance?.games_seen ?? 0),
-        multiple_pct: stats?.multiple_pct ?? null,
-        seen_delta: stats?.seen_delta ?? null,
-        opener_pct: openerPct(commander.card_name),
+        wins_when_seen: detail.summary.wins,
+        losses_when_seen: detail.summary.losses,
+        win_rate_when_seen: detail.summary.win_rate,
+        seen_pct: totalGames > 0 ? 100 : null,
+        multiple_pct: null,
+        seen_delta: null,
+        opener_pct: null,
       };
     });
   return [...commanderRows, ...exportRows];

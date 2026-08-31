@@ -3114,3 +3114,17 @@ def test_deck_and_game_detail_carry_brawl_commanders(tmp_path):
     assert game["opponent"]["commanders"] == [
         {"card_name": "The Unbeatable Squirrel Girl", "colors": ""}
     ]
+
+
+def test_export_text_gains_commander_block_for_brawl():
+    from mtga_tracker.dashboard import _with_commander_block
+
+    text = "About\nName MWM Bella\n\nDeck\n40 Plains\n49 Hare Apparent"
+    patched = _with_commander_block(text, [{"card_name": "Belladonna Took", "colors": "WB"}])
+    assert patched == (
+        "About\nName MWM Bella\n\nCommander\n1 Belladonna Took\n\nDeck\n40 Plains\n49 Hare Apparent"
+    )
+    # Idempotent, and untouched for non-Brawl decks.
+    assert _with_commander_block(patched, [{"card_name": "Belladonna Took", "colors": "WB"}]) == patched
+    assert _with_commander_block(text, []) == text
+    assert _with_commander_block(None, [{"card_name": "X", "colors": ""}]) is None

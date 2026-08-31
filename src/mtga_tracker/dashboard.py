@@ -2098,6 +2098,23 @@ def _deck_export_snapshot(
     }
 
 
+def _with_commander_block(text: Optional[str], commanders: List[Dict[str, Any]]) -> Optional[str]:
+    """Insert an Arena-format Commander section into a Brawl deck export.
+
+    Arena's submitted decklist omits the commander (it lives in the command
+    zone), so without this an imported export recreates a 99-card deck.
+    Set/collector codes aren't recorded for commanders; Arena's importer
+    resolves plain names fine."""
+    if not text or not commanders or "\nCommander\n" in text:
+        return text
+    marker = "\n\nDeck\n"
+    if marker not in text:
+        return text
+    block = "Commander\n" + "\n".join(f"1 {entry['card_name']}" for entry in commanders)
+    head, tail = text.split(marker, 1)
+    return f"{head}\n\n{block}{marker}{tail}"
+
+
 def dashboard_snapshot(
     db_path: Path = DEFAULT_DB_PATH,
     deck: Optional[str] = None,
@@ -3074,6 +3091,10 @@ def deck_detail(
             deck_faced_commanders = _bucket_commander_outcomes(faced_outcome_rows)
         except sqlite3.OperationalError:
             pass
+        if deck_commanders and deck_export.get("available"):
+            deck_export["text"] = _with_commander_block(
+                deck_export.get("text"), deck_commanders
+            )
         land_profile = _deck_land_profile(conn, where, params)
         account_rows = _dict_rows(
             conn.execute(
