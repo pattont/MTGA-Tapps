@@ -1019,6 +1019,25 @@ export function GameDetailPage({
             : undefined
         }
       >
+        {(detail.player.commanders?.length ?? 0) > 0 ? (
+          // Brawl: the commander starts in the command zone, visible on top
+          // of whatever was drawn — called out here instead of padding the
+          // hand table with a card that is always "in hand".
+          <p className="opening-hand-commander">
+            <span className="opening-hand-commander-label">Commander:</span>{' '}
+            {(detail.player.commanders ?? []).map((commander, index) => (
+              <span key={commander.card_name}>
+                {index > 0 ? ' · ' : ''}
+                <CardLink cardName={commander.card_name} returnHash={gameRouteHash(detail.game.game_id, backHref)}>
+                  {commander.card_name}
+                </CardLink>
+              </span>
+            ))}{' '}
+            <ColorPips
+              colors={(detail.player.commanders ?? []).map((commander) => commander.colors).join('')}
+            />
+          </p>
+        ) : null}
         {mulliganHands.length > 0 ? (
           <div className="mulligan-history">
             {mulliganHands.map((hand) => {

@@ -4479,6 +4479,24 @@ a.settings-link-button {
   margin-top: 2px;
 }
 
+/* Opening Hand's commander line (Brawl): name + pips above the hand table. */
+.opening-hand-commander {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 16px 0;
+  font-size: 0.9rem;
+}
+
+.opening-hand-commander-label {
+  color: var(--muted);
+}
+
+.opening-hand-commander .color-pips {
+  display: inline-flex;
+  gap: 3px;
+}
+
 /* Thin banner variant: same look, less height, inset like the section's
    metric grids so it lines up with the content around it. */
 .commander-banner {
