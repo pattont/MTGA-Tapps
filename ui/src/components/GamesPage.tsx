@@ -7,7 +7,8 @@ import {
 } from '../api';
 import { colorComboLabel } from '../colorCombos';
 import { formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone, shortFormatLabel } from '../format';
-import { FORMAT_QUICK_FILTERS } from '../quickFilters';
+import { normalizeQuickFilterId, quickFilterPredicate } from '../quickFilters';
+import { FormatQuickFilters } from './FormatQuickFilters';
 import { gameRouteHash, gamesRouteHash } from '../routes';
 import { Badge } from './Badge';
 import { ColorPips } from './ColorPips';
@@ -118,11 +119,7 @@ export function GamesPage({
   onFiltersChange?: (filters: SnapshotFilters) => void;
 }) {
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
-  const [quickFilter, setQuickFilter] = useState(() =>
-    FORMAT_QUICK_FILTERS.some((filter) => filter.id === filters.quick)
-      ? (filters.quick as string)
-      : 'all',
-  );
+  const [quickFilter, setQuickFilter] = useState(() => normalizeQuickFilterId(filters.quick));
   const [deckSearch, setDeckSearch] = useState('');
   const [retryToken, setRetryToken] = useState(0);
 
@@ -207,10 +204,10 @@ export function GamesPage({
   }, [rows]);
 
   const visibleRows = useMemo(() => {
-    const active = FORMAT_QUICK_FILTERS.find((filter) => filter.id === quickFilter);
+    const matchesQuick = quickFilterPredicate(quickFilter);
     const query = deckSearch.trim().toLocaleLowerCase();
     return rows.filter((row) => {
-      if (active && active.id !== 'all' && !active.matches(row.format_label.toLocaleLowerCase())) {
+      if (!matchesQuick(row.format_label.toLocaleLowerCase())) {
         return false;
       }
       if (query && !row.deck_name.toLocaleLowerCase().includes(query)) {
@@ -277,19 +274,7 @@ export function GamesPage({
             ) : null}
           </p>
         ) : null}
-        <div className="quick-filters" role="group" aria-label="Quick format filters">
-          {FORMAT_QUICK_FILTERS.map((filter) => (
-            <button
-              key={filter.id}
-              type="button"
-              className={quickFilter === filter.id ? 'quick-filter quick-filter-active' : 'quick-filter'}
-              aria-pressed={quickFilter === filter.id}
-              onClick={() => selectQuickFilter(filter.id)}
-            >
-              {filter.label}
-            </button>
-          ))}
-        </div>
+        <FormatQuickFilters value={quickFilter} onChange={selectQuickFilter} />
         <div className="table-filter">
           <label>
             <span>Search decks</span>

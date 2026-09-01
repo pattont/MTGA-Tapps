@@ -2734,6 +2734,15 @@ tbody tr:hover {
   padding: 12px 16px 4px;
 }
 
+/* Two-tier format chips: family row plus its fly-out refinement row. */
+.quick-filter-stack .quick-filters {
+  padding-bottom: 0;
+}
+
+.quick-filter-stack .quick-filters-sub {
+  padding: 6px 16px 4px 30px;
+}
+
 .quick-filter {
   padding: 4px 12px;
   border: 1px solid var(--border);

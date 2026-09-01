@@ -56,7 +56,8 @@ import { formatCardName, formatDateTime, formatDuration, formatNumber, outcomeLa
 import { auditNavItems,
   deckFinderNavItems, cardNavItems, deckNavItems, gameNavItems, gamesNavItems, opponentNavItems,
   opponentsNavItems, liveNavItems, settingsNavItems } from './nav';
-import { FORMAT_QUICK_FILTERS } from './quickFilters';
+import { quickFilterPredicate } from './quickFilters';
+import { FormatQuickFilters } from './components/FormatQuickFilters';
 import { RouteFiltersContext } from './routeFilters';
 import {
   dashboardRouteHash,
@@ -1155,12 +1156,10 @@ function Dashboard({
   );
 
   const filteredRecentGames = useMemo(() => {
-    const active = FORMAT_QUICK_FILTERS.find((filter) => filter.id === recentQuickFilter);
-    const base =
-      !active || active.id === 'all'
-        ? recentGames
-        : recentGames.filter((row) => active.matches(row.format_label.toLocaleLowerCase()));
-    return groupRecentGames(base);
+    const matches = quickFilterPredicate(recentQuickFilter);
+    return groupRecentGames(
+      recentGames.filter((row) => matches(row.format_label.toLocaleLowerCase())),
+    );
   }, [recentGames, recentQuickFilter]);
 
   return (
@@ -1412,19 +1411,7 @@ function Dashboard({
         title="Recent Games"
         description="Recent results with draw distribution, flood or mana-screw status, total turns, and game time."
       >
-        <div className="quick-filters" role="group" aria-label="Quick format filters">
-          {FORMAT_QUICK_FILTERS.map((filter) => (
-            <button
-              key={filter.id}
-              type="button"
-              className={recentQuickFilter === filter.id ? 'quick-filter quick-filter-active' : 'quick-filter'}
-              aria-pressed={recentQuickFilter === filter.id}
-              onClick={() => setRecentQuickFilter(filter.id)}
-            >
-              {filter.label}
-            </button>
-          ))}
-        </div>
+        <FormatQuickFilters value={recentQuickFilter} onChange={setRecentQuickFilter} />
         <SortableTable
           caption="Recent games"
           columns={recentColumns}
