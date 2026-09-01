@@ -164,6 +164,9 @@ export function DeckFinderPage() {
       setResults(null);
       setVariantsParent(null);
       setSelectedDeck(null);
+      // A fresh site/format means no source pill is "current" any more —
+      // lastFetch also drives which pill stays lit.
+      setLastFetch(null);
       if (!nextProvider.uses_source_picker) {
         void runFetch(nextProvider, { format: nextFormat, sourceUrl: '', sourceName: '' });
         return;
@@ -422,39 +425,18 @@ export function DeckFinderPage() {
         </div>
       ) : null}
 
-      {provider && provider.creators.length > 0 ? (
-        <div className="deckfinder-filter-row">
-          <span className="deckfinder-step-label">Creators</span>
-          <div className="quick-filters deckfinder-chips" role="group" aria-label="Creators">
-            {provider.creators.map((creator) => (
-              <button
-                key={creator.url}
-                className="quick-filter"
-                title={creator.description}
-                type="button"
-                onClick={() =>
-                  provider &&
-                  void runFetch(provider, {
-                    format: 'any',
-                    sourceUrl: creator.url,
-                    sourceName: creator.name,
-                  })
-                }
-              >
-                {creator.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
       {showSources && provider && regularSources.length > 0 ? (
         <div className="deckfinder-filter-row">
           <span className="deckfinder-step-label">{provider.source_picker_title}</span>
           <div className="quick-filters deckfinder-chips" role="group" aria-label="Deck sources">
             {provider.allow_all_sources ? (
               <button
-                className="quick-filter"
+                className={
+                  lastFetch && lastFetch.sourceUrl === ''
+                    ? 'quick-filter quick-filter-active'
+                    : 'quick-filter'
+                }
+                aria-pressed={Boolean(lastFetch && lastFetch.sourceUrl === '')}
                 type="button"
                 onClick={() =>
                   provider &&
@@ -467,7 +449,12 @@ export function DeckFinderPage() {
             {regularSources.map((source) => (
               <button
                 key={`${source.name}-${source.url}`}
-                className="quick-filter"
+                className={
+                  lastFetch?.sourceUrl === source.url
+                    ? 'quick-filter quick-filter-active'
+                    : 'quick-filter'
+                }
+                aria-pressed={lastFetch?.sourceUrl === source.url}
                 title={source.description}
                 type="button"
                 onClick={() =>
@@ -494,7 +481,12 @@ export function DeckFinderPage() {
           <div className="quick-filters deckfinder-chips" role="group" aria-label="Creators">
             {regularSources.length === 0 && provider.allow_all_sources ? (
               <button
-                className="quick-filter"
+                className={
+                  lastFetch && lastFetch.sourceUrl === ''
+                    ? 'quick-filter quick-filter-active'
+                    : 'quick-filter'
+                }
+                aria-pressed={Boolean(lastFetch && lastFetch.sourceUrl === '')}
                 type="button"
                 onClick={() =>
                   provider &&
@@ -507,7 +499,12 @@ export function DeckFinderPage() {
             {creatorSources.map((source) => (
               <button
                 key={`${source.name}-${source.url}`}
-                className="quick-filter"
+                className={
+                  lastFetch?.sourceUrl === source.url
+                    ? 'quick-filter quick-filter-active'
+                    : 'quick-filter'
+                }
+                aria-pressed={lastFetch?.sourceUrl === source.url}
                 title={source.description}
                 type="button"
                 onClick={() =>
@@ -520,6 +517,37 @@ export function DeckFinderPage() {
                 }
               >
                 {source.name.replace(/^Creator:\s*/u, '')}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {provider && provider.creators.length > 0 ? (
+        <div className="deckfinder-filter-row">
+          <span className="deckfinder-step-label">Creators</span>
+          <div className="quick-filters deckfinder-chips" role="group" aria-label="Creators">
+            {provider.creators.map((creator) => (
+              <button
+                key={creator.url}
+                className={
+                  lastFetch?.sourceUrl === creator.url
+                    ? 'quick-filter quick-filter-active'
+                    : 'quick-filter'
+                }
+                aria-pressed={lastFetch?.sourceUrl === creator.url}
+                title={creator.description}
+                type="button"
+                onClick={() =>
+                  provider &&
+                  void runFetch(provider, {
+                    format: 'any',
+                    sourceUrl: creator.url,
+                    sourceName: creator.name,
+                  })
+                }
+              >
+                {creator.label}
               </button>
             ))}
           </div>
