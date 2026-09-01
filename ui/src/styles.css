@@ -512,6 +512,14 @@ a {
   border-color: var(--accent);
 }
 
+/* Double-width deck picker (All Games — the format dropdown is gone, so the
+   deck names get the room instead). */
+.filter-field-wide-deck .deck-select-trigger,
+.filter-field-wide-deck .deck-select-popup {
+  width: 520px;
+  max-width: min(520px, 80vw);
+}
+
 /* Searchable deck dropdown. */
 .deck-select {
   position: relative;

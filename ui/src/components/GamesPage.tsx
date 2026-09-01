@@ -120,7 +120,6 @@ export function GamesPage({
 }) {
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
   const [quickFilter, setQuickFilter] = useState(() => normalizeQuickFilterId(filters.quick));
-  const [deckSearch, setDeckSearch] = useState('');
   const [retryToken, setRetryToken] = useState(0);
 
   // Bookmarkable quick filter: the chip is read from the URL on mount and
@@ -205,12 +204,8 @@ export function GamesPage({
 
   const visibleRows = useMemo(() => {
     const matchesQuick = quickFilterPredicate(quickFilter);
-    const query = deckSearch.trim().toLocaleLowerCase();
     return rows.filter((row) => {
       if (!matchesQuick(row.format_label.toLocaleLowerCase())) {
-        return false;
-      }
-      if (query && !row.deck_name.toLocaleLowerCase().includes(query)) {
         return false;
       }
       if (filters.colors && (row.opp_colors ?? '') !== filters.colors) {
@@ -218,7 +213,7 @@ export function GamesPage({
       }
       return true;
     });
-  }, [deckSearch, filters.colors, quickFilter, rows]);
+  }, [filters.colors, quickFilter, rows]);
 
   if (loadState.status === 'loading') {
     return (
@@ -250,7 +245,14 @@ export function GamesPage({
         description={`Every tracked game (${loadState.response.total} total), newest first.`}
       >
         {onFiltersChange ? (
-          <FilterBar filters={filters} onChange={onFiltersChange} options={filterOptions} />
+          <FilterBar
+            filters={filters}
+            hideDeckLabel
+            hideFormat
+            wideDeck
+            onChange={onFiltersChange}
+            options={filterOptions}
+          />
         ) : null}
         {filters.colors ? (
           <p className="active-color-filter">
@@ -275,22 +277,11 @@ export function GamesPage({
           </p>
         ) : null}
         <FormatQuickFilters value={quickFilter} onChange={selectQuickFilter} />
-        <div className="table-filter">
-          <label>
-            <span>Search decks</span>
-            <input
-              type="search"
-              value={deckSearch}
-              onChange={(event) => setDeckSearch(event.target.value)}
-              placeholder="Deck name"
-            />
-          </label>
-        </div>
         <SortableTable
           caption="All games"
           columns={columns}
-          pageSize={25}
-          paginationKey={`${quickFilter}|${deckSearch.trim().toLocaleLowerCase()}`}
+          pageSize={30}
+          paginationKey={quickFilter}
           getRowKey={(row) => row.game_id}
           initialSort={{ key: 'started_at', direction: 'desc' }}
           rows={visibleRows}

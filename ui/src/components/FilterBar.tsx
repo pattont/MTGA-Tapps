@@ -8,6 +8,12 @@ interface FilterBarProps {
   onChange: (filters: SnapshotFilters) => void;
   /** Hide the deck selector (e.g. on a deck detail page). */
   hideDeck?: boolean;
+  /** Hide the format dropdown (All Games: the quick-filter pills cover it). */
+  hideFormat?: boolean;
+  /** Drop the "Deck" label — the trigger's "All decks" text says it already. */
+  hideDeckLabel?: boolean;
+  /** Double-width deck picker (All Games, where the format dropdown is gone). */
+  wideDeck?: boolean;
   /** Right-aligned page action on the filter row (e.g. Copy Arena Deck). */
   trailing?: ReactNode;
 }
@@ -129,15 +135,24 @@ function DeckSelect({
   );
 }
 
-export function FilterBar({ filters, options, onChange, hideDeck = false, trailing }: FilterBarProps) {
+export function FilterBar({
+  filters,
+  options,
+  onChange,
+  hideDeck = false,
+  hideFormat = false,
+  hideDeckLabel = false,
+  wideDeck = false,
+  trailing,
+}: FilterBarProps) {
   const hasFilters = Boolean(
     filters.deck || filters.format || filters.days || filters.since || filters.until,
   );
   return (
     <div className="filter-bar" role="group" aria-label="Dashboard filters">
       {hideDeck ? null : (
-        <div className="filter-field">
-          <span className="filter-field-label">Deck</span>
+        <div className={wideDeck ? 'filter-field filter-field-wide-deck' : 'filter-field'}>
+          {hideDeckLabel ? null : <span className="filter-field-label">Deck</span>}
           <DeckSelect
             decks={options.decks}
             value={filters.deck}
@@ -145,20 +160,22 @@ export function FilterBar({ filters, options, onChange, hideDeck = false, traili
           />
         </div>
       )}
-      <label className="filter-field">
-        <span className="filter-field-label">Format</span>
-        <select
-          value={filters.format ?? ''}
-          onChange={(event) => onChange({ ...filters, format: event.target.value || undefined })}
-        >
-          <option value="">All formats</option>
-          {options.formats.filter(showInFormatAnalytics).map((format) => (
-            <option key={format.raw_format} value={format.raw_format}>
-              {format.format_label}
-            </option>
-          ))}
-        </select>
-      </label>
+      {hideFormat ? null : (
+        <label className="filter-field">
+          <span className="filter-field-label">Format</span>
+          <select
+            value={filters.format ?? ''}
+            onChange={(event) => onChange({ ...filters, format: event.target.value || undefined })}
+          >
+            <option value="">All formats</option>
+            {options.formats.filter(showInFormatAnalytics).map((format) => (
+              <option key={format.raw_format} value={format.raw_format}>
+                {format.format_label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <label className="filter-field">
         <span className="filter-field-label">Period</span>
         <select
