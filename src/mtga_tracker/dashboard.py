@@ -230,16 +230,73 @@ def _game_draw_quality(
     ).fetchone()
     recorded_draws = int(stats_drawn_row[0] or 0) if stats_drawn_row else 0
     decklist = deck_land_stats(conn, game_id, participant_id)
+    land_rate_source: Optional[str] = None
+    if decklist is None:
+        # No decklist was captured for this game: borrow the nearest submitted
+        # decklist for the same deck so Expected Lands reflects the real deck
+        # instead of the generic 40% heuristic.
+        decklist = _nearest_deck_land_stats(conn, participant_id)
+        if decklist is not None:
+            land_rate_source = "deck_history"
     deck_lands = None
     if decklist is not None:
         deck_size, deck_lands = decklist
-    return _draw_quality_metrics(
+    quality = _draw_quality_metrics(
         opening_hand,
         drawn,
         recorded_draws,
         int(deck_size or 60),
         deck_lands,
     )
+    if land_rate_source is not None:
+        quality["land_rate_source"] = land_rate_source
+    return quality
+
+
+def _nearest_deck_land_stats(
+    conn: sqlite3.Connection, participant_id: Optional[str]
+) -> Optional[tuple[int, int]]:
+    """(deck_size, lands) from the closest game that submitted a decklist for
+    the same deck: the latest one played at or before this game, else the
+    earliest one after it."""
+    if not participant_id:
+        return None
+    row = conn.execute(
+        """
+        SELECT p.deck_name, COALESCE(g.started_at, g.ended_at)
+        FROM participants p
+        JOIN games g ON g.id = p.game_id
+        WHERE p.id = ?
+        """,
+        (participant_id,),
+    ).fetchone()
+    if row is None or not row[0]:
+        return None
+    deck_name, played_at = row
+    played_at = played_at or ""
+    match = conn.execute(
+        """
+        SELECT p.game_id, p.id
+        FROM participants p
+        JOIN games g ON g.id = p.game_id
+        WHERE p.role = 'player' AND p.deck_name = ? AND p.id != ?
+          AND EXISTS (
+              SELECT 1 FROM game_deck_cards d
+              WHERE d.game_id = p.game_id AND d.participant_id = p.id
+                AND d.deck_zone = 'deck'
+          )
+        ORDER BY
+            CASE WHEN COALESCE(g.started_at, g.ended_at, '') <= ? THEN 0 ELSE 1 END,
+            CASE WHEN COALESCE(g.started_at, g.ended_at, '') <= ?
+                 THEN COALESCE(g.started_at, g.ended_at, '') END DESC,
+            COALESCE(g.started_at, g.ended_at, '') ASC
+        LIMIT 1
+        """,
+        (deck_name, participant_id, played_at, played_at),
+    ).fetchone()
+    if match is None:
+        return None
+    return deck_land_stats(conn, str(match[0]), str(match[1]))
 
 
 def _opponent_color_letters(conn: sqlite3.Connection, game_id: str, participant_id: str) -> str:
@@ -3292,7 +3349,7 @@ def _deck_land_profile(
         sum_lands_seen += int(quality.get("lands_seen") or 0)
         sum_draws += int(quality.get("total_draws") or 0)
         sum_land_draws += int(quality.get("land_draws") or 0)
-        if expected_land_pct is None or quality.get("land_rate_source") == "decklist":
+        if expected_land_pct is None:
             expected_land_pct = quality.get("expected_land_rate")
         if quality.get("is_flood"):
             flood += 1
@@ -3301,6 +3358,12 @@ def _deck_land_profile(
         else:
             normal += 1
     classified = flood + screw + normal
+    # The deck's land ratio comes from its newest submitted decklist (the same
+    # numbers shown in Land Statistics); only decks with no decklist at all
+    # fall back to the per-game estimate.
+    if lands is not None and deck_size:
+        expected_land_pct = round(100.0 * lands / deck_size, 1)
+    avg_cards_seen = round(sum_cards_seen / classified, 1) if classified else None
     return {
         "deck_size": deck_size,
         "lands": lands,
@@ -3309,15 +3372,22 @@ def _deck_land_profile(
         "normal_games": normal,
         "classified_games": classified,
         # Deck-level draw-quality averages across the classified games.
-        "avg_cards_seen": round(sum_cards_seen / classified, 1) if classified else None,
+        "avg_cards_seen": avg_cards_seen,
+        "avg_lands_seen": round(sum_lands_seen / classified, 1) if classified else None,
         "lands_seen_pct": (
             round(100.0 * sum_lands_seen / sum_cards_seen, 1) if sum_cards_seen else None
         ),
         "avg_cards_drawn": round(sum_draws / classified, 1) if classified else None,
+        "avg_lands_drawn": round(sum_land_draws / classified, 1) if classified else None,
         "lands_drawn_pct": (
             round(100.0 * sum_land_draws / sum_draws, 1) if sum_draws else None
         ),
         "expected_land_pct": expected_land_pct,
+        "expected_lands_seen": (
+            round(avg_cards_seen * expected_land_pct / 100.0, 1)
+            if avg_cards_seen is not None and expected_land_pct
+            else None
+        ),
     }
 
 
@@ -3673,21 +3743,11 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                 (game_id, player_participant_id),
             )
         )
-        stats_drawn_row = conn.execute(
-            """
-            SELECT cards_drawn
-            FROM game_participant_stats
-            WHERE game_id = ? AND participant_id = ?
-            """,
-            (game_id, player_participant_id),
-        ).fetchone()
-        recorded_draws = int(stats_drawn_row[0] or 0) if stats_drawn_row else 0
         deck_size = int((player or {}).get("deck_size") or 60)
-        draw_quality = _draw_quality_metrics(
-            opening_hand,
-            drawn,
-            recorded_draws,
-            deck_size,
+        # Shared helper: same visible-card rules, plus the submitted decklist
+        # (or the deck's nearest one) for the expected land rate.
+        draw_quality = _game_draw_quality(
+            conn, game_id, player_participant_id, deck_size
         )
         cards_played = _dict_rows(
             conn.execute(

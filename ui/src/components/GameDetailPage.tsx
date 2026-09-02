@@ -427,6 +427,9 @@ export function GameDetailPage({
   const landSeenPct =
     detail.draw_quality.land_seen_pct ?? (totalCardsSeen ? (100 * landsSeen) / totalCardsSeen : null);
   const expectedLandRate = detail.draw_quality.expected_land_rate ?? 40;
+  // No decklist for this game or any other game of the same deck: the rate is
+  // the generic heuristic, so say so in the label.
+  const expectedLandRateEstimated = detail.draw_quality.land_rate_source === 'estimate';
   const expectedLandsSeen =
     detail.draw_quality.expected_lands_seen ?? (totalCardsSeen * expectedLandRate) / 100;
   const isFlood =
@@ -879,14 +882,17 @@ export function GameDetailPage({
       >
         <section className="metric-grid metric-grid-deck draw-quality-grid" aria-label="Game draw quality">
           {/* Row 1: card totals (two wide cards). Row 2: land information (five cards). */}
-          <MetricCard label="Total Cards Seen" value={formatNumber(totalCardsSeen)} />
           <MetricCard label="Total Cards Drawn" value={formatNumber(detail.draw_quality.total_draws)} />
-          <MetricCard label="Lands Seen" value={`${landsSeen} (${formatWholePercent(landSeenPct)})`} />
+          <MetricCard label="Total Cards Seen" value={formatNumber(totalCardsSeen)} />
           <MetricCard
             label="Lands Drawn"
             value={`${detail.draw_quality.land_draws} (${formatWholePercent(detail.draw_quality.land_draw_pct)})`}
           />
-          <MetricCard label={`Expected Lands (${formatPercent(expectedLandRate)})`} value={expectedLandsSeen.toFixed(1)} />
+          <MetricCard label="Lands Seen" value={`${landsSeen} (${formatWholePercent(landSeenPct)})`} />
+          <MetricCard
+            label={`Expected Lands (${formatPercent(expectedLandRate)}${expectedLandRateEstimated ? ' est.' : ''})`}
+            value={expectedLandsSeen.toFixed(1)}
+          />
           <MetricCard label="Longest Land Streak" value={formatNumber(longestLandStreak)} />
           <MetricCard
             label="Draw Status"

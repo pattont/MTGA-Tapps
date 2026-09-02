@@ -587,6 +587,14 @@ const cutCardColumns: Column<CutCardRow>[] = [
   },
 ];
 
+/** "4.8 (39.7%)": average lands per game with the land share beside it. */
+function landsWithPercent(avg: number | null | undefined, pct: number | null | undefined): string {
+  if (pct == null) {
+    return '—';
+  }
+  return avg == null ? `${pct}%` : `${avg.toFixed(1)} (${pct}%)`;
+}
+
 export function DeckDetailPage({
   backHref = '#overview',
   deckName,
@@ -1125,32 +1133,29 @@ export function DeckDetailPage({
         {landProfile && landProfile.avg_cards_seen != null ? (
           <section className="metric-grid metric-grid-deck" aria-label="Deck draw quality">
             <MetricCard
-              label="Cards Seen / Game"
-              value={formatNumber(landProfile.avg_cards_seen)}
-            />
-            <MetricCard
-              label="Lands Seen"
-              value={
-                landProfile.lands_seen_pct != null ? `${landProfile.lands_seen_pct}%` : '—'
-              }
-            />
-            <MetricCard
               label="Cards Drawn / Game"
               value={formatNumber(landProfile.avg_cards_drawn)}
             />
             <MetricCard
-              label="Lands Drawn"
-              value={
-                landProfile.lands_drawn_pct != null ? `${landProfile.lands_drawn_pct}%` : '—'
-              }
+              label="Cards Seen / Game"
+              value={formatNumber(landProfile.avg_cards_seen)}
             />
             <MetricCard
-              label="Expected Lands"
-              value={
+              label="Lands Drawn / Game"
+              value={landsWithPercent(landProfile.avg_lands_drawn, landProfile.lands_drawn_pct)}
+            />
+            <MetricCard
+              label="Lands Seen / Game"
+              value={landsWithPercent(landProfile.avg_lands_seen, landProfile.lands_seen_pct)}
+            />
+            <MetricCard
+              label="Expected Lands / Game"
+              value={landsWithPercent(
+                landProfile.expected_lands_seen,
                 landProfile.expected_land_pct != null && landProfile.expected_land_pct > 0
-                  ? `${landProfile.expected_land_pct}%`
-                  : '—'
-              }
+                  ? landProfile.expected_land_pct
+                  : null,
+              )}
             />
           </section>
         ) : (

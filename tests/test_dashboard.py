@@ -3185,3 +3185,46 @@ def test_opponents_count_bo3_matches_once(tmp_path):
     assert all(game["match_id"] == "m1" for game in detail["games"])
     assert detail["games"][0]["match_wins"] == 2
     assert detail["games"][0]["match_losses"] == 1
+
+
+def test_game_detail_expected_lands_borrow_nearest_decklist(tmp_path):
+    """A game with no captured decklist uses the same deck's nearest submitted
+    decklist for Expected Lands instead of the generic 40% heuristic."""
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("delete from game_deck_cards where game_id = 'game-1'")
+        conn.execute(
+            "update game_deck_cards set quantity = 22 "
+            "where game_id = 'game-2' and display_name = 'Mountain'"
+        )
+
+    quality = game_detail(db_path, "game-1")["draw_quality"]
+    # game-2's decklist: 22 lands / 58 cards.
+    assert quality["expected_land_rate"] == 37.9
+    assert quality["land_rate_source"] == "deck_history"
+
+    # A deck with no decklist anywhere still falls back to the estimate.
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("delete from game_deck_cards")
+    quality = game_detail(db_path, "game-1")["draw_quality"]
+    assert quality["expected_land_rate"] == 40.0
+    assert quality["land_rate_source"] == "estimate"
+
+
+def test_deck_land_profile_expected_lands_from_newest_decklist(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "update game_deck_cards set quantity = 22 "
+            "where game_id = 'game-2' and display_name = 'Mountain'"
+        )
+
+    profile = deck_detail(db_path, "Boros Mouse")["land_profile"]
+    assert profile["deck_size"] == 58
+    assert profile["lands"] == 22
+    assert profile["expected_land_pct"] == 37.9
+    assert profile["avg_lands_seen"] is not None
+    assert profile["avg_lands_drawn"] is not None
+    assert profile["expected_lands_seen"] == round(
+        profile["avg_cards_seen"] * 37.9 / 100.0, 1
+    )

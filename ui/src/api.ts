@@ -570,10 +570,13 @@ export interface DeckLandProfile {
   classified_games: number;
   /** Deck-level draw-quality averages across the classified games. */
   avg_cards_seen?: number | null;
+  avg_lands_seen?: number | null;
   lands_seen_pct?: number | null;
   avg_cards_drawn?: number | null;
+  avg_lands_drawn?: number | null;
   lands_drawn_pct?: number | null;
   expected_land_pct?: number | null;
+  expected_lands_seen?: number | null;
 }
 
 /** One seat's average turn-time telemetry across a deck's games. */
@@ -798,6 +801,8 @@ export interface GameDrawQuality {
   lands_seen?: number;
   land_seen_pct?: number | null;
   expected_land_rate?: number;
+  /** 'decklist' (this game's list), 'deck_history' (nearest list for the same deck), or 'estimate'. */
+  land_rate_source?: 'decklist' | 'deck_history' | 'estimate';
   expected_lands_seen?: number;
   flood_probability_pct?: number | null;
   screw_probability_pct?: number | null;
