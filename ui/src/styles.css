@@ -1048,17 +1048,15 @@ a.best-deck-name:focus-visible {
   line-height: 1.4;
 }
 
-/* Game page Draw Quality: row 1 = two wide card-total boxes, row 2 = five land boxes. */
+/* Game page Draw Quality: seven cards on one line. The 180px floor keeps
+   every label on a single line — narrow windows wrap whole cards onto a
+   second row instead of breaking label text. */
 .draw-quality-grid {
-  grid-template-columns: repeat(10, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
-.draw-quality-grid > * {
-  grid-column: span 2;
-}
-
-.draw-quality-grid > :nth-child(-n + 2) {
-  grid-column: span 5;
+.draw-quality-grid .metric-card > span:first-child {
+  white-space: nowrap;
 }
 
 .draw-quality-reason {
@@ -2086,15 +2084,6 @@ tbody tr:hover {
 }
 
 @media (max-width: 980px) {
-  .draw-quality-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .draw-quality-grid > *,
-  .draw-quality-grid > :nth-child(-n + 2) {
-    grid-column: span 1;
-  }
-
   .app-layout {
     grid-template-columns: 1fr;
   }
@@ -2123,10 +2112,6 @@ tbody tr:hover {
 }
 
 @media (max-width: 620px) {
-  .draw-quality-grid {
-    grid-template-columns: 1fr;
-  }
-
   .dashboard-main {
     padding: 16px 16px 88px;
   }

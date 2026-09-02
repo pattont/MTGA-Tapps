@@ -885,7 +885,7 @@ export function GameDetailPage({
         description="Flood tracks excess lands and concentrated land streaks. Mana screw tracks statistically low land access and three or more known nonland draws while stuck on one or two lands."
       >
         <section className="metric-grid metric-grid-deck draw-quality-grid" aria-label="Game draw quality">
-          {/* Row 1: card totals (two wide cards). Row 2: land information (five cards). */}
+          {/* One line: card totals first, then the land information. */}
           <MetricCard label="Total Cards Drawn" value={formatNumber(detail.draw_quality.total_draws)} />
           <MetricCard label="Total Cards Seen" value={formatNumber(totalCardsSeen)} />
           <MetricCard
