@@ -877,25 +877,17 @@ export function GameDetailPage({
         title="Draw Quality"
         description="Flood tracks excess lands and concentrated land streaks. Mana screw tracks statistically low land access and three or more known nonland draws while stuck on one or two lands."
       >
-        <section className="metric-grid metric-grid-deck" aria-label="Game draw quality">
-          {/* No icons here: nine cards per row leave no room — values would wrap. */}
+        <section className="metric-grid metric-grid-deck draw-quality-grid" aria-label="Game draw quality">
+          {/* Row 1: card totals (two wide cards). Row 2: land information (five cards). */}
           <MetricCard label="Total Cards Seen" value={formatNumber(totalCardsSeen)} />
-          <MetricCard label="Lands Seen" value={`${landsSeen} (${formatWholePercent(landSeenPct)})`} />
           <MetricCard label="Total Cards Drawn" value={formatNumber(detail.draw_quality.total_draws)} />
+          <MetricCard label="Lands Seen" value={`${landsSeen} (${formatWholePercent(landSeenPct)})`} />
           <MetricCard
             label="Lands Drawn"
             value={`${detail.draw_quality.land_draws} (${formatWholePercent(detail.draw_quality.land_draw_pct)})`}
           />
           <MetricCard label={`Expected Lands (${formatPercent(expectedLandRate)})`} value={expectedLandsSeen.toFixed(1)} />
           <MetricCard label="Longest Land Streak" value={formatNumber(longestLandStreak)} />
-          <MetricCard
-            label="Worst 8-Draw Window"
-            value={maxLandsInEightDraws === null ? '—' : `${maxLandsInEightDraws} lands`}
-          />
-          <MetricCard
-            label="Low-Land Drought"
-            value={longestLowLandDrought ? `${longestLowLandDrought} draws` : '—'}
-          />
           <MetricCard
             label="Draw Status"
             value={drawStatus}

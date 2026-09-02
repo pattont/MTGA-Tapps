@@ -1545,7 +1545,7 @@ describe('App', () => {
     const drawStatus = screen.getByText('Draw Status').closest('.metric-card');
     expect(drawStatus).toHaveClass('metric-card-warning');
     expect(within(drawStatus as HTMLElement).getByText('Mana Screw')).toBeInTheDocument();
-    expect(screen.getByText('3 draws')).toBeInTheDocument();
+    expect(screen.queryByText('Low-Land Drought')).not.toBeInTheDocument();
     expect(screen.getByText('Mana Screw Evidence')).toHaveClass('badge-screw');
     expect(screen.getByText('3 consecutive nonland draws while stuck on 1 land')).toBeInTheDocument();
     expect(screen.queryByText('Flood evidence')).not.toBeInTheDocument();
