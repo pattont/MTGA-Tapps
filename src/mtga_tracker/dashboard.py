@@ -5211,7 +5211,7 @@ def render_dashboard_html(snapshot: Dict[str, Any]) -> str:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="refresh" content="20">
-  <title>MTGA Tracker Dashboard</title>
+  <title>Tapps Tracker Dashboard</title>
   <style>
     body {{ margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background: #111827; color: #f9fafb; }}
     main {{ max-width: 1180px; margin: 0 auto; padding: 28px; }}
@@ -5231,7 +5231,7 @@ def render_dashboard_html(snapshot: Dict[str, Any]) -> str:
 </head>
 <body>
 <main>
-  <h1>MTGA Tracker Dashboard</h1>
+  <h1>Tapps Tracker Dashboard</h1>
   <section class="cards">
     <div class="card"><div class="label">Games</div><div class="value">{summary["games"]}</div></div>
     <div class="card"><div class="label">Wins</div><div class="value">{summary["wins"]}</div></div>

@@ -1,4 +1,4 @@
-# MTGA Tracker
+# Tapps Tracker
 
 **Track your Magic: The Gathering Arena games — entirely on your machine.**
 
@@ -330,6 +330,6 @@ redistribute this software, but any distributed or network-hosted derivative
 must also publish its source under the same license. For commercial licensing
 outside these terms, contact the author.
 
-*MTGA Tracker is unofficial Fan Content. Not approved/endorsed by Wizards of
+*Tapps Tracker is unofficial Fan Content. Not approved/endorsed by Wizards of
 the Coast. Magic: The Gathering and its logos are trademarks of Wizards of the
 Coast LLC.*

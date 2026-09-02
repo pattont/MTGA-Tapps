@@ -51,7 +51,7 @@ class DeckAISettingsDialog(QDialog):
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.setWindowTitle("MTGA Tracker Settings")
+        self.setWindowTitle("Tapps Tracker Settings")
         self.setMinimumWidth(560)
 
         layout = QVBoxLayout(self)

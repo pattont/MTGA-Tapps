@@ -1,4 +1,4 @@
-"""MTGA Tracker - Track cards played in Magic: The Gathering Arena."""
+"""Tapps Tracker - Track cards played in Magic: The Gathering Arena."""
 
 # The version is derived from the git tag (setuptools-scm), never hand-edited.
 # _version.py is generated at install/build time and gitignored; installed

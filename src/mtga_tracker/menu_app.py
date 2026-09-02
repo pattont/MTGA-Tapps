@@ -63,7 +63,7 @@ def _status_dot_icon(color: str) -> QIcon:
     # Keep the real colors on macOS — template masking would strip them.
     icon.setIsMask(False)
     return icon
-_APP_NAME = "MTGA Tracker"
+_APP_NAME = "Tapps Tracker"
 _XTERM_BASE_COLORS = (
     "#000000",
     "#800000",
@@ -146,9 +146,9 @@ class LiveLogWindow(QMainWindow):
     ) -> None:
         super().__init__()
         settings = settings or AppSettings()
-        # Windows appends the application display name ("MTGA Tracker") to
+        # Windows appends the application display name ("Tapps Tracker") to
         # every window title, so the base title must not repeat it there.
-        self.setWindowTitle("Live Log" if sys.platform == "win32" else "MTGA Tracker - Live Log")
+        self.setWindowTitle("Live Log" if sys.platform == "win32" else "Tapps Tracker - Live Log")
         if window_icon is not None:
             self.setWindowIcon(window_icon)
         self.resize(settings.live_log_width, settings.live_log_height)
@@ -290,7 +290,7 @@ class MenuBarController(QObject):
         self.menu.addAction(self.toggle_tracker_action)
 
         self.menu.addSeparator()
-        self.quit_action = QAction("Quit MTGA Tracker", self)
+        self.quit_action = QAction("Quit Tapps Tracker", self)
         self.quit_action.triggered.connect(self.app.quit)
         self.menu.addAction(self.quit_action)
 
@@ -329,7 +329,7 @@ class MenuBarController(QObject):
         except Exception as exc:
             self.log_window.append_text(f"Application startup failed: {exc}\n")
             self.log_window.show()
-            QMessageBox.critical(self.log_window, "MTGA Tracker", str(exc))
+            QMessageBox.critical(self.log_window, "Tapps Tracker", str(exc))
 
     def open_dashboard(self, fragment: str = "") -> None:
         try:
@@ -392,7 +392,7 @@ class MenuBarController(QObject):
             self.toggle_tracker_action.setEnabled(status not in {"tracker-starting"})
             if status == "tracker-error":
                 self.tray.showMessage(
-                    "MTGA Tracker",
+                    "Tapps Tracker",
                     "Tracking stopped. Open the live log for details.",
                     QSystemTrayIcon.MessageIcon.Warning,
                     5000,
@@ -429,17 +429,17 @@ def run_menu_app(args: Any) -> int:
         # shutting down.
         QMessageBox.information(
             None,
-            "MTGA Tracker",
-            "MTGA Tracker is already running — look for its icon in the "
+            "Tapps Tracker",
+            "Tapps Tracker is already running — look for its icon in the "
             "menu bar (macOS) or system tray (Windows).\n\n"
             "If you just quit it, wait a few seconds and try again.",
         )
         return 0
     # QApplication owns the lifetime of the lock for the complete event loop.
     app._mtga_instance_lock = instance_lock
-    app.setApplicationName("MTGA Tracker")
-    app.setApplicationDisplayName("MTGA Tracker")
-    app.setOrganizationName("MTGA Tracker")
+    app.setApplicationName("Tapps Tracker")
+    app.setApplicationDisplayName("Tapps Tracker")
+    app.setOrganizationName("Tapps Tracker")
     app_icon = QIcon(str(_ASSET_DIR / "app-icon.png"))
     if not app_icon.isNull():
         app.setWindowIcon(app_icon)

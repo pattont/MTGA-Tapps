@@ -1,4 +1,4 @@
-"""Main entry point for MTGA Tracker."""
+"""Main entry point for Tapps Tracker."""
 
 import os
 import sys
@@ -12,7 +12,7 @@ from .log_parser import MTGALogParser
 
 
 def main():
-    """Main entry point for the MTGA Tracker application."""
+    """Main entry point for the Tapps Tracker application."""
     parser = argparse.ArgumentParser(
         description="Track cards played in Magic: The Gathering Arena",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -32,7 +32,7 @@ Examples:
     parser.add_argument(
         "--version",
         action="version",
-        version="MTGA Tracker 0.5.0",
+        version="Tapps Tracker 0.5.0",
     )
 
     args = parser.parse_args()

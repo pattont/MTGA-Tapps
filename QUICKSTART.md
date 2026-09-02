@@ -1,6 +1,6 @@
 # Quick Start Guide
 
-Get MTGA Tracker running in a few minutes.
+Get Tapps Tracker running in a few minutes.
 
 > 💬 Questions, bugs, or feature requests? Join the community on
 > **[Discord](https://discord.gg/ExfW3HaZgb)**.

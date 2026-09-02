@@ -21,9 +21,9 @@ def test_set_macos_process_name_uses_native_program_name(monkeypatch):
     monkeypatch.setattr(menu_app.sys, "platform", "darwin")
     monkeypatch.setattr(menu_app.ctypes, "CDLL", lambda _name: library)
 
-    menu_app._set_macos_process_name("MTGA Tracker")
+    menu_app._set_macos_process_name("Tapps Tracker")
 
-    assert setter.calls == [b"MTGA Tracker"]
+    assert setter.calls == [b"Tapps Tracker"]
     assert setter.argtypes == [menu_app.ctypes.c_char_p]
     assert setter.restype is None
 
@@ -36,7 +36,7 @@ def test_set_macos_process_name_is_noop_off_macos(monkeypatch):
         lambda _name: (_ for _ in ()).throw(AssertionError("must not load native library")),
     )
 
-    menu_app._set_macos_process_name("MTGA Tracker")
+    menu_app._set_macos_process_name("Tapps Tracker")
 
 
 class _FakeLock:
@@ -92,7 +92,7 @@ def test_tray_tooltip_uses_application_identity():
 
     menu_app._set_tray_tooltip(tray)
 
-    assert tray.tooltip == "MTGA Tracker"
+    assert tray.tooltip == "Tapps Tracker"
 
 
 class _FakeMenu:

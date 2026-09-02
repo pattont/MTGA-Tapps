@@ -617,8 +617,8 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'MTGA Tracker – Go to overview' })).toHaveAttribute(
+    expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Tapps Tracker – Go to overview' })).toHaveAttribute(
       'href',
       '#overview',
     );
@@ -635,7 +635,7 @@ describe('App', () => {
     ]);
     expect(screen.getByRole('heading', { name: 'Performance Overview' })).toBeInTheDocument();
     expect(screen.queryByText(/SQLite analytics/i)).not.toBeInTheDocument();
-    expect(document.title).toBe('MTGA Tracker – Overview');
+    expect(document.title).toBe('Tapps Tracker – Overview');
     expect(screen.getByText('50% WR · 1–1 · 2 games')).toBeInTheDocument();
     expect(screen.getAllByText('Boros Mouse').length).toBeGreaterThan(0);
     [
@@ -705,7 +705,7 @@ describe('App', () => {
 
     vi.mocked(window.scrollTo).mockClear();
     await user.click(
-      screen.getByRole('link', { name: 'MTGA Tracker – Go to overview' }),
+      screen.getByRole('link', { name: 'Tapps Tracker – Go to overview' }),
     );
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0 });
 
@@ -722,7 +722,7 @@ describe('App', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(snapshot), { status: 200 })));
     render(<App />);
 
-    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
+    expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
     // Decks table, Best Deck metric, and Recent Games.
     const deckLinks = screen.getAllByRole('link', { name: 'Boros Mouse' });
     expect(deckLinks.length).toBe(3);
@@ -758,7 +758,7 @@ describe('App', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<App />);
-    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
+    expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
 
     await act(async () => {
       window.location.hash = '#/deck-finder';
@@ -793,7 +793,7 @@ describe('App', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<App />);
-    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
+    expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
 
     await act(async () => {
       window.location.hash = '#/opponents';
@@ -884,7 +884,7 @@ describe('App', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<App />);
-    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
+    expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
 
     await act(async () => {
       window.location.hash = '#/live';
@@ -966,7 +966,7 @@ describe('App', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<App />);
-    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
+    expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
 
     await act(async () => {
       window.location.hash = '#/live';
@@ -1017,7 +1017,7 @@ describe('App', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<App />);
-    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
+    expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
 
     await act(async () => {
       window.location.hash = '#/settings';
@@ -1050,7 +1050,7 @@ describe('App', () => {
     vi.stubGlobal('fetch', fetchMock);
     render(<App />);
 
-    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
+    expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: 'Boros Mouse' }).length).toBeGreaterThan(0);
 
     await act(async () => {
@@ -1060,7 +1060,7 @@ describe('App', () => {
 
     expect((await screen.findAllByRole('heading', { name: 'Boros Mouse' })).length).toBeGreaterThan(0);
     expect(fetchMock).toHaveBeenCalledWith('/api/deck?name=Boros+Mouse', expect.anything());
-    expect(document.title).toBe('MTGA Tracker – Boros Mouse');
+    expect(document.title).toBe('Tapps Tracker – Boros Mouse');
     ['Win Rate Trend', 'Deck List & Card Performance', 'Mulligans', 'Decklist Changes', 'Formats', 'Recent Games'].forEach(
       (sectionName) => {
         expect(screen.getByRole('heading', { name: sectionName })).toBeInTheDocument();
@@ -1112,7 +1112,7 @@ describe('App', () => {
     });
 
     expect(await screen.findByLabelText('Overview metrics')).toBeInTheDocument();
-    expect(document.title).toBe('MTGA Tracker – Overview');
+    expect(document.title).toBe('Tapps Tracker – Overview');
     expect(screen.queryByRole('heading', { name: 'Deck List & Card Performance' })).not.toBeInTheDocument();
   });
 
@@ -1147,7 +1147,7 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
+    expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
 
     await user.selectOptions(screen.getByLabelText('Format'), 'Play');
     await user.selectOptions(screen.getByLabelText('Period'), '30');
@@ -1210,7 +1210,7 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
+    expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
 
     await user.type(screen.getByLabelText('Search decks'), 'izzet');
     const deckTable = screen.getByRole('table', { name: 'Deck performance' });
@@ -1282,7 +1282,7 @@ describe('App', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(snapshot), { status: 200 })));
     render(<App />);
 
-    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
+    expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
 
     expect(screen.getByRole('link', { name: /6\/4\/26, 12:10AM/i })).toHaveAttribute(
       'href',
@@ -1606,7 +1606,7 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await screen.findByText('MTGA Tracker');
+    await screen.findByText('Tapps Tracker');
     await user.type(screen.getByRole('combobox', { name: 'Search by card or deck name' }), 'Sheltered by Ghosts');
 
     const result = await screen.findByRole('option', { name: /Sheltered by Ghosts.*12 games.*9 played/i });
@@ -1636,7 +1636,7 @@ describe('App', () => {
       'https://api.scryfall.com/cards/named?exact=Mouse+Mentor&format=image&version=normal',
     );
     expect(fetchMock).toHaveBeenCalledWith('/api/card?name=Mouse+Mentor', expect.anything());
-    expect(document.title).toBe('MTGA Tracker – Mouse Mentor');
+    expect(document.title).toBe('Tapps Tracker – Mouse Mentor');
     [
       'Card Summary',
       'When Opponent Plays This Card',
@@ -1726,7 +1726,7 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    expect(await screen.findByText('MTGA Tracker')).toBeInTheDocument();
+    expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot', expect.anything());
 
     // The deck filter is a searchable dropdown: open, type, pick.

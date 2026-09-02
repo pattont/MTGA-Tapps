@@ -486,7 +486,7 @@ export function LiveLogPage() {
             <div className="live-waiting">
               <p className="live-waiting-title">Tracker is not running</p>
               <p className="live-waiting-detail">
-                Start the MTGA Tracker app and this page goes live automatically — no refresh
+                Start the Tapps Tracker app and this page goes live automatically — no refresh
                 needed.
               </p>
             </div>
