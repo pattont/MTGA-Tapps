@@ -812,7 +812,7 @@ describe('App', () => {
     expect(within(nav).queryByRole('link', { name: 'Recent Games' })).not.toBeInTheDocument();
   });
 
-  it('routes to the Live Log page and renders the live scoreboard', async () => {
+  it('routes to the Live Scoreboard page and renders the live scoreboard', async () => {
     const live = {
       tracker: { state: 'live', updated_at: new Date().toISOString(), session_id: 'S1' },
       now: {
@@ -899,11 +899,11 @@ describe('App', () => {
     // Finished game links to its game page.
     const gameLink = screen.getByRole('link', { name: /PastFoe/ });
     expect(gameLink.getAttribute('href')).toContain('#/game/G8');
-    // The dashboard sidebar gets the Live Log route entry.
+    // The dashboard sidebar gets the Live Scoreboard route entry.
     window.location.hash = '#overview';
   });
 
-  it('keeps the previous game scoreboard on a fresh Live Log load between games', async () => {
+  it('keeps the previous game scoreboard on a fresh Live Scoreboard load between games', async () => {
     const live = {
       tracker: { state: 'idle', updated_at: new Date().toISOString(), session_id: 'S1' },
       now: {
@@ -1454,8 +1454,11 @@ describe('App', () => {
     expect(within(gameMetrics).queryByText('Outcome')).not.toBeInTheDocument();
     expect(within(gameMetrics).queryByText('Format')).not.toBeInTheDocument();
     expect(within(gameMetrics).getAllByRole('article')).toHaveLength(6);
-    expect(screen.getByText('8 (73%)')).toBeInTheDocument();
-    expect(screen.getByText('7 (70%)')).toBeInTheDocument();
+    // Opponent mulligans unknown for this fixture -> dash, never a fake 0.
+    expect(within(gameMetrics).getByText('Mulligans (You / Opp)').closest('.metric-card')).toHaveTextContent('0 / —');
+    // Land percentages ride in the labels; the counts are the values.
+    expect(screen.getByText('Lands Seen (73%)').closest('.metric-card')).toHaveTextContent('8');
+    expect(screen.getByText('Lands Drawn (70%)').closest('.metric-card')).toHaveTextContent('7');
     expect(screen.getAllByText('Flood').length).toBeGreaterThan(0);
     const drawStatus = screen.getByText('Draw Status').closest('.metric-card');
     expect(drawStatus).toHaveClass('metric-card-info');

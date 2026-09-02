@@ -395,6 +395,34 @@ class TrackerStateLookupMixin:
                     stats["poison_added"] = value
                     break
 
+    def _observe_player_mulligans(self, players: Optional[List[Dict[str, Any]]]) -> None:
+        """Track each seat's mulligan count from the GRE player state.
+
+        Arena reports players[].mulliganCount for BOTH seats, so this is how
+        the opponent's mulligans become known. The field is omitted while it
+        is 0, so any seat present in the payload counts as observed; the
+        count only ever grows within a game, so keep the highest value.
+        """
+        by_seat = self.game_state.mulligan_count_by_seat
+        for player in players or []:
+            if not isinstance(player, dict):
+                continue
+            seat_id = self._normalize_seat_id(player.get("systemSeatNumber"))
+            if seat_id is None:
+                continue
+            value = player.get("mulliganCount")
+            count = value if isinstance(value, int) and value > 0 else 0
+            by_seat[int(seat_id)] = max(by_seat.get(int(seat_id), 0), count)
+
+    def _opponent_mulligan_count(self) -> Optional[int]:
+        """The opponent's mulligans for this game, or None when Arena never
+        reported their seat (old logs, or a game that ended before the first
+        player-state payload)."""
+        seat_id = self.game_state.opponent_seat_id
+        if seat_id is None:
+            return None
+        return self.game_state.mulligan_count_by_seat.get(int(seat_id))
+
     def _card_roles(self, grp_id):
         """Removal/wipe/bounce roles for a card, classified from rules text."""
         classifier = getattr(self, "_removal_classifier", None)

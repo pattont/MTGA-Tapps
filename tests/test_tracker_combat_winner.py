@@ -7507,3 +7507,33 @@ def test_live_colors_seed_from_commander_identity():
     )
     # No commander (non-Brawl): played cards alone, unchanged behavior.
     assert tracker._live_colors_with_commanders([CardEvent("Llanowar Elves", "you")], []) == "G"
+
+
+def test_opponent_mulligans_tracked_from_player_state():
+    """Arena's players[].mulliganCount covers both seats, so the opponent's
+    mulligans are known and land on their participant row."""
+    tracker = _removal_tracker()
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    # The field is omitted while it is 0: seat 1 reads as observed-zero.
+    tracker._observe_player_mulligans(
+        [
+            {"systemSeatNumber": 1, "lifeTotal": 20},
+            {"systemSeatNumber": 2, "lifeTotal": 20, "mulliganCount": 1},
+        ]
+    )
+    assert tracker.game_state.mulligan_count_by_seat == {1: 0, 2: 1}
+    assert tracker._opponent_mulligan_count() == 1
+
+    # Only ever ratchets up within a game; junk entries are tolerated.
+    tracker._observe_player_mulligans([{"systemSeatNumber": 2, "mulliganCount": 2}, "junk", None])
+    tracker._observe_player_mulligans([{"systemSeatNumber": 2}])
+    assert tracker._opponent_mulligan_count() == 2
+
+    snapshot = tracker._participant_snapshot("game-x", "opponent", 2)
+    assert snapshot["mulligans"] == 2
+
+    # Never observed -> unknown, not zero.
+    tracker.game_state.reset()
+    tracker.game_state.opponent_seat_id = 2
+    assert tracker._opponent_mulligan_count() is None

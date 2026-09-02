@@ -1031,7 +1031,7 @@ export default function App() {
                   ? opponentNavItems
                   : undefined
         }
-        heading={opponentsRoute ? 'Opponents' : gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute ? 'Opponent Information' : dashboardTitle)}
+        heading={opponentsRoute ? 'Opponents' : gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Live Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute ? 'Opponent Information' : dashboardTitle)}
         mainClassName={liveRoute ? 'live-page-main' : undefined}
       >
         {opponentsRoute ? (

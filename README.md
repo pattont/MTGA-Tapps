@@ -190,10 +190,17 @@ sqlite3 data/mtga_tracker.sqlite3 < data/_queries/WinRateByDeck.sql
 
 ## AI deck identification (optional)
 
-With an API key, the tracker makes one small request per completed game and
-names the opponent's deck — the Game Detail page shows it as the Opponent Deck
-Type, falling back to plain colors when there's no guess. The call runs in the
-background after the game ends, so tracking never waits on it.
+With an API key, the tracker makes exactly one small request per completed
+game and names the opponent's deck — the Game Detail page shows it as the
+Opponent Deck Type, falling back to plain colors when there's no guess. The
+call runs in the background after the game ends (and only when at least three
+opponent cards were revealed), so tracking never waits on it.
+
+What leaves your machine is only the names of the cards your opponent
+revealed in that game — never your deck, your account, or your log. Nothing
+else uses the key: the live scoreboard's colors come from Arena's local card
+database, and its mid-game deck label is a local guess that reuses names
+from earlier games.
 
 Configure it on the dashboard's **Settings** page (gear icon, top right — or
 the "Settings" menu-bar entry): enable, pick a provider (OpenAI, Anthropic, or
@@ -270,8 +277,9 @@ Everything is local SQLite. Stored logs are scrubbed of tokens and personal
 paths before persistence. The only network traffic is your browser fetching
 Scryfall card art — plus, only when you open the bundled Deck Finder,
 its requests to the public decklist sites you browse there — and, only if
-you enable AI deck identification, one small request per game to the AI
-provider you configured. Card
+you enable AI deck identification, exactly one small request per completed
+game to the AI provider you configured, carrying only the names of the cards
+your opponent revealed. Card
 *identification* uses Arena's own local card database
 (`Raw_CardDatabase_*.mtga`, discovered automatically under the Steam/Epic
 install, override with `MTGA_DATA_DIR`).

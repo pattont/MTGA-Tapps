@@ -354,14 +354,14 @@ export function AppShell({
             href="#/live"
             title={
               trackerState === 'offline'
-                ? 'Live Log — tracker is not running'
+                ? 'Live Scoreboard — tracker is not running'
                 : trackerState
-                  ? 'Live Log — tracker is running'
-                  : 'Live Log'
+                  ? 'Live Scoreboard — tracker is running'
+                  : 'Live Scoreboard'
             }
           >
             <span aria-hidden="true" className="sidebar-live-dot" />
-            <span className="sidebar-nav-label">Live Log</span>
+            <span className="sidebar-nav-label">Live Scoreboard</span>
           </a>
           <hr className="sidebar-live-rule" />
         </div>

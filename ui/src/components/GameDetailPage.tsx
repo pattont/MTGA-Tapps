@@ -737,7 +737,11 @@ export function GameDetailPage({
   const metricCards = [
     { label: 'Play / Draw', value: playDraw, icon: <Play /> },
     { label: 'Opponent Deck Type', value: opponentDeckType, icon: <Shield /> },
-    { label: 'Mulligans', value: formatNumber(detail.player.mulligans), icon: <RefreshCw /> },
+    {
+      label: 'Mulligans (You / Opp)',
+      value: `${formatNumber(detail.player.mulligans)} / ${formatNumber(detail.opponent.mulligans)}`,
+      icon: <RefreshCw />,
+    },
     { label: 'Turns', value: formatNumber(detail.game.total_turns), icon: <Repeat /> },
     { label: 'Duration', value: formatDuration(detail.game.duration_seconds), icon: <Timer /> },
     {
@@ -885,10 +889,10 @@ export function GameDetailPage({
           <MetricCard label="Total Cards Drawn" value={formatNumber(detail.draw_quality.total_draws)} />
           <MetricCard label="Total Cards Seen" value={formatNumber(totalCardsSeen)} />
           <MetricCard
-            label="Lands Drawn"
-            value={`${detail.draw_quality.land_draws} (${formatWholePercent(detail.draw_quality.land_draw_pct)})`}
+            label={`Lands Drawn (${formatWholePercent(detail.draw_quality.land_draw_pct)})`}
+            value={formatNumber(detail.draw_quality.land_draws)}
           />
-          <MetricCard label="Lands Seen" value={`${landsSeen} (${formatWholePercent(landSeenPct)})`} />
+          <MetricCard label={`Lands Seen (${formatWholePercent(landSeenPct)})`} value={formatNumber(landsSeen)} />
           <MetricCard
             label={`Expected Lands (${formatPercent(expectedLandRate)}${expectedLandRateEstimated ? ' est.' : ''})`}
             value={expectedLandsSeen.toFixed(1)}

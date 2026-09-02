@@ -78,8 +78,16 @@ class DeckAISettingsDialog(QDialog):
         layout = QVBoxLayout(tab)
 
         intro = QLabel(
-            "Identify your opponent's deck with an AI provider. One small, "
-            "cheap request per completed game — tracking never waits on it."
+            "Identify your opponent's deck with an AI provider. Exactly one "
+            "small request per completed game, sent in the background after "
+            "the game ends and only when at least three opponent cards were "
+            "revealed — tracking never waits on it. The request contains only "
+            "the names of the cards your opponent revealed: never your deck, "
+            "your account, or your log. The answer becomes the Opponent Deck "
+            "Type on the game page. Nothing else uses the key — the live "
+            "scoreboard's colors come from Arena's local card database, and "
+            "its mid-game deck label is a local guess that reuses names from "
+            "earlier games."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)

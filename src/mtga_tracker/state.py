@@ -132,6 +132,9 @@ class GameState:
         # Entries: {"events": List[CardEvent], "bottomed": List[int] (0-based positions)}.
         self.mulligan_hand_history: List[Dict[str, Any]] = []
         self.mulligan_count = 0
+        #: Arena's players[].mulliganCount per seat (both seats). Arena omits
+        #: the field while it is 0, so a seat seen without it reads as 0.
+        self.mulligan_count_by_seat: Dict[int, int] = {}
         self.initial_hand_size = 7
         self._hand_before_mulligan: List[str] = []
         self._hand_before_mulligan_ids: List[int] = []

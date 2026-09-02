@@ -587,12 +587,9 @@ const cutCardColumns: Column<CutCardRow>[] = [
   },
 ];
 
-/** "4.8 (39.7%)": average lands per game with the land share beside it. */
-function landsWithPercent(avg: number | null | undefined, pct: number | null | undefined): string {
-  if (pct == null) {
-    return '—';
-  }
-  return avg == null ? `${pct}%` : `${avg.toFixed(1)} (${pct}%)`;
+/** "Lands Seen (39.7%)": the land share rides in the label, the per-game average in the value. */
+function landsLabel(label: string, pct: number | null | undefined): string {
+  return pct == null ? label : `${label} (${pct}%)`;
 }
 
 export function DeckDetailPage({
@@ -1141,21 +1138,21 @@ export function DeckDetailPage({
               value={formatNumber(landProfile.avg_cards_seen)}
             />
             <MetricCard
-              label="Lands Drawn / Game"
-              value={landsWithPercent(landProfile.avg_lands_drawn, landProfile.lands_drawn_pct)}
+              label={landsLabel('Lands Drawn', landProfile.lands_drawn_pct)}
+              value={formatNumber(landProfile.avg_lands_drawn)}
             />
             <MetricCard
-              label="Lands Seen / Game"
-              value={landsWithPercent(landProfile.avg_lands_seen, landProfile.lands_seen_pct)}
+              label={landsLabel('Lands Seen', landProfile.lands_seen_pct)}
+              value={formatNumber(landProfile.avg_lands_seen)}
             />
             <MetricCard
-              label="Expected Lands / Game"
-              value={landsWithPercent(
-                landProfile.expected_lands_seen,
+              label={landsLabel(
+                'Expected Lands',
                 landProfile.expected_land_pct != null && landProfile.expected_land_pct > 0
                   ? landProfile.expected_land_pct
                   : null,
               )}
+              value={formatNumber(landProfile.expected_lands_seen)}
             />
           </section>
         ) : (
