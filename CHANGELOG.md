@@ -1,5 +1,87 @@
 # Changelog
 
+## 0.6.1
+
+- **Renamed to Tapps Tracker** everywhere you see it (menu bar, dashboard,
+  window titles). App bundles, commands, and data folders are unchanged, so
+  nothing moves on your machine.
+- **Brawl: commanders everywhere.** Game pages open with a commander-vs-
+  commander strip and the Opening Hand names your commander (hover for the
+  card); deck pages use the commander as the deck's signature art, add a slim
+  commander banner above the decklist, and list the Opponent Commanders you've
+  faced with your record against each. The overview's Brawl section is always
+  visible (own nav entry) with Best Commander and Toughest Opponent Commander
+  boxes backed by card art.
+- **Brawl: decklists include the commander** as the 100th card, Arena exports
+  gain a `Commander` section, and the commander's Games Seen is 100% — it is
+  in the command zone every game. Scoreboard colors seed from the commander
+  the moment it is revealed.
+- **Fixed: Expected Lands used a flat 40% heuristic** on the game page and an
+  older decklist version on the deck page. The game page now uses the
+  decklist submitted for that game (or the deck's nearest one); the deck page
+  uses the newest decklist's land ratio; the label says `est.` only when no
+  decklist exists at all.
+- **Draw Quality reworked.** Game page: Total Cards Drawn, Total Cards Seen,
+  Lands Drawn, Lands Seen, Expected Lands, Longest Land Streak, Draw Status on
+  one line, land percentages in the labels. The 8-draw-window and low-land-
+  drought boxes are gone — the flood/screw evidence line already says it in
+  words. Deck page shows per-game land averages with the share beside each
+  label.
+- **Opponent mulligans are tracked.** Arena reports mulligans for both seats;
+  the game page Mulligans box reads You / Opp. Games tracked before this
+  release show a dash for the opponent.
+- **Bo3 matches count once** in opponent counts and the opponents list; the
+  opponent page rolls each match into one expandable row with a Matches card.
+  All Opponents is its own page with a back link, a search box that shows the
+  count, and gold focus rings on every filter control.
+- **Two-tier format filters** on Recent Games and All Games: family pills
+  (Standard, Historic, Modern, Pioneer, Timeless, Limited, Brawl, Events) with
+  fly-out queue and Bo1/Bo3 refinements. All Games drops the redundant format
+  dropdown and search box, widens the deck picker, and shows 30 rows.
+- **Deck AI transparency.** Settings, the Settings dialog, and the README now
+  state exactly what the API key is used for: one small request per completed
+  game, after the game ends, containing only the names of the cards your
+  opponent revealed — never your deck, account, or log. Scoreboard colors and
+  the mid-game deck label are computed locally and never use the key.
+- Live Log is now **Live Scoreboard**; the scoreboard keeps the previous game
+  up across reloads with a "Waiting for next match…" pill; Stop Tracking shows
+  as stopped immediately; Deck Finder pills stay lit for the current results.
+- **Fixed: blank opponent color pips** — the color index no longer caches an
+  empty result when the analytics database is busy at startup, and it reads
+  Arena's renamed Localizations table.
+- Release workflow actions bumped to their Node 24 majors; `macos-debug.md`
+  documents the macOS "icon shudders and quits" launch failure and its fix.
+
+## 0.6.0
+
+- **Live Scoreboard.** During a game the `/live` page shows your lifetime and
+  today's record with the current deck, head-to-head record against the
+  opponent, lands played per side, a ramp-aware draw-quality strip, a per-turn
+  timer, your rank on ranked queues, and a best guess at the opponent's
+  archetype from their revealed cards (matched locally against earlier
+  identified games — no network). Between games the previous game's final
+  scoreboard stays up with a Previous Game chip showing the result.
+- **Opponents.** New Opponents section on the overview: your five most-faced
+  opponents with records, plus your record by opponent color combination —
+  and a searchable Opponents page listing everyone you've ever been paired
+  against.
+- **Fixed: a handful of games recorded you as your own opponent.** A
+  migration cleans up the historical rows.
+- **Removal accuracy overhaul.** Removal, wipe, bounce, and counter
+  classification audited against the card pool: edicts count as removal,
+  graveyard hate and hand disruption do not, land destruction is excluded,
+  temporary exile counts, and conditional sweepers are judged by outcome (a
+  board wipe only when they actually cleared the board). Three migrations
+  recount every historical game; `docs/REMOVAL_CLASSIFICATION.md` records
+  every ruling.
+- Play/Draw and mulligan badges replace the old Mulligans column on Recent
+  Games and All Games; All Games gains a Colors column; single gold focus
+  rings on filter controls; consistent section spacing throughout.
+- **Fixed:** stopping the tracker from the menu bar now flips the dashboard's
+  tracker state to off immediately; the All Opponents page no longer errors
+  on load.
+- Restart the tracker after updating — migrations run at startup.
+
 ## 0.5.9.2
 
 - **Fixed: exports could grab a deck instead of your collection.** Arena keeps
