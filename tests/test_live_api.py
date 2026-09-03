@@ -470,6 +470,46 @@ def test_live_payload_head_to_head_and_deck_record(tmp_path):
     assert now["deck_record"]["today_losses"] == 0
 
 
+def test_live_payload_record_vs_opponent_commander(tmp_path):
+    """Brawl: the scoreboard carries your lifetime record against the
+    opponent's commander (current game excluded; unseen commanders omitted)."""
+    store = _store(tmp_path)
+    conn = store.connect()
+    _seed_history(
+        conn,
+        [
+            ("c1", "Skellies", "A", None, "win", "2026-08-01"),
+            ("c2", "Skellies", "B", None, "loss", "2026-08-02"),
+            ("c3", "Skellies", "C", None, "win", "2026-08-03"),
+            ("c4", "Skellies", "D", None, "win", "2026-08-04"),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO participant_commanders (participant_id, card_name) VALUES (?, ?)",
+        [
+            ("c1-o", "Atraxa, Praetors' Voice"),
+            ("c2-o", "Atraxa, Praetors' Voice"),
+            ("c3-o", "Atraxa, Praetors' Voice"),
+            ("c4-o", "Someone Else"),
+        ],
+    )
+    conn.commit()
+    _log_line(store, "x", live=_live())  # opponent commander: Atraxa
+    store.close()
+
+    now = live_api.build_live_payload(tmp_path / "tracker.sqlite3")["now"]
+    assert now["commander_record"] == [
+        {"commander": "Atraxa, Praetors' Voice", "wins": 2, "losses": 1}
+    ]
+
+    # Never faced this commander before -> nothing to show.
+    store = _store(tmp_path)
+    _log_line(store, "y", live=_live(opponent_commanders=json.dumps(["Brand New"])))
+    store.close()
+    now = live_api.build_live_payload(tmp_path / "tracker.sqlite3")["now"]
+    assert now["commander_record"] == []
+
+
 def test_live_payload_rank_context_only_for_ranked(tmp_path):
     store = _store(tmp_path)
     conn = store.connect()

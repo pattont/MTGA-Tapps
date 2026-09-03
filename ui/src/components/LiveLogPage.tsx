@@ -256,6 +256,11 @@ function Scoreboard({
               {recordText(now.head_to_head.wins, now.head_to_head.losses)} vs this player
             </p>
           ) : null}
+          {(now.commander_record ?? []).map((record) => (
+            <p key={record.commander} className="live-side-stat">
+              {recordText(record.wins, record.losses)} vs <strong>{record.commander}</strong>
+            </p>
+          ))}
           {now.archetype_guess ? (
             <p className="live-side-stat">
               Looks like <strong>{now.archetype_guess.archetype}</strong>

@@ -12,10 +12,12 @@
   faced with your record against each. The overview's Brawl section is always
   visible (own nav entry) with Best Commander and Toughest Opponent Commander
   boxes backed by card art.
-- **Brawl: decklists include the commander** as the 100th card, Arena exports
-  gain a `Commander` section, and the commander's Games Seen is 100% — it is
-  in the command zone every game. Scoreboard colors seed from the commander
-  the moment it is revealed.
+- **Brawl: decklists include the commander.** Arena's submitted maindeck
+  leaves the commander out, so a Brawl list now shows all of its cards; Arena
+  exports gain a `Commander` section, and the commander's Games Seen is 100%
+  — it is in the command zone every game. Scoreboard colors seed from the
+  commander the moment it is revealed. (Brawl is recognized from Arena's
+  match format, never from deck size.)
 - **Fixed: Expected Lands used a flat 40% heuristic** on the game page and an
   older decklist version on the deck page. The game page now uses the
   decklist submitted for that game (or the deck's nearest one); the deck page

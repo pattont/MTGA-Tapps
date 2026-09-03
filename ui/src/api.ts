@@ -1523,6 +1523,8 @@ export interface LiveNow {
   deck_size?: number | null;
   deck_lands?: number | null;
   head_to_head?: { wins: number; losses: number } | null;
+  /** Brawl: lifetime record vs each of the opponent's commanders (unseen ones omitted). */
+  commander_record?: { commander: string; wins: number; losses: number }[] | null;
   deck_record?: {
     wins: number;
     losses: number;

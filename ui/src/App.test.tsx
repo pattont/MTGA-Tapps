@@ -833,7 +833,8 @@ describe('App', () => {
         mulligans: 1,
         game_started_at: new Date().toISOString(),
         player_commanders: ['Wilhelt, the Rotcleaver'],
-        opponent_commanders: [],
+        opponent_commanders: ["Atraxa, Praetors' Voice"],
+        commander_record: [{ commander: "Atraxa, Praetors' Voice", wins: 4, losses: 2 }],
       },
       session: {
         id: 'S1',
@@ -896,6 +897,9 @@ describe('App', () => {
     expect(screen.getByText('Wilhelt, the Rotcleaver')).toBeInTheDocument();
     expect(screen.getByText('Opponent: Casts Big Spell')).toBeInTheDocument();
     expect(screen.getByText('2–1')).toBeInTheDocument();
+    // Brawl: lifetime record against the opponent's commander.
+    const commanderRecord = screen.getByText(/4–2 vs/).closest('.live-side-stat');
+    expect(commanderRecord).toHaveTextContent("4–2 vs Atraxa, Praetors' Voice");
     // Finished game links to its game page.
     const gameLink = screen.getByRole('link', { name: /PastFoe/ });
     expect(gameLink.getAttribute('href')).toContain('#/game/G8');

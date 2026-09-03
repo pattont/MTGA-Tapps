@@ -186,6 +186,41 @@ def _head_to_head(
     return {"wins": wins, "losses": losses}
 
 
+def _commander_record(
+    conn: sqlite3.Connection,
+    opponent_commanders: Any,
+    current_game_id: Optional[str],
+) -> List[Dict[str, Any]]:
+    """Lifetime record against each of the opponent's commanders (Brawl),
+    the current game excluded. Commanders you have never faced before are
+    left out — an empty list means nothing to show."""
+    records: List[Dict[str, Any]] = []
+    for name in _json_list(opponent_commanders):
+        commander = str(name or "").strip()
+        if not commander:
+            continue
+        try:
+            row = conn.execute(
+                """
+                SELECT
+                  SUM(g.outcome = 'win') AS wins,
+                  SUM(g.outcome = 'loss') AS losses
+                FROM games g
+                JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
+                JOIN participant_commanders pc ON pc.participant_id = o.id
+                WHERE pc.card_name = ? AND g.id IS NOT ? AND g.outcome IN ('win', 'loss')
+                """,
+                (commander, current_game_id),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return []
+        wins, losses = int(row[0] or 0), int(row[1] or 0)
+        if wins + losses == 0:
+            continue
+        records.append({"commander": commander, "wins": wins, "losses": losses})
+    return records
+
+
 def _deck_record(
     conn: sqlite3.Connection,
     deck_name: Optional[str],
@@ -548,6 +583,9 @@ def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
                     conn, source.get("opponent_name"), feed_game_id
                 ),
                 "deck_record": _deck_record(conn, source.get("deck_name"), feed_game_id),
+                "commander_record": _commander_record(
+                    conn, source.get("opponent_commanders"), feed_game_id
+                ),
                 "rank": _rank_context(conn, source.get("format")),
                 "archetype_guess": (
                     _archetype_guess(conn, status.get("opponent_cards"), feed_game_id)
