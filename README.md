@@ -352,7 +352,6 @@ guidance lives.
 - [docs/OVERLAY_TRACKER_PLAN.md](docs/OVERLAY_TRACKER_PLAN.md) — planned in-game overlay
 - [docs/MTGA_LOG_FORMAT.md](docs/MTGA_LOG_FORMAT.md) — how Arena's log actually works
 - [docs/MTGA_INSTALL_DISCOVERY.md](docs/MTGA_INSTALL_DISCOVERY.md) — plan for finding Arena's card DB in standalone/non-default installs
-- [docs/live-log.md](docs/live-log.md) — the Live Scoreboard design
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release
 
 ## License

@@ -3,14 +3,15 @@
 Goal: a small always-on-top overlay beside Arena that answers two questions
 without leaving the game — **what's my chance of drawing a land next?**
 (minimized) and **what's left in my library and how likely is each card?**
-(expanded). Docks to either screen edge or floats, can slide away until the
-cursor touches the edge, one hotkey to toggle, and the land odds visible even
-when minimized. Opacity and the rest live in a settings flyout, saved as you
+(expanded). The rail sits in the left or right screen edge; the panel flies
+out over it on click or hover and, when unpinned, flies back after a few
+idle seconds. One hotkey to toggle, and the land odds visible even when
+minimized. Opacity and the rest live in a settings flyout, saved as you
 change them.
 
 This replaces the earlier PyQt6 plan. The reasons for the change are in §2.
 
-![Overlay design — rail, panel, settings flyout, and the docked auto-hide states](images/overlay-mockup.png)
+![Overlay design — rail, panel, settings flyout, and the two docked states](images/overlay-mockup.png)
 
 (`overlay-mockup.html` next to this file is the editable source of that image.)
 
@@ -64,20 +65,37 @@ cards. Height is capped at the screen's; the list scrolls inside it.
 - **No footer.** Opacity and every other preference live in the ⚙ flyout,
   not in the panel.
 
+### Docking — how the rail and the panel trade places
+
+The rail is the resting state and it lives **in** the screen edge: docked
+right, its right side is the edge itself (no border, no rounding on that
+side); drag it to the left edge and it mirrors. There is never a rail and a
+panel on screen at the same time — they are two layouts of the same window,
+flush to the same edge:
+
+1. Click **DECK** (or hover the rail) → the panel flies out from the edge and
+   takes the rail's place.
+2. **Pinned** (the default when it opens): the panel stays out until you
+   collapse it with the `›` control, the hotkey, or by unpinning.
+3. **Unpinned**: when the cursor has been off the panel for a few seconds
+   (4 s by default), it flies back into the edge and the rail returns. Hover
+   the rail and the panel flies out again.
+4. **Float** mode drops the edge behaviour entirely: the window sits wherever
+   you dragged it and DECK/`›` simply swap layouts in place.
+
+The pin control uses the same monochrome line-icon style as the collapse
+chevron and the gear (filled when pinned, outline when not) — no accent
+colour on controls.
+
 ### Settings flyout (⚙, both states)
 
 A small popover anchored under the gear; every value persists to the
 overlay's settings file the moment it changes:
 
 - **Opacity** slider (0.3–1.0, live preview while dragging).
-- **Dock**: Left · Right · Float. Docked, the window snaps flush to that
-  screen edge and keeps that edge on monitor changes; Float remembers its
-  last dragged position.
-- **Auto-hide at edge** (docked only): the panel slides off-screen and
-  leaves a slim edge tab showing the land % (with a green dot while a game
-  is live). Moving the cursor to that edge slides it back in; it slides out
-  again when the cursor leaves the panel, after a short grace period. The
-  tab is always click-to-toggle too, for trackpads.
+- **Dock**: Left · Right · Float.
+- **Unpinned: return to rail after** N seconds (default 4).
+- **Open pinned by default** (on).
 - **Click-through when pinned**: with the pin active, clicks pass through
   to Arena.
 - **Hotkeys**: toggle rail/panel (`Alt+Shift+T`), show/hide
@@ -154,7 +172,8 @@ model for the webview, and current WebView2 / WKWebView support.
   instance, and a tiny `overlay://` command surface (`set_opacity`,
   `set_click_through`, `set_layout`). Everything else is TypeScript.
 - **Settings** live in Tauri's app data (`overlay.json`: opacity, layout,
-  dock side, auto-hide, click-through, hotkeys; position via `window-state`),
+  dock side, return delay, pin default, click-through, hotkeys; position via
+  `window-state`),
   written on every change from the ⚙ flyout. The tracker's own
   `settings.json` gets one flag, `overlay.autolaunch`, read by the menu-bar
   app.
@@ -173,13 +192,13 @@ model for the webview, and current WebView2 / WKWebView support.
   Position persists through the `window-state` plugin; on launch the window
   is clamped back on screen if the monitor layout changed.
 - **Dock left / right**: the Rust side reads the current monitor's work area
-  and places the window flush to the chosen edge (`set_position` on monitor
-  change events). **Auto-hide** is a two-window arrangement: the main window
-  animates off-screen (position tween, ~160 ms) and a 16px "edge tab" window
-  stays at the edge showing the land %; a cursor-position poll (the
-  `mouse-position` plugin, or a global mouse-move hook) inside a 4px strip at
-  the edge triggers the slide-in; leaving the panel + 400 ms grace triggers
-  the slide-out. Float mode disables auto-hide.
+  and keeps the window flush to the chosen edge (`set_position` on resize and
+  monitor-change events; the outer side is drawn without border or rounding).
+  Rail ↔ panel is one window changing size in place, animated as a slide from
+  the edge (~160 ms position + size tween). The unpinned return timer runs in
+  the webview (`mouseleave` + N s); hover on the rail flies the panel out.
+  Float mode keeps the last dragged position and swaps layouts without the
+  slide.
 - **Click-through ("pin")**: `set_ignore_cursor_events(true)` makes the panel
   purely visual so misclicks reach Arena; the hotkey or tray un-pins. The
   pin control shows a filled icon while active.
@@ -244,7 +263,7 @@ bundle. CI adds a Rust toolchain step to `release.yml` (cached).
 3. **Phase 3 — rail + panel UI** against the fixture, then against the live
    API: land number, land strip, list (spells first), mana symbols, hover
    card, sort, dimmed rows, ⚙ flyout, waiting/offline/mid-game states.
-   Then dock left/right and auto-hide with the edge tab.
+   Then dock left/right, the rail ↔ panel slide, and the unpinned return.
 4. **Phase 4 — integration.** Menu-bar "Show Overlay", bundling in both
    installers, `overlay.autolaunch`, README section (with the fullscreen
    caveat), CHANGELOG entry.
