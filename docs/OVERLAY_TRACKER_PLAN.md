@@ -37,8 +37,10 @@ to fix it) — the one piece of colour-as-warning in the design.
 
 ### Expanded — the deck panel
 
-340px wide — enough that "Sheoldred, the Apocalypse" and "Overlord of the
-Mistmoors" fit without an ellipsis — and as dense as it can be while staying
+322px wide — the narrowest width at which "Sheoldred, the Apocalypse" and
+"Overlord of the Mistmoors" still fit without an ellipsis, with the count
+column sized to its text and 5px gutters, because every pixel the overlay
+takes is a pixel of the board — and as dense as it can be while staying
 readable: 22px rows. A 60-card deck is typically 18–24 distinct cards, which
 is ~620px of panel —
 it fits on any screen from 1080p up with every row visible, no scrolling.
@@ -79,7 +81,7 @@ the library starts at 99.
   **PLAY** / **DRAW** pill in the dashboard's on-play teal / on-draw violet
   once the tracker knows (blank until then); `Library 41 / 60`.
 - **Card list**, **Spells first, then Lands** — you scan for outs, and the
-  land odds already have their own strip. Each row: a 22px **mini bar**
+  land odds already have their own strip. Each row: an 18px **mini bar**
   filled to copies left ÷ copies in deck — the same bar language as the
   rail's library bar, and deliberately not a ring — coloured by card type
   (creature amber, instant blue, sorcery violet, enchantment pink, artifact
