@@ -86,7 +86,14 @@ the library starts at 99.
   every other control — once the tracker knows (blank until then);
   `Library 41 / 60`.
 - **Card list**, **Spells first, then Lands** — you scan for outs, and the
-  land odds already have their own strip. Each row: an 18px **mini bar**
+  land odds already have their own strip. Lands default to **two rows,
+  "Basic lands" and "Nonbasic lands"**, each summing copies left ÷ copies
+  in deck and the next-draw odds across its members (`10/14 · 24.4%`): which
+  individual land comes next is rarely the decision, whether *a* land comes
+  is. A **Lands: Basic / Nonbasic · Every land** setting in the ⚙ flyout
+  restores one row per land for players who want it (colourless utility
+  lands like a manland are "nonbasic"; in Brawl the same two rows apply, so
+  the collapsed-Lands default there is less needed). Each row: an 18px **mini bar**
   filled to copies left ÷ copies in deck — the same bar language as the
   rail's library bar, and deliberately not a ring — coloured by card type
   (creature amber, instant blue, sorcery violet, enchantment pink, artifact
@@ -141,8 +148,34 @@ overlay's settings file the moment it changes:
 - **Open pinned by default** (on).
 - **Click-through when pinned**: with the pin active, clicks pass through
   to Arena.
-- **Hotkeys**: toggle rail/panel (`Alt+Shift+T`), show/hide
-  (`Alt+Shift+H`), both rebindable.
+- **Lands**: Basic / Nonbasic (default) · Every land.
+- **Hotkeys**: toggle rail/panel and show/hide, both rebindable — see
+  "Hotkeys per platform" below.
+
+### Hotkeys per platform
+
+One chord, two spellings. The defaults are the same physical keys on both
+systems — the key to the left of the space bar plus Shift plus a letter —
+registered through Tauri's `global-shortcut` plugin with the accelerator
+string `Alt+Shift+T` / `Alt+Shift+H`, which the plugin maps to **Option**
+on macOS and **Alt** on Windows. What differs is presentation and
+rebinding:
+
+- **Labels** follow the platform: `⌥⇧T` in the flyout on macOS,
+  `Alt+Shift+T` on Windows (the mockup shows the macOS spelling).
+- **Rebinding** records the chord as pressed on that machine, displayed in
+  that platform's notation, and stored per platform in `overlay.json`
+  (`hotkeys.macos`, `hotkeys.windows`) so a settings file copied between
+  machines never binds a Command chord on Windows.
+- **Refused chords**: anything without a modifier (it would eat game
+  input), the platform's system-reserved combinations (`Cmd+Q`, `Cmd+Tab`,
+  `Alt+F4`, `Win`-combos), and the keys Arena binds in-game (space,
+  Enter, Esc, the number row, `Z`/`Q`/`W`/`E` in its default layout) —
+  refused with the reason shown inline.
+- Command/Ctrl are deliberately not part of the defaults: `Cmd+Shift+T`
+  reopens a browser tab on macOS and `Ctrl+Shift+T` does the same on
+  Windows, and neither should fire while a game has focus anyway. Option /
+  Alt + Shift + letter collides with nothing Arena or the OS uses.
 
 Corners are tight throughout — 6px on the window, 3px on controls, pills,
 and rows — so the overlay reads as an instrument, not a card. The window
@@ -272,9 +305,9 @@ flat over a long session. What gets that:
   with the overlay's own version shows a one-line banner rather than
   guessing at a changed state shape. The two ship together in the same
   release, so this only fires for a stale copy.
-- **Hotkeys vs Arena**: `Alt+Shift+T` / `Alt+Shift+H` collide with nothing
-  Arena binds; both rebindable, and a chord Arena uses is refused with an
-  explanation.
+- **Hotkeys vs Arena**: covered under "Hotkeys per platform" — same chord
+  on both systems, platform-native labels, per-platform storage, and
+  refusal of chords Arena or the OS already uses.
 - **Policy**: the overlay reads only the tracker's local API, which reads
   only Arena's log — no memory reading, no input injection, no network.
   That is the same footing as the tracker itself and the established
