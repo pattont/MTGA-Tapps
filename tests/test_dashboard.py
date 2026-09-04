@@ -3276,3 +3276,45 @@ def test_split_card_index_resolves_faces(tmp_path):
         assert _arena_export_card_name(conn, "Mountain (Land)", index) == "Mountain"
         # Without a prebuilt index it builds its own.
         assert _arena_export_card_name(conn, "Ice") == "Fire // Ice"
+
+
+def test_response_cache_serves_until_analytics_change(tmp_path):
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    dash.clear_response_cache()
+    calls = []
+
+    def compute():
+        calls.append(1)
+        return b'{"n": %d}' % len(calls)
+
+    first = dash.cached_response(db_path, "/api/snapshot", "", compute)
+    again = dash.cached_response(db_path, "/api/snapshot", "", compute)
+    assert first == again == b'{"n": 1}'
+    assert len(calls) == 1
+    # A different query string is a different entry.
+    assert dash.cached_response(db_path, "/api/snapshot", "days=30", compute) == b'{"n": 2}'
+
+    # A finished game (new games row) moves the fingerprint -> recompute.
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "insert into games (id, session_id, match_id, game_number, started_at, outcome) "
+            "values ('game-9', 'session-1', 'match-1', 3, '2026-06-05T00:00:00', 'win')"
+        )
+    assert dash.cached_response(db_path, "/api/snapshot", "", compute) == b'{"n": 3}'
+
+    # So does a late AI archetype landing on an opponent row.
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("update participants set deck_archetype = 'Izzet Prowess' where id = 'opponent-1'")
+    assert dash.cached_response(db_path, "/api/snapshot", "", compute) == b'{"n": 4}'
+
+    # And an explicit clear (every POST does this).
+    dash.clear_response_cache()
+    assert dash.cached_response(db_path, "/api/snapshot", "", compute) == b'{"n": 5}'
+
+    # A database with no fingerprint tables bypasses the cache entirely.
+    empty = tmp_path / "empty.sqlite3"
+    sqlite3.connect(empty).close()
+    assert dash.cached_response(empty, "/api/snapshot", "", compute) == b'{"n": 6}'
+    assert dash.cached_response(empty, "/api/snapshot", "", compute) == b'{"n": 7}'

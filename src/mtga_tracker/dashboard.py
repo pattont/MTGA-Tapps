@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import html
 import json
 import math
@@ -10,13 +11,14 @@ import mimetypes
 import os
 import re
 import sqlite3
+import threading
 import time
 import traceback
 import sys
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .draw_quality import (
@@ -2832,13 +2834,13 @@ def dashboard_snapshot(
             deck_name = row["deck_name"]
             row["deck_visual"] = deck_visuals.get(deck_name, _empty_deck_visual(deck_name))
             row["colors"] = deck_color_map.get(deck_name, "")
+        recent_quality = _draw_quality_batch(
+            conn, [(row.get("player_participant_id"), row.get("deck_size")) for row in recent_rows]
+        )
         for row in recent_rows:
-            quality = _game_draw_quality(
-                conn,
-                str(row.get("game_id")),
-                row.pop("player_participant_id", None),
-                row.pop("deck_size", None),
-            )
+            participant_id = row.pop("player_participant_id", None)
+            row.pop("deck_size", None)
+            quality = recent_quality.get(participant_id) or draw_quality_metrics([], [], 0, 60)
             row["flood_reasons"] = quality["flood_reasons"]
             row["is_flood"] = quality["is_flood"]
             row["screw_reasons"] = quality["screw_reasons"]
@@ -3354,13 +3356,13 @@ def deck_detail(
                 params,
             )
         )
+        recent_quality = _draw_quality_batch(
+            conn, [(row.get("player_participant_id"), row.get("deck_size")) for row in recent_rows]
+        )
         for row in recent_rows:
-            quality = _game_draw_quality(
-                conn,
-                str(row.get("game_id")),
-                row.pop("player_participant_id", None),
-                row.pop("deck_size", None),
-            )
+            participant_id = row.pop("player_participant_id", None)
+            row.pop("deck_size", None)
+            quality = recent_quality.get(participant_id) or draw_quality_metrics([], [], 0, 60)
             row["is_flood"] = quality["is_flood"]
             row["is_screw"] = quality["is_screw"]
 
@@ -5453,6 +5455,88 @@ def render_snapshot_json(snapshot: Dict[str, Any]) -> bytes:
     return json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
+# ---------------------------------------------------------------------------
+# Response cache
+#
+# The dashboard polls its read endpoints every few seconds, and between games
+# nothing in the analytics tables changes. Each JSON body is memoized against
+# a cheap fingerprint of the tables that feed it (row counts / max ids of the
+# append-only tables, plus the columns that late writers touch: AI archetypes
+# and card colour/mana backfills). A finished game, an annotation, a backfill,
+# or a database reset all move the fingerprint; a live_status heartbeat does
+# not, so the cache survives an idle tracker. A short TTL is the safety net
+# for anything the fingerprint cannot see (a repair, a date-window rollover).
+# ---------------------------------------------------------------------------
+
+_RESPONSE_CACHE_TTL_SECONDS = 60.0
+_RESPONSE_CACHE_MAX_ENTRIES = 64
+_response_cache: "collections.OrderedDict[Tuple[str, str, str], Tuple[Tuple[Any, ...], float, bytes]]" = (
+    collections.OrderedDict()
+)
+_response_cache_lock = threading.Lock()
+
+_FINGERPRINT_SQL = """
+SELECT
+  (SELECT COUNT(*) FROM games),
+  (SELECT MAX(rowid) FROM games),
+  (SELECT MAX(ended_at) FROM games),
+  (SELECT MAX(id) FROM game_events),
+  (SELECT COUNT(*) FROM participants),
+  (SELECT COUNT(deck_archetype) FROM participants),
+  (SELECT COUNT(*) FROM game_annotations),
+  (SELECT MAX(updated_at) FROM game_annotations),
+  (SELECT COUNT(color_identity) FROM cards),
+  (SELECT COUNT(mana_cost) FROM cards),
+  (SELECT MAX(rowid) FROM rank_snapshots),
+  (SELECT MAX(version) FROM schema_migrations)
+"""
+
+
+def _analytics_fingerprint(db_path: Path) -> Optional[Tuple[Any, ...]]:
+    """Cheap snapshot of "has anything the read endpoints depend on changed?".
+    None when it cannot be computed (missing table on an old DB) — callers
+    then skip the cache rather than risk serving stale data."""
+    try:
+        db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
+        with sqlite3.connect(db_uri, uri=True) as conn:
+            conn.execute("PRAGMA query_only = ON")
+            row = conn.execute(_FINGERPRINT_SQL).fetchone()
+        return tuple(row) if row is not None else None
+    except (sqlite3.Error, OSError):
+        return None
+
+
+def cached_response(
+    db_path: Path, path: str, query: str, compute: "Callable[[], bytes]"
+) -> bytes:
+    """Return the cached JSON body for (db, path, query) while the analytics
+    fingerprint is unchanged and the entry is younger than the TTL; otherwise
+    compute, store, and return it."""
+    fingerprint = _analytics_fingerprint(db_path)
+    if fingerprint is None:
+        return compute()
+    key = (str(db_path), path, query)
+    now = time.monotonic()
+    with _response_cache_lock:
+        entry = _response_cache.get(key)
+        if entry is not None and entry[0] == fingerprint and entry[1] > now:
+            _response_cache.move_to_end(key)
+            return entry[2]
+    body = compute()
+    with _response_cache_lock:
+        _response_cache[key] = (fingerprint, now + _RESPONSE_CACHE_TTL_SECONDS, body)
+        _response_cache.move_to_end(key)
+        while len(_response_cache) > _RESPONSE_CACHE_MAX_ENTRIES:
+            _response_cache.popitem(last=False)
+    return body
+
+
+def clear_response_cache() -> None:
+    with _response_cache_lock:
+        _response_cache.clear()
+
+
+
 def _send_bytes(
     handler: BaseHTTPRequestHandler,
     status: int,
@@ -5547,6 +5631,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):  # noqa: N802 - http.server API
         """Handle the dashboard's writes: game notes/tags and the DB reset."""
+        # Any write invalidates every memoized read body, whatever the fingerprint sees.
+        clear_response_cache()
         parsed = urlparse(self.path)
         if parsed.path.startswith("/api/deckfinder/"):
             # Deck Finder in the webapp: lazy import keeps the dashboard
@@ -5849,7 +5935,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except ValueError:
                 season = None
             try:
-                body = render_snapshot_json(
+                body = cached_response(
+                    self.db_path,
+                    request_path,
+                    parsed.query,
+                    lambda: render_snapshot_json(
                     dashboard_snapshot(
                         self.db_path,
                         deck=common["deck"],
@@ -5859,6 +5949,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         since=common["since"],
                         until=common["until"],
                     )
+                ),
                 )
             except FileNotFoundError as exc:
                 _send_bytes(
@@ -5896,7 +5987,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 )
                 return
             try:
-                body = render_snapshot_json(
+                body = cached_response(
+                    self.db_path,
+                    request_path,
+                    parsed.query,
+                    lambda: render_snapshot_json(
                     deck_detail(
                         self.db_path,
                         deck_name,
@@ -5905,6 +6000,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         since=common["since"],
                         until=common["until"],
                     )
+                ),
                 )
             except (FileNotFoundError, LookupError) as exc:
                 _send_bytes(
@@ -5939,7 +6035,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 )
                 return
             try:
-                body = render_snapshot_json(game_detail(self.db_path, game_id))
+                body = cached_response(
+                    self.db_path,
+                    request_path,
+                    parsed.query,
+                    lambda: render_snapshot_json(game_detail(self.db_path, game_id)),
+                )
             except (FileNotFoundError, LookupError) as exc:
                 _send_bytes(
                     self,
@@ -5962,7 +6063,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if request_path == "/api/opponents":
             try:
-                body = json.dumps(opponents_list(self.db_path)).encode("utf-8")
+                body = cached_response(
+                    self.db_path,
+                    request_path,
+                    parsed.query,
+                    lambda: json.dumps(opponents_list(self.db_path)).encode("utf-8"),
+                )
             except Exception as exc:  # noqa: BLE001
                 _send_bytes(
                     self,
@@ -5988,7 +6094,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             common = _parse_common_filters(query)
             try:
-                body = render_snapshot_json(
+                body = cached_response(
+                    self.db_path,
+                    request_path,
+                    parsed.query,
+                    lambda: render_snapshot_json(
                     opponent_detail(
                         self.db_path,
                         name,
@@ -5998,6 +6108,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         since=common["since"],
                         until=common["until"],
                     )
+                ),
                 )
             except (FileNotFoundError, LookupError) as exc:
                 _send_bytes(
@@ -6033,7 +6144,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 )
                 return
             try:
-                body = render_snapshot_json(
+                body = cached_response(
+                    self.db_path,
+                    request_path,
+                    parsed.query,
+                    lambda: render_snapshot_json(
                     card_detail(
                         self.db_path,
                         name,
@@ -6043,6 +6158,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         since=common["since"],
                         until=common["until"],
                     )
+                ),
                 )
             except (FileNotFoundError, LookupError) as exc:
                 _send_bytes(
@@ -6068,7 +6184,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             query = parse_qs(parsed.query)
             common = _parse_common_filters(query)
             try:
-                body = render_snapshot_json(
+                body = cached_response(
+                    self.db_path,
+                    request_path,
+                    parsed.query,
+                    lambda: render_snapshot_json(
                     all_games(
                         self.db_path,
                         deck=common["deck"],
@@ -6077,6 +6197,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         since=common["since"],
                         until=common["until"],
                     )
+                ),
                 )
             except FileNotFoundError as exc:
                 _send_bytes(

@@ -3,59 +3,85 @@
 Goal: a small always-on-top overlay beside Arena that answers two questions
 without leaving the game — **what's my chance of drawing a land next?**
 (minimized) and **what's left in my library and how likely is each card?**
-(expanded). Transparency slider, drag anywhere, one hotkey to toggle, and the
-land odds visible even when minimized.
+(expanded). Docks to either screen edge or floats, can slide away until the
+cursor touches the edge, one hotkey to toggle, and the land odds visible even
+when minimized. Opacity and the rest live in a settings flyout, saved as you
+change them.
 
 This replaces the earlier PyQt6 plan. The reasons for the change are in §2.
 
-![Overlay design — minimized rail and expanded panel](images/overlay-mockup.png)
+![Overlay design — rail, panel, settings flyout, and the docked auto-hide states](images/overlay-mockup.png)
+
+(`overlay-mockup.html` next to this file is the editable source of that image.)
 
 ## 1. What it shows
 
 ### Minimized — the rail
 
-A 72px-wide vertical rail meant to sit against a screen edge, in the order a
+A 64px-wide vertical rail that lives against a screen edge, in the order a
 player reads it mid-game:
 
 | Slot | Content | Why |
 | --- | --- | --- |
-| Mark | Tapps "T" tile | identifies the window; drag handle |
+| Icon | the Tapps Tracker app icon | identifies the window; drag handle |
 | Turn | current turn number | orientation at a glance |
-| **Land ring** | ring gauge filled to the next-draw land chance, "42% LAND" inside | the one number the minimized state exists for |
+| **Land** | `42%` in gold with LAND under it — no gauge, no ring, just the number | the one number the minimized state exists for |
 | Library | `41/60` with a thin bar (library ÷ deck size) | how deep into the deck you are |
 | DECK | opens the expanded panel | primary action, gold |
-| ⌃ | collapse to the mark only (a 30px tile) when you want it out of the way | |
-| ⚙ | opacity, dock side, hotkey, quit | |
+| ⚙ | opens the settings flyout (§4) | |
 
-The ring turns from gold to the danger tone when the land chance falls below
-25% with fewer than four lands in play (you're screwed and the deck isn't
-going to fix it) — the one piece of colour-as-warning in the design.
+The land number turns to the danger tone when the chance falls below 25%
+with fewer than four lands in play (you're screwed and the deck isn't going
+to fix it) — the one piece of colour-as-warning in the design.
 
 ### Expanded — the deck panel
 
-320px wide, height follows the list (capped to the screen; the list scrolls).
+300px wide and as dense as it can be while staying readable: 22px rows,
+so a 60-card deck's ~20 distinct cards fit in roughly 520px of height and a
+99-card Brawl list scrolls. No logo in this state — every pixel goes to
+cards. Height is capped at the screen's; the list scrolls inside it.
 
-- **Header**: deck name with colour pips, format and opponent name, turn,
-  and two controls: collapse (back to the rail) and pin (click-through mode,
-  see §4).
-- **Land drops strip**: `17 of 41 left` plus three odds — **NEXT** (gold),
-  **IN 2**, **IN 3** (green). The rail's ring is the NEXT number; the strip is
-  its full expansion.
+- **Header** (one line + one line): deck name with colour pips, format and
+  opponent name, turn, and three controls: collapse to the rail, pin
+  (click-through), and ⚙ (settings flyout).
+- **Land drops strip**, compact: `17 of 41 left` plus **NEXT** (gold),
+  **IN 2**, **IN 3** (green). The rail's number is NEXT; the strip is its
+  expansion.
 - **Sort + library**: sort by %, mana value, or name; `Library 41 / 60`.
-- **Card list**, grouped Lands then Spells. Each row: a ring showing copies
-  left ÷ copies in deck (coloured by card type — land green, creature amber,
-  instant blue, sorcery violet, enchantment pink, artifact grey; the same
-  type palette the dashboard's type chips use), `left/total`, name in the
-  type colour, mana cost from the bundled mana font, and the next-draw %.
-  Percentages step through three weights (gold ≥ 10%, white ≥ 5%, muted
-  below) so the eye finds the live outs first. Rows at 0 copies dim to 38%
-  and show a dash — they stay in place so the list never reshuffles under
-  you.
-- **Hover card** (also long-press on a touch display): next draw, within 2,
-  within 3, and copies left — the hypergeometric detail without cluttering
-  the row.
-- **Footer**: opacity slider (0.3–1.0, live), and the toggle hotkey shown so
-  people learn it.
+- **Card list**, **Spells first, then Lands** — you scan for outs, and the
+  land odds already have their own strip. Each row: a small ring showing
+  copies left ÷ copies in deck (coloured by card type — creature amber,
+  instant blue, sorcery violet, enchantment pink, artifact grey, land green,
+  the dashboard's type-chip palette), `left/total`, the name in the type
+  colour, the mana cost drawn with the **real mana symbols** (the same W/U/B/R/G
+  vectors the dashboard's colour pips use; generic mana as a grey numbered
+  circle), and the next-draw %. Percentages step through three weights (gold
+  ≥ 10%, white ≥ 5%, muted below) so the eye finds the live outs first. Rows
+  at 0 copies dim to 36% and show a dash — they stay in place so the list
+  never reshuffles under you.
+- **Hover card** (long-press on touch): next draw, within 2, within 3, and
+  copies left — the hypergeometric detail without cluttering the row.
+- **No footer.** Opacity and every other preference live in the ⚙ flyout,
+  not in the panel.
+
+### Settings flyout (⚙, both states)
+
+A small popover anchored under the gear; every value persists to the
+overlay's settings file the moment it changes:
+
+- **Opacity** slider (0.3–1.0, live preview while dragging).
+- **Dock**: Left · Right · Float. Docked, the window snaps flush to that
+  screen edge and keeps that edge on monitor changes; Float remembers its
+  last dragged position.
+- **Auto-hide at edge** (docked only): the panel slides off-screen and
+  leaves a slim edge tab showing the land % (with a green dot while a game
+  is live). Moving the cursor to that edge slides it back in; it slides out
+  again when the cursor leaves the panel, after a short grace period. The
+  tab is always click-to-toggle too, for trackpads.
+- **Click-through when pinned**: with the pin active, clicks pass through
+  to Arena.
+- **Hotkeys**: toggle rail/panel (`Alt+Shift+T`), show/hide
+  (`Alt+Shift+H`), both rebindable.
 
 What it deliberately does not have: a play-by-play log. The dashboard's Live
 Scoreboard already owns that; the overlay stays a draw-odds instrument.
@@ -128,7 +154,8 @@ model for the webview, and current WebView2 / WKWebView support.
   instance, and a tiny `overlay://` command surface (`set_opacity`,
   `set_click_through`, `set_layout`). Everything else is TypeScript.
 - **Settings** live in Tauri's app data (`overlay.json`: opacity, layout,
-  dock side, hotkey, position via `window-state`). The tracker's own
+  dock side, auto-hide, click-through, hotkeys; position via `window-state`),
+  written on every change from the ⚙ flyout. The tracker's own
   `settings.json` gets one flag, `overlay.autolaunch`, read by the menu-bar
   app.
 - **Launch**: the menu-bar app gains **Show Overlay**, which starts the
@@ -142,9 +169,17 @@ model for the webview, and current WebView2 / WKWebView support.
 - `always_on_top: true`, `decorations: false`, `transparent: true`,
   `shadow: false` (we draw our own), `skip_taskbar: true`, `resizable: false`,
   `focus: false` at creation so it never steals focus from Arena.
-- **Drag**: the header/mark is a `data-tauri-drag-region`. Position persists
-  through the `window-state` plugin; on launch the window is clamped back on
-  screen if the monitor layout changed.
+- **Drag**: the header (panel) and the icon (rail) are `data-tauri-drag-region`.
+  Position persists through the `window-state` plugin; on launch the window
+  is clamped back on screen if the monitor layout changed.
+- **Dock left / right**: the Rust side reads the current monitor's work area
+  and places the window flush to the chosen edge (`set_position` on monitor
+  change events). **Auto-hide** is a two-window arrangement: the main window
+  animates off-screen (position tween, ~160 ms) and a 16px "edge tab" window
+  stays at the edge showing the land %; a cursor-position poll (the
+  `mouse-position` plugin, or a global mouse-move hook) inside a 4px strip at
+  the edge triggers the slide-in; leaving the panel + 400 ms grace triggers
+  the slide-out. Float mode disables auto-hide.
 - **Click-through ("pin")**: `set_ignore_cursor_events(true)` makes the panel
   purely visual so misclicks reach Arena; the hotkey or tray un-pins. The
   pin control shows a filled icon while active.
@@ -207,13 +242,14 @@ bundle. CI adds a Rust toolchain step to `release.yml` (cached).
    window-state, single instance, opacity command. Static JSON fixture in
    the webview.
 3. **Phase 3 — rail + panel UI** against the fixture, then against the live
-   API: land ring, land strip, list, hover card, sort, dimmed rows,
-   waiting/offline/mid-game states.
+   API: land number, land strip, list (spells first), mana symbols, hover
+   card, sort, dimmed rows, ⚙ flyout, waiting/offline/mid-game states.
+   Then dock left/right and auto-hide with the edge tab.
 4. **Phase 4 — integration.** Menu-bar "Show Overlay", bundling in both
    installers, `overlay.autolaunch`, README section (with the fullscreen
    caveat), CHANGELOG entry.
-5. **Phase 5 — polish.** Known-top cards, danger-tone ring, light theme,
-   dock-side snapping, rebindable hotkeys.
+5. **Phase 5 — polish.** Known-top cards, danger-tone land number, light
+   theme, rebindable hotkeys, per-monitor dock memory.
 
 ## 8. Risks and answers
 

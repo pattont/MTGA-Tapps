@@ -6,7 +6,11 @@
   cached split-card lookup: at ~1000 games the overview loads in about a
   quarter of the time (800 ms → 230 ms), the opponent page in a fifth, All
   Games and deck pages in under half. Existing databases pick up the indexes
-  at the next launch (a one-time ~0.3 s build).
+  at the next launch (a one-time ~0.3 s build). Read endpoints are also
+  memoized against a fingerprint of the analytics tables, so the dashboard's
+  periodic refreshes between games answer in under 10 ms instead of
+  recomputing everything; a finished game, a note, or an AI archetype landing
+  invalidates it immediately.
 - **Fixed: All Games flood/screw badges disagreed with the game page** for a
   couple dozen games — the list ignored ramped lands and the real land ratio.
   Both now use the same rules.
