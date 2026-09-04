@@ -64,19 +64,25 @@ things keep it useful:
 The commander itself is never in the list (it's in the command zone) and
 the library starts at 99.
 
-- **Header** (one line + one line): deck name with colour pips, format and
-  opponent name, turn, and three controls: collapse to the rail, pin
-  (click-through), and ⚙ (settings flyout).
+- **Header** (one line + one line): deck name with colour pips; a short
+  format line — `Std. BO1 (Ranked) · vs ropeez` (abbreviated formats so
+  "(Ranked)" always fits: Std., Hist., Mod., Pio., Time., Brawl, Ltd.); turn;
+  and three controls in the header's muted text colour: collapse to the
+  rail, pin (click-through; filled icon when pinned, outline when not), and
+  ⚙ (settings flyout).
 - **Land drops strip**, compact: `17 of 41 left` plus **NEXT** (gold),
   **IN 2**, **IN 3** (green). The rail's number is NEXT; the strip is its
   expansion.
-- **Sort + library**: sort by %, mana value, or name; `Library 41 / 60`.
+- **Sort + play/draw + library**: sort by %, mana value, or name; a
+  **PLAY** / **DRAW** pill in the dashboard's on-play teal / on-draw violet
+  once the tracker knows (blank until then); `Library 41 / 60`.
 - **Card list**, **Spells first, then Lands** — you scan for outs, and the
-  land odds already have their own strip. Each row: a small ring showing
-  copies left ÷ copies in deck (coloured by card type — creature amber,
-  instant blue, sorcery violet, enchantment pink, artifact grey, land green,
-  the dashboard's type-chip palette), `left/total`, the name in the type
-  colour, the mana cost drawn with the **real mana symbols** (the same W/U/B/R/G
+  land odds already have their own strip. Each row: a 22px **mini bar**
+  filled to copies left ÷ copies in deck — the same bar language as the
+  rail's library bar, and deliberately not a ring — coloured by card type
+  (creature amber, instant blue, sorcery violet, enchantment pink, artifact
+  grey, land green — the dashboard's type-chip palette), `left/total`, the
+  name in the type colour, the mana cost drawn with the **real mana symbols** (the same W/U/B/R/G
   vectors the dashboard's colour pips use; generic mana as a grey numbered
   circle), and the next-draw %. Percentages step through three weights (gold
   ≥ 10%, white ≥ 5%, muted below) so the eye finds the live outs first. Rows
