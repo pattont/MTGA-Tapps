@@ -106,6 +106,7 @@ class TrackerRuntimeMixin:
         self._backfill_unresolved_card_labels()
         self._backfill_recent_match_metadata()
         self._backfill_rank_progress()
+        self._backfill_inventory()
 
         # self._print_line("\n   Waiting for game events...")
         self._print_line("\n Now ready to track games in MTGA!")

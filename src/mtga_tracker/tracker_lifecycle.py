@@ -307,6 +307,7 @@ class TrackerLifecycleMixin:
                     self._print_line("✅ Detailed Logs are enabled in Arena — ready to track.")
                 self._detailed_logs_last_state = True
             self._process_rank_progress(line)
+            self._process_inventory(line)
             # Always try to pick up match metadata (format, player name) from any line
             self._parse_match_metadata(line)
             for message in self._extract_gre_messages(line):

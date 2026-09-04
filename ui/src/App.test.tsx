@@ -1220,7 +1220,35 @@ describe('App', () => {
     const deckTable = screen.getByRole('table', { name: 'Deck performance' });
     expect(within(deckTable).getByText('Izzet Wizards')).toBeInTheDocument();
     expect(within(deckTable).queryByText('Boros Mouse')).not.toBeInTheDocument();
+    // No inventory seen yet -> no wildcard strip at all (never fake zeros).
+    expect(screen.queryByRole('group', { name: 'Wildcards available' })).not.toBeInTheDocument();
+  });
 
+  it('shows wildcards available beside the deck search once Arena has restated the inventory', async () => {
+    const withInventory = {
+      ...snapshot,
+      inventory: {
+        captured_at: '2026-09-03T21:20:02',
+        gems: 6675,
+        gold: 6875,
+        vault_progress: 825,
+        wc_common: 297,
+        wc_uncommon: 292,
+        wc_rare: 63,
+        wc_mythic: 9,
+      },
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(withInventory), { status: 200 })));
+    render(<App />);
+
+    expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
+    const strip = screen.getByRole('group', { name: 'Wildcards available' });
+    expect(within(strip).getByLabelText('Common wildcards')).toHaveTextContent('297');
+    expect(within(strip).getByLabelText('Uncommon wildcards')).toHaveTextContent('292');
+    expect(within(strip).getByLabelText('Rare wildcards')).toHaveTextContent('63');
+    expect(within(strip).getByLabelText('Mythic wildcards')).toHaveTextContent('9');
+    // It lives in the Decks section's filter row, next to the search box.
+    expect(strip.parentElement).toBe(screen.getByLabelText('Search decks').parentElement);
   });
 
   it('shows ten decks at a time and pages through the remaining decks', async () => {

@@ -434,6 +434,23 @@ class AnalyticsStore:
                 FOREIGN KEY(game_id) REFERENCES games(id)
             );
 
+            CREATE TABLE IF NOT EXISTS inventory_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                captured_at TEXT NOT NULL,
+                gems INTEGER,
+                gold INTEGER,
+                vault_progress INTEGER,
+                wc_common INTEGER,
+                wc_uncommon INTEGER,
+                wc_rare INTEGER,
+                wc_mythic INTEGER,
+                FOREIGN KEY(session_id) REFERENCES tracker_sessions(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_inventory_snapshots_captured
+            ON inventory_snapshots(captured_at);
+
             CREATE INDEX IF NOT EXISTS idx_matches_session_id
             ON matches(session_id);
 
@@ -2925,6 +2942,49 @@ class AnalyticsStore:
                     compress_payload(scrub_raw_log(payload_json)),
                 ),
             )
+
+    def record_inventory_snapshot(
+        self,
+        session: SessionSnapshot,
+        *,
+        captured_at: datetime,
+        gems: int,
+        gold: int,
+        wc_common: int,
+        wc_uncommon: int,
+        wc_rare: int,
+        wc_mythic: int,
+        vault_progress: Optional[int] = None,
+    ) -> bool:
+        """Persist a changed player-inventory snapshot (wildcards, gold, gems,
+        vault) and return whether a row was added. Unchanged snapshots are
+        skipped so the table stays a history of actual changes."""
+        conn = self.connect()
+        if conn is None:
+            return False
+        current = (gems, gold, vault_progress, wc_common, wc_uncommon, wc_rare, wc_mythic)
+        with conn:
+            self.upsert_session_row(conn, session, now=captured_at)
+            previous = conn.execute(
+                """
+                SELECT gems, gold, vault_progress, wc_common, wc_uncommon, wc_rare, wc_mythic
+                FROM inventory_snapshots
+                ORDER BY captured_at DESC, id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            if previous is not None and tuple(previous) == current:
+                return False
+            conn.execute(
+                """
+                INSERT INTO inventory_snapshots (
+                    session_id, captured_at, gems, gold, vault_progress,
+                    wc_common, wc_uncommon, wc_rare, wc_mythic
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (session.session_id, captured_at.isoformat(), *current),
+            )
+        return True
 
     def record_rank_snapshot(
         self,

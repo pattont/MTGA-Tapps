@@ -372,6 +372,17 @@ export interface SnapshotFilters {
   quick?: string;
 }
 
+export interface PlayerInventory {
+  captured_at: string;
+  gems: number | null;
+  gold: number | null;
+  vault_progress: number | null;
+  wc_common: number | null;
+  wc_uncommon: number | null;
+  wc_rare: number | null;
+  wc_mythic: number | null;
+}
+
 export interface DashboardSnapshot {
   summary: Summary;
   decks: DeckRow[];
@@ -387,6 +398,8 @@ export interface DashboardSnapshot {
   mana_readiness: ManaReadinessRow[];
   /** Overall flood/screw/normal split for the homepage Land Statistics. */
   land_profile?: DeckLandProfile | null;
+  /** Newest wildcard / currency snapshot Arena restated in its log; absent until seen. */
+  inventory?: PlayerInventory | null;
   schedule: { by_weekday: ScheduleRow[]; by_time_of_day: ScheduleRow[] };
   fatigue: FatigueRow[];
   streaks: StreakSummary;

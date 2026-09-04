@@ -516,6 +516,73 @@ class CardDatabase:
             self._color_index_by_name = index
         return index
 
+    def color_identity_for_name(self, name: str) -> Optional[str]:
+        """WUBRG identity for ONE card name straight from Arena's DB — the
+        on-demand path for a card the session index has never seen (a new
+        set Arena downloaded mid-session, or an index built before Arena's
+        DB was readable). Falls back to the casting cost's pips when the
+        color column is empty. None when the card is unknown; "" when known
+        but colorless."""
+        clean = str(name or "").strip()
+        if not clean:
+            return None
+        cache = getattr(self, "_color_by_name_cache", None)
+        if cache is None:
+            cache = {}
+            self._color_by_name_cache = cache
+        if clean in cache:
+            return cache[clean]
+        result: Optional[str] = None
+        db_path = self._resolve_mtga_db_path()
+        if db_path:
+            from .colors import arena_color_codes_to_letters
+
+            try:
+                conn = self._connect_mtga_db(db_path)
+                cur = conn.cursor()
+                cur.execute('PRAGMA table_info("Cards")')
+                columns = {str(row[1]) for row in cur.fetchall()}
+                color_column = next(
+                    (c for c in ("ColorIdentity", "colorIdentity", "Colors", "colors") if c in columns),
+                    None,
+                )
+                cost_column = next(
+                    (c for c in self._MANA_COST_COLUMN_CANDIDATES if c in columns), None
+                )
+                select = ", ".join(
+                    f'c."{column}"' for column in (color_column, cost_column) if column
+                )
+                if select:
+                    cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                    tables = {str(row[0]) for row in cur.fetchall()}
+                    title_table = (
+                        "Localizations_enUS" if "Localizations_enUS" in tables else "Localizations"
+                    )
+                    rows = cur.execute(
+                        f'SELECT {select} FROM "Cards" c '
+                        f'JOIN "{title_table}" l ON c."TitleId" = l."LocId" '
+                        'WHERE l."Loc" = ? LIMIT 8',
+                        (clean,),
+                    ).fetchall()
+                    for row in rows:
+                        values = list(row)
+                        letters = ""
+                        if color_column:
+                            letters = arena_color_codes_to_letters(values.pop(0))
+                        if not letters and cost_column and values:
+                            parsed = self.parse_arena_mana_cost(values[0])
+                            cost = str(parsed[0] if isinstance(parsed, tuple) else parsed or "")
+                            letters = "".join(ch for ch in "WUBRG" if ch in cost)
+                        if result is None or len(letters) > len(result):
+                            result = letters
+                conn.close()
+            except Exception:
+                result = None
+        # Only cache answers: a miss may be a card Arena downloads later.
+        if result is not None:
+            cache[clean] = result
+        return result
+
     #: Cards-table column names for set code / collector number, newest
     #: client naming first. Schema drifts across Arena versions, so we probe.
     _SET_CODE_COLUMN_CANDIDATES = ("ExpansionCode", "Set", "SetCode", "SetId")

@@ -7477,19 +7477,71 @@ def test_live_color_index_retries_after_empty_build():
     """An empty color-index build (analytics DB locked at startup, Arena
     mid-update) must not blank the scoreboard pips for the whole session —
     it retries after the cooldown."""
+    from mtga_tracker.colors import BASIC_LAND_COLORS
+
     tracker = make_tracker()
-    # Every layer fails: DummyCardDB has no index methods and there is no
-    # analytics store wired up, so the first build comes up empty.
-    assert tracker._live_color_index() == {}
+    # Every Arena layer fails: DummyCardDB has no index methods and there is
+    # no analytics store wired up. Basic lands are always known, but the
+    # build is marked incomplete so it keeps retrying.
+    assert tracker._live_color_index() == dict(BASIC_LAND_COLORS)
+    assert tracker._live_color_index_complete is False
 
-    # A source comes back — but inside the cooldown the cached miss holds.
+    # A source comes back — but inside the cooldown the cached build holds.
     tracker.card_db.color_identity_index_by_name = lambda: {"Dusk Rat": "B"}
-    assert tracker._live_color_index() == {}
+    assert tracker._live_color_index() == dict(BASIC_LAND_COLORS)
 
-    # Past the cooldown the rebuild succeeds and is cached.
+    # Past the cooldown the rebuild sees Arena's layer and is cached for good.
     tracker._live_color_index_attempt = 0.0
-    assert tracker._live_color_index() == {"Dusk Rat": "B"}
-    assert tracker._live_color_index_cache == {"Dusk Rat": "B"}
+    assert tracker._live_color_index() == {**BASIC_LAND_COLORS, "Dusk Rat": "B"}
+    assert tracker._live_color_index_complete is True
+    tracker.card_db.color_identity_index_by_name = lambda: {"Other": "U"}
+    tracker._live_color_index_attempt = 0.0
+    assert "Other" not in tracker._live_color_index()
+
+
+def test_live_color_index_partial_build_keeps_retrying_arena_layers():
+    """The real-world failure: Arena's DB was not readable when the index was
+    first built, so only cards from earlier games (the analytics table) had
+    colors — and that partial index used to be cached for the whole session."""
+    tracker = make_tracker()
+    tracker.card_db.color_identity_index_by_name = lambda: {}
+    tracker._live_color_index_cache = {"Llanowar Elves": "G", **__import__("mtga_tracker.colors", fromlist=["x"]).BASIC_LAND_COLORS}
+    tracker._live_color_index_complete = False
+    tracker._live_color_index_attempt = 0.0
+    # Arena comes back with the new set's card -> the rebuild picks it up.
+    tracker.card_db.color_identity_index_by_name = lambda: {"Edge Rover": "G", "Glimpse the Core": "R"}
+    index = tracker._live_color_index()
+    assert index["Edge Rover"] == "G" and index["Mountain"] == "R"
+    assert tracker._live_color_index_complete is True
+
+
+def test_live_colors_basic_lands_and_on_demand_lookup():
+    """Pips light from basic lands on turn one; a card missing from the
+    session index is looked up in Arena's DB on demand; a nonbasic land with
+    no identity never asserts colorless."""
+    tracker = make_tracker()
+    tracker._live_color_index_cache = {"Restless Fortress": "C"}
+    tracker._live_color_index_complete = True
+    tracker.card_db.color_identity_for_name = lambda name: {"Edge Rover": "G"}.get(name)
+
+    assert tracker._live_colors_for([CardEvent("Forest", "opp", card_type_category="Land")]) == "G"
+    assert (
+        tracker._live_colors_for(
+            [
+                CardEvent("Forest", "opp", card_type_category="Land"),
+                CardEvent("Mountain", "opp", card_type_category="Land"),
+            ]
+        )
+        == "RG"
+    )
+    # Not in the index -> Arena DB answers, and the answer is remembered.
+    assert tracker._live_colors_for([CardEvent("Edge Rover", "opp")]) == "G"
+    assert tracker._live_color_lookup_cache == {"Edge Rover": "G"}
+    # A land with no identity contributes nothing (not "C").
+    assert tracker._live_colors_for([CardEvent("Restless Fortress", "opp", card_type_category="Land")]) == ""
+    # Unknown card, Arena has no answer: nothing, and nothing cached.
+    assert tracker._live_colors_for([CardEvent("Mystery", "opp")]) == ""
+    assert "Mystery" not in tracker._live_color_lookup_cache
 
 
 def test_live_colors_seed_from_commander_identity():
@@ -7497,6 +7549,7 @@ def test_live_colors_seed_from_commander_identity():
     union in colors from cards actually played."""
     tracker = make_tracker()
     tracker._live_color_index_cache = {"Belladonna Took": "WB", "Llanowar Elves": "G"}
+    tracker._live_color_index_complete = True
 
     assert tracker._live_colors_with_commanders([], ["Belladonna Took"]) == "WB"
     assert (

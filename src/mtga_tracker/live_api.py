@@ -31,6 +31,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from .colors import BASIC_LAND_COLORS, colors_from_label
+
 #: live_status.updated_at older than this means the tracker is not running
 #: (its idle heartbeat writes every ~5 seconds).
 OFFLINE_AFTER_SECONDS = 20.0
@@ -299,15 +301,31 @@ def _rank_context(
 ARCHETYPE_GUESS_MIN_MATCHES = 2
 
 
+def _archetype_contradicts_colors(archetype: str, table_colors: set) -> bool:
+    """True when the archetype's colour word cannot contain the colours the
+    opponent has already shown (a "Mono-Red" guess after a Forest). Names
+    without a recognised colour word never contradict."""
+    letters = colors_from_label(archetype)
+    if not letters or letters == "C":
+        return False
+    return not table_colors <= set(letters)
+
+
 def _archetype_guess(
     conn: sqlite3.Connection,
     opponent_cards_json: Any,
     current_game_id: Optional[str],
+    opponent_colors: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Guess the opponent's archetype from their revealed cards, using past
     games whose opponents were identified (Deck AI) — no network, no model:
     the archetype whose historical played-cards overlap this game's revealed
     cards the most wins, with your record against it attached.
+
+    Lands never count as evidence (a Mountain matches every red deck ever
+    faced), and a guess whose colour word contradicts the colours already on
+    the table is thrown out — "Mono-Red" cannot be right once a Forest has
+    been played.
     """
     revealed = set(_json_list(opponent_cards_json))
     if len(revealed) < ARCHETYPE_GUESS_MIN_MATCHES:
@@ -320,6 +338,8 @@ def _archetype_guess(
             JOIN game_card_summary s ON s.participant_id = o.id
             WHERE o.role = 'opponent' AND o.deck_archetype IS NOT NULL
               AND o.game_id IS NOT ? AND s.played_count > 0
+              AND COALESCE(s.type_category, '') != 'Land'
+              AND s.display_name NOT LIKE '%(Land)'
             """,
             (current_game_id,),
         ).fetchall()
@@ -329,14 +349,23 @@ def _archetype_guess(
     def base(name: str) -> str:
         return str(name or "").split(" (")[0].split(" // ")[0].strip().casefold()
 
-    revealed_bases = {base(name) for name in revealed}
+    revealed_bases = {base(name) for name in revealed} - {
+        name.casefold() for name in BASIC_LAND_COLORS
+    }
+    table_colors = set(str(opponent_colors or "")) & set("WUBRG")
     matches: Dict[str, set] = {}
     for archetype, card_name in rows:
         if base(card_name) in revealed_bases:
             matches.setdefault(str(archetype), set()).add(base(card_name))
+    if table_colors:
+        matches = {
+            archetype: cards
+            for archetype, cards in matches.items()
+            if not _archetype_contradicts_colors(archetype, table_colors)
+        }
     if not matches:
         return None
-    archetype, matched = max(matches.items(), key=lambda item: len(item[1]))
+    archetype, matched = max(matches.items(), key=lambda item: (len(item[1]), item[0]))
     if len(matched) < ARCHETYPE_GUESS_MIN_MATCHES:
         return None
     try:
@@ -588,7 +617,12 @@ def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
                 ),
                 "rank": _rank_context(conn, source.get("format")),
                 "archetype_guess": (
-                    _archetype_guess(conn, status.get("opponent_cards"), feed_game_id)
+                    _archetype_guess(
+                        conn,
+                        status.get("opponent_cards"),
+                        feed_game_id,
+                        source.get("opponent_colors"),
+                    )
                     if status.get("in_game")
                     else None
                 ),

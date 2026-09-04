@@ -584,6 +584,62 @@ def test_live_payload_archetype_guess_from_revealed_cards(tmp_path):
     assert guess["wins"] == 1 and guess["losses"] == 1
 
 
+def test_archetype_guess_ignores_lands_and_contradicting_colors(tmp_path):
+    """The Gruul-vs-Mono-Red flip: basic lands match every deck ever faced, so
+    they are not evidence; and a guess whose colour word excludes a colour
+    already on the table is impossible and gets dropped."""
+    import json as _json
+
+    store = _store(tmp_path)
+    conn = store.connect()
+    _seed_history(
+        conn,
+        [
+            ("b1", "Bears", "Foe1", "Mono-Red Aggro", "loss", "2026-08-01"),
+            ("b2", "Bears", "Foe2", "Mono-Red Aggro", "win", "2026-08-02"),
+            ("b3", "Bears", "Foe3", "Gruul Stompy", "win", "2026-08-03"),
+        ],
+    )
+    for pid, cards in (
+        ("b1-o", [("Mountain", "Land"), ("Glimpse the Core", "Sorcery"), ("Monastery Swiftspear", "Creature")]),
+        ("b2-o", [("Mountain", "Land"), ("Glimpse the Core", "Sorcery")]),
+        ("b3-o", [("Forest", "Land"), ("Mountain", "Land"), ("Edge Rover", "Creature"), ("Glimpse the Core", "Sorcery")]),
+    ):
+        for name, kind in cards:
+            conn.execute(
+                "INSERT INTO game_card_summary (game_id, participant_id, display_name, type_category, played_count) "
+                "VALUES (?, ?, ?, ?, 1)",
+                (pid.split("-")[0], pid, name, kind),
+            )
+    conn.commit()
+    # Turn 4: Forest, Mountain, Edge Rover, Glimpse the Core revealed; table is RG.
+    _log_line(
+        store,
+        "x",
+        live=_live(
+            opponent_cards=_json.dumps(["Forest", "Mountain", "Edge Rover", "Glimpse the Core"]),
+            opponent_colors="RG",
+        ),
+    )
+    store.close()
+    guess = live_api.build_live_payload(tmp_path / "tracker.sqlite3")["now"]["archetype_guess"]
+    # Mono-Red has as many nonland matches as Gruul would with lands counted,
+    # but it cannot contain green — Gruul Stompy is the only legal answer.
+    assert guess["archetype"] == "Gruul Stompy"
+    assert guess["matched_cards"] == 2  # Edge Rover + Glimpse the Core; lands ignored
+
+    # Only a Mountain and a Glimpse revealed, no green yet: one nonland match
+    # is below the evidence bar, so no guess rather than a land-driven one.
+    store = _store(tmp_path)
+    _log_line(
+        store,
+        "y",
+        live=_live(opponent_cards=_json.dumps(["Mountain", "Glimpse the Core"]), opponent_colors="R"),
+    )
+    store.close()
+    assert live_api.build_live_payload(tmp_path / "tracker.sqlite3")["now"]["archetype_guess"] is None
+
+
 def test_live_payload_rank_hidden_for_unranked(tmp_path):
     store = _store(tmp_path)
     conn = store.connect()

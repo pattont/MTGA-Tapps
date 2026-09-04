@@ -39,6 +39,7 @@ import { DeckFinderPage } from './components/DeckFinderPage';
 import { LiveLogPage } from './components/LiveLogPage';
 import { SettingsPage } from './components/SettingsPage';
 import { MetricCard } from './components/MetricCard';
+import { WildcardStrip } from './components/WildcardStrip';
 import { AuditPage } from './components/AuditPage';
 import { OpponentDetailPage } from './components/OpponentDetailPage';
 import { OpponentsPage } from './components/OpponentsPage';
@@ -1462,7 +1463,7 @@ function Dashboard({
         title="Decks"
         description="Record plus combat telemetry per deck: damage pace, attacks, and lifegain. Profile is judged by damage dealt per turn."
       >
-        <div className="table-filter">
+        <div className="table-filter table-filter-row">
           <input
             type="search"
             aria-label="Search decks"
@@ -1470,6 +1471,7 @@ function Dashboard({
             onChange={(event) => setDeckSearch(event.target.value)}
             placeholder="Search decks"
           />
+          <WildcardStrip inventory={snapshot.inventory} />
         </div>
         <SortableTable
           caption="Deck performance"

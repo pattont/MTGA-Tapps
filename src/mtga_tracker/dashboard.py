@@ -2798,6 +2798,7 @@ def dashboard_snapshot(
         # every game the current filters cover.
         land_profile = _deck_land_profile(conn, where, params)
         schedule = _schedule_rows(conn, where, params)
+        inventory = _latest_inventory(conn)
         fatigue_rows = _fatigue_rows(conn, where, params)
         streaks = _streak_summary(conn, where, params)
         match_results = _match_level_results(conn, where, params)
@@ -2909,6 +2910,7 @@ def dashboard_snapshot(
         "combat_split": combat_split_rows,
         "mana_readiness": mana_readiness_rows,
         "land_profile": land_profile,
+        "inventory": inventory,
         "schedule": schedule,
         "fatigue": fatigue_rows,
         "streaks": streaks,
@@ -3486,6 +3488,35 @@ def reset_database(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
     finally:
         conn.close()
     return {"ok": True, "backup": str(backup_path)}
+
+
+def _latest_inventory(conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
+    """Newest player-inventory snapshot (wildcards, gold, gems, vault) or None
+    when the tracker has never seen one (old database, or Arena's log never
+    restated the inventory since the table existed)."""
+    if not _table_exists(conn, "inventory_snapshots"):
+        return None
+    row = conn.execute(
+        """
+        SELECT captured_at, gems, gold, vault_progress,
+               wc_common, wc_uncommon, wc_rare, wc_mythic
+        FROM inventory_snapshots
+        ORDER BY captured_at DESC, id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "captured_at": row[0],
+        "gems": row[1],
+        "gold": row[2],
+        "vault_progress": row[3],
+        "wc_common": row[4],
+        "wc_uncommon": row[5],
+        "wc_rare": row[6],
+        "wc_mythic": row[7],
+    }
 
 
 def _deck_land_profile(
@@ -5488,6 +5519,7 @@ SELECT
   (SELECT COUNT(color_identity) FROM cards),
   (SELECT COUNT(mana_cost) FROM cards),
   (SELECT MAX(rowid) FROM rank_snapshots),
+  (SELECT MAX(rowid) FROM inventory_snapshots),
   (SELECT MAX(version) FROM schema_migrations)
 """
 

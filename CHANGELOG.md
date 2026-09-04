@@ -16,6 +16,18 @@
   Both now use the same rules.
 - **Live Scoreboard shows your lifetime record against the opponent's
   commander** in Brawl, one line per commander, hidden until you've faced it.
+- **Wildcards available on the Overview**, beside the deck search: common,
+  uncommon, rare, and mythic counts read from the inventory block Arena
+  writes to its log at launch and on every event join (gold, gems, and vault
+  progress are stored too). Nothing shows until the tracker has seen one.
+- **Fixed: opponent colour pips could stay blank until turn 7.** When Arena's
+  card database wasn't readable at the moment the tracker built its colour
+  index, the index was cached for the session with only cards from earlier
+  games. It now keeps retrying Arena's layers until they answer, looks up
+  unknown cards on demand, and basic lands light their colour on turn one.
+- **Fixed: the scoreboard's "Looks like…" guess could flip to an impossible
+  archetype** (Gruul → Mono-Red after a Forest). Lands no longer count as
+  evidence, and a guess whose colours contradict the table is dropped.
 - The menu-bar item is now **Live Scoreboard**, matching the page.
 - Docs refreshed (README, Quick Start, AGENTS), and the in-game overlay plan
   rewritten for Tauri v2 with the rail/panel design mockup

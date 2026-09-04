@@ -1913,6 +1913,60 @@ tbody tr:hover {
   max-width: 280px;
 }
 
+/* Search box on the left, wildcards on the right, one line. */
+.table-filter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.wildcard-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  padding: 4px 12px 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.wildcard-strip-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--subtle);
+  margin-right: 2px;
+}
+
+.wildcard-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.wildcard-item strong {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.wildcard-icon {
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 45%));
+}
+
+.wildcard-common .wildcard-stop-hi { stop-color: #f2f5f7; }
+.wildcard-common .wildcard-stop-lo { stop-color: #9aa7b5; }
+.wildcard-uncommon .wildcard-stop-hi { stop-color: #cfe0ff; }
+.wildcard-uncommon .wildcard-stop-lo { stop-color: #7f97c4; }
+.wildcard-rare .wildcard-stop-hi { stop-color: #f6d67a; }
+.wildcard-rare .wildcard-stop-lo { stop-color: #c98d1d; }
+.wildcard-mythic .wildcard-stop-hi { stop-color: #ff9e63; }
+.wildcard-mythic .wildcard-stop-lo { stop-color: #d24a2b; }
+
 .table-filter label {
   display: grid;
   max-width: 280px;

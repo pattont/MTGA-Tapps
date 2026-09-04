@@ -29,6 +29,8 @@ from .format_normalizer import (
     normalize_match_format,
 )
 from .deck_llm import identify_deck, is_deck_llm_enabled
+from .colors import BASIC_LAND_COLORS
+from .inventory import iter_inventory_snapshots, parse_inventory_snapshot
 from .rank_progress import (
     iter_constructed_rank_snapshots,
     parse_constructed_rank_snapshot,
@@ -240,14 +242,21 @@ class TrackerAnalyticsMixin:
         used to blank the scoreboard pips until the tracker restarted.
         Instead an empty result is retried, at most every 30 seconds."""
         cached = getattr(self, "_live_color_index_cache", None)
-        if cached:
+        complete = bool(getattr(self, "_live_color_index_complete", False))
+        if cached and complete:
             return cached
         if cached is not None:
+            # Empty, or built without Arena's card DB (only the analytics
+            # table's previously-seen cards): serve it, but rebuild every
+            # 30 s until Arena's layers come through — otherwise a startup
+            # race left the pips blind to every card not seen in an earlier
+            # game for the whole session.
             last_attempt = getattr(self, "_live_color_index_attempt", 0.0)
             if time.monotonic() - last_attempt < 30.0:
                 return cached
         self._live_color_index_attempt = time.monotonic()
         index: Dict[str, str] = {}
+        arena_layers = 0
         try:
             for name, parsed in (self.card_db.mana_cost_index_by_name() or {}).items():
                 cost = str(parsed[0] if isinstance(parsed, tuple) else parsed or "")
@@ -258,6 +267,8 @@ class TrackerAnalyticsMixin:
                     # A real cost with no colored pips ({2}, {X}{C}{C}) is a
                     # KNOWN colorless card, not colors-unknown.
                     index[str(name)] = "C"
+            if index:
+                arena_layers += 1
         except Exception:
             pass
         try:
@@ -276,12 +287,19 @@ class TrackerAnalyticsMixin:
         except Exception:
             pass
         try:
-            for name, identity in (self.card_db.color_identity_index_by_name() or {}).items():
+            color_layer = self.card_db.color_identity_index_by_name() or {}
+            for name, identity in color_layer.items():
                 if name:
                     index[str(name)] = str(identity) or "C"
+            if color_layer:
+                arena_layers += 1
         except Exception:
             pass
+        # Basic lands carry no color identity in Arena's DB but tell you the
+        # deck's colors on turn one — they outrank every layer above.
+        index.update(BASIC_LAND_COLORS)
         self._live_color_index_cache = index
+        self._live_color_index_complete = arena_layers > 0
         return index
 
     def _live_colors_for(self, cards) -> str:
@@ -289,18 +307,56 @@ class TrackerAnalyticsMixin:
         this game — fills the Live Log scoreboard pips in real time (the
         game_card_summary rows only exist after the game persists)."""
         index = self._live_color_index()
-        if not index:
-            return ""
         letters: set = set()
         for event in cards or []:
             name = str(getattr(event, "card_name", "") or "")
-            identity = index.get(name) or index.get(name.split(" // ")[0].strip())
-            if identity:
-                letters.update(ch for ch in str(identity) if ch in "WUBRGC")
+            identity = (
+                BASIC_LAND_COLORS.get(name)
+                or index.get(name)
+                or index.get(name.split(" // ")[0].strip())
+            )
+            if identity is None:
+                # Not in the session index: ask Arena's DB for this one card
+                # (cached per name) so a brand-new set or a late-readable
+                # DB still lights the pips the turn the card is played.
+                identity = self._live_color_lookup(name)
+            if not identity:
+                continue
+            if identity == "C" and self._live_event_is_land(event):
+                # A nonbasic land with no identity says nothing about the
+                # deck's colors; only a spell can assert "colorless".
+                continue
+            letters.update(ch for ch in str(identity) if ch in "WUBRGC")
         colored = "".join(ch for ch in "WUBRG" if ch in letters)
         # All known cards colorless -> the side IS colorless ("C"), which the
         # scoreboard shows with the diamond pip.
         return colored or ("C" if "C" in letters else "")
+
+    def _live_color_lookup(self, name: str) -> Optional[str]:
+        """On-demand Arena DB lookup for one card name, remembered for the
+        session once it answers (a miss is retried, Arena may download it)."""
+        clean = str(name or "").strip()
+        if not clean:
+            return None
+        cache = getattr(self, "_live_color_lookup_cache", None)
+        if cache is None:
+            cache = {}
+            self._live_color_lookup_cache = cache
+        if clean in cache:
+            return cache[clean]
+        try:
+            lookup = getattr(self.card_db, "color_identity_for_name", None)
+            identity = lookup(clean) if callable(lookup) else None
+        except Exception:
+            identity = None
+        if identity is None:
+            base = clean.split(" // ")[0].strip()
+            if base != clean:
+                return self._live_color_lookup(base)
+            return None
+        letters = identity or "C"
+        cache[clean] = letters
+        return letters
 
     def _live_colors_with_commanders(self, cards, commanders) -> str:
         """Colors from cards played, seeded with the commander's identity.
@@ -475,6 +531,32 @@ class TrackerAnalyticsMixin:
                 game_id=game_id,
                 **snapshot,
             )
+        except (OSError, sqlite3.Error, TypeError, ValueError):
+            return
+
+    def _process_inventory(self, line: str) -> None:
+        """Persist the wildcard / gold / gem counts whenever Arena restates them."""
+        snapshot = parse_inventory_snapshot(line)
+        if snapshot is None:
+            return
+        try:
+            self._analytics_store().record_inventory_snapshot(
+                self._session_snapshot(), captured_at=self._now(), **snapshot
+            )
+        except (OSError, sqlite3.Error, TypeError, ValueError):
+            return
+
+    def _backfill_inventory(self) -> None:
+        """Import the inventory snapshots already present in the current Arena log."""
+        log_path = getattr(self.parser, "log_path", None)
+        if not log_path:
+            return
+        try:
+            store = self._analytics_store()
+            for captured_at, snapshot in iter_inventory_snapshots(log_path):
+                store.record_inventory_snapshot(
+                    self._session_snapshot(), captured_at=captured_at, **snapshot
+                )
         except (OSError, sqlite3.Error, TypeError, ValueError):
             return
 

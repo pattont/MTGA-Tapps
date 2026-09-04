@@ -94,3 +94,45 @@ def arena_color_codes_to_letters(raw: Optional[str]) -> str:
         if letter:
             letters.append(letter)
     return normalize_colors(letters)
+
+
+#: Basic (and snow) lands imply their color the moment they hit the table —
+#: Arena's card DB gives lands no color identity, so without this a side would
+#: read as colorless until its first spell.
+BASIC_LAND_COLORS = {
+    "Plains": "W",
+    "Island": "U",
+    "Swamp": "B",
+    "Mountain": "R",
+    "Forest": "G",
+    "Snow-Covered Plains": "W",
+    "Snow-Covered Island": "U",
+    "Snow-Covered Swamp": "B",
+    "Snow-Covered Mountain": "R",
+    "Snow-Covered Forest": "G",
+    "Wastes": "C",
+}
+
+
+def colors_from_label(label: Optional[str]) -> Optional[str]:
+    """Reverse of color_combo_label for the leading word(s) of an archetype
+    name: "Gruul Stompy" -> "RG", "Mono-Red Aggro" -> "R", "Esper Control"
+    -> "WUB", "5c Legends" -> "WUBRG", "Colorless Eldrazi" -> "C". None when
+    the name does not start with a recognised color word."""
+    if not label:
+        return None
+    head = str(label).strip().split(" ", 1)[0]
+    if head.lower() == "5c":
+        return WUBRG_ORDER
+    if head.lower() == "colorless":
+        return COLORLESS
+    if head.lower().startswith("mono-"):
+        color_name = head[5:].strip().capitalize()
+        for letter, name in COLOR_NAMES.items():
+            if name == color_name:
+                return letter
+        return None
+    for letters, name in COMBO_NAMES.items():
+        if name.lower() == head.lower():
+            return letters
+    return None
