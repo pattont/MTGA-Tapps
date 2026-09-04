@@ -488,6 +488,28 @@ class AnalyticsStore:
             CREATE INDEX IF NOT EXISTS idx_rank_snapshots_season_time
             ON rank_snapshots(rank_format, season_ordinal, captured_at);
 
+            -- Dashboard read paths that look cards up by participant alone
+            -- (opener-land stats, mana readiness, draw quality batches) and
+            -- games by match (Bo3 records). Without these each of them scans
+            -- the whole table once per game.
+            CREATE INDEX IF NOT EXISTS idx_opening_hand_participant
+            ON game_opening_hand_cards(participant_id);
+
+            CREATE INDEX IF NOT EXISTS idx_drawn_cards_participant
+            ON game_drawn_cards(participant_id);
+
+            CREATE INDEX IF NOT EXISTS idx_game_deck_cards_participant_zone
+            ON game_deck_cards(participant_id, deck_zone);
+
+            CREATE INDEX IF NOT EXISTS idx_game_card_summary_participant
+            ON game_card_summary(participant_id);
+
+            CREATE INDEX IF NOT EXISTS idx_participants_role_deck
+            ON participants(role, deck_name);
+
+            CREATE INDEX IF NOT EXISTS idx_games_match
+            ON games(match_id);
+
             INSERT OR IGNORE INTO schema_migrations(version, applied_at)
             VALUES (1, datetime('now'));
             """

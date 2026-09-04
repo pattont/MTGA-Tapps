@@ -3228,3 +3228,51 @@ def test_deck_land_profile_expected_lands_from_newest_decklist(tmp_path):
     assert profile["expected_lands_seen"] == round(
         profile["avg_cards_seen"] * 37.9 / 100.0, 1
     )
+
+
+def test_draw_quality_batch_matches_per_game_helper(tmp_path):
+    """The set-based batch must agree with the per-game helper it replaces,
+    including the nearest-decklist fallback and the estimate fallback."""
+    from mtga_tracker.dashboard import _draw_quality_batch, _game_draw_quality
+
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        # game-1 loses its decklist -> borrows game-2's (22 lands / 58).
+        conn.execute("delete from game_deck_cards where game_id = 'game-1'")
+        conn.execute(
+            "update game_deck_cards set quantity = 22 "
+            "where game_id = 'game-2' and display_name = 'Mountain'"
+        )
+        rows = conn.execute(
+            "select game_id, id, deck_size from participants where role = 'player'"
+        ).fetchall()
+        batch = _draw_quality_batch(conn, [(pid, size) for _, pid, size in rows])
+        for game_id, pid, size in rows:
+            single = _game_draw_quality(conn, game_id, pid, size)
+            assert batch[pid] == single, game_id
+        assert batch["player-1"]["land_rate_source"] == "deck_history"
+        assert batch["player-1"]["expected_land_rate"] == 37.9
+
+        conn.execute("delete from game_deck_cards")
+        batch = _draw_quality_batch(conn, [(pid, size) for _, pid, size in rows])
+        assert batch["player-1"]["land_rate_source"] == "estimate"
+        assert _draw_quality_batch(conn, []) == {}
+
+
+def test_split_card_index_resolves_faces(tmp_path):
+    from mtga_tracker.dashboard import _arena_export_card_name, _split_card_index
+
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "insert into cards (name, primary_type, first_seen_at) "
+            "values ('Fire // Ice', 'Instant', '2026-06-01')"
+        )
+        index = _split_card_index(conn)
+        assert index["Fire"] == "Fire // Ice"
+        assert index["Ice"] == "Fire // Ice"
+        assert _arena_export_card_name(conn, "Fire (Instant)", index) == "Fire // Ice"
+        assert _arena_export_card_name(conn, "Fire // Ice", index) == "Fire // Ice"
+        assert _arena_export_card_name(conn, "Mountain (Land)", index) == "Mountain"
+        # Without a prebuilt index it builds its own.
+        assert _arena_export_card_name(conn, "Ice") == "Fire // Ice"

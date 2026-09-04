@@ -299,6 +299,162 @@ def _nearest_deck_land_stats(
     return deck_land_stats(conn, str(match[0]), str(match[1]))
 
 
+def _draw_quality_batch(
+    conn: sqlite3.Connection,
+    participants: List[Tuple[str, Optional[int]]],
+) -> Dict[str, Dict[str, Any]]:
+    """participant_id -> draw-quality metrics for many games at once.
+
+    Same rules as _game_draw_quality (this game's decklist, else the nearest
+    same-deck decklist, else the size heuristic) but in a handful of set
+    queries instead of three per game — the difference between the overview
+    loading in a blink and in a second once the history reaches ~1000 games.
+    """
+    if not participants:
+        return {}
+    ids = [pid for pid, _ in participants if pid]
+    fallback_size = {pid: size for pid, size in participants if pid}
+    if not ids:
+        return {}
+    placeholders = ",".join("?" for _ in ids)
+    opener: Dict[str, List[Dict[str, Any]]] = {}
+    for record in _dict_rows(
+        conn.execute(
+            f"""
+            SELECT participant_id, display_name,
+                   COALESCE(type_category, 'Other') AS type_category
+            FROM game_opening_hand_cards
+            WHERE participant_id IN ({placeholders})
+            ORDER BY hand_position, copy_number
+            """,
+            ids,
+        )
+    ):
+        opener.setdefault(record["participant_id"], []).append(record)
+    drawn: Dict[str, List[Dict[str, Any]]] = {}
+    for record in _dict_rows(
+        conn.execute(
+            f"""
+            SELECT participant_id, display_name,
+                   COALESCE(type_category, 'Other') AS type_category,
+                   draw_position, source
+            FROM game_drawn_cards
+            WHERE participant_id IN ({placeholders})
+            ORDER BY draw_position
+            """,
+            ids,
+        )
+    ):
+        drawn.setdefault(record["participant_id"], []).append(record)
+    recorded: Dict[str, int] = {}
+    for pid, cards_drawn in conn.execute(
+        f"SELECT participant_id, cards_drawn FROM game_participant_stats "
+        f"WHERE participant_id IN ({placeholders})",
+        ids,
+    ):
+        recorded[pid] = int(cards_drawn or 0)
+    decklists: Dict[str, Tuple[int, int]] = {}
+    for pid, size, lands in conn.execute(
+        f"""
+        SELECT participant_id, SUM(quantity),
+               SUM(CASE WHEN type_category = 'Land' THEN quantity ELSE 0 END)
+        FROM game_deck_cards
+        WHERE deck_zone = 'deck' AND participant_id IN ({placeholders})
+        GROUP BY participant_id
+        """,
+        ids,
+    ):
+        if int(size or 0) > 0:
+            decklists[pid] = (int(size), int(lands or 0))
+
+    # Nearest same-deck decklist for games that submitted none.
+    missing = [pid for pid in ids if pid not in decklists]
+    borrowed: Dict[str, Tuple[int, int]] = {}
+    if missing:
+        deck_of: Dict[str, Tuple[str, str]] = {}
+        for pid, deck_name, played_at in conn.execute(
+            f"""
+            SELECT p.id, p.deck_name, COALESCE(g.started_at, g.ended_at, '')
+            FROM participants p
+            JOIN games g ON g.id = p.game_id
+            WHERE p.id IN ({",".join("?" for _ in missing)})
+            """,
+            missing,
+        ):
+            if deck_name:
+                deck_of[pid] = (str(deck_name), str(played_at or ""))
+        deck_names = sorted({name for name, _ in deck_of.values()})
+        history: Dict[str, List[Tuple[str, str]]] = {}
+        if deck_names:
+            for pid, deck_name, played_at in conn.execute(
+                f"""
+                SELECT p.id, p.deck_name, COALESCE(g.started_at, g.ended_at, '')
+                FROM participants p
+                JOIN games g ON g.id = p.game_id
+                WHERE p.role = 'player'
+                  AND p.deck_name IN ({",".join("?" for _ in deck_names)})
+                  AND EXISTS (
+                      SELECT 1 FROM game_deck_cards d
+                      WHERE d.participant_id = p.id AND d.deck_zone = 'deck'
+                  )
+                """,
+                deck_names,
+            ):
+                history.setdefault(str(deck_name), []).append((str(played_at or ""), pid))
+            history_ids = [pid for entries in history.values() for _, pid in entries]
+            history_stats: Dict[str, Tuple[int, int]] = {}
+            for chunk_start in range(0, len(history_ids), 900):
+                chunk = history_ids[chunk_start : chunk_start + 900]
+                for pid, size, lands in conn.execute(
+                    f"""
+                    SELECT participant_id, SUM(quantity),
+                           SUM(CASE WHEN type_category = 'Land' THEN quantity ELSE 0 END)
+                    FROM game_deck_cards
+                    WHERE deck_zone = 'deck'
+                      AND participant_id IN ({",".join("?" for _ in chunk)})
+                    GROUP BY participant_id
+                    """,
+                    chunk,
+                ):
+                    if int(size or 0) > 0:
+                        history_stats[pid] = (int(size), int(lands or 0))
+            for pid, (deck_name, played_at) in deck_of.items():
+                entries = [
+                    (at, other)
+                    for at, other in history.get(deck_name, [])
+                    if other != pid and other in history_stats
+                ]
+                if not entries:
+                    continue
+                before = [entry for entry in entries if entry[0] <= played_at]
+                pick = max(before) if before else min(entries)
+                borrowed[pid] = history_stats[pick[1]]
+
+    result: Dict[str, Dict[str, Any]] = {}
+    for pid in ids:
+        source: Optional[str] = None
+        decklist = decklists.get(pid)
+        if decklist is None:
+            decklist = borrowed.get(pid)
+            if decklist is not None:
+                source = "deck_history"
+        deck_size = fallback_size.get(pid)
+        deck_lands = None
+        if decklist is not None:
+            deck_size, deck_lands = decklist
+        quality = draw_quality_metrics(
+            opener.get(pid, []),
+            drawn.get(pid, []),
+            recorded.get(pid, 0),
+            int(deck_size or 60),
+            deck_lands=deck_lands,
+        )
+        if source is not None:
+            quality["land_rate_source"] = source
+        result[pid] = quality
+    return result
+
+
 def _opponent_color_letters(conn: sqlite3.Connection, game_id: str, participant_id: str) -> str:
     """Color letters seen across the opponent's revealed cards in one game —
     "C" when every known card was colorless (an Eldrazi deck is colorless,
@@ -2042,22 +2198,38 @@ def _empty_deck_visual(deck_name: str) -> Dict[str, Any]:
     }
 
 
-def _arena_export_card_name(conn: sqlite3.Connection, display_name: str) -> str:
+def _split_card_index(conn: sqlite3.Connection) -> Dict[str, str]:
+    """face name (either half) -> full "Front // Back" name, from the card
+    dimension. One small query instead of a LIKE scan per decklist row."""
+    index: Dict[str, str] = {}
+    try:
+        rows = conn.execute(
+            "SELECT name FROM cards WHERE name LIKE '% // %' ORDER BY LENGTH(name)"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return index
+    for (name,) in rows:
+        full = str(name)
+        for face in full.split(" // "):
+            face = face.strip()
+            if face:
+                # Longest full name wins, matching the old ORDER BY LENGTH DESC.
+                index[face] = full
+    return index
+
+
+def _arena_export_card_name(
+    conn: sqlite3.Connection,
+    display_name: str,
+    split_index: Optional[Dict[str, str]] = None,
+) -> str:
     """Prefer the full split-card name already known to the card dimension."""
     clean_name = _clean_card_name(display_name) or display_name
     if " // " in clean_name:
         return clean_name
-    row = conn.execute(
-        """
-        SELECT name
-        FROM cards
-        WHERE name LIKE ? OR name LIKE ?
-        ORDER BY LENGTH(name) DESC
-        LIMIT 1
-        """,
-        (f"{clean_name} // %", f"% // {clean_name}"),
-    ).fetchone()
-    return str(row[0]) if row else clean_name
+    if split_index is None:
+        split_index = _split_card_index(conn)
+    return split_index.get(clean_name, clean_name)
 
 
 def _deck_export_snapshot(
@@ -2101,6 +2273,7 @@ def _deck_export_snapshot(
 
     source_game_id = str(source[0])
     grouped: Dict[str, Dict[str, Dict[str, Any]]] = {"deck": {}, "sideboard": {}}
+    split_index = _split_card_index(conn)
     for row in _dict_rows(
         conn.execute(
             """
@@ -2120,7 +2293,7 @@ def _deck_export_snapshot(
         deck_zone = str(row.get("deck_zone") or "")
         if deck_zone not in grouped:
             continue
-        card_name = _arena_export_card_name(conn, str(row["display_name"]))
+        card_name = _arena_export_card_name(conn, str(row["display_name"]), split_index)
         card = grouped[deck_zone].setdefault(
             card_name,
             {
@@ -2832,6 +3005,7 @@ def deck_detail(
         format_rows, midweek_rows = _grouped_format_rows(conn, where, params)
         submitted_cards_by_game: Dict[str, Set[str]] = {}
         if _table_exists(conn, "game_deck_cards"):
+            split_index = _split_card_index(conn)
             for row in _dict_rows(
                 conn.execute(
                     f"""
@@ -2844,7 +3018,9 @@ def deck_detail(
                     params,
                 )
             ):
-                canonical_name = _arena_export_card_name(conn, str(row["display_name"]))
+                canonical_name = _arena_export_card_name(
+                    conn, str(row["display_name"]), split_index
+                )
                 submitted_cards_by_game.setdefault(row["game_id"], set()).update(
                     _card_name_aliases(canonical_name)
                 )
@@ -3335,14 +3511,17 @@ def _deck_land_profile(
     flood = screw = normal = 0
     sum_cards_seen = sum_lands_seen = sum_draws = sum_land_draws = 0
     expected_land_pct: Optional[float] = None
+    qualities = _draw_quality_batch(
+        conn, [(participant_id, row_deck_size) for _, participant_id, row_deck_size in game_rows]
+    )
     for game_id, participant_id, row_deck_size in game_rows:
-        if deck_size is None:
-            decklist = deck_land_stats(conn, str(game_id), participant_id)
-            if decklist is not None:
-                deck_size, lands = decklist
-        quality = _game_draw_quality(
-            conn, str(game_id), participant_id, row_deck_size
-        )
+        quality = qualities.get(participant_id)
+        if quality is None:
+            continue
+        if deck_size is None and quality.get("land_rate_source") == "decklist":
+            # Newest game (rows are newest-first) with its own submitted list.
+            deck_size = int(quality.get("deck_size") or 0) or None
+            lands = quality.get("deck_lands")
         if not quality.get("total_cards_seen"):
             continue
         sum_cards_seen += int(quality.get("total_cards_seen") or 0)
@@ -4774,14 +4953,7 @@ def all_games(
                   (
                     SELECT SUM(g2.outcome = 'loss') FROM games g2
                     WHERE g2.match_id = g.match_id
-                  ) AS match_losses,
-                  (
-                    SELECT GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
-                    FROM game_card_summary s
-                    JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
-                    JOIN cards c ON c.id = s.card_id
-                    WHERE s.game_id = g.id AND po.game_id = g.id
-                  ) AS opp_color_letters
+                  ) AS match_losses
                 FROM games g
                 JOIN matches m ON m.id = g.match_id
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
@@ -4791,74 +4963,36 @@ def all_games(
                 params,
             )
         )
-        participant_ids = [row["player_participant_id"] for row in rows]
-        opener_by_participant: Dict[str, List[Dict[str, Any]]] = {}
-        drawn_by_participant: Dict[str, List[Dict[str, Any]]] = {}
-        stats_drawn: Dict[str, int] = {}
-        deck_stats: Dict[str, Tuple[int, int]] = {}
-        if participant_ids:
-            placeholders = ",".join("?" for _ in participant_ids)
-            for record in _dict_rows(
-                conn.execute(
-                    f"""
-                    SELECT participant_id, display_name,
-                           COALESCE(type_category, 'Other') AS type_category
-                    FROM game_opening_hand_cards
-                    WHERE participant_id IN ({placeholders})
-                    ORDER BY hand_position
-                    """,
-                    participant_ids,
-                )
+        # Opponent colors for every game in one grouped pass (a correlated
+        # subquery per row costs ~15x more over the full history).
+        opp_letters: Dict[str, str] = {}
+        try:
+            for game_id, letters in conn.execute(
+                """
+                SELECT s.game_id,
+                       GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
+                FROM game_card_summary s
+                JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
+                JOIN cards c ON c.id = s.card_id
+                GROUP BY s.game_id
+                """
             ):
-                opener_by_participant.setdefault(record["participant_id"], []).append(record)
-            for record in _dict_rows(
-                conn.execute(
-                    f"""
-                    SELECT participant_id, display_name,
-                           COALESCE(type_category, 'Other') AS type_category, draw_position
-                    FROM game_drawn_cards
-                    WHERE participant_id IN ({placeholders})
-                    ORDER BY draw_position
-                    """,
-                    participant_ids,
-                )
-            ):
-                drawn_by_participant.setdefault(record["participant_id"], []).append(record)
-            for record in conn.execute(
-                f"""
-                SELECT participant_id, cards_drawn FROM game_participant_stats
-                WHERE participant_id IN ({placeholders})
-                """,
-                participant_ids,
-            ):
-                stats_drawn[record[0]] = int(record[1] or 0)
-            for record in conn.execute(
-                f"""
-                SELECT participant_id, SUM(quantity),
-                       SUM(CASE WHEN type_category = 'Land' THEN quantity ELSE 0 END)
-                FROM game_deck_cards
-                WHERE deck_zone = 'deck' AND participant_id IN ({placeholders})
-                GROUP BY participant_id
-                """,
-                participant_ids,
-            ):
-                deck_stats[record[0]] = (int(record[1] or 0), int(record[2] or 0))
+                opp_letters[str(game_id)] = str(letters or "")
+        except sqlite3.OperationalError:
+            opp_letters = {}
+        for row in rows:
+            row["opp_color_letters"] = opp_letters.get(str(row.get("game_id")), "")
+        qualities = _draw_quality_batch(
+            conn,
+            [(row["player_participant_id"], row.get("deck_size")) for row in rows],
+        )
         deck_color_map = _deck_color_map(conn)
 
     for row in rows:
         row["deck_colors"] = deck_color_map.get(str(row.get("deck_name") or ""), "")
         participant_id = row.pop("player_participant_id", None)
-        fallback_size = int(row.pop("deck_size", None) or 60)
-        decklist = deck_stats.get(participant_id)
-        deck_size = decklist[0] if decklist and decklist[0] else fallback_size
-        deck_lands = decklist[1] if decklist and decklist[0] else None
-        quality = draw_quality_metrics(
-            opener_by_participant.get(participant_id, []),
-            drawn_by_participant.get(participant_id, []),
-            stats_drawn.get(participant_id, 0),
-            deck_size,
-            deck_lands=deck_lands,
-        )
+        row.pop("deck_size", None)
+        quality = qualities.get(participant_id) or draw_quality_metrics([], [], 0, 60)
         row["is_flood"] = quality["is_flood"]
         row["is_screw"] = quality["is_screw"]
         row["cards_seen"] = quality["total_cards_seen"]

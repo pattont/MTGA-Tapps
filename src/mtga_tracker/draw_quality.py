@@ -393,6 +393,7 @@ def draw_quality_metrics(
         "flood_cards_seen": flood_cards_seen,
         "expected_land_rate": round(expected_land_rate * 100.0, 1),
         "land_rate_source": land_rate_source,
+        "deck_size": deck_size,
         "deck_lands": deck_lands,
         "expected_lands_seen": expected_lands_seen,
         "flood_probability_pct": flood_probability_pct,
