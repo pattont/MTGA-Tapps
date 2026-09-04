@@ -19,7 +19,7 @@
 - The menu-bar item is now **Live Scoreboard**, matching the page.
 - Docs refreshed (README, Quick Start, AGENTS), and the in-game overlay plan
   rewritten for Tauri v2 with the rail/panel design mockup
-  (`docs/OVERLAY_TRACKER_PLAN.md`).
+  (`docs/plans/OVERLAY_TRACKER_PLAN.md`).
 
 ## 0.6.1
 

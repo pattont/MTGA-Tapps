@@ -348,10 +348,10 @@ guidance lives.
 ## Documentation
 
 - [QUICKSTART.md](QUICKSTART.md) — install and first run
-- [docs/RELEASE_PLAN.md](docs/RELEASE_PLAN.md) — packaging, GitHub Releases, alpha checklist
-- [docs/OVERLAY_TRACKER_PLAN.md](docs/OVERLAY_TRACKER_PLAN.md) — planned in-game overlay
+- [docs/plans/RELEASE_PLAN.md](docs/plans/RELEASE_PLAN.md) — packaging, GitHub Releases, alpha checklist
+- [docs/plans/OVERLAY_TRACKER_PLAN.md](docs/plans/OVERLAY_TRACKER_PLAN.md) — planned in-game overlay (Tauri v2), with design mockups
 - [docs/MTGA_LOG_FORMAT.md](docs/MTGA_LOG_FORMAT.md) — how Arena's log actually works
-- [docs/MTGA_INSTALL_DISCOVERY.md](docs/MTGA_INSTALL_DISCOVERY.md) — plan for finding Arena's card DB in standalone/non-default installs
+- [docs/plans/MTGA_INSTALL_DISCOVERY.md](docs/plans/MTGA_INSTALL_DISCOVERY.md) — plan for finding Arena's card DB in standalone/non-default installs
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release
 
 ## License

@@ -17,7 +17,9 @@ Repo layout:
 - `tests/`: pytest suite, including `tests/deck_downloader/`. `tests/deprecated/` holds
   non-test debug scripts and is not part of the suite.
 - `packaging/` + `scripts/`: PyInstaller specs, entry points, and OS build scripts.
-- `docs/`: log-format reference and design/release plans. `CHANGELOG.md` tracks releases.
+- `docs/`: log-format reference, research notes, and the removal ledger; `docs/plans/` holds
+  design and release plans together with their mockups (mockup images live there, not in
+  `docs/images/`, which is for README screenshots). `CHANGELOG.md` tracks releases.
   The version comes from the git tag (setuptools-scm writes `_version.py`); there is no
   hand-edited version string anywhere, and a release is cut by pushing a `v*` tag. Never
   bump or invent a version in code.
@@ -174,7 +176,7 @@ UI changes require vitest, tsc, lint, and a fresh `npm run build` (the dashboard
   as part of the bundle, so UI changes must be built before packaging.
 - `.github/workflows/release.yml` builds both OS artifacts and attaches them to a **draft**
   GitHub Release on a `v*` tag or manual dispatch. Publishing the draft is the human "go"
-  button; ordinary pushes never run it. See `docs/RELEASE_PLAN.md`.
+  button; ordinary pushes never run it. See `docs/plans/RELEASE_PLAN.md`.
 
 ## Local Paths
 

@@ -11,7 +11,7 @@ change them.
 
 This replaces the earlier PyQt6 plan. The reasons for the change are in §2.
 
-![Overlay design — rail, panel, settings flyout, and the two docked states](images/overlay-mockup.png)
+![Overlay design — rail, panel, settings flyout, and the two docked states](overlay-mockup.png)
 
 (`overlay-mockup.html` next to this file is the editable source of that image.)
 
@@ -69,8 +69,10 @@ The commander itself is never in the list (it's in the command zone) and
 the library starts at 99.
 
 - **Header** (one line + one line): deck name with colour pips; a short
-  format line — `Std. BO1 (Ranked) · vs ropeez` (abbreviated formats so
-  "(Ranked)" always fits: Std., Hist., Mod., Pio., Time., Brawl, Ltd.); turn;
+  format line — `Std. BO1 Ranked · vs ropeez 1–2` — abbreviated formats
+  (Std., Hist., Mod., Pio., Time., Brawl, Ltd.) so "Ranked" always fits, and
+  your lifetime record against this opponent in white right after their
+  name whenever you've met before (the scoreboard's head-to-head); turn;
   and three controls in the header's muted text colour: collapse to the
   rail, pin (click-through; filled icon when pinned, outline when not), and
   ⚙ (settings flyout).
@@ -93,8 +95,10 @@ the library starts at 99.
   ≥ 10%, white ≥ 5%, muted below) so the eye finds the live outs first. Rows
   at 0 copies dim to 36% and show a dash — they stay in place so the list
   never reshuffles under you.
-- **Hover card** (long-press on touch): next draw, within 2, within 3, and
-  copies left — the hypergeometric detail without cluttering the row.
+- **Hover card**: rest the cursor on a row and a small card flies out
+  from that row toward the board (away from the docked edge) with the
+  hypergeometric detail the row can't hold — next draw, within 2, within 3,
+  copies left; the row highlights while the card is up. Long-press on touch.
 - **No footer.** Opacity and every other preference live in the ⚙ flyout,
   not in the panel.
 
@@ -102,7 +106,10 @@ the library starts at 99.
 
 The rail is the resting state and it lives **in** the screen edge: docked
 right, its right side is the edge itself (no border, no rounding on that
-side); drag it to the left edge and it mirrors. There is never a rail and a
+side); drag it to the left edge and it mirrors. **Docked windows slide
+freely up and down the edge** — drag the rail's icon or the panel's header
+and the window follows vertically while staying flush to the edge; the
+vertical position is remembered per dock side. There is never a rail and a
 panel on screen at the same time — they are two layouts of the same window,
 flush to the same edge:
 
@@ -230,6 +237,9 @@ model for the webview, and current WebView2 / WKWebView support.
 - **Dock left / right**: the Rust side reads the current monitor's work area
   and keeps the window flush to the chosen edge (`set_position` on resize and
   monitor-change events; the outer side is drawn without border or rounding).
+  Drags while docked are constrained to the y axis (the drag region reports
+  the delta, Rust re-clamps x to the edge every frame) and the resulting y is
+  stored per dock side.
   Rail ↔ panel is one window changing size in place, animated as a slide from
   the edge (~160 ms position + size tween). The unpinned return timer runs in
   the webview (`mouseleave` + N s); hover on the rail flies the panel out.
