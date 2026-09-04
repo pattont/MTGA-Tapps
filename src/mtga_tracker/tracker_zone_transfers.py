@@ -1192,6 +1192,7 @@ class TrackerZoneTransferMixin:
     ) -> bool:
         """Process zone-transfer annotations and return True when handled."""
         canonical_instance_id = self._canonical_instance_id(instance_id) or int(instance_id)
+        self._observe_library_zone_transfer(card_obj, annotation, zones_by_id, zone_src, zone_dest)
 
         if (
             category in ["CastSpell", "PlaySpell", "PlayLand", "Resolve"]

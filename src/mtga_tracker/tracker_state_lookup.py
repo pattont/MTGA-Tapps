@@ -445,6 +445,72 @@ class TrackerStateLookupMixin:
             if isinstance(zone, dict) and zone.get("zoneId") is not None
         }
 
+    def _observe_library_sizes(self, data: Dict[str, Any]) -> None:
+        """Record each seat's library size from the zone list (Arena lists the
+        hidden objects by instance id, so the count is exact)."""
+        zones = data.get("zones", [])
+        if not isinstance(zones, list):
+            return
+        for zone in zones:
+            if not isinstance(zone, dict) or zone.get("type") != "ZoneType_Library":
+                continue
+            owner_seat = self._normalize_seat_id(zone.get("ownerSeatId"))
+            obj_ids = zone.get("objectInstanceIds", [])
+            if owner_seat not in (1, 2) or not isinstance(obj_ids, list):
+                continue
+            self.game_state.library_size_by_seat[int(owner_seat)] = len(obj_ids)
+
+    def _observe_library_zone_transfer(
+        self,
+        card_obj: Optional[Dict[str, Any]],
+        annotation: Optional[Dict[str, Any]],
+        zones_by_id: Optional[Dict[int, Dict[str, Any]]],
+        zone_src: Optional[int],
+        zone_dest: Optional[int],
+    ) -> None:
+        """Count a card leaving or re-entering the PLAYER's library — the
+        overlay's copies-left math. Runs before the category-specific
+        handlers so draws, mills, tutors, ramp, exile-from-library, bounce
+        to library and shuffle-backs all land in one place. Pre-game traffic
+        (the mulligan re-deals and bottoms) is skipped: the kept opening hand
+        is the overlay's starting point."""
+        g = self.game_state
+        if not g.opening_hand_capture_closed or g.player_seat_id is None:
+            return
+        if (g.turn_number or 0) < 1:
+            # Still pre-game: the London-mulligan bottom arrives as a Put
+            # into the library after the kept hand is finalized, and the
+            # kept hand already excludes it.
+            return
+        if not isinstance(card_obj, dict) or not zones_by_id:
+            return
+        src = zones_by_id.get(int(zone_src)) if zone_src is not None else None
+        dest = zones_by_id.get(int(zone_dest)) if zone_dest is not None else None
+
+        def is_player_library(zone: Any) -> bool:
+            return (
+                isinstance(zone, dict)
+                and zone.get("type") == "ZoneType_Library"
+                and self._normalize_seat_id(zone.get("ownerSeatId")) == g.player_seat_id
+            )
+
+        leaving = is_player_library(src)
+        entering = is_player_library(dest)
+        if leaving == entering:
+            return
+        key = None
+        if isinstance(annotation, dict) and annotation.get("id") is not None:
+            key = (int(annotation["id"]), int(card_obj.get("instanceId") or 0))
+            if key in g.library_seen_annotations:
+                return
+        name = str(self._card_name_from_game_object(card_obj) or "").strip()
+        if not name or name.startswith("Card #"):
+            return
+        if key is not None:
+            g.library_seen_annotations.add(key)
+        bucket = g.library_departures if leaving else g.library_returns
+        bucket[name] = bucket.get(name, 0) + 1
+
     def _extract_hand_sizes(self, data: Dict[str, Any]) -> Dict[int, int]:
         """Return visible hand sizes by seat from the current state packet."""
         sizes: Dict[int, int] = {}

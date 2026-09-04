@@ -147,6 +147,14 @@ class GameState:
         self.opening_select_n_ids: List[int] = []
         self.submitted_deck_cards: List[int] = []
         self.submitted_sideboard_cards: List[int] = []
+        #: Overlay library bookkeeping (player's seat only). Card name ->
+        #: copies seen leaving / re-entering the library since the opening
+        #: hand was kept; annotation ids already counted; Arena's live
+        #: library sizes per seat from the zone list.
+        self.library_departures: Dict[str, int] = {}
+        self.library_returns: Dict[str, int] = {}
+        self.library_seen_annotations: set = set()
+        self.library_size_by_seat: Dict[int, int] = {}
 
         self.instance_roots: Dict[int, int] = {}
         # Targets printed as "[ID: N]" because the object was still hidden

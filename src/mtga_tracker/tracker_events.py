@@ -111,6 +111,7 @@ class TrackerEventsMixin(
         raw_players = data.get("players", [])
         self._observe_player_poison(raw_players if isinstance(raw_players, list) else [])
         self._observe_player_mulligans(raw_players if isinstance(raw_players, list) else [])
+        self._observe_library_sizes(data)
 
         # Newer MTGA logs often represent attackers via gameObjects.attackState
         # instead of AnnotationType_AttackerDeclared.

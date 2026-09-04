@@ -659,9 +659,52 @@ def build_status_payload(db_path: Path) -> Dict[str, Any]:
     }
 
 
+def build_overlay_payload(db_path: Path) -> Dict[str, Any]:
+    """The in-game overlay's poll target: tracker state, the library state the
+    tracker last wrote (see overlay_state.py), and the head-to-head record the
+    overlay header shows next to the opponent's name."""
+    db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
+    now = datetime.now()
+    with sqlite3.connect(db_uri, uri=True) as conn:
+        conn.execute("PRAGMA query_only = ON")
+        status = _live_status(conn)
+        state_raw = status.get("overlay_json") if status else None
+        state: Optional[Dict[str, Any]] = None
+        if state_raw:
+            try:
+                parsed = json.loads(state_raw)
+                if isinstance(parsed, dict):
+                    state = parsed
+            except (TypeError, ValueError):
+                state = None
+        head_to_head = None
+        if state and state.get("game_active") and status:
+            head_to_head = _head_to_head(conn, status.get("opponent_name"), status.get("game_id"))
+    tracker_state = _tracker_state(status, now)
+    if tracker_state == "offline":
+        # A stale row must not keep a finished game's library on screen.
+        state = None
+    return {
+        "tracker": {
+            "state": tracker_state,
+            "updated_at": status.get("updated_at") if status else None,
+            "session_id": status.get("session_id") if status else None,
+        },
+        "state": state,
+        "head_to_head": head_to_head,
+    }
+
+
 def handle_get(
     path: str, query: Dict[str, List[str]], db_path: Path
 ) -> Optional[Tuple[int, Dict[str, Any]]]:
+    if path == "/api/overlay":
+        try:
+            return 200, build_overlay_payload(db_path)
+        except FileNotFoundError as exc:
+            return 404, {"error": str(exc)}
+        except Exception as exc:  # pragma: no cover - defensive surface
+            return 500, {"error": f"{type(exc).__name__}: {exc}"}
     if path != "/api/live":
         return None
     try:

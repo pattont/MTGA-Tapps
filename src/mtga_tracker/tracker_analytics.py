@@ -31,6 +31,7 @@ from .format_normalizer import (
 from .deck_llm import identify_deck, is_deck_llm_enabled
 from .colors import BASIC_LAND_COLORS
 from .inventory import iter_inventory_snapshots, parse_inventory_snapshot
+from .overlay_state import build_overlay_state, idle_overlay_state
 from .rank_progress import (
     iter_constructed_rank_snapshots,
     parse_constructed_rank_snapshot,
@@ -215,6 +216,12 @@ class TrackerAnalyticsMixin:
             "db_path": str(self._console_db_path),
             "tracker_version": self._live_tracker_version(),
         }
+        try:
+            row["overlay_json"] = self._overlay_state_json(
+                in_game=in_game, format_label=format_label, on_play=on_play
+            )
+        except Exception:
+            row["overlay_json"] = None
         if in_game:
             # Freeze the live scoreboard as it stands: /api/live serves this
             # back between games, so loading the page after a game ends shows
@@ -427,6 +434,112 @@ class TrackerAnalyticsMixin:
         result = (len(ids), lands)
         self._live_deck_land_cache = (cache_key, result)
         return result
+
+    def _overlay_deck_names(self) -> List[str]:
+        """The submitted maindeck as one card name per copy, cached per
+        submission (grpId -> name goes through the card DB once)."""
+        ids = list(self.game_state.submitted_deck_cards or [])
+        if not ids:
+            return []
+        cache_key = (len(ids), ids[0], ids[-1])
+        cached = getattr(self, "_overlay_deck_names_cache", None)
+        if cached and cached[0] == cache_key:
+            return cached[1]
+        names: List[str] = []
+        for arena_id in ids:
+            try:
+                name = str(self.card_db.get_card_name(int(arena_id)) or "").strip()
+            except Exception:
+                name = ""
+            if name and not name.startswith("Card #"):
+                names.append(name)
+        self._overlay_deck_names_cache = (cache_key, names)
+        return names
+
+    def _overlay_card_info(self, name: str) -> tuple:
+        """(type_category, mana_cost, mana_value) for one deck card name."""
+        cache = getattr(self, "_overlay_card_info_cache", None)
+        if cache is None:
+            cache = {}
+            self._overlay_card_info_cache = cache
+        if name in cache:
+            return cache[name]
+        type_category: Optional[str] = None
+        mana_cost: Optional[str] = None
+        mana_value: Optional[float] = None
+        try:
+            for arena_id in self.game_state.submitted_deck_cards or []:
+                if str(self.card_db.get_card_name(int(arena_id)) or "") == name:
+                    resolve = getattr(self.card_db, "get_card_type_category", None)
+                    type_category = str(resolve(int(arena_id)) or "") if callable(resolve) else None
+                    break
+        except Exception:
+            type_category = None
+        try:
+            index = self.card_db.mana_cost_index_by_name() or {}
+            parsed = index.get(name) or index.get(name.split(" // ")[0].strip())
+            if isinstance(parsed, tuple):
+                mana_cost = str(parsed[0]) if parsed[0] else None
+                mana_value = float(parsed[1]) if parsed[1] is not None else None
+        except Exception:
+            pass
+        info = (type_category or None, mana_cost, mana_value)
+        cache[name] = info
+        return info
+
+    def _overlay_state_json(
+        self,
+        *,
+        in_game: bool,
+        format_label: Optional[str],
+        on_play: Optional[int],
+    ) -> Optional[str]:
+        """The in-game overlay's payload (see overlay_state.py), or the idle
+        shape between games. None only when there is nothing to say."""
+        g = self.game_state
+        now = self._now().isoformat()
+        if not in_game:
+            return json.dumps(idle_overlay_state(game_active=False, updated_at=now))
+        if getattr(g, "mid_game_attach", False):
+            return json.dumps(
+                idle_overlay_state(
+                    game_active=True,
+                    mid_game_attach=True,
+                    deck_name=g.player_deck_name,
+                    updated_at=now,
+                )
+            )
+        deck = self._overlay_deck_names()
+        if not deck:
+            return json.dumps(
+                idle_overlay_state(game_active=True, deck_name=g.player_deck_name, updated_at=now)
+            )
+        # Departures start from the kept opening hand; everything after it
+        # is counted by _observe_library_zone_transfer.
+        departures: Dict[str, int] = dict(g.library_departures)
+        for name in g.starting_hand or []:
+            departures[name] = departures.get(name, 0) + 1
+        library_size = None
+        if g.player_seat_id is not None:
+            library_size = g.library_size_by_seat.get(int(g.player_seat_id))
+        state = build_overlay_state(
+            deck=deck,
+            departures=departures,
+            returns=g.library_returns,
+            library_size=library_size,
+            card_info=self._overlay_card_info,
+            game_active=True,
+            deck_name=g.player_deck_name,
+            format_label=format_label,
+            match_type=g.match_type,
+            opponent_name=g.opponent_display_name,
+            turn_number=g.turn_number or None,
+            on_play=None if on_play is None else bool(on_play),
+            player_commanders=g.player_commanders,
+            opponent_commanders=g.opponent_commanders,
+            updated_at=now,
+        )
+        return json.dumps(state, separators=(",", ":"))
 
     def _live_opponent_card_names(self) -> Optional[str]:
         """JSON list of distinct opponent card names revealed this game —

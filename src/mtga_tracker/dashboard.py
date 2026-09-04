@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import hashlib
 import html
 import json
 import math
@@ -5654,6 +5655,14 @@ def _parse_common_filters(query: Dict[str, List[str]]) -> Dict[str, Any]:
     }
 
 
+#: The overlay is a separate app (its own origin), so its poll endpoint is the
+#: one place the dashboard answers cross-origin. Localhost only, read only.
+_OVERLAY_CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Expose-Headers": "ETag",
+}
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     """HTTP handler rendering the dashboard on each request."""
 
@@ -5664,6 +5673,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """Avoid writing request logs when a windowed build has no stderr stream."""
         if sys.stderr is not None:
             super().log_message(message_format, *args)
+
+    def do_OPTIONS(self):  # noqa: N802 - http.server API
+        """CORS preflight for the overlay's conditional poll (If-None-Match is
+        not a safelisted header, so the webview asks first). Only /api/overlay
+        is reachable cross-origin; everything else stays same-origin."""
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/overlay":
+            self.send_error(404)
+            return
+        self.send_response(204)
+        for name, value in _OVERLAY_CORS_HEADERS.items():
+            self.send_header(name, value)
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "If-None-Match")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.end_headers()
 
     def do_POST(self):  # noqa: N802 - http.server API
         """Handle the dashboard's writes: game notes/tags and the DB reset."""
@@ -5904,19 +5929,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
-        if request_path == "/api/live":
+        if request_path in ("/api/live", "/api/overlay"):
             from . import live_api
 
             handled = live_api.handle_get(request_path, parse_qs(parsed.query), self.db_path)
             if handled is not None:
                 status, body = handled
-                _send_bytes(
-                    self,
-                    status,
-                    json.dumps(body).encode("utf-8"),
-                    "application/json; charset=utf-8",
-                    {"Cache-Control": "no-store"},
-                )
+                payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
+                headers = {"Cache-Control": "no-store"}
+                if request_path == "/api/overlay" and status == 200:
+                    # The overlay polls twice a second; an unchanged library
+                    # must cost nothing to answer or to receive.
+                    etag = '"' + hashlib.sha1(payload).hexdigest()[:20] + '"'
+                    headers["ETag"] = etag
+                    headers.update(_OVERLAY_CORS_HEADERS)
+                    if self.headers.get("If-None-Match") == etag:
+                        self.send_response(304)
+                        for name, value in headers.items():
+                            self.send_header(name, value)
+                        self.end_headers()
+                        return
+                _send_bytes(self, status, payload, "application/json; charset=utf-8", headers)
                 return
         if request_path == "/api/settings":
             from . import settings_api
