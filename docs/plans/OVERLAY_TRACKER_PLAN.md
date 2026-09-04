@@ -28,7 +28,7 @@ nothing that matters — in the order a player reads it mid-game:
 | Turn | current turn number | orientation at a glance |
 | **Land** | `42%` in gold (14px) with LAND under it — no gauge, no ring, just the number | the one number the minimized state exists for |
 | Library | `41/60` with a thin bar (library ÷ deck size) | how deep into the deck you are |
-| DECK | opens the expanded panel | primary action, gold |
+| DECK | opens the expanded panel | the one primary action, so the one filled gold button |
 | ⚙ | opens the settings flyout (§4) | |
 
 The land number turns to the danger tone when the chance falls below 25%
@@ -81,8 +81,10 @@ the library starts at 99.
   **IN 2**, **IN 3** (green). The rail's number is NEXT; the strip is its
   expansion.
 - **Sort + play/draw + library**: sort by %, mana value, or name; a
-  **PLAY** / **DRAW** pill in the dashboard's on-play teal / on-draw violet
-  once the tracker knows (blank until then); `Library 41 / 60`.
+  **PLAY** / **DRAW** pill — the dashboard's on-play teal / on-draw violet
+  as text and border over a 12% tint of the same colour, 3px corners like
+  every other control — once the tracker knows (blank until then);
+  `Library 41 / 60`.
 - **Card list**, **Spells first, then Lands** — you scan for outs, and the
   land odds already have their own strip. Each row: an 18px **mini bar**
   filled to copies left ÷ copies in deck — the same bar language as the
@@ -143,7 +145,10 @@ overlay's settings file the moment it changes:
   (`Alt+Shift+H`), both rebindable.
 
 Corners are tight throughout — 6px on the window, 3px on controls, pills,
-and rows — so the overlay reads as an instrument, not a card.
+and rows — so the overlay reads as an instrument, not a card. The window
+background is a 94% opaque panel colour, not a blur: `backdrop-filter`
+costs a compositor pass on every frame Arena repaints underneath, for a
+look nobody is examining mid-game.
 
 What it deliberately does not have: a play-by-play log. The dashboard's Live
 Scoreboard already owns that; the overlay stays a draw-odds instrument.
@@ -163,6 +168,126 @@ for that card show 100% and everything else 0% for that draw, with a small
 "top: <card>" line in the land strip; if the tracker does not know, it says
 nothing rather than guessing.
 
+### Turning it on and off
+
+The overlay is off until a player asks for it, and "off" means the process
+is not running — zero memory, zero CPU, nothing to hide.
+
+- **Settings page** (dashboard, gear icon) gains an **In-game overlay**
+  section: an **Enable overlay** toggle (`overlay.enabled` in
+  `settings.json`, default off) and, once enabled, the launch-with-tracker
+  choice. Turning it off quits the overlay process immediately.
+- **Menu bar / tray** gains a checkable **Show Overlay** item mirroring the
+  same setting, so it can be toggled without opening the dashboard.
+- **The overlay's own tray icon** (Tauri tray) offers Show/Hide, Dock Left /
+  Right / Float, Settings…, and **Quit Overlay** — quitting from there also
+  writes `overlay.enabled: false`, so it stays off next launch.
+- **Hotkey** `Alt+Shift+H` hides and shows it without quitting.
+- **Lifecycle**: the menu-bar app starts the overlay when tracking starts
+  (if enabled) and stops it when tracking stops; the overlay also exits on
+  its own if the tracker API has been unreachable for five minutes, so a
+  crashed tracker never leaves an orphan window over the desktop.
+
+### The game window
+
+Two independent questions, answered by two independent mechanisms:
+
+1. **Is a game happening?** — comes from the tracker (`game_active` in
+   the overlay state, derived from Arena's own log), never from the OS. This
+   drives what the overlay *shows*: rail with numbers during a game,
+   "Waiting for next match" between games, "Tracker not running" when the
+   API is gone. No window detection is involved, so this part is identical
+   on both platforms and cannot break when Arena updates its window title.
+
+2. **Is Arena on screen, and where?** — comes from the OS, polled once a
+   second on the Rust side (a single cheap call, no hooks, no injection),
+   and drives *whether and where* the overlay is visible:
+   - **macOS**: `NSWorkspace.frontmostApplication` for focus (bundle id
+     `com.wizards.mtga`) and `CGWindowListCopyWindowInfo` for Arena's
+     window bounds → which display it's on and whether the bounds equal
+     that display's frame (borderless fullscreen).
+   - **Windows**: `GetForegroundWindow` → `GetWindowThreadProcessId` →
+     process image name `MTGA.exe` for focus; `EnumWindows` +
+     `GetWindowRect` + `MonitorFromWindow` for bounds and display.
+   - **Follow Arena** (default on): the overlay docks to the edge of the
+     display Arena's window is on, and re-docks when Arena moves monitors.
+   - **Hide when Arena isn't in front** (default on): alt-tab away and the
+     overlay hides within a second; come back and it returns. Off, it
+     stays up over everything (useful on a second monitor).
+   - **Exclusive fullscreen**: no overlay can draw over it on either OS
+     (Arena owns the display). Detected as: game active, Arena frontmost,
+     and our window not visible → the tray icon shows a one-time hint
+     ("Arena is in exclusive fullscreen; switch to borderless/windowed
+     fullscreen to see the overlay"). Borderless fullscreen — what most
+     players use — works normally.
+   - If Arena's window is never found (the poll fails, or Arena isn't
+     running), the overlay behaves as if "Follow Arena" were off and uses
+     the last known dock position; nothing errors, nothing spins.
+
+### Memory budget
+
+Target: **under 80 MB resident on both platforms, idle and in-game**, and
+flat over a long session. What gets that:
+
+- **Rendering**: the webview's own process is the floor (~30–50 MB for
+  WKWebView / WebView2 — shared system components, not ours). On top of
+  it the page must stay tiny: **Preact** (via the `preact/compat` alias,
+  so the components still read as React) instead of React — ~4 KB instead
+  of ~140 KB of framework, and a proportionally smaller heap; no icon
+  library (the handful of glyphs are inline SVG); no card images, ever; no
+  fonts beyond the system stack and the bundled mana font; no
+  `backdrop-filter`.
+- **One webview**: rail and panel are layouts of the same window, so
+  there is never a second webview process.
+- **Polling**: the state poll uses `If-None-Match` and the API answers
+  `304` when nothing changed, so an idle poll allocates nothing and parses
+  nothing. The interval backs off — 500 ms during a game, 2 s between
+  games, 10 s when the tracker is offline — and stops entirely while the
+  window is hidden.
+- **Rust side**: no async runtime beyond what Tauri already spins up, no
+  background threads of our own (the OS poll runs on Tauri's timer), and a
+  release profile with `lto = "fat"`, `codegen-units = 1`, `panic =
+  "abort"`, `strip = true`, `opt-level = "z"` — roughly a 4 MB binary.
+- **Tauri config**: `withGlobalTauri: false`, only the plugins listed
+  (`window-state`, `global-shortcut`, `single-instance`); the capability
+  file allows exactly the commands the page calls and nothing else.
+- **Acceptance test** (Phase 2): the overlay open for two hours against a
+  fixture that changes state every second; RSS must not grow more than
+  5 MB from minute 5 to minute 120, measured with Activity Monitor and
+  Task Manager. Leaks get fixed before Phase 3 starts.
+
+### Other things to plan for
+
+- **Multi-monitor and DPI**: dock geometry uses the target monitor's work
+  area and scale factor; a 4K monitor at 150% and a 1080p at 100% must
+  produce the same physical rail width (Tauri reports logical pixels —
+  size in logical units, never physical).
+- **The tracker's port** is configurable; the overlay is launched with
+  `--api` and also reads `settings.json` so a manually launched overlay
+  finds the right port.
+- **Reconnect**: tracker restart, log rotation, Bo3 sideboarding — the
+  overlay holds no state of its own beyond preferences, so every reconnect
+  is a fresh state fetch; nothing to resync.
+- **Version skew**: `GET /api/version` is checked on connect; a mismatch
+  with the overlay's own version shows a one-line banner rather than
+  guessing at a changed state shape. The two ship together in the same
+  release, so this only fires for a stale copy.
+- **Hotkeys vs Arena**: `Alt+Shift+T` / `Alt+Shift+H` collide with nothing
+  Arena binds; both rebindable, and a chord Arena uses is refused with an
+  explanation.
+- **Policy**: the overlay reads only the tracker's local API, which reads
+  only Arena's log — no memory reading, no input injection, no network.
+  That is the same footing as the tracker itself and the established
+  third-party trackers.
+- **Signing**: the overlay binary is inside the existing app bundle /
+  installer, so today's ad-hoc macOS signature and SmartScreen story cover
+  it; when the app gets notarized, the overlay is notarized with it.
+- **Tests**: Rust unit tests for dock geometry and the hide/show state
+  machine (pure functions over fake window rects); Playwright against the
+  webview page for every state (rail, panel, waiting, offline, mid-game,
+  Brawl); the existing pytest suite for `overlay_state.py` and
+  `/api/overlay`.
+
 ## 2. Why Tauri v2
 
 The earlier plan put the overlay in the PyQt6 process because it was already
@@ -174,9 +299,11 @@ there. That has three problems Tauri solves outright:
   false`, `skip_taskbar`, and `set_ignore_cursor_events` (click-through) as
   first-class window options. Getting the same from Qt means platform
   `#ifdef` work we would maintain forever.
-- **Same UI code as the dashboard.** The overlay is a React + TypeScript
-  view; it reuses `ColorPips`, `ManaCost`, the type palette, and the design
-  tokens from `ui/`. No second rendering stack to keep visually in sync.
+- **Same UI code as the dashboard.** The overlay is a TypeScript view
+  written against the React API but built on Preact through `preact/compat`
+  (see the memory budget); it reuses `ColorPips`, `ManaCost`, the type
+  palette, and the design tokens from `ui/`. No second rendering stack to
+  keep visually in sync.
 - **A small, signed, separate binary.** A Tauri app is ~6–10 MB and runs in
   its own process, so an overlay crash can never take tracking down (the one
   invariant this project cares about most). It is also the natural shape for
@@ -286,8 +413,8 @@ model for the webview, and current WebView2 / WKWebView support.
 ```
 overlay/                     Tauri v2 project (new)
   src-tauri/                 Rust: main.rs, tray, shortcuts, window commands, tauri.conf.json
-  src/                       React + TS: Rail.tsx, Panel.tsx, CardRow.tsx, useOverlayState.ts
-  package.json               vite + @tauri-apps/api + @tauri-apps/cli
+  src/                       Preact/compat + TS: Rail.tsx, Panel.tsx, CardRow.tsx, useOverlayState.ts
+  package.json               vite + preact + @tauri-apps/api + @tauri-apps/cli
 ui/src/shared/               design tokens, ColorPips, ManaCost, type palette, hypergeometric helpers (moved here; the dashboard imports from it too)
 src/mtga_tracker/overlay_state.py   pure state builder (no Qt, no Tauri)
 src/mtga_tracker/live_api.py        + GET /api/overlay
@@ -305,8 +432,10 @@ bundle. CI adds a Rust toolchain step to `release.yml` (cached).
    /api/overlay` with ETag. The dashboard could render this too, which is
    how it gets verified before any Tauri code exists.
 2. **Phase 2 — Tauri shell.** Window flags, drag, tray, hotkey,
-   window-state, single instance, opacity command. Static JSON fixture in
-   the webview.
+   window-state, single instance, opacity command, the Arena window poll
+   (follow / hide-when-not-in-front), and the enable/disable plumbing
+   (Settings toggle, menu-bar item, launch with tracking). Static JSON
+   fixture in the webview. Ends with the two-hour memory soak.
 3. **Phase 3 — rail + panel UI** against the fixture, then against the live
    API: land number, land strip, list (spells first), mana symbols, hover
    card, sort, dimmed rows, ⚙ flyout, waiting/offline/mid-game states.
