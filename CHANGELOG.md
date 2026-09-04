@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- **Faster dashboard.** Six new indexes, a set-based draw-quality pass, and a
+  cached split-card lookup: at ~1000 games the overview loads in about a
+  quarter of the time (800 ms → 230 ms), the opponent page in a fifth, All
+  Games and deck pages in under half. Existing databases pick up the indexes
+  at the next launch (a one-time ~0.3 s build).
+- **Fixed: All Games flood/screw badges disagreed with the game page** for a
+  couple dozen games — the list ignored ramped lands and the real land ratio.
+  Both now use the same rules.
+- **Live Scoreboard shows your lifetime record against the opponent's
+  commander** in Brawl, one line per commander, hidden until you've faced it.
+- The menu-bar item is now **Live Scoreboard**, matching the page.
+- Docs refreshed (README, Quick Start, AGENTS), and the in-game overlay plan
+  rewritten for Tauri v2 with the rail/panel design mockup
+  (`docs/OVERLAY_TRACKER_PLAN.md`).
+
 ## 0.6.1
 
 - **Renamed to Tapps Tracker** everywhere you see it (menu bar, dashboard,

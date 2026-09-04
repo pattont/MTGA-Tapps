@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tapps Overlay — design mockup</title>
+<style>
+  :root {
+    --bg: #101418; --panel: #171d23; --panel-strong: #1f2730; --surface: #141a20;
+    --text: #edf2f7; --muted: #9aa7b5; --subtle: #728092; --border: #303a45;
+    --accent: #d7aa49; --accent-strong: #f0c66c; --danger: #f28b82; --success: #7bd88f;
+    --draw: #8ab4f8; --land: #7bd88f; --creature: #e8b86d; --instant: #8ab4f8; --sorcery: #b79df7;
+    --ench: #d48fe8; --artifact: #b8c4d0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #2b3138; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--text); }
+  .stage { display: flex; gap: 48px; padding: 40px; align-items: flex-start;
+           background: radial-gradient(1200px 600px at 60% 40%, #3a4250 0%, #23292f 60%, #1a1f24 100%); }
+  .label { color: #c9d2dc; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; margin: 0 0 12px; }
+
+  /* ---------- MINIMIZED RAIL ---------- */
+  .rail { width: 72px; background: rgba(16,20,24,.86); border: 1px solid var(--border); border-radius: 14px;
+          box-shadow: 0 16px 40px rgb(0 0 0 / 45%); backdrop-filter: blur(10px); padding: 10px 0 8px;
+          display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .rail .mark { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, #d7aa49, #8a6a20);
+                display: grid; place-items: center; font-weight: 800; color: #1a1408; font-size: 15px; letter-spacing: -.02em; }
+  .rail .sep { width: 44px; height: 1px; background: var(--border); }
+  .rail .k { font-size: 9px; letter-spacing: .12em; color: var(--subtle); text-transform: uppercase; }
+  .rail .v { font-size: 18px; font-weight: 800; line-height: 1; margin-top: 3px; }
+  .rail .cell { display: flex; flex-direction: column; align-items: center; }
+  .ring { position: relative; width: 52px; height: 52px; display: grid; place-items: center; }
+  .ring svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+  .ring .num { font-size: 15px; font-weight: 800; color: var(--accent-strong); line-height: 1; }
+  .ring .sub { font-size: 8px; color: var(--subtle); letter-spacing: .1em; }
+  .rail .lib { font-size: 12px; font-weight: 700; color: var(--muted); }
+  .rail .lib b { color: var(--text); }
+  .rail .bar { width: 44px; height: 4px; border-radius: 4px; background: #2b343e; overflow: hidden; }
+  .rail .bar i { display: block; height: 100%; width: 68%; background: var(--success); }
+  .rail .btn { width: 52px; height: 30px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-strong);
+               display: grid; place-items: center; font-size: 10px; font-weight: 800; letter-spacing: .12em; color: var(--muted); }
+  .rail .btn.gold { color: var(--accent); border-color: rgba(215,170,73,.45); }
+  .rail .gear { color: var(--subtle); font-size: 14px; margin-top: 2px; }
+
+  /* ---------- EXPANDED PANEL ---------- */
+  .panel { width: 320px; background: rgba(16,20,24,.9); border: 1px solid var(--border); border-radius: 14px;
+           box-shadow: 0 16px 40px rgb(0 0 0 / 45%); backdrop-filter: blur(10px); overflow: hidden; }
+  .head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  .head .mark { width: 24px; height: 24px; border-radius: 6px; background: linear-gradient(135deg, #d7aa49, #8a6a20);
+                display: grid; place-items: center; font-weight: 800; color: #1a1408; font-size: 12px; }
+  .head .deck { flex: 1; min-width: 0; }
+  .head .deck b { display: block; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .head .deck span { font-size: 11px; color: var(--muted); }
+  .pips { display: inline-flex; gap: 3px; vertical-align: middle; margin-left: 6px; }
+  .pip { width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgb(0 0 0 / 40%); }
+  .pip.w { background: #f4efd8; } .pip.b { background: #3b3541; }
+  .head .turn { font-size: 11px; color: var(--subtle); text-align: right; line-height: 1.2; }
+  .head .turn b { display: block; font-size: 15px; color: var(--text); }
+  .head .ctl { display: flex; gap: 4px; }
+  .head .ctl span { width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--border); display: grid; place-items: center;
+                    color: var(--muted); font-size: 12px; background: var(--panel-strong); }
+
+  .lands { display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border);
+           background: linear-gradient(90deg, rgba(123,216,143,.07), transparent); }
+  .lands .t { font-size: 10px; letter-spacing: .12em; color: var(--success); text-transform: uppercase; font-weight: 800; }
+  .lands .t small { display: block; font-size: 11px; letter-spacing: 0; text-transform: none; color: var(--muted); font-weight: 500; margin-top: 2px; }
+  .odd { text-align: center; min-width: 46px; padding: 4px 6px; border-radius: 8px; background: var(--panel-strong); border: 1px solid var(--border); }
+  .odd small { display: block; font-size: 9px; color: var(--subtle); letter-spacing: .08em; }
+  .odd b { font-size: 14px; color: var(--success); }
+  .odd.now b { color: var(--accent-strong); }
+
+  .tools { display: flex; align-items: center; gap: 6px; padding: 8px 12px; font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--border); }
+  .tools .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .tools .seg span { padding: 3px 8px; }
+  .tools .seg span.on { background: rgba(215,170,73,.16); color: var(--accent-strong); font-weight: 700; }
+  .tools .lib { margin-left: auto; }
+  .tools .lib b { color: var(--text); }
+
+  .list { padding: 4px 6px 6px; }
+  .grp { font-size: 9px; letter-spacing: .14em; color: var(--subtle); text-transform: uppercase; padding: 8px 8px 3px; }
+  .row { display: grid; grid-template-columns: 26px 30px 1fr auto 44px; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 8px; font-size: 12.5px; }
+  .row:nth-child(even) { background: rgba(31,39,48,.35); }
+  .row.dim { opacity: .38; }
+  .row .cnt { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .row .cnt b { color: var(--text); }
+  .row .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .nm.land { color: var(--land); } .row .nm.creature { color: var(--creature); } .row .nm.instant { color: var(--instant); }
+  .row .nm.sorcery { color: var(--sorcery); } .row .nm.ench { color: var(--ench); } .row .nm.artifact { color: var(--artifact); }
+  .row .mana { display: inline-flex; gap: 2px; }
+  .row .mana i { width: 13px; height: 13px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-size: 8px; font-weight: 800; color: #222; border: 1px solid rgb(0 0 0 / 35%); }
+  .mana .g { background: #cbd5d9; } .mana .w { background: #f4efd8; } .mana .bb { background: #a89bb0; color:#111; }
+  .row .pct { text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .row .pct.hot { color: var(--accent-strong); } .row .pct.warm { color: var(--text); } .row .pct.cold { color: var(--muted); font-weight: 600; }
+  .mini { position: relative; width: 22px; height: 22px; display: grid; place-items: center; }
+  .mini svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+
+  .foot { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--border); font-size: 10px; color: var(--subtle); }
+  .foot .slider { flex: 1; height: 3px; background: #2b343e; border-radius: 3px; position: relative; }
+  .foot .slider i { position: absolute; left: 0; top: 0; height: 100%; width: 78%; background: var(--accent); border-radius: 3px; }
+  .foot .slider b { position: absolute; left: 78%; top: -5px; width: 12px; height: 12px; border-radius: 50%; background: var(--accent-strong); transform: translateX(-50%); }
+  .foot .hot { margin-left: 4px; padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; font-family: ui-monospace, Menlo, monospace; }
+
+  /* hover detail card */
+  .hover { position: absolute; width: 196px; background: var(--panel-strong); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: 11px;
+           box-shadow: 0 12px 30px rgb(0 0 0 / 50%); }
+  .hover b { display: block; font-size: 12px; margin-bottom: 4px; color: var(--creature); }
+  .hover .r { display: flex; justify-content: space-between; color: var(--muted); padding: 1px 0; }
+  .hover .r span:last-child { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <div>
+    <p class="label">Minimized — docked rail</p>
+    <div class="rail" id="rail">
+      <div class="mark">T</div>
+      <div class="sep"></div>
+      <div class="cell"><span class="k">Turn</span><span class="v">7</span></div>
+      <div class="sep"></div>
+      <div class="cell">
+        <div class="ring">
+          <svg viewBox="0 0 52 52" width="52" height="52">
+            <circle cx="26" cy="26" r="22" fill="none" stroke="#2b343e" stroke-width="5"/>
+            <circle cx="26" cy="26" r="22" fill="none" stroke="#d7aa49" stroke-width="5" stroke-linecap="round"
+                    stroke-dasharray="138.2" stroke-dashoffset="80.2"/>
+          </svg>
+          <div style="text-align:center"><div class="num">42%</div><div class="sub">LAND</div></div>
+        </div>
+      </div>
+      <div class="cell"><span class="lib"><b>41</b>/60</span><span class="bar"><i></i></span></div>
+      <div class="sep"></div>
+      <div class="btn gold">DECK</div>
+      <div class="btn">⌃</div>
+      <div class="gear">⚙</div>
+    </div>
+  </div>
+
+  <div style="position:relative">
+    <p class="label">Expanded — deck panel</p>
+    <div class="panel" id="panel">
+      <div class="head">
+        <div class="mark">T</div>
+        <div class="deck"><b>Orzhov Skellies <span class="pips"><i class="pip w"></i><i class="pip b"></i></span></b><span>Standard BO1 · vs ropeez</span></div>
+        <div class="turn">TURN<b>7</b></div>
+        <div class="ctl"><span>⌄</span><span>◫</span></div>
+      </div>
+
+      <div class="lands">
+        <div class="t">Land drops<small>17 of 41 left</small></div>
+        <div class="odd now"><small>NEXT</small><b>42%</b></div>
+        <div class="odd"><small>IN 2</small><b>66%</b></div>
+        <div class="odd"><small>IN 3</small><b>81%</b></div>
+      </div>
+
+      <div class="tools">
+        <span>Sort</span>
+        <span class="seg"><span class="on">%</span><span>Mana</span><span>Name</span></span>
+        <span class="lib">Library <b>41</b> / 60</span>
+      </div>
+
+      <div class="list">
+        <div class="grp">Lands</div>
+        <div class="row"><span class="mini"><svg viewBox="0 0 22 22" width="22" height="22"><circle cx="11" cy="11" r="8.5" fill="none" stroke="#2b343e" stroke-width="3"/><circle cx="11" cy="11" r="8.5" fill="none" stroke="#7bd88f" stroke-width="3" stroke-dasharray="53.4" stroke-dashoffset="13.3"/></svg></span><span class="cnt"><b>6</b>/8</span><span class="nm land">Plains</span><span class="mana"></span><span class="pct hot">14.6%</span></div>
+        <div class="row"><span class="mini"><svg viewBox="0 0 22 22" width="22" height="22"><circle cx="11" cy="11" r="8.5" fill="none" stroke="#2b343e" stroke-width="3"/><circle cx="11" cy="11" r="8.5" fill="none" stroke="#7bd88f" stroke-width="3" stroke-dasharray="53.4" stroke-dashoffset="17.8"/></svg></span><span class="cnt"><b>4</b>/6</span><span class="nm land">Swamp</span><span class="mana"></span><span class="pct warm">9.8%</span></div>
+        <div class="row"><span class="mini"><svg viewBox="0 0 22 22" width="22" height="22"><circle cx="11" cy="11" r="8.5" fill="none" stroke="#2b343e" stroke-width="3"/><circle cx="11" cy="11" r="8.5" fill="none" stroke="#7bd88f" stroke-width="3" stroke-dasharray="53.4" stroke-dashoffset="13.3"/></svg></span><span class="cnt"><b>3</b>/4</span><span class="nm land">Caves of Koilos</span><span class="mana"></span><span class="pct warm">7.3%</span></div>
+        <div class="row"><span class="mini"><svg viewBox="0 0 22 22" width="22" height="22"><circle cx="11" cy="11" r="8.5" fill="none" stroke="#2b343e" stroke-width="3"/><circle cx="11" cy="11" r="8.5" fill="none" stroke="#7bd88f" stroke-width="3" stroke-dasharray="53.4" stroke-dashoffset="0"/></svg></span><span class="cnt"><b>4</b>/4</span><span class="nm land">Fortified Beachhead</span><span class="mana"></span><span class="pct warm">9.8%</span></div>
+
+        <div class="grp">Spells</div>
+        <div class="row"><span class="mini"><svg viewBox="0 0 22 22" width="22" height="22"><circle cx="11" cy="11" r="8.5" fill="none" stroke="#2b343e" stroke-width="3"/><circle cx="11" cy="11" r="8.5" fill="none" stroke="#e8b86d" stroke-width="3" stroke-dasharray="53.4" stroke-dashoffset="0"/></svg></span><span class="cnt"><b>4</b>/4</span><span class="nm creature">Skeleton Crew</span><span class="mana"><i class="g">1</i><i class="bb">B</i></span><span class="pct warm">9.8%</span></div>
+        <div class="row"><span class="mini"><svg viewBox="0 0 22 22" width="22" height="22"><circle cx="11" cy="11" r="8.5" fill="none" stroke="#2b343e" stroke-width="3"/><circle cx="11" cy="11" r="8.5" fill="none" stroke="#e8b86d" stroke-width="3" stroke-dasharray="53.4" stroke-dashoffset="13.3"/></svg></span><span class="cnt"><b>3</b>/4</span><span class="nm creature">Tithing Blade</span><span class="mana"><i class="g">1</i><i class="bb">B</i></span><span class="pct warm">7.3%</span></div>
+        <div class="row"><span class="mini"><svg viewBox="0 0 22 22" width="22" height="22"><circle cx="11" cy="11" r="8.5" fill="none" stroke="#2b343e" stroke-width="3"/><circle cx="11" cy="11" r="8.5" fill="none" stroke="#8ab4f8" stroke-width="3" stroke-dasharray="53.4" stroke-dashoffset="13.3"/></svg></span><span class="cnt"><b>3</b>/4</span><span class="nm instant">Fell</span><span class="mana"><i class="g">1</i><i class="bb">B</i></span><span class="pct warm">7.3%</span></div>
+        <div class="row"><span class="mini"><svg viewBox="0 0 22 22" width="22" height="22"><circle cx="11" cy="11" r="8.5" fill="none" stroke="#2b343e" stroke-width="3"/><circle cx="11" cy="11" r="8.5" fill="none" stroke="#e8b86d" stroke-width="3" stroke-dasharray="53.4" stroke-dashoffset="26.7"/></svg></span><span class="cnt"><b>2</b>/4</span><span class="nm creature">Enduring Innocence</span><span class="mana"><i class="g">2</i><i class="w">W</i></span><span class="pct cold">4.9%</span></div>
+        <div class="row"><span class="mini"><svg viewBox="0 0 22 22" width="22" height="22"><circle cx="11" cy="11" r="8.5" fill="none" stroke="#2b343e" stroke-width="3"/><circle cx="11" cy="11" r="8.5" fill="none" stroke="#b79df7" stroke-width="3" stroke-dasharray="53.4" stroke-dashoffset="26.7"/></svg></span><span class="cnt"><b>2</b>/4</span><span class="nm sorcery">Sunfall</span><span class="mana"><i class="g">3</i><i class="w">W</i><i class="w">W</i></span><span class="pct cold">4.9%</span></div>
+        <div class="row"><span class="mini"><svg viewBox="0 0 22 22" width="22" height="22"><circle cx="11" cy="11" r="8.5" fill="none" stroke="#2b343e" stroke-width="3"/><circle cx="11" cy="11" r="8.5" fill="none" stroke="#d48fe8" stroke-width="3" stroke-dasharray="53.4" stroke-dashoffset="26.7"/></svg></span><span class="cnt"><b>1</b>/2</span><span class="nm ench">Sheltered by Ghosts</span><span class="mana"><i class="g">1</i><i class="w">W</i></span><span class="pct cold">2.4%</span></div>
+        <div class="row dim"><span class="mini"><svg viewBox="0 0 22 22" width="22" height="22"><circle cx="11" cy="11" r="8.5" fill="none" stroke="#2b343e" stroke-width="3"/></svg></span><span class="cnt"><b>0</b>/2</span><span class="nm creature">Souls of the Lost</span><span class="mana"><i class="bb">B</i></span><span class="pct cold">—</span></div>
+      </div>
+
+      <div class="foot">
+        <span>Opacity</span><div class="slider"><i></i><b></b></div>
+        <span>Toggle</span><span class="hot">⌥⇧T</span>
+      </div>
+    </div>
+
+    <div class="hover" style="left: 335px; top: 318px;">
+      <b>Tithing Blade</b>
+      <div class="r"><span>Next draw</span><span>7.3%</span></div>
+      <div class="r"><span>Within 2 draws</span><span>14.3%</span></div>
+      <div class="r"><span>Within 3 draws</span><span>21.0%</span></div>
+      <div class="r"><span>Left in library</span><span>3 of 4</span></div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

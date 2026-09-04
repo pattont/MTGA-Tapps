@@ -1,4 +1,10 @@
-# Live Log in the Dashboard
+# Live Scoreboard in the Dashboard
+
+> Shipped as the dashboard's **Live Scoreboard** (`#/live`; the sidebar entry
+> and menu-bar item carry the same name). The original design below is kept
+> for the reasoning; later additions include the frozen previous-game
+> scoreboard between games, records vs. this deck / this opponent / their
+> commander, and the local archetype guess.
 
 Replace the Python live-log window with a first-class **Live Log** page in the
 web UI — the screen a player keeps open on a second monitor while they play.

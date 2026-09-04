@@ -20,10 +20,13 @@ data, your disk.
 **Live tracking.** One lightweight app — menu bar on macOS, system tray on
 Windows — runs everything: it follows your game in real time (casts, draws,
 lands, combat, life totals, stack resolution), writes every game to the local
-analytics database, and serves the dashboard. The **Live Log** is a live
-**Scoreboard** page right in the dashboard: both players' life, colors, and
-deck, the turn clock, session record, today's games, and a play-by-play feed
-that reads exactly like the per-game timeline — no separate window to manage.
+analytics database, and serves the dashboard. The **Live Scoreboard** page
+sits right in the dashboard: both players' life, colors, and deck, your record
+with this deck and against this opponent (and, in Brawl, against their
+commander), the turn clock, session record, today's games, and a play-by-play
+feed that reads exactly like the per-game timeline — no separate window to
+manage. Between games the previous game's final scoreboard stays up until the
+next match starts.
 Prefer a terminal? The same tracker runs as a plain console command.
 
 **Deck analytics.** Every deck gets a drill-down page tinted with its signature
@@ -35,10 +38,12 @@ Brawl), Bo3 sideboarding records, and Best Against / Worst Against opponent
 color highlights.
 
 **Game forensics.** Each game page reconstructs the match: opening hand and
-every mulligan (including the card you bottomed), drawn cards with the turn
-they arrived, draw-quality analysis with statistically-grounded flood/screw
-detection, a life-total chart, per-seat combat summaries, and the complete
-event timeline.
+every mulligan (including the card you bottomed) for you — and how many times
+your opponent mulliganed, which Arena reports for both seats — drawn cards
+with the turn they arrived, draw-quality analysis with statistically-grounded
+flood/screw detection (expected lands come from your actual decklist, not a
+generic ratio), a life-total chart, per-seat combat summaries, and the
+complete event timeline.
 
 **Interaction analytics.** Every game records what both players did with their
 interaction: removal and board wipes played (and how many you drew), creatures
@@ -50,18 +55,27 @@ feature existed.
 
 **Opponent intelligence.** Revealed cards identify the opponent's colors, named
 with community archetype names (Dimir, Jeskai, Mono-Red…), tracked across your
-history so you can see which matchups actually beat you. Optionally, bring your
-own AI key (OpenAI, Anthropic, or Gemini) and the tracker names the opponent's
-actual archetype — "Jeskai Control", "Gruul Aggro" — after each game.
+history so you can see which matchups actually beat you. An Opponents section
+shows your most-faced opponents and your record by opponent color combination,
+and the **All Opponents** page lists everyone you've ever been paired against
+(a Bo3 counts once) with a per-opponent page behind each name. Optionally,
+bring your own AI key (OpenAI, Anthropic, or Gemini) and the tracker names the
+opponent's actual archetype — "Jeskai Control", "Gruul Aggro" — after each
+game.
 
-**Brawl, done properly.** Commanders are tracked from the opening hand of every
-Brawl game — yours and your opponent's. A dedicated Brawl section on the
+**Brawl, done properly.** Commanders are tracked from the command zone of
+every Brawl game — yours and your opponent's. The Brawl section on the
 Overview shows your overall and per-queue record (Historic Brawl, Brawl
-(Ranked), Standard Brawl) plus **Your Commanders** and **Faced Commanders**
-win-rate tables, because Brawl players think in commanders, not deck names.
-Brawl rows in Recent Games expand to show the commander-vs-commander matchup
-with colors. Starting life, 100-card decks, and command-zone recasts are all
-handled.
+(Ranked), Standard Brawl), **Best Commander** and **Toughest Opponent
+Commander** boxes with card art, and **Your Commanders** / **Faced
+Commanders** win-rate tables, because Brawl players think in commanders, not
+deck names. Game pages open with a commander-vs-commander strip; deck pages
+use the commander as the deck's signature art, keep it in the decklist and
+Arena export, and list the opponent commanders you've faced with your record
+against each. Recent Games rows expand to show the matchup with colors, and
+the Live Scoreboard shows your lifetime record against the commander across
+the table. Starting life and command-zone recasts are handled; Brawl is
+recognized from Arena's match format, never from deck size.
 
 **Deck Finder.** A bundled companion tool that browses current decklists from
 creators and sites (Moxfield, AetherHub, TCGplayer, magic.gg, MTGO, Untapped)
@@ -78,15 +92,17 @@ backfill your old games.
 
 ## Screenshots
 
-**Live Log — the Scoreboard** — while you play: both life totals with color
-pips and deck, the turn and game clock, your live session record, today's
-finished games, and a play-by-play feed identical to the per-game timeline:
+**Live Scoreboard** — while you play: both life totals with color pips and
+deck, your records with this deck and against this opponent, the turn and
+game clock, your live session record, today's finished games, and a
+play-by-play feed identical to the per-game timeline:
 
-![Live Log Scoreboard](docs/images/live-log.png)
+![Live Scoreboard](docs/images/live-log.png)
 
 **Recent Games** — outcomes, deck and opponent colors (including the colorless
 diamond), formats, Brawl commander matchups, draw status, and game pace at a
-glance:
+glance, with two-tier format pills (Standard, Historic, Limited, Brawl… and a
+fly-out of queues) to narrow the table:
 
 ![Recent Games](docs/images/recent-games.png)
 
@@ -108,6 +124,11 @@ searchable and sortable:
 **Game forensics** — turn timing, draw quality, combat & resources, life chart, full timeline:
 
 ![Game detail page](docs/images/game-detail.png)
+
+**All Opponents** — everyone you've been paired against, searchable, each
+name opening a page with your full history against them:
+
+![All Opponents page](docs/images/opponents.png)
 
 ## Quick start
 
@@ -159,16 +180,21 @@ venv/bin/python -m mtga_tracker.dashboard        # http://127.0.0.1:8765
 
 | Route | What you get |
 | --- | --- |
-| `#/` | Overview: metrics, best deck, trends, ranked progress, recent games, decks, opponent meta |
-| `#/deck/<name>` | Deck drill-down: cards, mulligans, versions, land stats, streaks, vs-colors |
+| `#/` | Overview: metrics, best deck, trends, ranked progress, recent games, decks, Brawl, opponents |
+| `#/live` | Live Scoreboard: the current game, session record, today's games, play-by-play |
+| `#/deck/<name>` | Deck drill-down: cards, mulligans, versions, land stats, streaks, vs-colors, commanders |
 | `#/game/<id>` | Game detail: draw quality, life chart, hands, timeline, notes |
 | `#/card/<name>` | Card drill-down: by-deck performance, repeat draws, opener impact |
-| `#/games` | Every tracked game, filterable (deck, format, opponent colors) |
+| `#/games` | Every tracked game with deck picker, format pills, and period filter |
+| `#/opponents` | Everyone you've been paired against; `#/opponent/<name>` for one opponent |
+| `#/deckfinder` | Deck Finder: browse and export decklists from creators and sites |
+| `#/settings` | Deck AI, Deck Finder creators, collection export, tracker status |
 | `#/audit` | Database health findings |
 
-JSON API: `GET /api/snapshot`, `/api/deck`, `/api/game`, `/api/card`,
-`/api/cards?q=`, `/api/games`, `/api/version` — the dashboard is read-only
-except `POST /api/game/annotation` (your per-game notes and tags).
+JSON API: `GET /api/snapshot`, `/api/live`, `/api/deck`, `/api/game`,
+`/api/card`, `/api/cards?q=`, `/api/games`, `/api/opponents`, `/api/opponent`,
+`/api/version` — the dashboard is read-only except `POST /api/game/annotation`
+(your per-game notes and tags).
 
 Port busy? `--port 8766`. Lost the terminal? `lsof -ti tcp:8765 | xargs kill`.
 
@@ -326,7 +352,8 @@ guidance lives.
 - [docs/OVERLAY_TRACKER_PLAN.md](docs/OVERLAY_TRACKER_PLAN.md) — planned in-game overlay
 - [docs/MTGA_LOG_FORMAT.md](docs/MTGA_LOG_FORMAT.md) — how Arena's log actually works
 - [docs/MTGA_INSTALL_DISCOVERY.md](docs/MTGA_INSTALL_DISCOVERY.md) — plan for finding Arena's card DB in standalone/non-default installs
-- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — seat detection and log issues
+- [docs/live-log.md](docs/live-log.md) — the Live Scoreboard design
+- [CHANGELOG.md](CHANGELOG.md) — what changed in each release
 
 ## License
 

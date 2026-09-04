@@ -17,10 +17,10 @@ Repo layout:
 - `tests/`: pytest suite, including `tests/deck_downloader/`. `tests/deprecated/` holds
   non-test debug scripts and is not part of the suite.
 - `packaging/` + `scripts/`: PyInstaller specs, entry points, and OS build scripts.
-- `docs/`: log-format reference and design/release plans. `CHANGELOG.md` tracks releases;
-  the version lives in exactly TWO files that must stay in sync — `pyproject.toml` and
-  `src/mtga_tracker/__init__.py` (`__version__`, which the build scripts and startup banner
-  read).
+- `docs/`: log-format reference and design/release plans. `CHANGELOG.md` tracks releases.
+  The version comes from the git tag (setuptools-scm writes `_version.py`); there is no
+  hand-edited version string anywhere, and a release is cut by pushing a `v*` tag. Never
+  bump or invent a version in code.
 
 ### Entry points
 
@@ -37,8 +37,9 @@ Primary code paths:
 - `src/mtga_tracker/main.py`: console-tracker CLI entry point.
 - `src/mtga_tracker/app.py`: unified launcher that wires one `AnalyticsStore`/`--db` into both
   the tracker thread and the dashboard server, with or without the GUI (`--no-gui`).
-- `src/mtga_tracker/menu_app.py`: PyQt6 menu-bar/tray controller and Live Tracker Log window.
-  GUI-only; guarded by the `gui` extra and skipped in headless test runs.
+- `src/mtga_tracker/menu_app.py`: PyQt6 menu-bar/tray controller. Its "Live Scoreboard"
+  item opens the dashboard's `#/live`; the old Qt log window is a debug fallback. GUI-only;
+  guarded by the `gui` extra and skipped in headless test runs.
 - `src/mtga_tracker/paths.py`: cross-platform discovery of `Player.log`, the data dir, and
   Arena's raw card DB (macOS, Windows Steam libraries via `libraryfolders.vdf`, Epic,
   `MTGA_DATA_DIR` override). All path logic belongs here — do not inline OS checks elsewhere.
@@ -74,7 +75,14 @@ Primary code paths:
   historical games from the `game_events` timeline (used by migration v19 — fills NULL
   columns only, never overwrites live-tracked values).
 - `src/mtga_tracker/db_audit.py`: SQLite consistency audit and safe repair CLI.
-- `src/mtga_tracker/dashboard.py`: dependency-free local SQLite dashboard.
+- `src/mtga_tracker/dashboard.py`: dependency-free local SQLite dashboard. Read paths are
+  set-based on purpose: `_draw_quality_batch` classifies every game in a handful of queries
+  (the overview and All Games use it — never call the per-game `_game_draw_quality` in a loop
+  over history), `_split_card_index` replaces per-row LIKE lookups, and All Games gathers
+  opponent colors in one grouped query. Profile with a copy of a real database before
+  adding a correlated subquery that runs once per game.
+- `src/mtga_tracker/live_api.py`: `/api/live` payload — current game, frozen previous-game
+  scoreboard, records vs. deck / opponent / opponent commander, local archetype guess.
 - `src/mtga_tracker/draw_quality.py`: CLI/report helpers for land flood/screw and repeated-card draw audits.
 - `src/mtga_tracker/tracker_summary.py`: end-game and session summary rendering.
 - `src/mtga_tracker/tracker_rendering.py`: console formatting, actor labels, mana/text cleanup, runtime strings.
@@ -244,9 +252,11 @@ Preserve these behaviors unless the user explicitly changes requirements:
   per-seat inputs via `played_mana` (play totals + turns from `games.player_turns`/
   `opponent_turns`). `scripts/probe_mtga_card_db.py` verifies the cost column/format against
   a real Arena install.
-- The sidebar `MTGA Tracker` brand uses the dashboard heading typography, links to the very
-  top of Overview, and displays local vector W/U/B/R/G mana symbols rather than upscaled raster
-  icons. Browser tab titles use `MTGA Tracker – <page>`.
+- The product's display name is **Tapps Tracker** (`ui/src/branding.ts`, `PRODUCT_NAME`);
+  the sidebar brand uses the dashboard heading typography, links to the very top of Overview,
+  and displays local vector W/U/B/R/G mana symbols rather than upscaled raster icons. Browser
+  tab titles use `Tapps Tracker – <page>`. App bundle names, commands, and data folders still
+  say `MTGA Tracker` on purpose (renaming them moves users' data).
 - Unhandled annotations go to the text diagnostics log, not SQLite.
 - AI deck identification makes at most ONE provider call per game, only after the game
   completes, only for tracked matches, and always on a background thread. The result lands in
@@ -259,9 +269,25 @@ Preserve these behaviors unless the user explicitly changes requirements:
   queue identifier always outranks deck metadata: a deck's Format ATTRIBUTE
   ("HistoricBrawl"/"HistoricBrawlRanked") describes the deck, not the queue, and must never
   relabel a match whose format already normalizes to a Brawl queue.
-- The Overview's Brawl section (record strip + Your/Faced Commanders tables, paged at 8)
-  renders only when Brawl data exists; the Formats table groups per-set limited entries
-  ("Premier Draft - MSH") under an expandable base row.
+- The Overview's Brawl section (record strip, Best Commander / Toughest Opponent Commander
+  art boxes, Your/Faced Commanders tables paged at 8) is always rendered with an empty state
+  and has its own nav entry. Brawl is recognized from the match format, never from deck size.
+  The commander is absent from Arena's submitted maindeck, so deck pages and exports add it
+  back (`Commander` export section; Games Seen 100%). The Formats table groups per-set
+  limited entries ("Premier Draft - MSH") under an expandable base row.
+- Expected Lands uses the decklist submitted for that game; a game without one borrows the
+  same deck's nearest submitted list (`land_rate_source: deck_history`); only a deck with no
+  list anywhere falls back to the size heuristic (`estimate`, labelled "est." in the UI).
+  The deck page's ratio is the newest decklist's lands / size.
+- Opponent mulligans come from Arena's `players[].mulliganCount`, which is reported for both
+  seats (`_observe_player_mulligans`, `GameState.mulligan_count_by_seat`); the opponent's
+  count persists to `participants.mulligans` and the game page shows "Mulligans (You / Opp)".
+  The player's own count still comes from the mulligan-prompt tracking.
+- Opponents: `top_opponents`, `opponents_list`, and the opponent page count a Bo3 match once
+  (grouped by `match_id`, `SUM(mw > ml)`); the UI rolls Bo3 games into one expandable row.
+- Format quick filters are two-tier (`ui/src/quickFilters.ts`: `FORMAT_FAMILIES` with
+  refinements; legacy ids normalized by `normalizeQuickFilterId`). Recent Games and All Games
+  share `FormatQuickFilters`; All Games has no format dropdown or deck search box.
 
 ## MTGA Log Gotchas
 
@@ -323,10 +349,21 @@ Important tables:
   durable console headers, and `estimated_header_events` historical backfills.
 - `game_events`: structured event history where available.
 - `console_logs`: rendered console log lines for later dashboard/query work. Also feeds the
-  dashboard's Live Log page (`/api/live` in `live_api.py`, `since` = `console_logs.id`).
+  dashboard's Live Scoreboard page (`/api/live` in `live_api.py`, `since` = `console_logs.id`).
 - `live_status`: single-row (id=1) "what is happening right now" snapshot the tracker upserts
-  with every console line plus a ~5s idle heartbeat; drives the Live Log scoreboard. The old
-  Qt live-log window is a buried debug fallback (`MTGA_TRACKER_QT_LOG=1`).
+  with every console line plus a ~5s idle heartbeat; drives the Live Scoreboard. Stopping the
+  tracker calls `mark_live_status_stopped` (rewinds `updated_at`, `in_game=0`) so the
+  dashboard flips to off at once; `last_game_json` freezes the final in-game snapshot so the
+  previous game's scoreboard survives reloads until the next game starts. The old Qt log
+  window is a buried debug fallback (`MTGA_TRACKER_QT_LOG=1`).
+- `participant_commanders`: Brawl commander(s) per participant (both seats).
+- Indexes: besides the `(game_id, participant_id)` pairs, the per-card tables carry
+  `participant_id`-only indexes, `game_deck_cards(participant_id, deck_zone)`,
+  `game_card_summary(participant_id)`, `participants(role, deck_name)`, and `games(match_id)`.
+  They live in the schema baseline (`CREATE INDEX IF NOT EXISTS`), so existing databases
+  pick them up at the next launch. A dashboard query that filters by `participant_id` or
+  `match_id` alone must use them — that was the difference between 800 ms and 200 ms on the
+  overview at ~1000 games.
 - `raw_game_payloads`: sanitized raw payload archive. `payload_json` is stored
   **zlib-compressed** (migration v11 converted legacy rows) — always read it through
   `payload_codec.decode_payload`, or use `python -m mtga_tracker.payload_dump <game_id>`;
@@ -382,8 +419,8 @@ High-risk areas needing tests:
 - Do not introduce network dependencies for normal card resolution when the local MTGA card DB can provide the data.
 - Python is formatted with black at line length 100 (`[tool.black]` in `pyproject.toml`) and
   targets Python 3.9+; avoid syntax newer than that. TypeScript must pass `tsc -b` and eslint.
-- Record user-visible changes in `CHANGELOG.md` under the release being prepared, and bump the
-  version only when cutting a release — in BOTH `pyproject.toml` and
-  `src/mtga_tracker/__init__.py` (the tag drives the release workflow).
+- Record user-visible changes in `CHANGELOG.md` under the release being prepared — the
+  changelog is part of the release, not an afterthought. Never bump a version in code: the
+  `v*` tag is the version, and only the user cuts one.
 - Never commit generated or local-only files: `ui/dist/`, `data/*.sqlite3*`, `config.py`,
   `settings.json`, and `.claude/` are all gitignored on purpose.

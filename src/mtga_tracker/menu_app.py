@@ -262,9 +262,9 @@ class MenuBarController(QObject):
         self.menu.addAction(self.status_action)
         self.menu.addSeparator()
 
-        # Order matters (same on macOS and Windows): Live Log, Dashboard,
+        # Order matters (same on macOS and Windows): Live Scoreboard, Dashboard,
         # Deck Finder, Settings — then the utility items.
-        self.show_log_action = QAction("Live Log", self)
+        self.show_log_action = QAction("Live Scoreboard", self)
         self.show_log_action.triggered.connect(self.open_live_log)
         self.menu.addAction(self.show_log_action)
 
@@ -343,7 +343,7 @@ class MenuBarController(QObject):
         self.open_dashboard("/#/deck-finder")
 
     def open_live_log(self) -> None:
-        """The live log lives in the dashboard now (#/live)."""
+        """The Live Scoreboard lives in the dashboard (#/live)."""
         self.open_dashboard("/#/live")
 
     def show_live_log(self) -> None:

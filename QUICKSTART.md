@@ -37,7 +37,7 @@ scripts/build_macos_installer.sh
 The app lives in the menu bar: it starts tracking, serves the dashboard locally,
 and opens it in your browser. The tracker's status line at the top of the menu
 shows a green dot while it's running and red when it's stopped. Menu items, in
-order: **Live Log** (the live Scoreboard page), **Dashboard**, **Deck Finder**,
+order: **Live Scoreboard**, **Dashboard**, **Deck Finder**,
 **Settings** (Deck AI, creators, tracker status), **Open Data Folder**,
 **Start/Stop Tracking**, **Quit**. Installed builds keep their database under
 `~/Library/Application Support/MTGA Tracker` (macOS) or
@@ -82,14 +82,15 @@ venv/bin/python -m mtga_tracker.dashboard      # http://127.0.0.1:8765
 
 ## What to expect
 
-Start the tracker, then play Arena. Open **Live Log** for the live Scoreboard —
-both life totals with color pips, the turn and game clock, your session record,
-today's games, and a play-by-play feed (casts, draws, lands, combat, stack
-resolution, life totals) that reads just like the per-game timeline. Each
-finished game is saved to the local SQLite database. The rest of the dashboard
-(auto-refreshing) has the overview, per-deck pages, per-game detail with timeline
-and draw-quality analysis, and per-card pages. Everything is local; no account,
-no cloud.
+Start the tracker, then play Arena. Open the **Live Scoreboard** — both life
+totals with color pips, your record with this deck and against this opponent,
+the turn and game clock, your session record, today's games, and a play-by-play
+feed (casts, draws, lands, combat, stack resolution, life totals) that reads
+just like the per-game timeline. Each finished game is saved to the local
+SQLite database. The rest of the dashboard (auto-refreshing) has the overview,
+per-deck pages, per-game detail with timeline and draw-quality analysis,
+per-card pages, and the opponents you've faced. Everything is local; no
+account, no cloud.
 
 Tips:
 
@@ -118,5 +119,5 @@ lsof -ti tcp:8765 | xargs kill
 **Nothing showing up** — the tracker only reads new log events from when it starts;
 play a card in Arena to test.
 
-More: `README.md` for the full feature tour, `docs/TROUBLESHOOTING.md` for seat/log
-issues, `docs/MTGA_LOG_FORMAT.md` for how Arena's log works.
+More: `README.md` for the full feature tour, `docs/MTGA_LOG_FORMAT.md` for how
+Arena's log works, and the Discord for anything else.
