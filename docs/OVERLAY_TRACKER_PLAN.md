@@ -19,14 +19,14 @@ This replaces the earlier PyQt6 plan. The reasons for the change are in §2.
 
 ### Minimized — the rail
 
-A 64px-wide vertical rail that lives against a screen edge, in the order a
-player reads it mid-game:
+A 44px-wide vertical rail that lives in a screen edge — thin enough to cover
+nothing that matters — in the order a player reads it mid-game:
 
 | Slot | Content | Why |
 | --- | --- | --- |
 | Icon | the Tapps Tracker app icon | identifies the window; drag handle |
 | Turn | current turn number | orientation at a glance |
-| **Land** | `42%` in gold with LAND under it — no gauge, no ring, just the number | the one number the minimized state exists for |
+| **Land** | `42%` in gold (14px) with LAND under it — no gauge, no ring, just the number | the one number the minimized state exists for |
 | Library | `41/60` with a thin bar (library ÷ deck size) | how deep into the deck you are |
 | DECK | opens the expanded panel | primary action, gold |
 | ⚙ | opens the settings flyout (§4) | |
@@ -37,10 +37,32 @@ to fix it) — the one piece of colour-as-warning in the design.
 
 ### Expanded — the deck panel
 
-300px wide and as dense as it can be while staying readable: 22px rows,
-so a 60-card deck's ~20 distinct cards fit in roughly 520px of height and a
-99-card Brawl list scrolls. No logo in this state — every pixel goes to
-cards. Height is capped at the screen's; the list scrolls inside it.
+300px wide and as dense as it can be while staying readable: 22px rows. A
+60-card deck is typically 18–24 distinct cards, which is ~620px of panel —
+it fits on any screen from 1080p up with every row visible, no scrolling.
+No logo in this state — every pixel goes to cards. The panel's height is
+capped at the screen's work area and the list scrolls inside it when a deck
+is taller than that.
+
+**Brawl (99 singletons + commander).** A full singleton list is ~2,200px of
+rows, so the panel cannot show it all at once and shouldn't try. Three
+things keep it useful:
+
+- **Drawn cards leave the list.** In a singleton format a card at 0 copies is
+  simply gone from the library, so instead of dimming in place (the 60-card
+  behaviour, where "2/4 left" still matters) drawn rows move into a collapsed
+  **Drawn (n)** group at the bottom. The visible list shrinks every turn
+  and is, by mid-game, mostly the cards you still care about.
+- **Type groups collapse** (Creatures, Instants, Sorceries, Enchantments,
+  Artifacts, Planeswalkers, Lands) with the group header showing the summed
+  odds — "Instants · 7 left · 17.1%" — so a collapsed group still answers
+  "how likely is *an* answer". Lands default to collapsed in Brawl; the
+  land strip already carries that number.
+- **Compact density** (18px rows) as a flyout option for anyone who wants
+  more on screen; it applies to both formats.
+
+The commander itself is never in the list (it's in the command zone) and
+the library starts at 99.
 
 - **Header** (one line + one line): deck name with colour pips, format and
   opponent name, turn, and three controls: collapse to the rail, pin
