@@ -1604,7 +1604,13 @@ def _mana_readiness_rows(
 
 
 def _combat_deck_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> List[Dict[str, Any]]:
-    """Per-deck combat/aggression profile from game_participant_stats."""
+    """Per-deck combat/aggression profile from game_participant_stats.
+
+    No row cap: the Decks table joins these by name, and a cap (this used to
+    stop at 40 decks) silently blanked the Profile and combat columns for
+    every deck past it — a player with many small decks saw dashes on rows
+    with plenty of games.
+    """
     rows = _dict_rows(
         conn.execute(
             f"""
@@ -1629,7 +1635,6 @@ def _combat_deck_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -
             GROUP BY COALESCE(p.deck_name, '(unknown)')
             HAVING COUNT(*) > 0
             ORDER BY games DESC, deck_name COLLATE NOCASE
-            LIMIT 40
             """,
             params,
         )
@@ -2436,7 +2441,6 @@ def dashboard_snapshot(
                 WHERE {where}
                 GROUP BY p.deck_name, p.went_first
                 ORDER BY deck_name, play_draw
-                LIMIT 40
                 """,
                 params,
             )

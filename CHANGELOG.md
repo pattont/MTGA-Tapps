@@ -25,6 +25,9 @@
   index, the index was cached for the session with only cards from earlier
   games. It now keeps retrying Arena's layers until they answer, looks up
   unknown cards on demand, and basic lands light their colour on turn one.
+- **Fixed: Profile and combat columns blank for decks past the 40th.** The
+  Decks table lists up to 100 decks but its combat telemetry stopped at 40,
+  so players with many small decks saw dashes on rows with plenty of games.
 - **Fixed: the scoreboard's "Looks like…" guess could flip to an impossible
   archetype** (Gruul → Mono-Red after a Forest). Lands no longer count as
   evidence, and a guess whose colours contradict the table is dropped.

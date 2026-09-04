@@ -3318,3 +3318,42 @@ def test_response_cache_serves_until_analytics_change(tmp_path):
     sqlite3.connect(empty).close()
     assert dash.cached_response(empty, "/api/snapshot", "", compute) == b'{"n": 6}'
     assert dash.cached_response(empty, "/api/snapshot", "", compute) == b'{"n": 7}'
+
+
+def test_combat_profile_covers_every_deck_not_just_the_first_forty(tmp_path):
+    """A player with many small decks lost the Profile and combat columns on
+    every deck past the 40th (the combat query was capped at 40 rows while
+    the Decks table lists up to 100)."""
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        for index in range(60):
+            game_id = f"deck-game-{index}"
+            conn.execute(
+                "insert into games (id, session_id, match_id, game_number, started_at, outcome, "
+                "duration_seconds, total_turns, player_turns, opponent_turns) "
+                "values (?, 'session-1', 'match-1', 1, ?, 'win', 300, 10, 5, 5)",
+                (game_id, f"2026-06-{10 + index // 20:02d}T00:{index % 60:02d}:00"),
+            )
+            conn.execute(
+                "insert into participants (id, game_id, seat_id, role, display_name, deck_name, "
+                "went_first, mulligans, opening_hand_size, starting_life, ending_life) "
+                "values (?, ?, 1, 'player', 'Tapps', ?, 1, 0, 7, 20, 20)",
+                (f"{game_id}-p", game_id, f"Deck {index:02d}"),
+            )
+            conn.execute(
+                "insert into game_participant_stats (game_id, participant_id, attack_steps, "
+                "attacking_creatures, attackers_lost, blocking_creatures, blockers_lost, damage_dealt, "
+                "damage_taken, life_lost, self_damage, life_gained, cards_played, cards_drawn, "
+                "cards_discarded, cards_milled, cards_exiled) "
+                "values (?, ?, 3, 6, 0, 0, 0, 20, 4, 4, 0, 0, 8, 6, 0, 0, 0)",
+                (game_id, f"{game_id}-p"),
+            )
+
+    snapshot = dashboard_snapshot(db_path)
+    combat_names = {row["deck_name"] for row in snapshot["combat_decks"]}
+    deck_names = {row["deck_name"] for row in snapshot["decks"]}
+    assert deck_names <= combat_names
+    profiles = {row["deck_name"]: row["aggression_profile"] for row in snapshot["combat_decks"]}
+    assert profiles["Deck 59"] == "Aggro"  # 20 damage over 5 turns
+    play_draw_decks = {row["deck_name"] for row in snapshot["deck_play_draw"]}
+    assert "Deck 59" in play_draw_decks
