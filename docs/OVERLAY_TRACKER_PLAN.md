@@ -37,8 +37,10 @@ to fix it) — the one piece of colour-as-warning in the design.
 
 ### Expanded — the deck panel
 
-300px wide and as dense as it can be while staying readable: 22px rows. A
-60-card deck is typically 18–24 distinct cards, which is ~620px of panel —
+340px wide — enough that "Sheoldred, the Apocalypse" and "Overlord of the
+Mistmoors" fit without an ellipsis — and as dense as it can be while staying
+readable: 22px rows. A 60-card deck is typically 18–24 distinct cards, which
+is ~620px of panel —
 it fits on any screen from 1080p up with every row visible, no scrolling.
 No logo in this state — every pixel goes to cards. The panel's height is
 capped at the screen's work area and the list scrolls inside it when a deck
@@ -82,7 +84,8 @@ the library starts at 99.
   rail's library bar, and deliberately not a ring — coloured by card type
   (creature amber, instant blue, sorcery violet, enchantment pink, artifact
   grey, land green — the dashboard's type-chip palette), `left/total`, the
-  name in the type colour, the mana cost drawn with the **real mana symbols** (the same W/U/B/R/G
+  name in the type colour (11px mana symbols, small enough to read as cost
+  rather than compete with the name), the mana cost drawn with the **real mana symbols** (the same W/U/B/R/G
   vectors the dashboard's colour pips use; generic mana as a grey numbered
   circle), and the next-draw %. Percentages step through three weights (gold
   ≥ 10%, white ≥ 5%, muted below) so the eye finds the live outs first. Rows
@@ -128,6 +131,9 @@ overlay's settings file the moment it changes:
   to Arena.
 - **Hotkeys**: toggle rail/panel (`Alt+Shift+T`), show/hide
   (`Alt+Shift+H`), both rebindable.
+
+Corners are tight throughout — 6px on the window, 3px on controls, pills,
+and rows — so the overlay reads as an instrument, not a card.
 
 What it deliberately does not have: a play-by-play log. The dashboard's Live
 Scoreboard already owns that; the overlay stays a draw-odds instrument.
