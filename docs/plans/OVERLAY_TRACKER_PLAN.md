@@ -69,10 +69,11 @@ The commander itself is never in the list (it's in the command zone) and
 the library starts at 99.
 
 - **Header** (one line + one line): deck name with colour pips; a short
-  format line — `Std. BO1 Ranked · vs ropeez 1–2` — abbreviated formats
+  format line — `Std. BO1 Ranked · vs ropeez (1–2)` — abbreviated formats
   (Std., Hist., Mod., Pio., Time., Brawl, Ltd.) so "Ranked" always fits, and
-  your lifetime record against this opponent in white right after their
-  name whenever you've met before (the scoreboard's head-to-head); turn;
+  your lifetime record against this opponent right after their name, in the
+  same size and colour as the name, whenever you've met before (the
+  scoreboard's head-to-head); turn;
   and three controls in the header's muted text colour: collapse to the
   rail, pin (click-through; filled icon when pinned, outline when not), and
   ⚙ (settings flyout).
