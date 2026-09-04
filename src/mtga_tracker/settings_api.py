@@ -5,9 +5,10 @@ Settings dialog edits (settings.json's "deck_ai" section and
 deckfinder_config.json) are readable/writable from the web Settings page.
 
 Endpoints (all under /api/settings):
-- GET  /api/settings           -> {deck_ai, deck_finder}
+- GET  /api/settings           -> {tracker, deck_ai, deck_finder, platform, overlay}
 - POST /api/settings/deck-ai   -> save AI provider/keys/models
 - POST /api/settings/deck-finder -> save the creator lists
+- POST /api/settings/overlay   -> {enabled} start/stop the in-game overlay
 """
 
 from __future__ import annotations
@@ -152,6 +153,28 @@ def _platform_info() -> Dict[str, Any]:
     }
 
 
+def _overlay_status() -> Dict[str, Any]:
+    """Whether the in-game overlay is shipped, enabled, and running."""
+    from .overlay_launcher import get_manager
+
+    return get_manager().refresh()
+
+
+def _set_overlay_enabled(payload: Dict[str, Any]) -> Dict[str, Any]:
+    from .overlay_launcher import get_manager
+
+    if "enabled" not in payload:
+        raise ValueError("'enabled' is required")
+    manager = get_manager()
+    enabled = bool(payload.get("enabled"))
+    if enabled and not manager.available:
+        raise ValueError("The overlay is not included in this build.")
+    status = manager.set_enabled(enabled)
+    if enabled and not status.get("running"):
+        raise ValueError(status.get("error") or "The overlay could not be started.")
+    return status
+
+
 def handle_get(path: str, db_path: Optional[Path] = None) -> Optional[Tuple[int, Dict[str, Any]]]:
     if path != "/api/settings":
         return None
@@ -166,6 +189,7 @@ def handle_get(path: str, db_path: Optional[Path] = None) -> Optional[Tuple[int,
             # warning shows only on darwin, and export is offered only where
             # a memory reader exists.
             "platform": _platform_info(),
+            "overlay": _overlay_status(),
         }
     except Exception as exc:  # pragma: no cover - defensive surface
         return 500, {"error": f"{type(exc).__name__}: {exc}"}
@@ -179,6 +203,8 @@ def handle_post(path: str, payload: Dict[str, Any]) -> Optional[Tuple[int, Dict[
             from .deckfinder_api import write_creator_config
 
             return 200, {"deck_finder": write_creator_config(payload)}
+        if path == "/api/settings/overlay":
+            return 200, {"overlay": _set_overlay_enabled(payload)}
     except (ValueError, TypeError) as exc:
         return 400, {"error": str(exc)}
     except Exception as exc:  # pragma: no cover - defensive surface

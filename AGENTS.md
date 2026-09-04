@@ -14,6 +14,10 @@ Repo layout:
 - `src/mtga_tracker/`: tracker runtime, analytics store, dashboard server, desktop app.
 - `src/mtga_deck_downloader/`: the bundled Deck Finder companion tool.
 - `ui/`: React/Vite dashboard frontend (built to the gitignored `ui/dist`).
+- `overlay/`: the in-game overlay, a Tauri v2 app — Rust shell in `overlay/src-tauri/`
+  (window, docking, hotkeys, tray, Arena probe) and a Preact page in `overlay/src/`.
+  It talks to the tracker only through `GET /api/overlay`; the Python side that launches
+  it is `src/mtga_tracker/overlay_launcher.py`. See `overlay/README.md`.
 - `tests/`: pytest suite, including `tests/deck_downloader/`. `tests/deprecated/` holds
   non-test debug scripts and is not part of the suite.
 - `packaging/` + `scripts/`: PyInstaller specs, entry points, and OS build scripts.
@@ -174,6 +178,14 @@ UI changes require vitest, tsc, lint, and a fresh `npm run build` (the dashboard
   launch opens a Terminal with all providers listed.
 - The build scripts prefer the repo venv and fall back to `$PYTHON`; they build `ui/dist`
   as part of the bundle, so UI changes must be built before packaging.
+- The in-game overlay is built by `scripts/build_overlay.sh` / `.ps1` (called from the app
+  build scripts) into `overlay/build-out/` — a `Tapps Overlay.app` on macOS, a
+  `tapps-overlay.exe` on Windows — and `packaging/mtga_tracker.spec` ships it as data under
+  `overlay/`. No Rust toolchain → the overlay is skipped with a warning and the Settings
+  page reports "not in this build"; CI sets `OVERLAY_REQUIRED=1` so releases always carry
+  it. `overlay_launcher.overlay_binary_candidates()` lists every location the tracker looks
+  in (env `MTGA_TRACKER_OVERLAY_BIN` overrides). The overlay's frontend and Rust tests:
+  `cd overlay && npm test && cargo test --manifest-path src-tauri/Cargo.toml`.
 - `.github/workflows/release.yml` builds both OS artifacts and attaches them to a **draft**
   GitHub Release on a `v*` tag or manual dispatch. Publishing the draft is the human "go"
   button; ordinary pushes never run it. See `docs/plans/RELEASE_PLAN.md`.
@@ -398,6 +410,12 @@ from persisted `Previous Turn` console headers at startup and by `db_audit --rep
 Add or update regression tests for every parser/state-machine bug. Prefer focused tests that build minimal game-state payloads rather than replaying huge logs.
 
 For dashboard UI changes, run both the Python tests and the frontend test/build commands. Keep the frontend app isolated under `ui/`; do not move tracker runtime behavior into the frontend.
+
+For overlay changes, run `cd overlay && npm test && npm run build` and `cargo test` in
+`overlay/src-tauri`; `node scripts/screenshots.mjs` renders the rail/panel/flyout states
+against fixture payloads for a visual check (`overlay/shots/`, gitignored). The macOS and
+Windows-specific Rust (`arena.rs`, the `cfg(target_os)` blocks) only compiles on those
+platforms — CI builds both.
 
 High-risk areas needing tests:
 

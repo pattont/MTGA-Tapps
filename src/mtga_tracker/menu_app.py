@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .app import CallbackTextStream, UnifiedLauncher
+from .overlay_launcher import get_manager as get_overlay_manager
 from .paths import DATA_DIR
 from .settings import AppSettings, load_app_settings
 
@@ -134,6 +135,7 @@ def _set_tray_tooltip(tray: QSystemTrayIcon) -> None:
 class AppSignals(QObject):
     log_text = pyqtSignal(str)
     status_changed = pyqtSignal(str)
+    overlay_changed = pyqtSignal(dict)
 
 
 class LiveLogWindow(QMainWindow):
@@ -276,6 +278,19 @@ class MenuBarController(QObject):
         self.deck_downloader_action.triggered.connect(self.open_deck_downloader)
         self.menu.addAction(self.deck_downloader_action)
 
+        # The in-game overlay is a separate process; this item and the
+        # Settings page's toggle drive the same OverlayManager.
+        self.overlay = get_overlay_manager()
+        self.overlay_action = QAction("Show Overlay", self)
+        self.overlay_action.setCheckable(True)
+        self.overlay_action.triggered.connect(self.toggle_overlay)
+        self.menu.addAction(self.overlay_action)
+        self.overlay.add_listener(self.signals.overlay_changed.emit)
+        self.signals.overlay_changed.connect(self._sync_overlay_action)
+        self._overlay_timer = QTimer(self)
+        self._overlay_timer.setInterval(3000)
+        self._overlay_timer.timeout.connect(self._poll_overlay)
+
         self.settings_action = QAction("Settings", self)
         self.settings_action.triggered.connect(self.open_settings)
         self.menu.addAction(self.settings_action)
@@ -324,6 +339,7 @@ class MenuBarController(QObject):
             url = self.launcher.start_dashboard()
             self.log_window.append_text(f"Dashboard: {url}\n")
             self.launcher.start_tracker(background=True)
+            self._start_overlay(url)
             if not self.args.no_browser:
                 QTimer.singleShot(350, self.open_dashboard)
         except Exception as exc:
@@ -374,6 +390,43 @@ class MenuBarController(QObject):
         except Exception as exc:
             self.log_window.append_text(f"⚠️ Could not open Settings: {exc}\n")
 
+    def _start_overlay(self, dashboard_url: str) -> None:
+        self.overlay.configure(dashboard_url)
+        self._sync_overlay_action(self.overlay.status())
+        if self.overlay.enabled:
+            if self.overlay.start():
+                self.log_window.append_text("Overlay: started\n")
+            else:
+                self.log_window.append_text(
+                    f"Overlay: {self.overlay.status().get('error') or 'could not start'}\n"
+                )
+            self._sync_overlay_action(self.overlay.status())
+        self._overlay_timer.start()
+
+    def toggle_overlay(self, checked: bool) -> None:
+        status = self.overlay.set_enabled(checked)
+        if checked and not status.get("running"):
+            self.overlay_action.setChecked(False)
+            self.tray.showMessage(
+                "Tapps Tracker",
+                status.get("error") or "The overlay could not be started.",
+                QSystemTrayIcon.MessageIcon.Warning,
+                5000,
+            )
+
+    def _poll_overlay(self) -> None:
+        # Catches "Quit overlay" from the overlay's own tray so the check
+        # mark (and the saved setting) follow it.
+        self.overlay.refresh()
+
+    def _sync_overlay_action(self, status: dict) -> None:
+        available = bool(status.get("available"))
+        self.overlay_action.setEnabled(available)
+        self.overlay_action.setChecked(bool(status.get("running")))
+        self.overlay_action.setText(
+            "Show Overlay" if available else "Show Overlay (not in this build)"
+        )
+
     def toggle_tracker(self) -> None:
         if self.launcher.tracker_is_running:
             self.toggle_tracker_action.setEnabled(False)
@@ -412,6 +465,8 @@ class MenuBarController(QObject):
             return
         self._shutting_down = True
         self.toggle_tracker_action.setEnabled(False)
+        self._overlay_timer.stop()
+        self.overlay.stop()
         self.launcher.shutdown()
         self.tray.hide()
 

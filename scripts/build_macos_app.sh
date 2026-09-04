@@ -8,6 +8,9 @@ cd "$ROOT_DIR/ui"
 npm ci
 npm run build
 
+# The in-game overlay (skipped with a warning when Rust isn't installed).
+"$ROOT_DIR/scripts/build_overlay.sh"
+
 cd "$ROOT_DIR"
 "$ROOT_DIR/scripts/create_macos_icon.sh"
 "$PYTHON" -m pip install -e '.[gui,build]'

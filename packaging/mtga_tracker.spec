@@ -36,6 +36,18 @@ app_version = _resolve_app_version()
 if not (ui_dist / "index.html").is_file():
     raise SystemExit("ui/dist is missing. Run `cd ui && npm run build` first.")
 
+# The in-game overlay is a separate native app staged by
+# scripts/build_overlay.{sh,ps1}. Optional: a build without Rust simply
+# ships without it (the Settings page says so), so this never fails.
+overlay_out = project_root / "overlay" / "build-out"
+overlay_datas = []
+if is_macos and (overlay_out / "Tapps Overlay.app").is_dir():
+    overlay_datas.append((str(overlay_out / "Tapps Overlay.app"), "overlay/Tapps Overlay.app"))
+elif is_windows and (overlay_out / "tapps-overlay.exe").is_file():
+    overlay_datas.append((str(overlay_out / "tapps-overlay.exe"), "overlay"))
+if not overlay_datas:
+    print("mtga_tracker.spec: no overlay build in overlay/build-out — packaging without the in-game overlay")
+
 app_icon = None
 if is_macos:
     app_icon = project_root / "packaging" / "assets" / "MTGATracker.icns"
@@ -53,6 +65,7 @@ analysis = Analysis(
     datas=[
         (str(ui_dist), "ui/dist"),
         (str(runtime_assets), "mtga_tracker/assets"),
+        *overlay_datas,
     ],
     hiddenimports=[],
     hookspath=[],

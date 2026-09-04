@@ -4107,6 +4107,17 @@ tr.deck-change-row-out .card-link {
   gap: 8px;
 }
 
+.settings-hint {
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.settings-hint code {
+  font-size: 0.82rem;
+}
+
 /* Tracker info block on the Settings page. */
 .settings-info {
   display: grid;

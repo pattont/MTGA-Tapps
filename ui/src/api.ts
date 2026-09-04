@@ -1651,11 +1651,23 @@ export interface PlatformSettings {
   collection_export: boolean;
 }
 
+export interface OverlaySettings {
+  /** Saved preference: start the overlay with the tracker. */
+  enabled: boolean;
+  /** The overlay executable shipped with this build. */
+  available: boolean;
+  /** The overlay process is up right now. */
+  running: boolean;
+  binary: string | null;
+  error: string | null;
+}
+
 export interface TrackerSettings {
   tracker: TrackerInfoSettings;
   deck_ai: DeckAiSettings;
   deck_finder: DeckFinderCreatorSettings;
   platform: PlatformSettings;
+  overlay: OverlaySettings;
 }
 
 export async function fetchTrackerSettings(signal?: AbortSignal): Promise<TrackerSettings> {
@@ -1727,6 +1739,16 @@ export async function saveDeckAiSettings(payload: {
   });
   const body = await deckFinderJson<{ deck_ai: DeckAiSettings }>(response);
   return body.deck_ai;
+}
+
+export async function setOverlayEnabled(enabled: boolean): Promise<OverlaySettings> {
+  const response = await fetch('/api/settings/overlay', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  const body = await deckFinderJson<{ overlay: OverlaySettings }>(response);
+  return body.overlay;
 }
 
 export async function saveDeckFinderCreators(payload: {

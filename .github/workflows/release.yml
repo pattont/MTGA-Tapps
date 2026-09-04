@@ -34,6 +34,8 @@ jobs:
     env:
       # The build scripts prefer a repo venv; on CI use the runner's python.
       PYTHON: python3
+      # A release without the overlay is a broken release, not a warning.
+      OVERLAY_REQUIRED: "1"
     steps:
       # Full history + tags: the app version is derived from the git tag by
       # setuptools-scm, and a shallow checkout would leave it guessing.
@@ -50,6 +52,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+
+      # The in-game overlay is a Tauri app: Rust for the shell, npm for the
+      # page. Release builds must include it (OVERLAY_REQUIRED above).
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: overlay/src-tauri
 
       - name: Install Inno Setup (Windows)
         if: runner.os == 'Windows'

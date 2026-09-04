@@ -6,8 +6,10 @@ import {
   saveDeckAiSettings,
   saveDeckFinderCreators,
   startCollectionExport,
+  setOverlayEnabled,
   type CollectionExportFormat,
   type CollectionExportJob,
+  type OverlaySettings,
   type DeckAiSettings,
   type DeckFinderCreator,
   type DeckFinderCreatorSettings,
@@ -277,6 +279,7 @@ export function SettingsPage() {
   const [deckAi, setDeckAi] = useState<DeckAiSettings | null>(null);
   const [creators, setCreators] = useState<DeckFinderCreatorSettings | null>(null);
   const [platform, setPlatform] = useState<PlatformSettings | null>(null);
+  const [overlay, setOverlay] = useState<OverlaySettings | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -287,6 +290,7 @@ export function SettingsPage() {
           setDeckAi(settings.deck_ai);
           setCreators(settings.deck_finder);
           setPlatform(settings.platform);
+          setOverlay(settings.overlay ?? null);
         }
       })
       .catch((exc: unknown) => {
@@ -314,6 +318,22 @@ export function SettingsPage() {
           </p>
         ) : (
           <TrackerInfo info={trackerInfo} />
+        )}
+      </Section>
+
+      <Section
+        id="settings-overlay"
+        title="In-game overlay"
+        description="A small always-on-top window beside Arena: a rail with the turn, the chance of a land on the next draw, and your library count, which opens into your full decklist with per-card draw odds. It only reads this tracker's local API, never the game. Dock it left or right, pin it, or hide it with Alt+Shift+H (⌥⇧H on macOS) — every other preference lives in the overlay's own ⚙ menu."
+      >
+        {error ? (
+          <p className="empty-state deckfinder-state">{error}</p>
+        ) : overlay === null ? (
+          <p className="state-panel deckfinder-state" role="status" aria-busy="true">
+            Loading...
+          </p>
+        ) : (
+          <OverlayForm initial={overlay} platform={platform} />
         )}
       </Section>
 
@@ -371,6 +391,66 @@ export function SettingsPage() {
         </div>
       </Section>
     </>
+  );
+}
+
+function OverlayForm({
+  initial,
+  platform,
+}: {
+  initial: OverlaySettings;
+  platform: PlatformSettings | null;
+}) {
+  const [overlay, setOverlay] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function toggle(enabled: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      setOverlay(await setOverlayEnabled(enabled));
+    } catch (exc: unknown) {
+      setError(exc instanceof Error ? exc.message : 'The overlay could not be changed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const macos = platform?.system === 'macos';
+  return (
+    <div className="settings-form">
+      <label className="settings-check">
+        <input
+          checked={overlay.running}
+          disabled={busy || !overlay.available}
+          type="checkbox"
+          onChange={(event) => void toggle(event.target.checked)}
+        />
+        Show the overlay while Tapps Tracker is running
+      </label>
+      {!overlay.available ? (
+        <p className="settings-hint">
+          This build doesn't include the overlay. Release builds ship it; from a checkout, run{' '}
+          <code>scripts/build_overlay.sh</code> first.
+        </p>
+      ) : (
+        <p className="settings-hint">
+          {overlay.running ? 'Running' : 'Off'}
+          {overlay.enabled && !overlay.running ? ' — it will start with the tracker next time.' : '.'}{' '}
+          Toggle it any time from the menu-bar icon (Show Overlay) or with the overlay's hotkeys:{' '}
+          {macos ? '⌥⇧T' : 'Alt+Shift+T'} opens the deck panel, {macos ? '⌥⇧H' : 'Alt+Shift+H'} hides it.
+          {macos
+            ? ' On macOS it sits over Arena in windowed and fullscreen-windowed modes; Arena in exclusive fullscreen covers it.'
+            : ' Arena in exclusive fullscreen covers it — use borderless windowed.'}
+        </p>
+      )}
+      {error ? (
+        <p className="collection-export-status collection-export-fail" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
   );
 }
 

@@ -188,13 +188,14 @@ venv/bin/python -m mtga_tracker.dashboard        # http://127.0.0.1:8765
 | `#/games` | Every tracked game with deck picker, format pills, and period filter |
 | `#/opponents` | Everyone you've been paired against; `#/opponent/<name>` for one opponent |
 | `#/deckfinder` | Deck Finder: browse and export decklists from creators and sites |
-| `#/settings` | Deck AI, Deck Finder creators, collection export, tracker status |
+| `#/settings` | In-game overlay, Deck AI, Deck Finder creators, collection export, tracker status |
 | `#/audit` | Database health findings |
 
-JSON API: `GET /api/snapshot`, `/api/live`, `/api/deck`, `/api/game`,
-`/api/card`, `/api/cards?q=`, `/api/games`, `/api/opponents`, `/api/opponent`,
-`/api/version` — the dashboard is read-only except `POST /api/game/annotation`
-(your per-game notes and tags).
+JSON API: `GET /api/snapshot`, `/api/live`, `/api/overlay`, `/api/deck`,
+`/api/game`, `/api/card`, `/api/cards?q=`, `/api/games`, `/api/opponents`,
+`/api/opponent`, `/api/version` — the dashboard is read-only except
+`POST /api/game/annotation` (your per-game notes and tags) and the Settings
+page's own `POST /api/settings/*`.
 
 Port busy? `--port 8766`. Lost the terminal? `lsof -ti tcp:8765 | xargs kill`.
 
@@ -280,6 +281,36 @@ The memory-extraction technique is adapted from
 [MTGA-collection-exporter](https://github.com/NthPhantom10/MTGA-collection-exporter)
 — full credit to them for working out how to find the collection in Arena's
 process memory.
+
+## In-game overlay
+
+A small always-on-top window that sits in the edge of the screen beside
+Arena. At rest it is a 44-pixel **rail**: the turn, the chance that your
+next draw is a land, and your library count. Click **DECK** (or hover the
+rail, or press `Alt+Shift+T` / `⌥⇧T`) and it opens into the **panel**: your
+full decklist with copies left and the chance of drawing each card next,
+land drops for the next one, two, and three draws, a Play/Draw pill, and
+spells-first sorting by odds, mana value, or name. Lands show as **Basic
+lands / Nonbasic lands** rows by default (every land is a setting). Rest the
+cursor on a row for the within-2 and within-3 odds. In Brawl the cards
+you've already drawn collapse into a **Drawn** group so the list shrinks as
+the game goes.
+
+Turn it on from **Settings → In-game overlay** or the menu-bar icon's
+**Show Overlay**. Pin it to keep it open, or leave it unpinned and it slides
+back into the rail a few seconds after the cursor leaves. Dock it left or
+right (or float it), set its opacity, click-through, row density and hotkeys
+from its own ⚙ menu; `Alt+Shift+H` / `⌥⇧H` hides it. It hides itself when
+Arena isn't the front window and comes back when it is.
+
+It reads only this tracker's local `GET /api/overlay` — never Arena's memory
+or screen — so it knows exactly what the tracker knows: your library from
+the moment the opening hand is kept, minus what has left it. If the tracker
+joined a game late it says so instead of guessing. **Arena in exclusive
+fullscreen covers every overlay; use windowed or borderless/fullscreen
+windowed.** The overlay is a separate ~5 MB native app (Tauri) shipped inside
+the tracker; building from source needs Rust (`scripts/build_overlay.sh`),
+and a build without it simply says so on the Settings page.
 
 ## What isn't tracked
 

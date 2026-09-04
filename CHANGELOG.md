@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **In-game overlay.** A small always-on-top window beside Arena: a 44 px
+  rail with the turn, the chance of a land on the next draw, and the library
+  count, opening into a panel with the full decklist, copies left, next-draw
+  odds per card (within 2 / within 3 on hover), land drops for the next one,
+  two, and three draws, a Play/Draw pill, and sort by odds, mana value, or
+  name. Lands group into Basic / Nonbasic rows by default; in Brawl, drawn
+  singletons collapse into a Drawn group. Docks left or right (or floats),
+  pins or slides back into the rail when idle, hides when Arena isn't in
+  front, with opacity, click-through, density, and per-platform hotkeys
+  (`Alt+Shift+T` / `⌥⇧T` toggles the panel, `Alt+Shift+H` / `⌥⇧H` hides)
+  in its own ⚙ menu. Enable it from Settings → In-game overlay or the
+  menu-bar icon's Show Overlay. It is a separate native app (Tauri v2,
+  Preact page) that polls `GET /api/overlay` with ETags — nothing else, and
+  never the game — so it costs the tracker nothing. Release builds include
+  it; building from source needs Rust (`scripts/build_overlay.sh`).
+- **`GET /api/overlay`**: the library the tracker knows (deck minus what has
+  left it, from the kept opening hand on), per-card hypergeometric odds,
+  land-drop odds, format, opponent, turn, play/draw, and the head-to-head
+  record — with an ETag so unchanged states answer 304.
 - **Faster dashboard.** Six new indexes, a set-based draw-quality pass, and a
   cached split-card lookup: at ~1000 games the overview loads in about a
   quarter of the time (800 ms → 230 ms), the opponent page in a fifth, All

@@ -1,0 +1,6 @@
+node_modules/
+dist/
+build-out/
+shots/
+src-tauri/target/
+src-tauri/gen/

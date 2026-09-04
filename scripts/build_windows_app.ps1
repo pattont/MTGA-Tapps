@@ -4,7 +4,8 @@
 #   pwsh scripts/build_windows_app.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\build_windows_app.ps1
 #
-# Requirements: Python 3.9+ and Node 18+ on PATH.
+# Requirements: Python 3.9+ and Node 18+ on PATH; Rust (rustup) for the
+# in-game overlay, which is skipped with a warning when cargo is missing.
 # Output: dist\MTGA Tracker\MTGA Tracker.exe and dist\MTGA-Tracker-<version>-windows.zip
 
 $ErrorActionPreference = "Stop"
@@ -25,6 +26,10 @@ if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
 npm run build
 if ($LASTEXITCODE -ne 0) { throw "npm run build failed" }
 Pop-Location
+
+Write-Host "==> Building in-game overlay (overlay\build-out)"
+& (Join-Path $RootDir "scripts\build_overlay.ps1")
+if ($LASTEXITCODE -ne 0) { throw "overlay build failed" }
 
 Write-Host "==> Installing Python build dependencies"
 & $Python -m pip install -e ".[gui,build]"

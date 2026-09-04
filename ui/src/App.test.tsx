@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
@@ -1012,8 +1012,16 @@ describe('App', () => {
         tcgplayer: [],
       },
       platform: { system: 'macos', collection_export: true },
+      overlay: { enabled: false, available: true, running: false, binary: '/tmp/tapps-overlay', error: null },
     };
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url) === '/api/settings/overlay') {
+        const enabled = Boolean(JSON.parse(String(init?.body)).enabled);
+        return new Response(
+          JSON.stringify({ overlay: { ...settings.overlay, enabled, running: enabled } }),
+          { status: 200 },
+        );
+      }
       if (String(url).startsWith('/api/settings')) {
         return new Response(JSON.stringify(settings), { status: 200 });
       }
@@ -1042,6 +1050,20 @@ describe('App', () => {
       screen.getByRole('heading', { name: 'Export MTGA Collection' }),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Export to .csv' })).toBeInTheDocument();
+    // The in-game overlay toggle drives /api/settings/overlay and reflects the answer.
+    expect(screen.getByRole('heading', { name: 'In-game overlay' })).toBeInTheDocument();
+    const overlayToggle = screen.getByLabelText(/Show the overlay while Tapps Tracker is running/);
+    expect(overlayToggle).not.toBeChecked();
+    expect(screen.getByText(/⌥⇧T opens the deck panel/)).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(overlayToggle);
+    });
+    expect(await screen.findByText(/^Running/)).toBeInTheDocument();
+    expect(overlayToggle).toBeChecked();
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/settings/overlay',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ enabled: true }) }),
+    );
   });
 
   it('routes to the deck detail page and back to the dashboard', async () => {
