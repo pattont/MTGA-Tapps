@@ -53,6 +53,8 @@ export interface Settings {
   opacity: number;
   /** Strength of the charcoal ground, 0–100 (100 is nearly solid, 0 is text-only). */
   backgroundOpacity: number;
+  /** Size of everything, percent (50–200). */
+  scale: number;
   /** The panel never grows past this share of the screen height (30–100). */
   panelMaxHeightPct: number;
   dock: Dock;

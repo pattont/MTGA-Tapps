@@ -55,12 +55,15 @@ pub const PANEL_MIN_HEIGHT: i32 = 160;
 /// Vertical gap kept from the work area's top and bottom when clamping.
 const EDGE_MARGIN: i32 = 8;
 
-pub fn size_for(layout: Layout, content_height: i32, work_area: &Rect, max_height_pct: u32) -> Size {
+/// `content_height` is the page's base (unscaled) measurement; `scale_pct`
+/// grows the window with the page's transform.
+pub fn size_for(layout: Layout, content_height: i32, work_area: &Rect, max_height_pct: u32, scale_pct: u32) -> Size {
+    let scaled = |v: i32| (v as i64 * scale_pct.clamp(50, 200) as i64 / 100) as i32;
     match layout {
-        Layout::Rail => Size { width: RAIL_WIDTH, height: RAIL_HEIGHT },
+        Layout::Rail => Size { width: scaled(RAIL_WIDTH), height: scaled(RAIL_HEIGHT) },
         Layout::Panel => Size {
-            width: PANEL_WIDTH,
-            height: fit_height(content_height, work_area, max_height_pct),
+            width: scaled(PANEL_WIDTH),
+            height: fit_height(scaled(content_height), work_area, max_height_pct),
         },
     }
 }
@@ -175,15 +178,17 @@ mod tests {
 
     #[test]
     fn rail_and_panel_sizes() {
-        assert_eq!(size_for(Layout::Rail, 9999, &WORK, 100), Size { width: 44, height: RAIL_HEIGHT });
-        assert_eq!(size_for(Layout::Panel, 620, &WORK, 100), Size { width: 322, height: 620 });
+        assert_eq!(size_for(Layout::Rail, 9999, &WORK, 100, 100), Size { width: 44, height: RAIL_HEIGHT });
+        assert_eq!(size_for(Layout::Rail, 9999, &WORK, 100, 150), Size { width: 66, height: RAIL_HEIGHT * 3 / 2 });
+        assert_eq!(size_for(Layout::Panel, 400, &WORK, 100, 150), Size { width: 483, height: 600 });
+        assert_eq!(size_for(Layout::Panel, 620, &WORK, 100, 100), Size { width: 322, height: 620 });
         // Taller than the screen -> capped with the edge margin.
-        assert_eq!(size_for(Layout::Panel, 3000, &WORK, 100).height, 1055 - 16);
+        assert_eq!(size_for(Layout::Panel, 3000, &WORK, 100, 100).height, 1055 - 16);
         // The max-height setting caps a long list to a share of the screen.
-        assert_eq!(size_for(Layout::Panel, 3000, &WORK, 70).height, 1055 * 70 / 100);
-        assert_eq!(size_for(Layout::Panel, 500, &WORK, 70).height, 500);
+        assert_eq!(size_for(Layout::Panel, 3000, &WORK, 70, 100).height, 1055 * 70 / 100);
+        assert_eq!(size_for(Layout::Panel, 500, &WORK, 70, 100).height, 500);
         // Never below the minimum.
-        assert_eq!(size_for(Layout::Panel, 10, &WORK, 70).height, PANEL_MIN_HEIGHT);
+        assert_eq!(size_for(Layout::Panel, 10, &WORK, 70, 100).height, PANEL_MIN_HEIGHT);
     }
 
     #[test]

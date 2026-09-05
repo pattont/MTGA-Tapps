@@ -210,7 +210,7 @@ export function App() {
     else if (list) for (const child of Array.from(list.children)) observer.observe(child);
     report();
     return () => observer.disconnect();
-  }, [layout.layout, payload, settings?.lands, settings?.density, sort, flyout, contentHeight]);
+  }, [layout.layout, payload, settings?.lands, settings?.density, settings?.scale, sort, flyout, contentHeight]);
 
   // --- unpinned return -------------------------------------------------------
   const clearReturn = useCallback(() => {
@@ -332,7 +332,13 @@ export function App() {
     <div
       ref={rootRef}
       class={`root ${dockClass} ${layout.layout === 'panel' ? 'is-panel' : 'is-rail'} ${settings.backgroundOpacity > 0 ? 'has-bg' : 'no-bg'}`}
-      style={{ '--opacity': settings.opacity, '--tint-alpha': (0.9 * settings.backgroundOpacity) / 100 } as never}
+      style={
+        {
+          '--opacity': settings.opacity,
+          '--tint-alpha': (0.96 * settings.backgroundOpacity) / 100,
+          '--scale': settings.scale / 100,
+        } as never
+      }
       onMouseEnter={onPointerEnter}
       onMouseLeave={onPointerLeave}
     >

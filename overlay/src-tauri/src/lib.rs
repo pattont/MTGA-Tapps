@@ -179,7 +179,7 @@ fn apply_geometry(app: &AppHandle) {
     let mut runtime = state.runtime.lock().unwrap();
     let area = target_monitor(&window, &runtime, settings.follow_arena);
     runtime.area = Some(area);
-    let size = dock::size_for(runtime.layout, runtime.content_height, &area, settings.panel_max_height_pct);
+    let size = dock::size_for(runtime.layout, runtime.content_height, &area, settings.panel_max_height_pct, settings.scale);
     let y = match settings.dock {
         Dock::Left => settings.positions.left_y,
         Dock::Right => settings.positions.right_y,
@@ -762,7 +762,7 @@ fn on_moved(app: &AppHandle, physical_x: i32, physical_y: i32) {
         let area = target_monitor(&window, &runtime, settings.follow_arena);
         (
             settings.dock,
-            dock::size_for(runtime.layout, runtime.content_height, &area, settings.panel_max_height_pct),
+            dock::size_for(runtime.layout, runtime.content_height, &area, settings.panel_max_height_pct, settings.scale),
             area,
         )
     };

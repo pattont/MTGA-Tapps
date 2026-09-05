@@ -86,8 +86,9 @@ itself; a warm dashboard is faster still.
 
 - **In-game overlay.** A small always-on-top window beside Arena: a 44 px
   rail with the turn, the chance of a land on the next draw, and the library
-  count, opening into a panel with the full decklist, copies left, next-draw
-  odds per card (within 2 / within 3 on hover), land drops for the next one,
+  count, opening into a panel with the full decklist — each card's name over
+  its mana cost, copies left over next-draw odds on the right (within 2 /
+  within 3 on hover) — land drops for the next one,
   two, and three draws, a Play/Draw pill, and sort by odds, mana value, or
   name. Lands group into Basic / Nonbasic rows by default; in Brawl, drawn
   singletons collapse into a Drawn group. The final library stays up (marked
@@ -96,8 +97,9 @@ itself; a warm dashboard is faster still.
   too); docks left or right (or floats), pins or slides back into the rail
   when idle, steps aside when Arena isn't in front. Sits on a charcoal tint
   with hairlines between rows and no box border; Overlay opacity fades the
-  whole thing and Background opacity sets the tint alone (100 % is nearly
-  solid, 0 % is text-only over the board); Max panel height (share of
+  whole thing, Background opacity sets the tint alone (100 % is nearly
+  solid, 0 % is text-only over the board), and Scale sizes everything from
+  50 % to 200 %; Max panel height (share of
   the screen, default 70 %; the list scrolls inside), click-through,
   density, and per-platform hotkeys (`Alt+Shift+T` / `⌥⇧T`
   toggles the panel, `Alt+Shift+H` / `⌥⇧H` hides) in its own ⚙ menu. Enable

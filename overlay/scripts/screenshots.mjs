@@ -72,6 +72,7 @@ const board = async (page) => { await page.addStyleTag({ content: 'body{backgrou
 await shot('rail-nobg', 'game', { width: 44, height: 210 }, board);
 await shot('panel-nobg', 'game', { width: 322, height: 560 }, async (page) => { await board(page); await openPanel(page); });
 await shot('panel-nobg-flyout', 'game', { width: 322, height: 560 }, async (page) => { await board(page); await openPanel(page); await page.click('button[aria-label="Settings"]'); });
+await shot('panel-scale150', 'game', { width: 483, height: 720 }, async (page) => { await board(page); await openPanel(page); await page.click('button[aria-label="Settings"]'); await page.evaluate(() => { const el = document.querySelector('input[aria-label="Scale, percent"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(el, '150'); el.dispatchEvent(new Event('input', { bubbles: true })); }); await page.click('button[aria-label="Close settings"]'); });
 await shot('panel-all-lands', 'game', { width: 322, height: 640 }, async (page) => { await openPanel(page); await page.click('button[aria-label="Settings"]'); await page.click('text=Every land'); await page.click('button[aria-label="Close settings"]'); });
 await browser.close();
 server.close();

@@ -102,6 +102,19 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
         <span class="v">{settings.backgroundOpacity}%</span>
       </label>
       <label class="r">
+        <span>Scale</span>
+        <input
+          type="range"
+          min="50"
+          max="200"
+          step="5"
+          value={settings.scale}
+          onInput={(event) => onChange({ ...settings, scale: Number((event.currentTarget as HTMLInputElement).value) })}
+          aria-label="Scale, percent"
+        />
+        <span class="v">{settings.scale}%</span>
+      </label>
+      <label class="r">
         <span>Max panel height</span>
         <input
           type="range"

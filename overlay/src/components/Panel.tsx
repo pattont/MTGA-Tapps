@@ -55,14 +55,18 @@ function CardRow({ row, exhausted, onHover }: { row: Row; exhausted: boolean; on
           <b class={`fill-${typeClass(row.type_category)}`} style={{ width: `${frac}%` }} />
         </i>
       </span>
-      <span class="cnt">
-        <b>{row.left}</b>/{row.total}
+      <span class="body">
+        <span class={`nm ${typeClass(row.type_category)}`} title={row.name}>
+          {row.name}
+        </span>
+        {row.group ? null : <ManaCost cost={row.mana_cost} />}
       </span>
-      <span class={`nm ${typeClass(row.type_category)}`} title={row.name}>
-        {row.name}
+      <span class="right">
+        <span class="cnt">
+          <b>{row.left}</b>/{row.total}
+        </span>
+        <span class={`pct ${tone}`}>{row.left > 0 ? formatPct(row.odds['1']) : '—'}</span>
       </span>
-      <ManaCost cost={row.group ? null : row.mana_cost} />
-      <span class={`pct ${tone}`}>{row.left > 0 ? formatPct(row.odds['1']) : '—'}</span>
     </div>
   );
 }

@@ -71,6 +71,9 @@ pub struct Settings {
     /// 100 is nearly solid (never fully); 0 is text with a shadow over the
     /// board.
     pub background_opacity: u32,
+    /// Size of everything, percent (50–200). The page lays out at its base
+    /// size and is scaled; the window grows to match.
+    pub scale: u32,
     /// The panel never grows past this share of the screen's height (30–100);
     /// the list scrolls inside it instead.
     pub panel_max_height_pct: u32,
@@ -94,7 +97,8 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             opacity: 1.0,
-            background_opacity: 85,
+            background_opacity: 90,
+            scale: 100,
             panel_max_height_pct: 70,
             dock: Dock::Right,
             return_after_seconds: 4,
@@ -131,6 +135,10 @@ impl Settings {
         }
         self.return_after_seconds = self.return_after_seconds.clamp(1, 60);
         self.background_opacity = self.background_opacity.min(100);
+        if self.scale == 0 {
+            self.scale = 100;
+        }
+        self.scale = self.scale.clamp(50, 200);
         if self.panel_max_height_pct == 0 {
             self.panel_max_height_pct = 70;
         }
