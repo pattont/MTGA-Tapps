@@ -20,6 +20,13 @@
   Preact page) that polls `GET /api/overlay` with ETags — nothing else, and
   never the game — so it costs the tracker nothing. Release builds include
   it; building from source needs Rust (`scripts/build_overlay.sh`).
+- **Windows builds are harder for Defender to mistake for malware.** The
+  release build compiles PyInstaller's bootloader from source instead of
+  shipping the prebuilt one every PyInstaller-packed trojan also uses, and
+  both exes now carry a proper version resource (company, product,
+  description). `Trojan:Win32/Wacatac.*!ml` is a machine-learning false
+  positive on unsigned PyInstaller apps; QUICKSTART explains how to restore
+  a quarantined install.
 - **Fixed: the Live Scoreboard lost the previous game at midnight.** Its
   "today's games" list went by calendar day, so a game played at 23:58 had
   no outcome and no record at 00:05 and the Previous Game chip went blank.

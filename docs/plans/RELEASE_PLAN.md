@@ -102,6 +102,15 @@ honest without paying for installer builds each time.
 - **Windows:** unsigned exes get a SmartScreen warning ("More info → Run
   anyway"). Acceptable for alpha; an OV/EV signing cert (~$100–400/yr) is a
   beta/public concern, not an alpha blocker.
+- **Windows Defender false positives** (`Trojan:Win32/Wacatac.*!ml` — an ML
+  verdict, not a signature): PyInstaller's prebuilt bootloader is the bytes
+  every PyInstaller-packed malware also ships, so `build_windows_app.ps1`
+  rebuilds the bootloader from source (`pip install --no-binary pyinstaller`)
+  and the spec stamps a VERSIONINFO resource (company, product, description)
+  on both exes. Signing is the only complete fix and costs money, so the
+  remaining step per release is manual: submit `MTGA Tracker.exe` at
+  https://www.microsoft.com/wdsi/filesubmission as a developer false-positive
+  report; the cloud verdict for that hash usually clears within 48 hours.
 
 ## Step 4 — Updates via GitHub
 
