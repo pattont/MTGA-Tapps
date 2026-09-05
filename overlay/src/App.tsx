@@ -28,6 +28,16 @@ export function hoverCardTop(rowTop: number, rowBottom: number, viewportHeight: 
   return Math.max(2, rowTop - 2 - HOVER_CARD_HEIGHT);
 }
 
+function verticalPadding(element: HTMLElement | null): number {
+  if (!element || typeof getComputedStyle !== 'function') return 0;
+  try {
+    const style = getComputedStyle(element);
+    return (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+  } catch {
+    return 0;
+  }
+}
+
 /** Where the hover card goes: toward the board, i.e. away from the docked edge. */
 export function hoverSide(dock: Settings['dock']): 'left' | 'right' {
   return dock === 'left' ? 'right' : 'left';
@@ -39,7 +49,10 @@ export function hoverSide(dock: Settings['dock']): 'left' | 'right' {
  */
 export function measureContentHeight(panel: HTMLElement, list: HTMLElement | null, flyout: HTMLElement | null = null): number {
   const listVisible = list ? list.clientHeight : 0;
-  const listFull = list ? list.scrollHeight : 0;
+  // The list's own scrollHeight is never smaller than its visible height,
+  // so a window that opened tall would never shrink; measure the rows.
+  const body = list?.querySelector<HTMLElement>('.list-body') ?? null;
+  const listFull = body ? body.offsetHeight + verticalPadding(list) : list ? list.scrollHeight : 0;
   const chrome = panel.offsetHeight - listVisible;
   const natural = Math.ceil(chrome + listFull);
   const forFlyout = flyout ? Math.ceil(flyout.offsetTop + flyout.scrollHeight + 10) : 0;
@@ -188,11 +201,13 @@ export function App() {
     };
     const observer = new ResizeObserver(report);
     const list = root.querySelector<HTMLElement>('.list');
+    const body = root.querySelector<HTMLElement>('.list-body');
     const panel = root.querySelector<HTMLElement>('.panel');
     const fly = root.querySelector<HTMLElement>('.fly');
     if (panel) observer.observe(panel);
     if (fly) observer.observe(fly);
-    if (list) for (const child of Array.from(list.children)) observer.observe(child);
+    if (body) observer.observe(body);
+    else if (list) for (const child of Array.from(list.children)) observer.observe(child);
     report();
     return () => observer.disconnect();
   }, [layout.layout, payload, settings?.lands, settings?.density, sort, flyout, contentHeight]);
@@ -316,8 +331,8 @@ export function App() {
   return (
     <div
       ref={rootRef}
-      class={`root ${dockClass} ${layout.layout === 'panel' ? 'is-panel' : 'is-rail'} ${settings.background ? 'has-bg' : 'no-bg'}`}
-      style={{ '--opacity': settings.opacity } as never}
+      class={`root ${dockClass} ${layout.layout === 'panel' ? 'is-panel' : 'is-rail'} ${settings.backgroundOpacity > 0 ? 'has-bg' : 'no-bg'}`}
+      style={{ '--opacity': settings.opacity, '--tint-alpha': (0.9 * settings.backgroundOpacity) / 100 } as never}
       onMouseEnter={onPointerEnter}
       onMouseLeave={onPointerLeave}
     >

@@ -55,7 +55,7 @@ async function shot(name, fixture, size, steps) {
   if (steps) await steps(page);
   await page.waitForTimeout(250);
   await page.screenshot({ path: `shots/${name}.png`, omitBackground: false });
-  const h = await page.evaluate(() => { const p = document.querySelector('.panel'); const l = p?.querySelector('.list'); return p ? { panel: p.offsetHeight, list: l?.clientHeight, listFull: l?.scrollHeight } : null; });
+  const h = await page.evaluate(() => { const p = document.querySelector('.panel'); const l = p?.querySelector('.list'); const b = p?.querySelector('.list-body'); return p ? { panel: p.offsetHeight, list: l?.clientHeight, rows: b?.offsetHeight, natural: b ? p.offsetHeight - l.clientHeight + b.offsetHeight : null } : null; });
   console.log(name, JSON.stringify(h));
   await ctx.close();
 }

@@ -64,13 +64,13 @@ pub struct Positions {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
-    /// Paint the tinted ground behind the rail and panel (a fixed charcoal
-    /// wash, hairlines between rows); off leaves text with a shadow over
-    /// the board.
-    pub background: bool,
-    /// Opacity of the whole overlay, 0.2–1.0: the slider fades everything —
-    /// tint, text, controls — not just the ground.
+    /// Opacity of the whole overlay, 0.2–1.0: fades everything — ground,
+    /// text, controls.
     pub opacity: f64,
+    /// Strength of the charcoal ground behind the rail and panel, 0–100.
+    /// 100 is nearly solid (never fully); 0 is text with a shadow over the
+    /// board.
+    pub background_opacity: u32,
     /// The panel never grows past this share of the screen's height (30–100);
     /// the list scrolls inside it instead.
     pub panel_max_height_pct: u32,
@@ -93,8 +93,8 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            background: true,
             opacity: 1.0,
+            background_opacity: 85,
             panel_max_height_pct: 70,
             dock: Dock::Right,
             return_after_seconds: 4,
@@ -130,6 +130,7 @@ impl Settings {
             self.opacity = 1.0;
         }
         self.return_after_seconds = self.return_after_seconds.clamp(1, 60);
+        self.background_opacity = self.background_opacity.min(100);
         if self.panel_max_height_pct == 0 {
             self.panel_max_height_pct = 70;
         }

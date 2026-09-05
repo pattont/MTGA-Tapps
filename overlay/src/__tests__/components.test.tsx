@@ -123,8 +123,17 @@ describe('App helpers', () => {
 
   it('measures the natural panel height from chrome plus the full list', () => {
     const panel = { offsetHeight: 400 } as HTMLElement;
-    const list = { clientHeight: 300, scrollHeight: 520 } as HTMLElement;
+    const list = { clientHeight: 300, scrollHeight: 520, querySelector: () => null } as unknown as HTMLElement;
     expect(measureContentHeight(panel, list)).toBe(620);
+    // A window that opened tall: the list's scrollHeight equals its (large)
+    // visible height, but the rows are short — the rows win, so it shrinks.
+    const tall = { offsetHeight: 620 } as HTMLElement;
+    const shortList = {
+      clientHeight: 500,
+      scrollHeight: 500,
+      querySelector: () => ({ offsetHeight: 210 }),
+    } as unknown as HTMLElement;
+    expect(measureContentHeight(tall, shortList)).toBe(330);
     expect(measureContentHeight({ offsetHeight: 90 } as HTMLElement, null)).toBe(160);
     expect(measureContentHeight({ offsetHeight: 90 } as HTMLElement, null, { offsetTop: 34, scrollHeight: 300 } as HTMLElement)).toBe(344);
   });

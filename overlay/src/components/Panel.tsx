@@ -161,6 +161,7 @@ export function Panel(props: Props) {
             </span>
           </div>
           <div class="list">
+            <div class="list-body">
             {sections && sections.spells.length > 0 ? <div class="grp">Spells</div> : null}
             {sections?.spells.map((row) => (
               <CardRow key={row.key} row={row} exhausted={row.left === 0} onHover={onHover} />
@@ -182,6 +183,7 @@ export function Panel(props: Props) {
                 {state.unaccounted} card{state.unaccounted === 1 ? '' : 's'} in the library the tracker can't name
               </div>
             ) : null}
+            </div>
           </div>
         </>
       ) : (

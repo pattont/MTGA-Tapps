@@ -49,9 +49,10 @@ export interface Hotkeys {
 }
 
 export interface Settings {
-  /** Paint the dark ground behind the rail and panel (off: text over the board). */
-  background: boolean;
+  /** Opacity of the whole overlay, 0.2–1. */
   opacity: number;
+  /** Strength of the charcoal ground, 0–100 (100 is nearly solid, 0 is text-only). */
+  backgroundOpacity: number;
   /** The panel never grows past this share of the screen height (30–100). */
   panelMaxHeightPct: number;
   dock: Dock;

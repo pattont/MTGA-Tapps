@@ -77,20 +77,29 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
         </button>
       </div>
       <label class="r">
-        <span>Background</span>
-        <input type="checkbox" checked={settings.background} onChange={(event) => onChange({ ...settings, background: (event.currentTarget as HTMLInputElement).checked })} />
-      </label>
-      <label class="r">
-        <span>Opacity</span>
+        <span>Overlay opacity</span>
         <input
           type="range"
           min="20"
           max="100"
           value={Math.round(settings.opacity * 100)}
           onInput={(event) => onChange({ ...settings, opacity: Number((event.currentTarget as HTMLInputElement).value) / 100 })}
-          aria-label="Opacity"
+          aria-label="Overlay opacity"
         />
         <span class="v">{Math.round(settings.opacity * 100)}%</span>
+      </label>
+      <label class="r">
+        <span>Background opacity</span>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          step="5"
+          value={settings.backgroundOpacity}
+          onInput={(event) => onChange({ ...settings, backgroundOpacity: Number((event.currentTarget as HTMLInputElement).value) })}
+          aria-label="Background opacity"
+        />
+        <span class="v">{settings.backgroundOpacity}%</span>
       </label>
       <label class="r">
         <span>Max panel height</span>

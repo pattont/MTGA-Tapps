@@ -1,9 +1,9 @@
 /* Tapps Overlay — the rail and the panel.
    Ported from docs/plans/overlay-mockup.html; the window itself is
-   transparent, the rail/panel paint a fixed charcoal tint (no backdrop blur
-   — it costs a compositor pass per frame on both platforms) with hairlines
-   between rows, the way game overlays usually read; --opacity fades the
-   whole overlay. */
+   transparent, the rail/panel paint a charcoal tint at --tint-alpha (no
+   backdrop blur — it costs a compositor pass per frame on both platforms)
+   with hairlines between rows, the way game overlays usually read;
+   --opacity fades the whole overlay. */
 
 :root {
   --bg: #101418;
@@ -18,7 +18,8 @@
   --success: #7bd88f;
   --danger: #f28b82;
   --opacity: 1;
-  --tint: rgba(24, 28, 34, 0.68);
+  --tint-alpha: 0.765;
+  --tint: rgba(24, 28, 34, var(--tint-alpha));
   --hairline: rgba(255, 255, 255, 0.09);
   color-scheme: dark;
 }
@@ -480,7 +481,7 @@ img {
   border-top: 1px solid var(--hairline);
 }
 
-.list > .grp:first-child {
+.list-body > .grp:first-child {
   border-top: 0;
 }
 
@@ -508,7 +509,7 @@ img {
 }
 
 .grp + .row,
-.list > .row:first-child {
+.list-body > .row:first-child {
   border-top: 0;
 }
 
