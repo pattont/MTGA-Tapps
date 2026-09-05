@@ -119,21 +119,21 @@ fn arena_monitor_index(window: &WebviewWindow, bounds: (i32, i32, i32, i32)) -> 
     if w <= 0 || h <= 0 {
         return None;
     }
-    let centre = (x + w / 2, y + h / 2);
+    let arena = Rect { x, y, width: w, height: h };
     #[cfg(target_os = "macos")]
-    {
-        let rects: Vec<Rect> = monitor_rects(window).into_iter().map(|(r, _)| r).collect();
-        return rects.iter().position(|r| r.contains(centre.0, centre.1));
-    }
+    let rects: Vec<Rect> = monitor_rects(window).into_iter().map(|(r, _)| r).collect();
     #[cfg(not(target_os = "macos"))]
-    {
-        let monitors = window.available_monitors().ok()?;
-        monitors.iter().position(|m| {
+    let rects: Vec<Rect> = window
+        .available_monitors()
+        .ok()?
+        .iter()
+        .map(|m| {
             let p = m.position();
             let s = m.size();
-            Rect { x: p.x, y: p.y, width: s.width as i32, height: s.height as i32 }.contains(centre.0, centre.1)
+            Rect { x: p.x, y: p.y, width: s.width as i32, height: s.height as i32 }
         })
-    }
+        .collect();
+    dock::monitor_holding(&rects, &arena)
 }
 
 /// The monitor the window should dock on: Arena's (when it has a window and
@@ -203,44 +203,75 @@ fn apply_geometry(app: &AppHandle) {
     ));
 }
 
-/// Over a fullscreen Arena (its own Space) a floating window is not enough:
-/// the window must also be a full-screen auxiliary that joins every Space,
-/// at a level above the fullscreen window. Tauri's `set_always_on_top`
-/// resets the level to floating, so this runs after every call to it.
+/// Over a fullscreen Arena (its own Space) a floating NSWindow is not
+/// enough on current macOS: even with `canJoinAllSpaces` and
+/// `fullScreenAuxiliary` set, the window stays on the desktop Space. What
+/// does work — the same trick as the tauri-nspanel plugin — is turning the
+/// window into a non-activating NSPanel, giving it those collection
+/// behaviours and a level above the fullscreen window, and ordering it
+/// front "regardless" (without activating the overlay). NSPanel adds no
+/// instance variables, so swapping the class of the live window is safe.
+/// Tauri's `set_always_on_top` resets the level, so this runs after every
+/// show.
 #[cfg(target_os = "macos")]
 fn raise_above_fullscreen(window: &WebviewWindow) {
+    use objc2::runtime::{AnyClass, AnyObject};
+
     // NSWindowCollectionBehavior
     const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
     const STATIONARY: usize = 1 << 4;
     const IGNORES_CYCLE: usize = 1 << 6;
     const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
+    // NSWindowStyleMask
+    const NONACTIVATING_PANEL: usize = 1 << 7;
+
     #[link(name = "CoreGraphics", kind = "framework")]
     extern "C" {
         fn CGShieldingWindowLevel() -> i32;
     }
+    #[link(name = "objc", kind = "dylib")]
+    extern "C" {
+        fn object_setClass(obj: *mut AnyObject, cls: *const AnyClass) -> *const AnyClass;
+    }
+
     let target = window.clone();
     let _ = window.run_on_main_thread(move || {
         let Ok(ptr) = target.ns_window() else {
             diag::log("macos: no NSWindow to raise");
             return;
         };
+        let ns: &AnyObject = unsafe { &*(ptr as *const AnyObject) };
+        let panel_class: &AnyClass = objc2::class!(NSPanel);
+        let is_panel: bool = unsafe { objc2::msg_send![ns, isKindOfClass: panel_class] };
+        if !is_panel {
+            unsafe { object_setClass(ptr as *mut AnyObject, panel_class) };
+            diag::log("macos: window turned into an NSPanel");
+        }
         // The shielding level is the one level above a captured
         // (exclusive-fullscreen) display as well as above fullscreen
         // Spaces; the window is only ever shown while Arena is running.
         let level = unsafe { CGShieldingWindowLevel() } as isize;
         let behavior = CAN_JOIN_ALL_SPACES | STATIONARY | IGNORES_CYCLE | FULL_SCREEN_AUXILIARY;
-        let ns: &objc2::runtime::AnyObject = unsafe { &*(ptr as *const objc2::runtime::AnyObject) };
-        let (level_now, behavior_now, on_active_space): (isize, usize, bool) = unsafe {
-            let _: () = objc2::msg_send![ns, setLevel: level];
+        let (level_now, behavior_now, style_now, on_active_space, visible): (isize, usize, usize, bool, bool) = unsafe {
+            let style: usize = objc2::msg_send![ns, styleMask];
+            let _: () = objc2::msg_send![ns, setStyleMask: style | NONACTIVATING_PANEL];
+            let _: () = objc2::msg_send![ns, setHidesOnDeactivate: false];
             let _: () = objc2::msg_send![ns, setCollectionBehavior: behavior];
+            let _: () = objc2::msg_send![ns, setLevel: level];
+            let visible: bool = objc2::msg_send![ns, isVisible];
+            if visible {
+                let _: () = objc2::msg_send![ns, orderFrontRegardless];
+            }
             (
                 objc2::msg_send![ns, level],
                 objc2::msg_send![ns, collectionBehavior],
+                objc2::msg_send![ns, styleMask],
                 objc2::msg_send![ns, isOnActiveSpace],
+                visible,
             )
         };
         diag::log(format!(
-            "macos: window level={level_now} (asked {level}) behavior={behavior_now:#x} (asked {behavior:#x}) on_active_space={on_active_space}"
+            "macos: window level={level_now} (asked {level}) behavior={behavior_now:#x} (asked {behavior:#x}) style={style_now:#x} visible={visible} on_active_space={on_active_space}"
         ));
     });
 }

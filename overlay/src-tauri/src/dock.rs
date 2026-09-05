@@ -108,6 +108,29 @@ pub fn docked_position(
 /// Pick the monitor to dock on: the one containing the point (cursor at
 /// game start, or Arena's window centre), else the one overlapping `hint`
 /// the most, else the first. Returns an index into `monitors`.
+/// The monitor that holds (at least 90 % of) `window`, by overlap. None
+/// while the window straddles monitors — a fullscreen Space sliding across
+/// during a swipe must not drag the overlay to another screen.
+pub fn monitor_holding(monitors: &[Rect], window: &Rect) -> Option<usize> {
+    let area = window.width as i64 * window.height as i64;
+    if area <= 0 {
+        return None;
+    }
+    let mut best: Option<(usize, i64)> = None;
+    for (index, monitor) in monitors.iter().enumerate() {
+        let left = window.x.max(monitor.x);
+        let top = window.y.max(monitor.y);
+        let right = (window.x + window.width).min(monitor.x + monitor.width);
+        let bottom = (window.y + window.height).min(monitor.y + monitor.height);
+        let overlap = (right - left).max(0) as i64 * (bottom - top).max(0) as i64;
+        if overlap > best.map(|(_, o)| o).unwrap_or(0) {
+            best = Some((index, overlap));
+        }
+    }
+    let (index, overlap) = best?;
+    (overlap * 10 >= area * 9).then_some(index)
+}
+
 pub fn choose_monitor(monitors: &[Rect], point: Option<(i32, i32)>, hint: Option<&Rect>) -> Option<usize> {
     if monitors.is_empty() {
         return None;
@@ -178,6 +201,23 @@ mod tests {
         assert_eq!(constrain_drag(Dock::Right, (400, 300), size, &WORK), (1876, 300));
         assert_eq!(constrain_drag(Dock::Left, (400, 300), size, &WORK), (0, 300));
         assert_eq!(constrain_drag(Dock::Float, (400, 300), size, &WORK), (400, 300));
+    }
+
+    #[test]
+    fn monitor_holding_needs_the_window_inside_one_screen() {
+        let monitors = [
+            Rect { x: 0, y: 0, width: 3200, height: 1800 },
+            Rect { x: 3200, y: 153, width: 2056, height: 1329 },
+            Rect { x: -1800, y: -989, width: 1800, height: 3200 },
+        ];
+        let arena = Rect { x: 0, y: 0, width: 3200, height: 1800 };
+        assert_eq!(monitor_holding(&monitors, &arena), Some(0));
+        // Mid-swipe: the fullscreen window is sliding between screens.
+        assert_eq!(monitor_holding(&monitors, &Rect { x: 1341, y: 0, width: 3200, height: 1800 }), None);
+        assert_eq!(monitor_holding(&monitors, &Rect { x: -3237, y: 0, width: 3200, height: 1800 }), None);
+        // A small windowed Arena on the second screen.
+        assert_eq!(monitor_holding(&monitors, &Rect { x: 3400, y: 300, width: 1600, height: 900 }), Some(1));
+        assert_eq!(monitor_holding(&monitors, &Rect { x: 0, y: 0, width: 0, height: 0 }), None);
     }
 
     #[test]
