@@ -55,7 +55,8 @@ describe('Panel', () => {
     // Lands fold into one row until opened.
     const landRow = screen.getByRole('button', { name: /Lands, 11 of 20 left/ });
     expect(landRow.textContent).toContain('11/20');
-    expect(landRow.textContent).toContain('26.8%');
+    expect(landRow.textContent).toContain('27%');
+    expect(landRow.textContent).not.toContain('26.8');
     expect(screen.queryByText('Basic lands')).toBeNull();
     fireEvent.click(landRow);
     expect(screen.getByText('Basic lands')).toBeTruthy();

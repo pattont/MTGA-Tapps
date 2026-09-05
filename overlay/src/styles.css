@@ -554,15 +554,18 @@ img {
 .row .right {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
   gap: 2px;
-  width: 64px;
-  padding: 4px 8px;
+  width: var(--band);
+  padding: 4px 4px;
+  text-align: center;
 }
 
-/* One darker band behind every row's numbers, the same width top to bottom. */
+/* One darker band behind every row's numbers, the same width top to bottom.
+   Only as wide as "12/12" needs, with the count and % centred inside it. */
 .list-body {
+  --band: 58px;
   position: relative;
 }
 
@@ -572,7 +575,7 @@ img {
   top: 0;
   bottom: 0;
   right: 0;
-  width: 64px;
+  width: var(--band);
   background: rgba(0, 0, 0, 0.28);
   pointer-events: none;
 }
@@ -694,7 +697,7 @@ img {
 }
 
 .pct {
-  text-align: right;
+  text-align: center;
   font-size: 10.5px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -798,7 +801,7 @@ img {
 }
 
 .density-compact .row .right {
-  padding: 2px 8px;
+  padding: 2px 4px;
 }
 
 .density-compact .row .nm {

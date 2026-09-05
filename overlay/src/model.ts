@@ -176,13 +176,12 @@ export function landDanger(state: OverlayState, landsInPlay: number | null): boo
   return state.land_odds['1'] < 25 && (landsInPlay ?? 0) < 4 && state.library_size > 0;
 }
 
+/** Odds are shown as whole percentages everywhere: "27%", never "26.8%". */
 export function formatPct(value: number): string {
-  return `${value.toFixed(1)}%`;
-}
-
-export function formatWhole(value: number): string {
   return `${Math.round(value)}%`;
 }
+
+export const formatWhole = formatPct;
 
 /** Break "{1}{B}{B}" into symbols; hybrid "{W/U}" stays one symbol. */
 export function manaSymbols(cost: string | null | undefined): string[] {
