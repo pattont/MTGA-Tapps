@@ -285,6 +285,12 @@ class MenuBarController(QObject):
         self.overlay_action.setCheckable(True)
         self.overlay_action.triggered.connect(self.toggle_overlay)
         self.menu.addAction(self.overlay_action)
+        # The overlay has no menu-bar icon of its own; its preferences (dock,
+        # opacity, hotkeys, ...) open from here.
+        self.overlay_settings_action = QAction("Overlay Settings…", self)
+        self.overlay_settings_action.triggered.connect(self.open_overlay_settings)
+        self.overlay_settings_action.setEnabled(False)
+        self.menu.addAction(self.overlay_settings_action)
         self.overlay.add_listener(self.signals.overlay_changed.emit)
         self.signals.overlay_changed.connect(self._sync_overlay_action)
         self._overlay_timer = QTimer(self)
@@ -414,6 +420,15 @@ class MenuBarController(QObject):
                 5000,
             )
 
+    def open_overlay_settings(self) -> None:
+        if not self.overlay.send("open-settings"):
+            self.tray.showMessage(
+                "Tapps Tracker",
+                "Turn on Show Overlay first.",
+                QSystemTrayIcon.MessageIcon.Information,
+                3000,
+            )
+
     def _poll_overlay(self) -> None:
         # Catches "Quit overlay" from the overlay's own tray so the check
         # mark (and the saved setting) follow it.
@@ -421,8 +436,10 @@ class MenuBarController(QObject):
 
     def _sync_overlay_action(self, status: dict) -> None:
         available = bool(status.get("available"))
+        running = bool(status.get("running"))
         self.overlay_action.setEnabled(available)
-        self.overlay_action.setChecked(bool(status.get("running")))
+        self.overlay_action.setChecked(running)
+        self.overlay_settings_action.setEnabled(running)
         self.overlay_action.setText(
             "Show Overlay" if available else "Show Overlay (not in this build)"
         )

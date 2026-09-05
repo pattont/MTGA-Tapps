@@ -13,7 +13,9 @@ and nothing else. Design and behaviour: `docs/plans/OVERLAY_TRACKER_PLAN.md`.
   odds); `poll.ts` the ETag/backoff poller; `tauri.ts` the door to the Rust
   side (with a browser stand-in for tests and `vite dev`).
 - `src-tauri/` — the shell. `lib.rs` owns the window (rail ↔ panel sizing,
-  docking, hotkeys, tray, click-through), `dock.rs` the pure geometry,
+  docking, hotkeys, click-through; no tray of its own — the tracker's menu bar
+  drives it by launching a second instance with `--open-settings`, `--show`
+  or `--hide`, which the single-instance guard hands over), `dock.rs` the pure geometry,
   `settings.rs` the persisted preferences (`overlay.json` in the app config
   dir), `arena.rs` the once-a-second "is Arena in front" probe.
 

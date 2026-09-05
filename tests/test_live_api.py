@@ -827,3 +827,18 @@ def test_games_list_keeps_the_sessions_games_past_midnight(tmp_path):
     payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
     ids = {game["id"] for game in payload["games"]}
     assert ids == {"S1:match:1:game:1", "SH:match:10:game:1"}
+
+
+def test_games_list_always_has_the_most_recent_game(tmp_path):
+    """A fresh session with nothing played today still gets the last game,
+    so the scoreboard's "Last game: …" line has something to say."""
+    store = _store(tmp_path)
+    conn = store.connect()
+    _seed_history(conn, [("SH:match:1:game:1", "Skellies", "Old Foe", None, "win", "2026-08-30")])
+    with conn:
+        store._upsert_live_status(
+            conn, {"session_id": "S9", "updated_at": datetime.now().isoformat(), "in_game": 0}
+        )
+    store.close()
+    payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+    assert [game["id"] for game in payload["games"]] == ["SH:match:1:game:1"]

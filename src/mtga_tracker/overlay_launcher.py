@@ -281,6 +281,36 @@ class OverlayManager:
             self._last_error = None
             return True
 
+    #: Flags the running overlay understands from a second launch (its
+    #: single-instance guard hands the arguments over and the second copy
+    #: exits): open the ⚙ flyout, show, hide.
+    REQUESTS = {"open-settings": "--open-settings", "show": "--show", "hide": "--hide"}
+
+    def send(self, request: str) -> bool:
+        """Ask the running overlay to do something (from the tracker's menu)."""
+        flag = self.REQUESTS.get(request)
+        if flag is None:
+            raise ValueError(f"Unknown overlay request: {request!r}")
+        with self._lock:
+            if not self.running:
+                return False
+            binary = self.binary
+            if binary is None:
+                return False
+            try:
+                self._popen(
+                    [str(binary), flag],
+                    cwd=str(binary.parent),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    **_detached_kwargs(),
+                )
+            except OSError as exc:
+                self._last_error = f"Could not reach the overlay: {exc}"
+                return False
+        return True
+
     def stop(self, *, timeout: float = 3.0) -> None:
         with self._lock:
             process = self._process

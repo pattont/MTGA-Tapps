@@ -8,7 +8,8 @@ Endpoints (all under /api/settings):
 - GET  /api/settings           -> {tracker, deck_ai, deck_finder, platform, overlay}
 - POST /api/settings/deck-ai   -> save AI provider/keys/models
 - POST /api/settings/deck-finder -> save the creator lists
-- POST /api/settings/overlay   -> {enabled} start/stop the in-game overlay
+- POST /api/settings/overlay   -> {enabled} start/stop the in-game overlay, or
+                                  {request: "open-settings"} to open its ⚙ flyout
 """
 
 from __future__ import annotations
@@ -163,9 +164,14 @@ def _overlay_status() -> Dict[str, Any]:
 def _set_overlay_enabled(payload: Dict[str, Any]) -> Dict[str, Any]:
     from .overlay_launcher import get_manager
 
+    manager = get_manager()
+    if "request" in payload:
+        # e.g. {"request": "open-settings"} — the overlay's ⚙ flyout.
+        if not manager.send(str(payload["request"])):
+            raise ValueError("The overlay is not running.")
+        return manager.status()
     if "enabled" not in payload:
         raise ValueError("'enabled' is required")
-    manager = get_manager()
     enabled = bool(payload.get("enabled"))
     if enabled and not manager.available:
         raise ValueError("The overlay is not included in this build.")

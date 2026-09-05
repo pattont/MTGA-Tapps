@@ -15,7 +15,8 @@
   Arena isn't in front, with opacity, click-through, density, and per-platform hotkeys
   (`Alt+Shift+T` / `⌥⇧T` toggles the panel, `Alt+Shift+H` / `⌥⇧H` hides)
   in its own ⚙ menu. Enable it from Settings → In-game overlay or the
-  menu-bar icon's Show Overlay. It is a separate native app (Tauri v2,
+  menu bar's Show Overlay; Overlay Settings… in the same menu opens its ⚙
+  flyout — the overlay adds no menu-bar icon of its own. It is a separate native app (Tauri v2,
   Preact page) that polls `GET /api/overlay` with ETags — nothing else, and
   never the game — so it costs the tracker nothing. Release builds include
   it; building from source needs Rust (`scripts/build_overlay.sh`).

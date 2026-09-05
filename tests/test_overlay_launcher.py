@@ -126,6 +126,28 @@ def test_manager_reports_a_missing_binary(tmp_path, monkeypatch):
     assert "not included" in status["error"]
 
 
+def test_send_launches_a_second_instance_with_the_flag(tmp_path):
+    binary = _fake_binary(tmp_path)
+    launched = []
+
+    def popen(args, **kwargs):
+        process = FakeProcess(args, **kwargs)
+        launched.append(process)
+        return process
+
+    manager = OverlayManager(binary=binary, settings_path=tmp_path / "settings.json", popen=popen, log_dir=tmp_path)
+    assert manager.send("open-settings") is False  # not running yet
+    manager.set_enabled(True)
+    assert manager.send("open-settings") is True
+    assert launched[-1].args == [str(binary), "--open-settings"]
+    assert manager.running is True  # the request never replaces the real process
+    with pytest.raises(ValueError):
+        manager.send("dance")
+
+    code, body = settings_api.handle_post("/api/settings/overlay", {"request": "open-settings"})
+    assert code == 400  # the global manager (no binary here) is not running
+
+
 def test_refresh_turns_the_setting_off_when_the_overlay_quits_itself(tmp_path):
     binary = _fake_binary(tmp_path)
     processes = []

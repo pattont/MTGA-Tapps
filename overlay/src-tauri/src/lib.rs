@@ -3,7 +3,7 @@
 //! One always-on-top, frameless, transparent window that switches between
 //! the rail and the panel layout, docks flush to a screen edge, and answers
 //! the page's commands. The page (Preact) owns everything that is drawn; this
-//! side owns the window, the tray, the global hotkeys, the Arena poll, and
+//! side owns the window, the global hotkeys, the Arena poll, and
 //! the settings file.
 
 mod arena;
@@ -15,8 +15,6 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewWindow, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -33,11 +31,11 @@ const ARENA_POLL: Duration = Duration::from_secs(1);
 struct Runtime {
     layout: Layout,
     pinned: bool,
-    /// The player hid it (hotkey / tray); stays hidden until they show it.
+    /// The player hid it (hotkey / tracker menu); stays hidden until they show it.
     hidden_by_user: bool,
     /// Hidden because Arena is not running, or not in front (setting).
     hidden_for_arena: bool,
-    /// Shown regardless of Arena while the tray's Settings… flyout is open.
+    /// Shown regardless of Arena while a flyout opened from the tracker's menu is up.
     force_show: bool,
     /// The monitor the window was last placed on. Sticky: it only changes
     /// when Arena's window turns up on another one.
@@ -360,7 +358,6 @@ fn toggle_hidden(app: &AppHandle) {
     }
     refresh_visibility(app);
     emit_layout(app);
-    sync_tray(app);
 }
 
 fn save_settings(app: &AppHandle) {
@@ -404,44 +401,16 @@ fn register_hotkeys(app: &AppHandle) {
 }
 
 // ---------------------------------------------------------------------------
-// Tray
+// Requests from the tracker (a second launch with flags; see run())
 // ---------------------------------------------------------------------------
 
-const TRAY_SHOW: &str = "tray-show";
-const TRAY_DOCK_LEFT: &str = "tray-dock-left";
-const TRAY_DOCK_RIGHT: &str = "tray-dock-right";
-const TRAY_DOCK_FLOAT: &str = "tray-dock-float";
-const TRAY_SETTINGS: &str = "tray-settings";
-const TRAY_QUIT: &str = "tray-quit";
-
-fn build_tray(app: &AppHandle) -> tauri::Result<()> {
-    let (dock, visible) = {
-        let state = app.state::<AppState>();
-        let settings = state.settings.lock().unwrap();
-        let runtime = state.runtime.lock().unwrap();
-        (settings.dock, !runtime.hidden_by_user)
-    };
-    let show = CheckMenuItem::with_id(app, TRAY_SHOW, "Show Overlay", true, visible, None::<&str>)?;
-    let left = CheckMenuItem::with_id(app, TRAY_DOCK_LEFT, "Left edge", true, dock == Dock::Left, None::<&str>)?;
-    let right = CheckMenuItem::with_id(app, TRAY_DOCK_RIGHT, "Right edge", true, dock == Dock::Right, None::<&str>)?;
-    let float = CheckMenuItem::with_id(app, TRAY_DOCK_FLOAT, "Floating", true, dock == Dock::Float, None::<&str>)?;
-    let dock_menu = Submenu::with_items(app, "Dock", true, &[&left, &right, &float])?;
-    let settings_item = MenuItem::with_id(app, TRAY_SETTINGS, "Settings…", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, TRAY_QUIT, "Quit Overlay", true, None::<&str>)?;
-    let menu = Menu::with_items(
-        app,
-        &[&show, &PredefinedMenuItem::separator(app)?, &dock_menu, &settings_item, &PredefinedMenuItem::separator(app)?, &quit],
-    )?;
-    let mut builder = TrayIconBuilder::with_id("main")
-        .menu(&menu)
-        .show_menu_on_left_click(true)
-        .tooltip("Tapps Tracker")
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            TRAY_SHOW => toggle_hidden(app),
-            TRAY_DOCK_LEFT => set_dock(app, Dock::Left),
-            TRAY_DOCK_RIGHT => set_dock(app, Dock::Right),
-            TRAY_DOCK_FLOAT => set_dock(app, Dock::Float),
-            TRAY_SETTINGS => {
+/// The tracker's menu bar drives the overlay by starting a second instance
+/// with a flag; the single-instance plugin hands those arguments here and
+/// the second instance exits. No tray of our own — one menu-bar icon.
+fn handle_request(app: &AppHandle, args: &[String]) {
+    for arg in args {
+        match arg.as_str() {
+            "--open-settings" => {
                 {
                     let state = app.state::<AppState>();
                     let mut runtime = state.runtime.lock().unwrap();
@@ -449,61 +418,29 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                     // Reachable without Arena: shown until the flyout closes.
                     runtime.force_show = true;
                 }
-                sync_tray(app);
                 refresh_visibility(app);
                 emit_layout(app);
                 let _ = app.emit("overlay-open-settings", ());
             }
-            TRAY_QUIT => app.exit(0),
-            _ => {}
-        });
-    if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone());
-    }
-    builder.build(app)?;
-    Ok(())
-}
-
-/// Re-tick the tray's check items after a change from the page or a hotkey.
-fn sync_tray(app: &AppHandle) {
-    let Some(tray) = app.tray_by_id("main") else { return };
-    let (dock, visible) = {
-        let state = app.state::<AppState>();
-        let settings = state.settings.lock().unwrap();
-        let runtime = state.runtime.lock().unwrap();
-        (settings.dock, !runtime.hidden_by_user)
-    };
-    // Rebuilding the small menu is simpler and cheaper than holding item handles.
-    if let Ok(show) = CheckMenuItem::with_id(app, TRAY_SHOW, "Show Overlay", true, visible, None::<&str>) {
-        if let (Ok(left), Ok(right), Ok(float)) = (
-            CheckMenuItem::with_id(app, TRAY_DOCK_LEFT, "Left edge", true, dock == Dock::Left, None::<&str>),
-            CheckMenuItem::with_id(app, TRAY_DOCK_RIGHT, "Right edge", true, dock == Dock::Right, None::<&str>),
-            CheckMenuItem::with_id(app, TRAY_DOCK_FLOAT, "Floating", true, dock == Dock::Float, None::<&str>),
-        ) {
-            if let (Ok(dock_menu), Ok(settings_item), Ok(quit), Ok(sep1), Ok(sep2)) = (
-                Submenu::with_items(app, "Dock", true, &[&left, &right, &float]),
-                MenuItem::with_id(app, TRAY_SETTINGS, "Settings…", true, None::<&str>),
-                MenuItem::with_id(app, TRAY_QUIT, "Quit Overlay", true, None::<&str>),
-                PredefinedMenuItem::separator(app),
-                PredefinedMenuItem::separator(app),
-            ) {
-                if let Ok(menu) = Menu::with_items(app, &[&show, &sep1, &dock_menu, &settings_item, &sep2, &quit]) {
-                    let _ = tray.set_menu(Some(menu));
+            "--show" => {
+                {
+                    let state = app.state::<AppState>();
+                    state.runtime.lock().unwrap().hidden_by_user = false;
                 }
+                refresh_visibility(app);
+                emit_layout(app);
             }
+            "--hide" => {
+                {
+                    let state = app.state::<AppState>();
+                    state.runtime.lock().unwrap().hidden_by_user = true;
+                }
+                refresh_visibility(app);
+                emit_layout(app);
+            }
+            _ => {}
         }
     }
-}
-
-fn set_dock(app: &AppHandle, dock: Dock) {
-    {
-        let state = app.state::<AppState>();
-        state.settings.lock().unwrap().dock = dock;
-    }
-    save_settings(app);
-    apply_geometry(app);
-    emit_layout(app);
-    sync_tray(app);
 }
 
 // ---------------------------------------------------------------------------
@@ -573,13 +510,12 @@ fn get_settings(state: tauri::State<AppState>) -> Settings {
 
 #[tauri::command]
 fn update_settings(app: AppHandle, state: tauri::State<AppState>, settings: Settings) -> Settings {
-    let (dock_changed, hotkeys_changed, next) = {
+    let (hotkeys_changed, next) = {
         let mut current = state.settings.lock().unwrap();
         let next = settings.clamped();
-        let dock_changed = current.dock != next.dock;
         let hotkeys_changed = current.hotkeys() != next.hotkeys();
         *current = next.clone();
-        (dock_changed, hotkeys_changed, next)
+        (hotkeys_changed, next)
     };
     save_settings(&app);
     if hotkeys_changed {
@@ -587,9 +523,6 @@ fn update_settings(app: AppHandle, state: tauri::State<AppState>, settings: Sett
     }
     apply_geometry(&app);
     apply_click_through(&app);
-    if dock_changed {
-        sync_tray(&app);
-    }
     emit_layout(&app);
     next
 }
@@ -669,7 +602,6 @@ fn hide_overlay(app: AppHandle) {
     }
     refresh_visibility(&app);
     emit_layout(&app);
-    sync_tray(&app);
 }
 
 #[tauri::command]
@@ -678,7 +610,7 @@ fn quit_overlay(app: AppHandle) {
     app.exit(0);
 }
 
-/// The ⚙ flyout closed: a window the tray forced open goes back to
+/// The ⚙ flyout closed: a window the tracker's menu forced open goes back to
 /// following Arena.
 #[tauri::command]
 fn flyout_closed(app: AppHandle) {
@@ -722,15 +654,8 @@ fn api_url_from_args() -> Option<String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            // A second launch just shows the first one.
-            diag::log(format!("second instance asked to show us: {args:?}"));
-            {
-                let state = app.state::<AppState>();
-                state.runtime.lock().unwrap().hidden_by_user = false;
-            }
-            refresh_visibility(app);
-            emit_layout(app);
-            sync_tray(app);
+            diag::log(format!("request from a second launch: {args:?}"));
+            handle_request(app, &args);
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .on_page_load(|webview, payload| {
@@ -781,7 +706,7 @@ pub fn run() {
                 settings_path,
             });
             // No Dock icon, no app switcher entry: the overlay is a HUD, and
-            // the tray icon is its only chrome.
+            // the tracker's menu bar is its only chrome.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let handle = app.handle().clone();
@@ -802,10 +727,6 @@ pub fn run() {
                 diag::log("no main window — the window failed to build");
             }
             apply_geometry(&handle);
-            match build_tray(&handle) {
-                Ok(()) => diag::log("tray built"),
-                Err(err) => diag::log(format!("tray failed: {err}")),
-            }
             register_hotkeys(&handle);
             refresh_visibility(&handle);
             start_arena_poll(handle.clone());

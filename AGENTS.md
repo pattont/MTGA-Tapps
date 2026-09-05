@@ -15,7 +15,8 @@ Repo layout:
 - `src/mtga_deck_downloader/`: the bundled Deck Finder companion tool.
 - `ui/`: React/Vite dashboard frontend (built to the gitignored `ui/dist`).
 - `overlay/`: the in-game overlay, a Tauri v2 app — Rust shell in `overlay/src-tauri/`
-  (window, docking, hotkeys, tray, Arena probe) and a Preact page in `overlay/src/`.
+  (window, docking, hotkeys, Arena probe; no tray — the tracker menu drives it via a
+  second launch with `--open-settings`/`--show`/`--hide`) and a Preact page in `overlay/src/`.
   It talks to the tracker only through `GET /api/overlay`; the Python side that launches
   it is `src/mtga_tracker/overlay_launcher.py`. See `overlay/README.md`.
 - `tests/`: pytest suite, including `tests/deck_downloader/`. `tests/deprecated/` holds
