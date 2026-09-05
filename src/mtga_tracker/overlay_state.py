@@ -119,6 +119,10 @@ def build_overlay_state(
 
     return {
         "game_active": bool(game_active),
+        # Set by the tracker between the game's end and Arena's return to
+        # Home: the final library stays on screen until the player leaves
+        # the results screen.
+        "game_over": False,
         "mid_game_attach": bool(mid_game_attach),
         "deck_name": deck_name,
         "format_label": format_label,

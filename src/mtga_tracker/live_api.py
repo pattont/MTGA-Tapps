@@ -416,9 +416,13 @@ def _latest_event_game_id(
     return str(row[0]) if row and row[0] else None
 
 
-def _games_payload(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
-    """Today's finished games, newest first, ready to link to #/game/<id>."""
+def _games_payload(conn: sqlite3.Connection, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Today's finished games plus this tracker session's, newest first,
+    ready to link to #/game/<id>. The session's games matter past midnight:
+    a game that started at 23:58 must still be the "previous game" — with its
+    outcome — at 00:05, not vanish because the calendar day rolled over."""
     today = datetime.now().strftime("%Y-%m-%d")
+    session_prefix = f"{session_id}:%" if session_id else ""
     return _dict_rows(
         conn.execute(
             """
@@ -438,11 +442,11 @@ def _games_payload(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
             JOIN matches m ON m.id = g.match_id
             LEFT JOIN participants p ON p.game_id = g.id AND p.role = 'player'
             LEFT JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
-            WHERE date(g.started_at) = ?
+            WHERE date(g.started_at) = ? OR (? != '' AND g.id LIKE ?)
             ORDER BY g.started_at DESC
             LIMIT 40
             """,
-            (today,),
+            (today, session_prefix, session_prefix),
         )
     )
 
@@ -637,7 +641,7 @@ def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
             },
             "now": now_payload,
             "session": _session_payload(conn, session_id),
-            "games": _games_payload(conn),
+            "games": _games_payload(conn, session_id),
             "events": events,
             "seq": seq,
         }

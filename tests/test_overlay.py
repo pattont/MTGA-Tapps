@@ -205,9 +205,21 @@ def test_overlay_state_json_from_tracker_state():
     left = {card["name"]: card["left"] for card in state["cards"]}
     assert left == {"Card900": 2, "Card901": 2}
 
-    # Between games the idle shape is written, never a stale library.
+    # The game ends: the final library stays, flagged game_over, so the
+    # overlay keeps the cards through Arena's results screen...
+    ended = json.loads(tracker._overlay_state_json(in_game=False, format_label=None, on_play=None))
+    assert ended["game_active"] is False and ended["game_over"] is True
+    assert {card["name"]: card["left"] for card in ended["cards"]} == {"Card900": 2, "Card901": 2}
+    assert ended["deck_name"] == "Skellies"
+
+    # ...until Arena changes scene (the results screen is gone), which
+    # drops it and asks the heartbeat to write the idle row right away.
+    tracker._parse_match_metadata(
+        '[UnityCrossThreadLogger]Client.SceneChange {"fromSceneName":"None","toSceneName":"Home","initiator":"System"}'
+    )
+    assert tracker._live_status_dirty is True
     idle = json.loads(tracker._overlay_state_json(in_game=False, format_label=None, on_play=None))
-    assert idle["game_active"] is False and idle["cards"] == []
+    assert idle["game_active"] is False and idle["game_over"] is False and idle["cards"] == []
 
 
 # --------------------------------------------------------------------------

@@ -8,7 +8,8 @@
   odds per card (within 2 / within 3 on hover), land drops for the next one,
   two, and three draws, a Play/Draw pill, and sort by odds, mana value, or
   name. Lands group into Basic / Nonbasic rows by default; in Brawl, drawn
-  singletons collapse into a Drawn group. Shows only while Arena is running,
+  singletons collapse into a Drawn group. The final library stays up (marked
+  FINAL) through Arena's results screen and clears when you leave it. Shows only while Arena is running,
   on Arena's screen (over a fullscreen Arena too); docks left or right (or
   floats), pins or slides back into the rail when idle, steps aside when
   Arena isn't in front, with opacity, click-through, density, and per-platform hotkeys
@@ -18,6 +19,10 @@
   Preact page) that polls `GET /api/overlay` with ETags — nothing else, and
   never the game — so it costs the tracker nothing. Release builds include
   it; building from source needs Rust (`scripts/build_overlay.sh`).
+- **Fixed: the Live Scoreboard lost the previous game at midnight.** Its
+  "today's games" list went by calendar day, so a game played at 23:58 had
+  no outcome and no record at 00:05 and the Previous Game chip went blank.
+  The list now also carries the current tracker session's games.
 - **`GET /api/overlay`**: the library the tracker knows (deck minus what has
   left it, from the kept opening hand on), per-card hypergeometric odds,
   land-drop odds, format, opponent, turn, play/draw, and the head-to-head

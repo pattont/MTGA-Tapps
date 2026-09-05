@@ -160,6 +160,11 @@ export function shortFormat(label: string | null | undefined): string {
   return text;
 }
 
+/** Whether the panel has a library to show: live, or frozen on the results screen. */
+export function showsLibrary(state: OverlayState | null | undefined): boolean {
+  return Boolean(state && !state.mid_game_attach && state.cards.length > 0 && (state.game_active || state.game_over));
+}
+
 export function oddsTone(value: number): 'hot' | 'warm' | 'cold' {
   if (value >= 10) return 'hot';
   if (value >= 5) return 'warm';

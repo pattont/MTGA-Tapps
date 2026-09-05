@@ -14,6 +14,8 @@ export interface OverlayCard {
 
 export interface OverlayState {
   game_active: boolean;
+  /** The game ended but Arena is still on the results screen: the final library stays up. */
+  game_over: boolean;
   mid_game_attach: boolean;
   deck_name: string | null;
   format_label: string | null;

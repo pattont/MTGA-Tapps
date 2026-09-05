@@ -83,6 +83,16 @@ describe('Panel', () => {
     expect(onHover).toHaveBeenLastCalledWith(null, null);
   });
 
+  it('keeps the final library up on the results screen', () => {
+    const payload = inGamePayload();
+    payload.state = { ...payload.state!, game_active: false, game_over: true };
+    const { container } = render(<Panel {...panelProps({ payload })} />);
+    expect(screen.getByText('Mono-Red Aggro')).toBeTruthy();
+    expect(screen.getByText('FINAL')).toBeTruthy();
+    expect(screen.getByText(/Game over · Std\. BO1 Ranked/)).toBeTruthy();
+    expect(container.querySelectorAll('.row').length).toBeGreaterThan(5);
+  });
+
   it('has empty states for idle and offline', () => {
     const { container, rerender } = render(<Panel {...panelProps({ payload: idlePayload() })} />);
     expect(screen.getByText(/Waiting for a match/)).toBeTruthy();

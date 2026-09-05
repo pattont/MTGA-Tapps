@@ -1093,6 +1093,11 @@ class TrackerOpeningDeckMixin:
         format_updated = False
         scene_context = data.get("context")
         scene_target = data.get("toSceneName")
+        if scene_target and not from_backfill:
+            # Any scene change after a game means the results screen is gone
+            # (Arena logs the duel scene as "None" -> "Home"): the overlay
+            # drops the finished game's library.
+            self._overlay_left_results_screen()
         if scene_target == "Home":
             # Entering Home abandons the previously visited event queue. Without
             # clearing this, a later Play match can inherit a stale Midweek label.

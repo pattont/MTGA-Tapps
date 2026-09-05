@@ -39,6 +39,7 @@ export function inGameState(): OverlayState {
   const landsLeft = 11;
   return {
     game_active: true,
+    game_over: false,
     mid_game_attach: false,
     deck_name: 'Mono-Red Aggro',
     format_label: 'Standard Best-of-1 (Ranked)',

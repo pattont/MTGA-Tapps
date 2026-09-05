@@ -2876,6 +2876,14 @@ class AnalyticsStore:
                 (needle, replacement, session_id, like),
             )
 
+    def write_live_status(self, live: Dict[str, Any]) -> None:
+        """Replace the live_status row outright (no console line attached)."""
+        conn = self.connect()
+        if conn is None:
+            return
+        with conn:
+            self._upsert_live_status(conn, live)
+
     def touch_live_status(self, session_id: str, now: datetime) -> None:
         """Idle heartbeat: bump updated_at so the dashboard can tell a quiet
         tracker from a stopped one. Creates the row if it doesn't exist."""

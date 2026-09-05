@@ -221,7 +221,9 @@ export function App() {
   // next game starts it comes back the way it was (open, and pinned or not).
   const restoreAfterGame = useRef<{ pinned: boolean } | null>(null);
   const wasActive = useRef<boolean | null>(null);
-  const gameActive = Boolean(payload?.state?.game_active) && !payload?.state?.mid_game_attach;
+  // "Active" for the fold-away rule includes the results screen: the
+  // final library stays up until Arena leaves it (game_over clears).
+  const gameActive = Boolean(payload?.state && (payload.state.game_active || payload.state.game_over) && !payload.state.mid_game_attach);
   useEffect(() => {
     const before = wasActive.current;
     wasActive.current = gameActive;

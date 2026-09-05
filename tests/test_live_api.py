@@ -795,3 +795,35 @@ def test_frozen_last_game_not_used_while_in_game(tmp_path):
     assert now_block["last_game_frozen"] is False
     assert now_block["deck_name"] == "Live Deck"
     store.close()
+
+
+def test_games_list_keeps_the_sessions_games_past_midnight(tmp_path):
+    """23:58 → 00:05: the game just played is still the "previous game" with
+    its outcome, even though the calendar day rolled over. Today's games from
+    other sessions still show; older sessions' games do not."""
+    store = _store(tmp_path)
+    conn = store.connect()
+    today = datetime.now().strftime("%Y-%m-%d")
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    conn.execute(
+        "INSERT OR IGNORE INTO tracker_sessions (id, started_at) VALUES ('S1', ?)",
+        (f"{yesterday}T23:40:00",),
+    )
+    _seed_history(
+        conn,
+        [
+            ("S1:match:1:game:1", "Skellies", "Villain", None, "win", yesterday),
+            ("SH:match:9:game:1", "Skellies", "Old Foe", None, "loss", yesterday),
+            ("SH:match:10:game:1", "Skellies", "New Foe", None, "win", today),
+        ],
+    )
+    with conn:
+        store._upsert_live_status(
+            conn,
+            {"session_id": "S1", "updated_at": datetime.now().isoformat(), "in_game": 0},
+        )
+    store.close()
+
+    payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+    ids = {game["id"] for game in payload["games"]}
+    assert ids == {"S1:match:1:game:1", "SH:match:10:game:1"}

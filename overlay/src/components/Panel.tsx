@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'preact/hooks';
-import { buildSections, formatPct, formatWhole, oddsTone, shortFormat, typeClass, type Row } from '../model';
+import { buildSections, formatPct, formatWhole, oddsTone, shortFormat, showsLibrary, typeClass, type Row } from '../model';
 import type { Link, OverlayPayload, Settings, SortKey } from '../types';
 import { Chevron, Gear, Pin } from './Icons';
 import { ManaCost } from './ManaCost';
@@ -75,7 +75,7 @@ export function Panel(props: Props) {
   const [showDrawn, setShowDrawn] = useState(false);
   const pips = state ? deckColors(state.cards) : [];
   const h2h = payload?.head_to_head;
-  const active = Boolean(state?.game_active) && !state?.mid_game_attach && (state?.library_size ?? 0) > 0;
+  const active = showsLibrary(state);
 
   return (
     <div class={`panel density-${settings.density}`} role="group" aria-label="Deck panel">
@@ -93,6 +93,7 @@ export function Panel(props: Props) {
           </b>
           {active && state ? (
             <span>
+              {state.game_over ? 'Game over · ' : ''}
               {shortFormat(state.format_label)}
               {state.opponent_name ? ` · vs ${state.opponent_name}` : ''}
               {h2h ? ` (${h2h.wins}–${h2h.losses})` : ''}
@@ -150,7 +151,9 @@ export function Panel(props: Props) {
                 </button>
               ))}
             </span>
-            {state.on_play === null ? null : (
+            {state.game_over ? (
+              <span class="pd over">FINAL</span>
+            ) : state.on_play === null ? null : (
               <span class={`pd ${state.on_play ? 'play' : 'draw'}`}>{state.on_play ? 'PLAY' : 'DRAW'}</span>
             )}
             <span class="lib">

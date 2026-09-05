@@ -1,5 +1,5 @@
 import appIcon from '../icons/app.png';
-import { formatWhole, landDanger } from '../model';
+import { formatWhole, landDanger, showsLibrary } from '../model';
 import type { Link, OverlayPayload } from '../types';
 import { Gear } from './Icons';
 
@@ -15,7 +15,7 @@ interface Props {
 /** The 44px rail: icon (drag handle), turn, land %, library, DECK, gear. */
 export function Rail({ payload, link, landsInPlay, onOpenPanel, onOpenSettings, onDragStart }: Props) {
   const state = payload?.state ?? null;
-  const active = Boolean(state?.game_active) && !state?.mid_game_attach && (state?.library_size ?? 0) > 0;
+  const active = showsLibrary(state);
   const status =
     link !== 'online' || payload?.tracker.state === 'offline'
       ? 'Tracker not running'

@@ -499,6 +499,15 @@ class TrackerAnalyticsMixin:
         g = self.game_state
         now = self._now().isoformat()
         if not in_game:
+            # The game just ended: keep the final library on screen (marked
+            # game_over) until Arena goes back to Home, which clears it.
+            frozen = getattr(self, "_last_in_game_overlay_state", None)
+            if frozen:
+                ended = dict(frozen)
+                ended["game_active"] = False
+                ended["game_over"] = True
+                ended["updated_at"] = now
+                return json.dumps(ended)
             return json.dumps(idle_overlay_state(game_active=False, updated_at=now))
         if getattr(g, "mid_game_attach", False):
             return json.dumps(
@@ -539,7 +548,16 @@ class TrackerAnalyticsMixin:
             opponent_commanders=g.opponent_commanders,
             updated_at=now,
         )
+        self._last_in_game_overlay_state = state
         return json.dumps(state, separators=(",", ":"))
+
+    def _overlay_left_results_screen(self) -> None:
+        """Arena went back to Home: the finished game's library comes off
+        the overlay at the next live-status write (forced by the heartbeat)."""
+        if getattr(self, "_last_in_game_overlay_state", None) is None:
+            return
+        self._last_in_game_overlay_state = None
+        self._live_status_dirty = True
 
     def _live_opponent_card_names(self) -> Optional[str]:
         """JSON list of distinct opponent card names revealed this game —
@@ -577,15 +595,22 @@ class TrackerAnalyticsMixin:
 
     def _live_heartbeat(self) -> None:
         """Bump live_status.updated_at every few seconds while idle, so the
-        dashboard can tell a quiet tracker from a stopped one."""
+        dashboard can tell a quiet tracker from a stopped one. When something
+        changed the live row without a console line to carry it (the overlay
+        state after Arena returns to Home), write the whole row instead."""
         now_monotonic = time.monotonic()
+        dirty = getattr(self, "_live_status_dirty", False)
         last = getattr(self, "_last_live_heartbeat", 0.0)
-        if now_monotonic - last < 5.0:
+        if not dirty and now_monotonic - last < 5.0:
             return
         self._last_live_heartbeat = now_monotonic
+        self._live_status_dirty = False
         try:
-            self._analytics_store().touch_live_status(self.session_id, datetime.now())
-        except (OSError, sqlite3.Error):
+            if dirty:
+                self._analytics_store().write_live_status(self._live_status_snapshot())
+            else:
+                self._analytics_store().touch_live_status(self.session_id, datetime.now())
+        except (OSError, sqlite3.Error, TypeError, ValueError):
             return
 
     def _record_raw_payload_snapshot(self, payload_type: str, payload_text: str) -> None:

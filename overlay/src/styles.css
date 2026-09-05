@@ -436,6 +436,12 @@ img {
   background: rgba(95, 212, 196, 0.12);
 }
 
+.tools .pd.over {
+  color: var(--muted);
+  border-color: var(--border);
+  background: var(--panel-strong);
+}
+
 .tools .pd.draw {
   color: #b79df7;
   border-color: rgba(183, 157, 247, 0.5);
