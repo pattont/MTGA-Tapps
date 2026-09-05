@@ -456,6 +456,27 @@ class TrackerAnalyticsMixin:
         self._overlay_deck_names_cache = (cache_key, names)
         return names
 
+    def _overlay_sideboard_names(self) -> List[str]:
+        """The submitted sideboard as one card name per copy (cached like the
+        maindeck)."""
+        ids = list(getattr(self.game_state, "submitted_sideboard_cards", None) or [])
+        if not ids:
+            return []
+        cache_key = (len(ids), ids[0], ids[-1])
+        cached = getattr(self, "_overlay_sideboard_names_cache", None)
+        if cached and cached[0] == cache_key:
+            return cached[1]
+        names: List[str] = []
+        for arena_id in ids:
+            try:
+                name = str(self.card_db.get_card_name(int(arena_id)) or "").strip()
+            except Exception:
+                name = ""
+            if name and not name.startswith("Card #"):
+                names.append(name)
+        self._overlay_sideboard_names_cache = (cache_key, names)
+        return names
+
     def _overlay_card_info(self, name: str) -> tuple:
         """(type_category, mana_cost, mana_value) for one deck card name."""
         cache = getattr(self, "_overlay_card_info_cache", None)
@@ -468,7 +489,10 @@ class TrackerAnalyticsMixin:
         mana_cost: Optional[str] = None
         mana_value: Optional[float] = None
         try:
-            for arena_id in self.game_state.submitted_deck_cards or []:
+            pool = list(self.game_state.submitted_deck_cards or []) + list(
+                getattr(self.game_state, "submitted_sideboard_cards", None) or []
+            )
+            for arena_id in pool:
                 if str(self.card_db.get_card_name(int(arena_id)) or "") == name:
                     resolve = getattr(self.card_db, "get_card_type_category", None)
                     type_category = str(resolve(int(arena_id)) or "") if callable(resolve) else None
@@ -547,6 +571,7 @@ class TrackerAnalyticsMixin:
             player_commanders=g.player_commanders,
             opponent_commanders=g.opponent_commanders,
             updated_at=now,
+            sideboard=self._overlay_sideboard_names(),
         )
         self._last_in_game_overlay_state = state
         return json.dumps(state, separators=(",", ":"))

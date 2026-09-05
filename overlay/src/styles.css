@@ -79,6 +79,26 @@ img {
   align-items: stretch;
 }
 
+/* The panel window is panel + gutter; the gutter sits on the board side. */
+.gutter {
+  flex: 1 1 auto;
+  position: relative;
+  min-width: 0;
+}
+
+.dock-right .gutter {
+  order: 0;
+}
+
+.dock-right .panel {
+  order: 1;
+}
+
+.dock-left .gutter,
+.dock-float .gutter {
+  order: 1;
+}
+
 /* ---------------------------------------------------------------- rail */
 
 .rail-host {
@@ -229,6 +249,7 @@ img {
 
 .panel {
   width: 322px;
+  flex: none;
   height: 100%;
   background: rgba(24, 28, 34, var(--tint-alpha));
   border: 0;
@@ -531,15 +552,51 @@ img {
 }
 
 .row .right {
-  /* A darker column behind the numbers so they stand off the list. */
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   justify-content: center;
   gap: 2px;
-  min-width: 56px;
+  width: 64px;
   padding: 4px 8px;
+}
+
+/* One darker band behind every row's numbers, the same width top to bottom. */
+.list-body {
+  position: relative;
+}
+
+.list-body::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 64px;
   background: rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+}
+
+.list-body > * {
+  position: relative;
+}
+
+.row.land-row,
+.row.side-row {
+  width: 100%;
+  text-align: left;
+  color: inherit;
+}
+
+.row .nm svg {
+  vertical-align: -1px;
+  margin-left: 2px;
+  color: var(--subtle);
+}
+
+.names-white .row .nm,
+.names-white .sb-row .nm {
+  color: var(--text);
 }
 
 .row .cnt {
@@ -826,7 +883,7 @@ img {
 
 .hover {
   position: absolute;
-  width: 176px;
+  width: 184px;
   background: var(--panel-strong);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -837,12 +894,14 @@ img {
   pointer-events: none;
 }
 
-.hover.side-left {
-  left: 8px;
+.gutter.side-left .hover,
+.gutter.side-left .sideboard {
+  right: 6px;
 }
 
-.hover.side-right {
-  right: 8px;
+.gutter.side-right .hover,
+.gutter.side-right .sideboard {
+  left: 6px;
 }
 
 .hover b {
@@ -865,6 +924,57 @@ img {
 .hover .r span:last-child {
   color: var(--text);
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ----------------------------------------------------- sideboard flyout */
+
+.sideboard {
+  position: absolute;
+  top: 0;
+  width: 184px;
+  max-height: 100%;
+  overflow-y: auto;
+  background: rgba(24, 28, 34, var(--tint-alpha));
+  border-radius: 6px;
+  font-size: 12px;
+  scrollbar-width: thin;
+}
+
+.sb-head {
+  font-size: 8.5px;
+  letter-spacing: 0.14em;
+  color: var(--subtle);
+  text-transform: uppercase;
+  padding: 6px 8px 3px;
+}
+
+.sb-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--hairline);
+}
+
+.sb-row .body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sb-row .nm {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sb-row .cnt {
+  font-size: 13px;
+  color: var(--text);
   font-variant-numeric: tabular-nums;
 }
 

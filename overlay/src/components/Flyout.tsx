@@ -172,6 +172,17 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
         </span>
       </div>
       <div class="r">
+        <span>Card names</span>
+        <span class="seg" role="group" aria-label="Card names">
+          <button type="button" class={settings.nameColor === 'type' ? 'on' : ''} onClick={() => onChange({ ...settings, nameColor: 'type' })}>
+            Colored by type
+          </button>
+          <button type="button" class={settings.nameColor === 'white' ? 'on' : ''} onClick={() => onChange({ ...settings, nameColor: 'white' })}>
+            White
+          </button>
+        </span>
+      </div>
+      <div class="r">
         <span>Rows</span>
         <span class="seg" role="group" aria-label="Density">
           <button type="button" class={settings.density === 'comfortable' ? 'on' : ''} onClick={() => onChange({ ...settings, density: 'comfortable' })}>

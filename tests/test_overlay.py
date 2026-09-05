@@ -191,6 +191,7 @@ def test_overlay_state_json_from_tracker_state():
     g.opponent_display_name = "ropeez"
     g.turn_number = 5
     g.submitted_deck_cards = [900] * 4 + [901] * 3
+    g.submitted_sideboard_cards = [902] * 2 + [903]
     g.starting_hand = ["Card900", "Card901"]
     g.library_departures = {"Card900": 1}
     g.library_returns = {}
@@ -204,6 +205,7 @@ def test_overlay_state_json_from_tracker_state():
     assert state["deck_size"] == 7 and state["library_size"] == 4 and state["unaccounted"] == 0
     left = {card["name"]: card["left"] for card in state["cards"]}
     assert left == {"Card900": 2, "Card901": 2}
+    assert [(c["name"], c["count"]) for c in state["sideboard"]] == [("Card902", 2), ("Card903", 1)]
 
     # The game ends: the final library stays, flagged game_over, so the
     # overlay keeps the cards through Arena's results screen...

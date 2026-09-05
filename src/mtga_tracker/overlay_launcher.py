@@ -4,7 +4,7 @@ The overlay is its own small native app (`overlay/`), built by
 `scripts/build_overlay.sh` and shipped inside the tracker bundle. This
 module is the only thing in the Python side that knows where the binary
 lives and how to run it: the menu-bar app and the dashboard's Settings page
-both go through :class:`OverlayManager`, so "Show Overlay" in the tray and
+both go through :class:`OverlayManager`, so "Start Overlay" in the menu bar and
 the "In-game overlay" toggle on the Settings page agree with each other.
 
 The overlay talks to the tracker only through the dashboard's

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { Flyout } from './components/Flyout';
 import { Panel } from './components/Panel';
 import { Rail } from './components/Rail';
-import { formatPct, type Row } from './model';
+import { formatPct, typeClass, type Row } from './model';
+import { ManaCost } from './components/ManaCost';
 import { OverlayPoller } from './poll';
 import { log, tauri } from './tauri';
 import type { Link, LayoutInfo, OverlayPayload, Settings, SortKey } from './types';
@@ -79,6 +80,7 @@ export function App() {
   const [sort, setSort] = useState<SortKey>('odds');
   const [hover, setHover] = useState<HoverCard | null>(null);
   const [flyout, setFlyout] = useState(false);
+  const [sideboardOpen, setSideboardOpen] = useState(false);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const pollerRef = useRef<OverlayPoller | null>(null);
@@ -173,6 +175,7 @@ export function App() {
   const collapse = useCallback(async () => {
     setHover(null);
     setFlyout(false);
+    setSideboardOpen(false);
     const info = await tauri.invoke<LayoutInfo>('set_layout', { layout: 'rail', contentHeight: null });
     setLayout(info);
   }, []);
@@ -342,26 +345,75 @@ export function App() {
   return (
     <div
       ref={rootRef}
-      class={`root ${dockClass} ${layout.layout === 'panel' ? 'is-panel' : 'is-rail'} ${settings.opacity > 0 ? 'has-bg' : 'no-bg'}`}
+      class={`root ${dockClass} ${layout.layout === 'panel' ? 'is-panel' : 'is-rail'} ${settings.opacity > 0 ? 'has-bg' : 'no-bg'} names-${settings.nameColor}`}
       style={{ '--tint-alpha': tintAlpha(settings.opacity), '--scale': settings.scale / 100 } as never}
       onMouseEnter={onPointerEnter}
       onMouseLeave={onPointerLeave}
     >
       {layout.layout === 'panel' ? (
-        <Panel
-          payload={payload}
-          link={link}
-          settings={settings}
-          pinned={layout.pinned}
-          dock={settings.dock}
-          sort={sort}
-          onSort={setSort}
-          onCollapse={collapse}
-          onTogglePin={togglePin}
-          onOpenSettings={() => setFlyout((v) => !v)}
-          onDragStart={dragStart}
-          onHover={onHover}
-        />
+        <>
+          <Panel
+            payload={payload}
+            link={link}
+            settings={settings}
+            pinned={layout.pinned}
+            dock={settings.dock}
+            sort={sort}
+            onSort={setSort}
+            onCollapse={collapse}
+            onTogglePin={togglePin}
+            onOpenSettings={() => setFlyout((v) => !v)}
+            onDragStart={dragStart}
+            onHover={onHover}
+            sideboardOpen={sideboardOpen}
+            onToggleSideboard={() => setSideboardOpen((v) => !v)}
+          />
+          {/* The transparent strip on the board side: the hover card and the
+              sideboard fly out here, beside the panel rather than over it. */}
+          <div class={`gutter side-${side}`}>
+            {hover ? (
+              <div class="hover" style={hoverStyle} role="tooltip">
+                <b>{hover.row.name}</b>
+                <div class="r">
+                  <span>Next draw</span>
+                  <span>{formatPct(hover.row.odds['1'])}</span>
+                </div>
+                <div class="r">
+                  <span>Within 2</span>
+                  <span>{formatPct(hover.row.odds['2'])}</span>
+                </div>
+                <div class="r">
+                  <span>Within 3</span>
+                  <span>{formatPct(hover.row.odds['3'])}</span>
+                </div>
+                <div class="r">
+                  <span>Left</span>
+                  <span>
+                    {hover.row.left} of {hover.row.total}
+                  </span>
+                </div>
+              </div>
+            ) : null}
+            {sideboardOpen && payload?.state?.sideboard?.length ? (
+              <div class="sideboard" role="dialog" aria-label="Sideboard">
+                <div class="sb-head">Sideboard</div>
+                {payload.state.sideboard.map((card) => (
+                  <div key={card.name} class="sb-row">
+                    <span class="body">
+                      <span class={`nm ${typeClass(card.type_category)}`} title={card.name}>
+                        {card.name}
+                      </span>
+                      <ManaCost cost={card.mana_cost} />
+                    </span>
+                    <span class="cnt">
+                      <b>{card.count}</b>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </>
       ) : (
         <div class="rail-host" onMouseEnter={onRailEnter} onMouseLeave={onRailLeave}>
           <Rail
@@ -377,29 +429,6 @@ export function App() {
           />
         </div>
       )}
-      {hover && layout.layout === 'panel' ? (
-        <div class={`hover side-${side}`} style={hoverStyle} role="tooltip">
-          <b>{hover.row.name}</b>
-          <div class="r">
-            <span>Next draw</span>
-            <span>{formatPct(hover.row.odds['1'])}</span>
-          </div>
-          <div class="r">
-            <span>Within 2</span>
-            <span>{formatPct(hover.row.odds['2'])}</span>
-          </div>
-          <div class="r">
-            <span>Within 3</span>
-            <span>{formatPct(hover.row.odds['3'])}</span>
-          </div>
-          <div class="r">
-            <span>Left</span>
-            <span>
-              {hover.row.left} of {hover.row.total}
-            </span>
-          </div>
-        </div>
-      ) : null}
       {flyout ? (
         <Flyout
           settings={settings}

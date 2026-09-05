@@ -438,7 +438,7 @@ function OverlayForm({
         <p className="settings-hint">
           {overlay.running ? 'Running — it shows itself when Arena is up' : 'Off'}
           {overlay.enabled && !overlay.running ? ' — it will start with the tracker next time.' : '.'}{' '}
-          Toggle it any time from the menu-bar icon (Show Overlay) or with the overlay's hotkeys:{' '}
+          Start or stop it any time from the menu-bar icon (Start / Stop Overlay) or use the overlay's hotkeys:{' '}
           {macos ? '⌥⇧T' : 'Alt+Shift+T'} opens the deck panel, {macos ? '⌥⇧H' : 'Alt+Shift+H'} hides it.
           {macos
             ? ' On macOS it sits over Arena in windowed and fullscreen-windowed modes; Arena in exclusive fullscreen covers it.'

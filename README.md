@@ -297,7 +297,7 @@ you've already drawn collapse into a **Drawn** group so the list shrinks as
 the game goes.
 
 Turn it on from **Settings → In-game overlay** or the menu-bar icon's
-**Show Overlay**. Pin it to keep it open, or leave it unpinned and it slides
+**Start Overlay**. Pin it to keep it open, or leave it unpinned and it slides
 back into the rail a few seconds after the cursor leaves. Dock it left or
 right (or float it), set its opacity, click-through, row density and hotkeys
 from its own ⚙ menu; `Alt+Shift+H` / `⌥⇧H` hides it. It exists only while

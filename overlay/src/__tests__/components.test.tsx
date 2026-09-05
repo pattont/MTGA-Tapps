@@ -24,6 +24,8 @@ function panelProps(overrides: Partial<Parameters<typeof Panel>[0]> = {}) {
     onOpenSettings: noop,
     onDragStart: noop,
     onHover: noop,
+    sideboardOpen: false,
+    onToggleSideboard: noop,
     ...overrides,
   };
 }
@@ -50,13 +52,18 @@ describe('Panel', () => {
     expect(screen.getByText('Mono-Red Aggro')).toBeTruthy();
     expect(screen.getByText('Std. BO1 Ranked · vs sansastark (1–2)')).toBeTruthy();
     expect(screen.getByText('PLAY')).toBeTruthy();
+    // Lands fold into one row until opened.
+    const landRow = screen.getByRole('button', { name: /Lands, 11 of 20 left/ });
+    expect(landRow.textContent).toContain('11/20');
+    expect(landRow.textContent).toContain('26.8%');
+    expect(screen.queryByText('Basic lands')).toBeNull();
+    fireEvent.click(landRow);
     expect(screen.getByText('Basic lands')).toBeTruthy();
     expect(screen.getByText('Nonbasic lands')).toBeTruthy();
     expect(container.querySelectorAll('.pips img').length).toBe(1);
     expect(container.querySelector('.pips img')?.getAttribute('alt')).toBe('R');
     const groups = Array.from(container.querySelectorAll('.grp')).map((g) => g.textContent);
     expect(groups[0]).toBe('Spells');
-    expect(groups[1]).toBe('Lands');
   });
 
   it('dims exhausted rows in 60-card and collapses them in Brawl', () => {
@@ -74,6 +81,7 @@ describe('Panel', () => {
   it('shows every land and reports hover boxes', () => {
     const onHover = vi.fn();
     const { container } = render(<Panel {...panelProps({ settings: { ...defaultSettings(), lands: 'all' }, onHover })} />);
+    fireEvent.click(screen.getByRole('button', { name: /^Lands,/ }));
     expect(screen.getByText('Mountain')).toBeTruthy();
     expect(screen.getByText('Rockface Village')).toBeTruthy();
     const row = container.querySelector('.row') as HTMLElement;
@@ -81,6 +89,22 @@ describe('Panel', () => {
     expect(onHover).toHaveBeenCalledWith(expect.objectContaining({ name: expect.any(String) }), expect.objectContaining({ top: expect.any(Number) }));
     fireEvent.mouseLeave(row);
     expect(onHover).toHaveBeenLastCalledWith(null, null);
+  });
+
+  it('offers the sideboard as a row when the deck has one', () => {
+    const onToggleSideboard = vi.fn();
+    const payload = inGamePayload();
+    payload.state = {
+      ...payload.state!,
+      sideboard: [
+        { name: 'Obliterating Bolt', type_category: 'Sorcery', mana_cost: '{1}{R}', mana_value: 2, count: 3, land: false },
+        { name: 'Urabrask\'s Forge', type_category: 'Artifact', mana_cost: '{2}{R}', mana_value: 3, count: 2, land: false },
+      ],
+    };
+    render(<Panel {...panelProps({ payload, onToggleSideboard })} />);
+    const row = screen.getByRole('button', { name: /Sideboard, 5 cards/ });
+    fireEvent.click(row);
+    expect(onToggleSideboard).toHaveBeenCalled();
   });
 
   it('keeps the final library up on the results screen', () => {

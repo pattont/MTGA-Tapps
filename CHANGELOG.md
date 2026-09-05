@@ -103,9 +103,11 @@ itself; a warm dashboard is faster still.
   the screen, default 70 %; the list scrolls inside), click-through,
   density, and per-platform hotkeys (`Alt+Shift+T` / `⌥⇧T`
   toggles the panel, `Alt+Shift+H` / `⌥⇧H` hides) in its own ⚙ menu. Enable
-  it from Settings → In-game overlay or the menu bar's Show Overlay; Overlay
-  Settings… in the same menu opens its ⚙ flyout — the overlay adds no
-  menu-bar icon of its own. It is a separate native app (Tauri v2, Preact
+  it from Settings → In-game overlay or the menu bar's Start Overlay; the
+  menu shows an Overlay: Running/Stopped line under the tracker's, an
+  overlay section (Start/Stop Overlay, Overlay Settings) and a tracker
+  section (Stop Tracking, Tracker Settings) — the overlay adds no menu-bar
+  icon of its own. It is a separate native app (Tauri v2, Preact
   page) that polls `GET /api/overlay` with ETags — nothing else, and never
   the game — so it costs the tracker nothing. Release builds include it;
   building from source needs Rust (`scripts/build_overlay.sh`).

@@ -258,14 +258,18 @@ class MenuBarController(QObject):
         _set_tray_tooltip(self.tray)
         self.menu = QMenu()
 
+        # Status lines. Kept enabled (a disabled item renders at half
+        # opacity on macOS and is hard to read); clicking one does nothing.
         self.status_action = QAction("Tracker: Starting", self)
         self.status_action.setIcon(_status_dot_icon(self.STATUS_COLORS["tracker-starting"]))
-        self.status_action.setEnabled(False)
         self.menu.addAction(self.status_action)
+        self.overlay_status_action = QAction("Overlay: Stopped", self)
+        self.overlay_status_action.setIcon(_status_dot_icon(self.STATUS_COLORS["tracker-stopped"]))
+        self.menu.addAction(self.overlay_status_action)
         self.menu.addSeparator()
 
         # Order matters (same on macOS and Windows): Live Scoreboard, Dashboard,
-        # Deck Finder, Settings — then the utility items.
+        # Deck Finder, Open Data Folder — then the overlay and tracker sections.
         self.show_log_action = QAction("Live Scoreboard", self)
         self.show_log_action.triggered.connect(self.open_live_log)
         self.menu.addAction(self.show_log_action)
@@ -278,16 +282,19 @@ class MenuBarController(QObject):
         self.deck_downloader_action.triggered.connect(self.open_deck_downloader)
         self.menu.addAction(self.deck_downloader_action)
 
-        # The in-game overlay is a separate process; this item and the
-        # Settings page's toggle drive the same OverlayManager.
+        self.open_data_action = QAction("Open Data Folder", self)
+        self.open_data_action.triggered.connect(self.open_data_folder)
+        self.menu.addAction(self.open_data_action)
+
+        # Overlay section. The overlay is a separate process; this item and
+        # the Settings page's toggle drive the same OverlayManager. It has no
+        # menu-bar icon of its own, so its preferences open from here too.
+        self.menu.addSeparator()
         self.overlay = get_overlay_manager()
-        self.overlay_action = QAction("Show Overlay", self)
-        self.overlay_action.setCheckable(True)
+        self.overlay_action = QAction("Start Overlay", self)
         self.overlay_action.triggered.connect(self.toggle_overlay)
         self.menu.addAction(self.overlay_action)
-        # The overlay has no menu-bar icon of its own; its preferences (dock,
-        # opacity, hotkeys, ...) open from here.
-        self.overlay_settings_action = QAction("Overlay Settings…", self)
+        self.overlay_settings_action = QAction("Overlay Settings", self)
         self.overlay_settings_action.triggered.connect(self.open_overlay_settings)
         self.overlay_settings_action.setEnabled(False)
         self.menu.addAction(self.overlay_settings_action)
@@ -297,18 +304,14 @@ class MenuBarController(QObject):
         self._overlay_timer.setInterval(3000)
         self._overlay_timer.timeout.connect(self._poll_overlay)
 
-        self.settings_action = QAction("Settings", self)
-        self.settings_action.triggered.connect(self.open_settings)
-        self.menu.addAction(self.settings_action)
-
-        self.open_data_action = QAction("Open Data Folder", self)
-        self.open_data_action.triggered.connect(self.open_data_folder)
-        self.menu.addAction(self.open_data_action)
-
+        # Tracker section.
         self.menu.addSeparator()
         self.toggle_tracker_action = QAction("Stop Tracking", self)
         self.toggle_tracker_action.triggered.connect(self.toggle_tracker)
         self.menu.addAction(self.toggle_tracker_action)
+        self.settings_action = QAction("Tracker Settings", self)
+        self.settings_action.triggered.connect(self.open_settings)
+        self.menu.addAction(self.settings_action)
 
         self.menu.addSeparator()
         self.quit_action = QAction("Quit Tapps Tracker", self)
@@ -409,10 +412,10 @@ class MenuBarController(QObject):
             self._sync_overlay_action(self.overlay.status())
         self._overlay_timer.start()
 
-    def toggle_overlay(self, checked: bool) -> None:
-        status = self.overlay.set_enabled(checked)
-        if checked and not status.get("running"):
-            self.overlay_action.setChecked(False)
+    def toggle_overlay(self) -> None:
+        turn_on = not self.overlay.running
+        status = self.overlay.set_enabled(turn_on)
+        if turn_on and not status.get("running"):
             self.tray.showMessage(
                 "Tapps Tracker",
                 status.get("error") or "The overlay could not be started.",
@@ -424,7 +427,7 @@ class MenuBarController(QObject):
         if not self.overlay.send("open-settings"):
             self.tray.showMessage(
                 "Tapps Tracker",
-                "Turn on Show Overlay first.",
+                "Start the overlay first.",
                 QSystemTrayIcon.MessageIcon.Information,
                 3000,
             )
@@ -438,10 +441,14 @@ class MenuBarController(QObject):
         available = bool(status.get("available"))
         running = bool(status.get("running"))
         self.overlay_action.setEnabled(available)
-        self.overlay_action.setChecked(running)
         self.overlay_settings_action.setEnabled(running)
-        self.overlay_action.setText(
-            "Show Overlay" if available else "Show Overlay (not in this build)"
+        if not available:
+            self.overlay_action.setText("Start Overlay (not in this build)")
+        else:
+            self.overlay_action.setText("Stop Overlay" if running else "Start Overlay")
+        self.overlay_status_action.setText("Overlay: Running" if running else "Overlay: Stopped")
+        self.overlay_status_action.setIcon(
+            _status_dot_icon(self.STATUS_COLORS["tracker-running" if running else "tracker-stopped"])
         )
 
     def toggle_tracker(self) -> None:

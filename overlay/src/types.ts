@@ -12,6 +12,15 @@ export interface OverlayCard {
   odds: Record<'1' | '2' | '3', number>;
 }
 
+export interface OverlaySideCard {
+  name: string;
+  type_category: string;
+  mana_cost: string | null;
+  mana_value: number | null;
+  count: number;
+  land: boolean;
+}
+
 export interface OverlayState {
   game_active: boolean;
   /** The game ended but Arena is still on the results screen: the final library stays up. */
@@ -32,6 +41,8 @@ export interface OverlayState {
   lands_total: number;
   land_odds: Record<'1' | '2' | '3', number>;
   cards: OverlayCard[];
+  /** The submitted sideboard, one row per distinct card (no odds). */
+  sideboard?: OverlaySideCard[];
   updated_at: string | null;
 }
 
@@ -61,6 +72,8 @@ export interface Settings {
   clickThroughWhenPinned: boolean;
   lands: 'grouped' | 'all';
   density: 'comfortable' | 'compact';
+  /** Card names in their type colour, or plain white. */
+  nameColor: 'type' | 'white';
   followArena: boolean;
   hideWhenArenaNotInFront: boolean;
   apiUrl: string;

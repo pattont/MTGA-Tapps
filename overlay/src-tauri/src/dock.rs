@@ -50,6 +50,10 @@ pub enum Layout {
 pub const RAIL_WIDTH: i32 = 44;
 pub const RAIL_HEIGHT: i32 = 210;
 pub const PANEL_WIDTH: i32 = 322;
+/// Transparent strip beside the panel, on the board side, where the hover
+/// card and the sideboard fly out to. Part of the window; clicks on the
+/// fully transparent pixels fall through on macOS.
+pub const PANEL_GUTTER: i32 = 196;
 pub const PANEL_MIN_HEIGHT: i32 = 160;
 
 /// Vertical gap kept from the work area's top and bottom when clamping.
@@ -62,7 +66,7 @@ pub fn size_for(layout: Layout, content_height: i32, work_area: &Rect, max_heigh
     match layout {
         Layout::Rail => Size { width: scaled(RAIL_WIDTH), height: scaled(RAIL_HEIGHT) },
         Layout::Panel => Size {
-            width: scaled(PANEL_WIDTH),
+            width: scaled(PANEL_WIDTH + PANEL_GUTTER),
             height: fit_height(scaled(content_height), work_area, max_height_pct),
         },
     }
@@ -180,8 +184,8 @@ mod tests {
     fn rail_and_panel_sizes() {
         assert_eq!(size_for(Layout::Rail, 9999, &WORK, 100, 100), Size { width: 44, height: RAIL_HEIGHT });
         assert_eq!(size_for(Layout::Rail, 9999, &WORK, 100, 150), Size { width: 66, height: RAIL_HEIGHT * 3 / 2 });
-        assert_eq!(size_for(Layout::Panel, 400, &WORK, 100, 150), Size { width: 483, height: 600 });
-        assert_eq!(size_for(Layout::Panel, 620, &WORK, 100, 100), Size { width: 322, height: 620 });
+        assert_eq!(size_for(Layout::Panel, 400, &WORK, 100, 150), Size { width: (322 + 196) * 3 / 2, height: 600 });
+        assert_eq!(size_for(Layout::Panel, 620, &WORK, 100, 100), Size { width: 322 + 196, height: 620 });
         // Taller than the screen -> capped with the edge margin.
         assert_eq!(size_for(Layout::Panel, 3000, &WORK, 100, 100).height, 1055 - 16);
         // The max-height setting caps a long list to a share of the screen.

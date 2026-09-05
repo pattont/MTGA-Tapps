@@ -24,6 +24,8 @@ interface Props {
   onOpenSettings: () => void;
   onDragStart: (event: MouseEvent) => void;
   onHover: (row: Row | null, box: { top: number; bottom: number } | null) => void;
+  sideboardOpen: boolean;
+  onToggleSideboard: () => void;
 }
 
 /** Deck colours from the decklist's casting costs — what the header pips show. */
@@ -72,11 +74,15 @@ function CardRow({ row, exhausted, onHover }: { row: Row; exhausted: boolean; on
 }
 
 export function Panel(props: Props) {
-  const { payload, link, settings, pinned, sort, onSort, onCollapse, onTogglePin, onOpenSettings, onDragStart, onHover } = props;
+  const { payload, link, settings, pinned, sort, onSort, onCollapse, onTogglePin, onOpenSettings, onDragStart, onHover, sideboardOpen, onToggleSideboard } = props;
   const state = payload?.state ?? null;
   const offline = link !== 'online' || payload?.tracker.state === 'offline';
   const sections = useMemo(() => (state ? buildSections(state, sort, settings.lands) : null), [state, sort, settings.lands]);
   const [showDrawn, setShowDrawn] = useState(false);
+  // Lands fold into one row (total + next-draw %) until opened.
+  const [landsOpen, setLandsOpen] = useState(false);
+  const sideboard = state?.sideboard ?? [];
+  const sideboardCount = sideboard.reduce((sum, card) => sum + card.count, 0);
   const pips = state ? deckColors(state.cards) : [];
   const h2h = payload?.head_to_head;
   const active = showsLibrary(state);
@@ -170,10 +176,37 @@ export function Panel(props: Props) {
             {sections?.spells.map((row) => (
               <CardRow key={row.key} row={row} exhausted={row.left === 0} onHover={onHover} />
             ))}
-            {sections && sections.lands.length > 0 ? <div class="grp">Lands</div> : null}
-            {sections?.lands.map((row) => (
-              <CardRow key={row.key} row={row} exhausted={row.left === 0} onHover={onHover} />
-            ))}
+            {sections && sections.lands.length > 0 ? (
+              <button
+                type="button"
+                class={`row land-row${landsOpen ? ' open' : ''}`}
+                onClick={() => setLandsOpen((v) => !v)}
+                aria-expanded={landsOpen}
+                aria-label={`Lands, ${state.lands_left} of ${state.lands_total} left`}
+              >
+                <span class="mini">
+                  <i class="mbar">
+                    <b class="fill-land" style={{ width: `${state.lands_total > 0 ? (100 * state.lands_left) / state.lands_total : 0}%` }} />
+                  </i>
+                </span>
+                <span class="body">
+                  <span class="nm land">
+                    Lands <Chevron dir={landsOpen ? 'down' : 'right'} />
+                  </span>
+                </span>
+                <span class="right">
+                  <span class="cnt">
+                    <b>{state.lands_left}</b>/{state.lands_total}
+                  </span>
+                  <span class={`pct ${state.lands_left > 0 ? oddsTone(state.land_odds['1']) : 'cold'}`}>
+                    {state.lands_left > 0 ? formatPct(state.land_odds['1']) : '—'}
+                  </span>
+                </span>
+              </button>
+            ) : null}
+            {landsOpen
+              ? sections?.lands.map((row) => <CardRow key={row.key} row={row} exhausted={row.left === 0} onHover={onHover} />)
+              : null}
             {sections && sections.drawn.length > 0 ? (
               <>
                 <button type="button" class="grp grp-toggle" onClick={() => setShowDrawn((v) => !v)} aria-expanded={showDrawn}>
@@ -181,6 +214,27 @@ export function Panel(props: Props) {
                 </button>
                 {showDrawn ? sections.drawn.map((row) => <CardRow key={row.key} row={row} exhausted onHover={onHover} />) : null}
               </>
+            ) : null}
+            {sideboardCount > 0 ? (
+              <button
+                type="button"
+                class={`row side-row${sideboardOpen ? ' open' : ''}`}
+                onClick={onToggleSideboard}
+                aria-expanded={sideboardOpen}
+                aria-label={`Sideboard, ${sideboardCount} cards`}
+              >
+                <span class="mini" />
+                <span class="body">
+                  <span class="nm other">
+                    Sideboard <Chevron dir={sideboardOpen ? 'down' : 'right'} />
+                  </span>
+                </span>
+                <span class="right">
+                  <span class="cnt">
+                    <b>{sideboardCount}</b>
+                  </span>
+                </span>
+              </button>
             ) : null}
             {state.unaccounted > 0 ? (
               <div class="note">

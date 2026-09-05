@@ -50,6 +50,10 @@ struct Runtime {
     /// exactly there is the echo of our own placement, not a user drag —
     /// otherwise the panel's clamped y would overwrite the rail's.
     placed_at: Option<(i32, i32)>,
+    /// When we last placed the window. A resize can move the window's origin
+    /// before our set_position lands (macOS keeps the bottom edge put), and
+    /// that intermediate Moved must not be mistaken for a drag and saved.
+    placed_when: Option<std::time::Instant>,
     last_arena: ArenaStatus,
 }
 
@@ -66,6 +70,7 @@ impl Default for Runtime {
             monitor: None,
             snapping: false,
             placed_at: None,
+            placed_when: None,
             last_arena: ArenaStatus::default(),
         }
     }
@@ -192,6 +197,7 @@ fn apply_geometry(app: &AppHandle) {
     let (x, y) = dock::docked_position(settings.dock, size, &area, y, float_at);
     runtime.snapping = true;
     runtime.placed_at = Some((x, y));
+    runtime.placed_when = Some(std::time::Instant::now());
     let sized = window.set_size(LogicalSize::new(size.width, size.height));
     let placed = window.set_position(LogicalPosition::new(x, y));
     runtime.snapping = false;
@@ -752,6 +758,12 @@ fn on_moved(app: &AppHandle, physical_x: i32, physical_y: i32) {
         if let Some((px, py)) = runtime.placed_at {
             // Allow a pixel of rounding between logical and physical.
             if (px - logical.x).abs() <= 1 && (py - logical.y).abs() <= 1 {
+                return;
+            }
+        }
+        if let Some(when) = runtime.placed_when {
+            // The echo of a resize we just made, not a drag.
+            if when.elapsed() < Duration::from_millis(500) {
                 return;
             }
         }

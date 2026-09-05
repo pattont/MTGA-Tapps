@@ -24,6 +24,14 @@ pub enum Lands {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+pub enum NameColor {
+    /// Card names in their type colour (creature, instant, ...).
+    Type,
+    White,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Density {
     Comfortable,
     Compact,
@@ -81,6 +89,7 @@ pub struct Settings {
     pub click_through_when_pinned: bool,
     pub lands: Lands,
     pub density: Density,
+    pub name_color: NameColor,
     pub follow_arena: bool,
     pub hide_when_arena_not_in_front: bool,
     pub api_url: String,
@@ -105,6 +114,7 @@ impl Default for Settings {
             click_through_when_pinned: false,
             lands: Lands::Grouped,
             density: Density::Comfortable,
+            name_color: NameColor::Type,
             follow_arena: true,
             hide_when_arena_not_in_front: true,
             api_url: "http://127.0.0.1:8765".into(),

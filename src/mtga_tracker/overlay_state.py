@@ -77,9 +77,11 @@ def build_overlay_state(
     player_commanders: Optional[Iterable[str]] = None,
     opponent_commanders: Optional[Iterable[str]] = None,
     updated_at: Optional[str] = None,
+    sideboard: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """Assemble the overlay payload. ``deck`` lists one entry per copy; the
-    commander is not in it (it lives in the command zone)."""
+    commander is not in it (it lives in the command zone). ``sideboard``
+    likewise lists one entry per copy and is shown as-is (no odds)."""
     totals: Counter = Counter(str(name) for name in deck if name)
     left: Counter = Counter()
     for name, total in totals.items():
@@ -117,6 +119,22 @@ def build_overlay_state(
             }
         )
 
+    side_totals: Counter = Counter(str(name) for name in (sideboard or []) if name)
+    side_cards: List[Dict[str, Any]] = []
+    for name in sorted(side_totals):
+        type_category, mana_cost, mana_value = card_info(name)
+        land = _is_land(type_category, name)
+        side_cards.append(
+            {
+                "name": name,
+                "type_category": type_category or ("Land" if land else "Other"),
+                "mana_cost": mana_cost,
+                "mana_value": mana_value,
+                "count": side_totals[name],
+                "land": land,
+            }
+        )
+
     return {
         "game_active": bool(game_active),
         # Set by the tracker between the game's end and Arena's return to
@@ -141,6 +159,7 @@ def build_overlay_state(
             str(n): _pct(odds_within(lands_left, library_size, n)) for n in ODDS_HORIZONS
         },
         "cards": cards,
+        "sideboard": side_cards,
         "updated_at": updated_at,
     }
 

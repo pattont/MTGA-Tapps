@@ -87,6 +87,7 @@ export function defaultSettings(): Settings {
     clickThroughWhenPinned: false,
     lands: 'grouped',
     density: 'comfortable',
+    nameColor: 'type',
     followArena: true,
     hideWhenArenaNotInFront: true,
     apiUrl: 'http://127.0.0.1:8765',
