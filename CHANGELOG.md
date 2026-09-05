@@ -2,46 +2,85 @@
 
 ## Unreleased
 
-- **Windows builds are harder for Defender to mistake for malware.** The
-  release build compiles PyInstaller's bootloader from source instead of
-  shipping the prebuilt one every PyInstaller-packed trojan also uses, and
-  both exes now carry a proper version resource (company, product,
-  description). `Trojan:Win32/Wacatac.*!ml` is a machine-learning false
-  positive on unsigned PyInstaller apps; QUICKSTART explains how to restore
-  a quarantined install.
-- **Faster dashboard.** Six new indexes, a set-based draw-quality pass, and a
-  cached split-card lookup: at ~1000 games the overview loads in about a
-  quarter of the time (800 ms → 230 ms), the opponent page in a fifth, All
-  Games and deck pages in under half. Existing databases pick up the indexes
-  at the next launch (a one-time ~0.3 s build). Read endpoints are also
-  memoized against a fingerprint of the analytics tables, so the dashboard's
-  periodic refreshes between games answer in under 10 ms instead of
-  recomputing everything; a finished game, a note, or an AI archetype landing
-  invalidates it immediately.
-- **Fixed: All Games flood/screw badges disagreed with the game page** for a
-  couple dozen games — the list ignored ramped lands and the real land ratio.
-  Both now use the same rules.
+### Windows installer — read this if Defender complains
+
+Windows Defender has been quarantining `MTGA Tracker.exe` from the 0.6.1
+installer as **Trojan:Win32/Wacatac.B!ml** (sometimes `.C!ml`). The tracker
+is not malware; the `!ml` suffix marks a machine-learning *guess*, not a
+match against anything known, and it fires on unsigned PyInstaller apps
+constantly. The shape of this one is exactly what the heuristics distrust:
+a freshly built, unsigned executable with no publisher that tails another
+program's log, runs a local web server, launches helper processes, and — for
+the collection exporter — reads Arena's memory.
+
+This release does the two free things that help:
+
+- **The PyInstaller bootloader is compiled from source** on the build
+  machine instead of shipping the prebuilt one that every PyInstaller-packed
+  trojan also ships, so the exe no longer shares those bytes with them.
+- **Both executables carry a real version resource** (company, product,
+  description, version) — an anonymous exe scores worse than a described
+  one.
+
+Signing the binaries is the only complete cure and it costs money every
+year, so it is not happening for a free tool; each release is instead
+submitted to Microsoft as a false positive, which clears that build within a
+day or two. If Defender has already quarantined your install: **Windows
+Security → Protection history → the Wacatac entry → Restore**, then **Allow
+on device**, or reinstall after the verdict clears. Details in QUICKSTART.
+
+### Performance
+
+Measured on a ~1000-game database. Numbers are cold loads from the tracker
+itself; a warm dashboard is faster still.
+
+- **Overview: 803 ms → 227 ms** (about a quarter of the time). All Games and
+  deck pages load in under half the time; the opponent page in about a fifth.
+- **Refreshes between games answer in ~8 ms instead of recomputing
+  everything.** Read endpoints are memoized against a fingerprint of the
+  analytics tables; the tracker's heartbeat doesn't invalidate it, while a
+  finished game, a saved note, or an AI archetype landing invalidates it
+  immediately (60-second ceiling either way).
+- How: six new indexes (participants by game/role/deck, deck cards by
+  participant and zone, opening hands and draws by participant, games by
+  match), one set-based draw-quality pass for the overview and All Games
+  instead of one query per game, and a cached split-card name lookup for
+  exports. Existing databases pick up the indexes at their next launch — a
+  one-time build of about 0.3 s.
+
+### New
+
+- **Wildcards on the Overview**, beside the deck search: common, uncommon,
+  rare, and mythic counts read from the inventory block Arena writes to its
+  log at launch and on every event join (gold, gems, and vault progress are
+  stored too). Nothing shows until the tracker has seen one.
 - **Live Scoreboard shows your lifetime record against the opponent's
   commander** in Brawl, one line per commander, hidden until you've faced it.
-- **Wildcards available on the Overview**, beside the deck search: common,
-  uncommon, rare, and mythic counts read from the inventory block Arena
-  writes to its log at launch and on every event join (gold, gems, and vault
-  progress are stored too). Nothing shows until the tracker has seen one.
-- **Fixed: opponent colour pips could stay blank until turn 7.** When Arena's
-  card database wasn't readable at the moment the tracker built its colour
-  index, the index was cached for the session with only cards from earlier
-  games. It now keeps retrying Arena's layers until they answer, looks up
-  unknown cards on demand, and basic lands light their colour on turn one.
-- **Fixed: Profile and combat columns blank for decks past the 40th.** The
-  Decks table lists up to 100 decks but its combat telemetry stopped at 40,
-  so players with many small decks saw dashes on rows with plenty of games.
-- **Fixed: the scoreboard's "Looks like…" guess could flip to an impossible
+- The menu-bar item is now **Live Scoreboard**, matching the page.
+
+### Fixes
+
+- **Opponent colour pips could stay blank until turn 7.** When Arena's card
+  database wasn't readable at the moment the tracker built its colour index,
+  the index was cached for the session with only cards from earlier games.
+  It now keeps retrying Arena's layers until they answer, looks up unknown
+  cards on demand, and basic lands light their colour on turn one.
+- **The scoreboard's "Looks like…" guess could flip to an impossible
   archetype** (Gruul → Mono-Red after a Forest). Lands no longer count as
   evidence, and a guess whose colours contradict the table is dropped.
-- The menu-bar item is now **Live Scoreboard**, matching the page.
-- Docs refreshed (README, Quick Start, AGENTS), and the in-game overlay plan
+- **All Games flood/screw badges disagreed with the game page** for a couple
+  dozen games — the list ignored ramped lands and the real land ratio. Both
+  now use the same rules.
+- **Profile and combat columns were blank for decks past the 40th.** The
+  Decks table lists up to 100 decks but its combat telemetry stopped at 40,
+  so players with many small decks saw dashes on rows with plenty of games.
+
+### Docs
+
+- README, Quick Start, and AGENTS refreshed; the in-game overlay plan
   rewritten for Tauri v2 with the rail/panel design mockup
-  (`docs/plans/OVERLAY_TRACKER_PLAN.md`).
+  (`docs/plans/OVERLAY_TRACKER_PLAN.md`). The overlay itself ships in a later
+  release.
 
 ## 0.6.1
 
