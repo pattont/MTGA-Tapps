@@ -1,3 +1,4 @@
+import { useState } from 'preact/hooks';
 import type { Settings } from '../types';
 import { Close } from './Icons';
 
@@ -50,6 +51,7 @@ export function chordFromEvent(event: KeyboardEvent): string | null {
 }
 
 export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props) {
+  const [pendingScale, setPendingScale] = useState<number | null>(null);
   const hotkeys = platform === 'macos' ? settings.hotkeysMacos : settings.hotkeysWindows;
   const setHotkeys = (next: Settings['hotkeysMacos']) =>
     onChange(platform === 'macos' ? { ...settings, hotkeysMacos: next } : { ...settings, hotkeysWindows: next });
@@ -77,42 +79,35 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
         </button>
       </div>
       <label class="r">
-        <span>Overlay opacity</span>
-        <input
-          type="range"
-          min="20"
-          max="100"
-          value={Math.round(settings.opacity * 100)}
-          onInput={(event) => onChange({ ...settings, opacity: Number((event.currentTarget as HTMLInputElement).value) / 100 })}
-          aria-label="Overlay opacity"
-        />
-        <span class="v">{Math.round(settings.opacity * 100)}%</span>
-      </label>
-      <label class="r">
-        <span>Background opacity</span>
+        <span>Opacity</span>
         <input
           type="range"
           min="0"
           max="100"
           step="5"
-          value={settings.backgroundOpacity}
-          onInput={(event) => onChange({ ...settings, backgroundOpacity: Number((event.currentTarget as HTMLInputElement).value) })}
+          value={Math.round(settings.opacity * 100)}
+          onInput={(event) => onChange({ ...settings, opacity: Number((event.currentTarget as HTMLInputElement).value) / 100 })}
           aria-label="Background opacity"
         />
-        <span class="v">{settings.backgroundOpacity}%</span>
+        <span class="v">{Math.round(settings.opacity * 100)}%</span>
       </label>
       <label class="r">
         <span>Scale</span>
+        {/* Applied on release: a live rescale moves the slider under the cursor. */}
         <input
           type="range"
           min="50"
           max="200"
           step="5"
-          value={settings.scale}
-          onInput={(event) => onChange({ ...settings, scale: Number((event.currentTarget as HTMLInputElement).value) })}
+          value={pendingScale ?? settings.scale}
+          onInput={(event) => setPendingScale(Number((event.currentTarget as HTMLInputElement).value))}
+          onChange={(event) => {
+            setPendingScale(null);
+            onChange({ ...settings, scale: Number((event.currentTarget as HTMLInputElement).value) });
+          }}
           aria-label="Scale, percent"
         />
-        <span class="v">{settings.scale}%</span>
+        <span class="v">{pendingScale ?? settings.scale}%</span>
       </label>
       <label class="r">
         <span>Max panel height</span>

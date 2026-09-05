@@ -2,8 +2,8 @@
    Ported from docs/plans/overlay-mockup.html; the window itself is
    transparent, the rail/panel paint a charcoal tint at --tint-alpha (no
    backdrop blur — it costs a compositor pass per frame on both platforms)
-   with hairlines between rows, the way game overlays usually read;
-   --opacity fades the whole overlay. */
+   with hairlines between rows, the way game overlays usually read. Text
+   is never faded; the slider only drives --tint-alpha. */
 
 :root {
   --bg: #101418;
@@ -17,10 +17,8 @@
   --accent-strong: #f0c66c;
   --success: #7bd88f;
   --danger: #f28b82;
-  --opacity: 1;
   --scale: 1;
-  --tint-alpha: 0.864;
-  --tint: rgba(24, 28, 34, var(--tint-alpha));
+  --tint-alpha: 0.72;
   --hairline: rgba(255, 255, 255, 0.09);
   color-scheme: dark;
 }
@@ -88,19 +86,11 @@ img {
   height: 100%;
 }
 
-/* The opacity slider fades the overlay itself — tint, text, controls — but
-   never the settings flyout, which must stay readable to turn it back up. */
-.rail-host,
-.panel,
-.hover {
-  opacity: var(--opacity);
-}
-
 .rail {
   width: 44px;
   height: 100%;
   max-height: 100%;
-  background: var(--tint);
+  background: rgba(24, 28, 34, var(--tint-alpha));
   border: 0;
   border-radius: 6px;
   padding: 7px 0 5px;
@@ -240,7 +230,7 @@ img {
 .panel {
   width: 322px;
   height: 100%;
-  background: var(--tint);
+  background: rgba(24, 28, 34, var(--tint-alpha));
   border: 0;
   border-radius: 6px;
   overflow: hidden;

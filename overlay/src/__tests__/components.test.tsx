@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Panel, deckColors } from '../components/Panel';
 import { Rail } from '../components/Rail';
-import { hoverCardTop, hoverSide, measureContentHeight } from '../App';
+import { hoverCardTop, hoverSide, measureContentHeight, tintAlpha } from '../App';
 import { defaultSettings } from '../tauri';
 import { brawlState, inGamePayload, idlePayload, offlinePayload } from './fixtures';
 
@@ -109,6 +109,15 @@ describe('Panel', () => {
 describe('deckColors', () => {
   it('reads colours from casting costs, hybrid included, in WUBRG order', () => {
     expect(deckColors([{ mana_cost: '{1}{G}' }, { mana_cost: '{W/U}' }, { mana_cost: null }])).toEqual(['W', 'U', 'G']);
+  });
+});
+
+describe('tintAlpha', () => {
+  it('drives only the ground: 88 % at the top, dark at the default, gone at zero', () => {
+    expect(tintAlpha(1)).toBe(0.88);
+    expect(tintAlpha(0.6)).toBeGreaterThan(0.7);
+    expect(tintAlpha(0.6)).toBeLessThan(0.75);
+    expect(tintAlpha(0)).toBe(0);
   });
 });
 

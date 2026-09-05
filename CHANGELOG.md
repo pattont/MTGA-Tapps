@@ -96,10 +96,10 @@ itself; a warm dashboard is faster still.
   only while Arena is running, on Arena's screen (over a fullscreen Arena
   too); docks left or right (or floats), pins or slides back into the rail
   when idle, steps aside when Arena isn't in front. Sits on a charcoal tint
-  with hairlines between rows and no box border; Overlay opacity fades the
-  whole thing, Background opacity sets the tint alone (100 % is nearly
-  solid, 0 % is text-only over the board), and Scale sizes everything from
-  50 % to 200 %; Max panel height (share of
+  with hairlines between rows and no box border; text is always fully
+  visible and the Opacity slider drives only the tint (about 88 % charcoal
+  at 100, gone at 0, default 60), while Scale sizes everything from 50 % to
+  200 %; Max panel height (share of
   the screen, default 70 %; the list scrolls inside), click-through,
   density, and per-platform hotkeys (`Alt+Shift+T` / `⌥⇧T`
   toggles the panel, `Alt+Shift+H` / `⌥⇧H` hides) in its own ⚙ menu. Enable

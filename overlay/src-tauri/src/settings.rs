@@ -64,13 +64,11 @@ pub struct Positions {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
-    /// Opacity of the whole overlay, 0.2–1.0: fades everything — ground,
-    /// text, controls.
+    /// The background slider, 0.0–1.0. Text, lines and numbers are always
+    /// fully visible; this only drives the charcoal ground, which tops out
+    /// at about 88 % at 1.0 and is gone at 0.0. Default 0.6 leaves room
+    /// to make it more visible.
     pub opacity: f64,
-    /// Strength of the charcoal ground behind the rail and panel, 0–100.
-    /// 100 is nearly solid (never fully); 0 is text with a shadow over the
-    /// board.
-    pub background_opacity: u32,
     /// Size of everything, percent (50–200). The page lays out at its base
     /// size and is scaled; the window grows to match.
     pub scale: u32,
@@ -96,8 +94,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            opacity: 1.0,
-            background_opacity: 90,
+            opacity: 0.6,
             scale: 100,
             panel_max_height_pct: 70,
             dock: Dock::Right,
@@ -130,11 +127,10 @@ impl Settings {
     }
 
     pub fn clamped(mut self) -> Self {
-        if !(0.2..=1.0).contains(&self.opacity) || self.opacity.is_nan() {
-            self.opacity = 1.0;
+        if !(0.0..=1.0).contains(&self.opacity) || self.opacity.is_nan() {
+            self.opacity = 0.6;
         }
         self.return_after_seconds = self.return_after_seconds.clamp(1, 60);
-        self.background_opacity = self.background_opacity.min(100);
         if self.scale == 0 {
             self.scale = 100;
         }
@@ -180,7 +176,7 @@ mod tests {
 
         let weird: Settings = serde_json::from_str(r#"{"opacity": 7, "returnAfterSeconds": 0, "apiUrl": " "}"#).unwrap();
         let fixed = weird.clamped();
-        assert_eq!(fixed.opacity, 1.0);
+        assert_eq!(fixed.opacity, 0.6);
         assert_eq!(fixed.return_after_seconds, 1);
         assert_eq!(fixed.api_url, "http://127.0.0.1:8765");
         // Missing fields take defaults (a file from an older version keeps working).

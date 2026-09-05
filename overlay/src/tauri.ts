@@ -78,8 +78,7 @@ function browserShell(): Shell {
 
 export function defaultSettings(): Settings {
   return {
-    opacity: 1,
-    backgroundOpacity: 90,
+    opacity: 0.6,
     scale: 100,
     panelMaxHeightPct: 70,
     dock: 'right',

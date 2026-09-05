@@ -49,10 +49,8 @@ export interface Hotkeys {
 }
 
 export interface Settings {
-  /** Opacity of the whole overlay, 0.2–1. */
+  /** Background slider, 0–1: only the charcoal ground (≈88 % at 1, gone at 0); text is always fully visible. */
   opacity: number;
-  /** Strength of the charcoal ground, 0–100 (100 is nearly solid, 0 is text-only). */
-  backgroundOpacity: number;
   /** Size of everything, percent (50–200). */
   scale: number;
   /** The panel never grows past this share of the screen height (30–100). */

@@ -38,6 +38,17 @@ function verticalPadding(element: HTMLElement | null): number {
   }
 }
 
+/**
+ * The background slider → charcoal alpha. Text is never faded; only the
+ * ground is. Tops out at 88 % so the board still shows through a little at
+ * 100, and the curve keeps the default (60) reasonably dark (≈72 %) with
+ * room above it.
+ */
+export function tintAlpha(slider: number): number {
+  const v = Math.max(0, Math.min(1, slider));
+  return Math.round(0.88 * Math.pow(v, 0.4) * 1000) / 1000;
+}
+
 /** Where the hover card goes: toward the board, i.e. away from the docked edge. */
 export function hoverSide(dock: Settings['dock']): 'left' | 'right' {
   return dock === 'left' ? 'right' : 'left';
@@ -331,14 +342,8 @@ export function App() {
   return (
     <div
       ref={rootRef}
-      class={`root ${dockClass} ${layout.layout === 'panel' ? 'is-panel' : 'is-rail'} ${settings.backgroundOpacity > 0 ? 'has-bg' : 'no-bg'}`}
-      style={
-        {
-          '--opacity': settings.opacity,
-          '--tint-alpha': (0.96 * settings.backgroundOpacity) / 100,
-          '--scale': settings.scale / 100,
-        } as never
-      }
+      class={`root ${dockClass} ${layout.layout === 'panel' ? 'is-panel' : 'is-rail'} ${settings.opacity > 0 ? 'has-bg' : 'no-bg'}`}
+      style={{ '--tint-alpha': tintAlpha(settings.opacity), '--scale': settings.scale / 100 } as never}
       onMouseEnter={onPointerEnter}
       onMouseLeave={onPointerLeave}
     >
