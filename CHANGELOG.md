@@ -94,10 +94,11 @@ itself; a warm dashboard is faster still.
   FINAL) through Arena's results screen and clears when you leave it. Shows
   only while Arena is running, on Arena's screen (over a fullscreen Arena
   too); docks left or right (or floats), pins or slides back into the rail
-  when idle, steps aside when Arena isn't in front. No background by
-  default — text with a shadow over the board — with a Background toggle and
-  opacity, a Max panel height (share of the screen, default 70 %; the list
-  scrolls inside), click-through, density, and per-platform hotkeys (`Alt+Shift+T` / `⌥⇧T`
+  when idle, steps aside when Arena isn't in front. Sits on a neutral dark
+  tint (60 % by default, adjustable, or off for text-only over the board)
+  with hairlines between rows and no box border; Max panel height (share of
+  the screen, default 70 %; the list scrolls inside), click-through,
+  density, and per-platform hotkeys (`Alt+Shift+T` / `⌥⇧T`
   toggles the panel, `Alt+Shift+H` / `⌥⇧H` hides) in its own ⚙ menu. Enable
   it from Settings → In-game overlay or the menu bar's Show Overlay; Overlay
   Settings… in the same menu opens its ⚙ flyout — the overlay adds no

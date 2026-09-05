@@ -64,9 +64,11 @@ pub struct Positions {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
-    /// Paint the dark ground behind the rail and panel. Off by default: over
-    /// the board a solid block is a distraction; text with a shadow is not.
+    /// Paint the tinted ground behind the rail and panel (a neutral dark
+    /// wash at `opacity`, hairlines between rows); off leaves text with a
+    /// shadow over the board.
     pub background: bool,
+    /// Strength of the tint, 0.2–1.0 (1.0 is a solid panel).
     pub opacity: f64,
     /// The panel never grows past this share of the screen's height (30–100);
     /// the list scrolls inside it instead.
@@ -90,8 +92,8 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            background: false,
-            opacity: 0.94,
+            background: true,
+            opacity: 0.6,
             panel_max_height_pct: 70,
             dock: Dock::Right,
             return_after_seconds: 4,
@@ -123,8 +125,8 @@ impl Settings {
     }
 
     pub fn clamped(mut self) -> Self {
-        if !(0.3..=1.0).contains(&self.opacity) || self.opacity.is_nan() {
-            self.opacity = 0.94;
+        if !(0.2..=1.0).contains(&self.opacity) || self.opacity.is_nan() {
+            self.opacity = 0.6;
         }
         self.return_after_seconds = self.return_after_seconds.clamp(1, 60);
         if self.panel_max_height_pct == 0 {
@@ -168,7 +170,7 @@ mod tests {
 
         let weird: Settings = serde_json::from_str(r#"{"opacity": 7, "returnAfterSeconds": 0, "apiUrl": " "}"#).unwrap();
         let fixed = weird.clamped();
-        assert_eq!(fixed.opacity, 0.94);
+        assert_eq!(fixed.opacity, 0.6);
         assert_eq!(fixed.return_after_seconds, 1);
         assert_eq!(fixed.api_url, "http://127.0.0.1:8765");
         // Missing fields take defaults (a file from an older version keeps working).

@@ -81,15 +81,15 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
         <input type="checkbox" checked={settings.background} onChange={(event) => onChange({ ...settings, background: (event.currentTarget as HTMLInputElement).checked })} />
       </label>
       <label class={`r${settings.background ? '' : ' off'}`}>
-        <span>Background opacity</span>
+        <span>Tint strength</span>
         <input
           type="range"
-          min="30"
+          min="20"
           max="100"
           disabled={!settings.background}
           value={Math.round(settings.opacity * 100)}
           onInput={(event) => onChange({ ...settings, opacity: Number((event.currentTarget as HTMLInputElement).value) / 100 })}
-          aria-label="Background opacity"
+          aria-label="Tint strength"
         />
         <span class="v">{Math.round(settings.opacity * 100)}%</span>
       </label>
