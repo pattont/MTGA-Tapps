@@ -435,7 +435,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let mut builder = TrayIconBuilder::with_id("main")
         .menu(&menu)
         .show_menu_on_left_click(true)
-        .tooltip("Tapps Overlay")
+        .tooltip("Tapps Tracker")
         .on_menu_event(|app, event| match event.id().as_ref() {
             TRAY_SHOW => toggle_hidden(app),
             TRAY_DOCK_LEFT => set_dock(app, Dock::Left),

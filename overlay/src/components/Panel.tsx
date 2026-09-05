@@ -82,7 +82,7 @@ export function Panel(props: Props) {
       <div class="head" onMouseDown={onDragStart}>
         <div class="deck">
           <b>
-            {state?.deck_name ?? 'Tapps Overlay'}
+            {(active && state?.deck_name) || 'Tapps Tracker'}
             {pips.length > 0 ? (
               <span class="pips">
                 {pips.map((c) => (
@@ -91,21 +91,21 @@ export function Panel(props: Props) {
               </span>
             ) : null}
           </b>
-          <span>
-            {offline
-              ? 'Tracker offline'
-              : state?.mid_game_attach
-                ? 'Joined mid-game — library unknown'
-                : !active
-                  ? 'Between games'
-                  : `${shortFormat(state?.format_label)}${state?.opponent_name ? ` · vs ${state.opponent_name}` : ''}${
-                      h2h ? ` (${h2h.wins}–${h2h.losses})` : ''
-                    }`}
-          </span>
+          {active && state ? (
+            <span>
+              {shortFormat(state.format_label)}
+              {state.opponent_name ? ` · vs ${state.opponent_name}` : ''}
+              {h2h ? ` (${h2h.wins}–${h2h.losses})` : ''}
+            </span>
+          ) : state?.mid_game_attach && !offline ? (
+            <span>Joined mid-game — library unknown</span>
+          ) : null}
         </div>
-        <div class="turn">
-          TURN<b>{active && state?.turn_number ? state.turn_number : '—'}</b>
-        </div>
+        {active && state ? (
+          <div class="turn">
+            TURN<b>{state.turn_number ?? '—'}</b>
+          </div>
+        ) : null}
         <div class="ctl" onMouseDown={(event) => event.stopPropagation()}>
           <button type="button" onClick={onCollapse} title="Collapse to rail" aria-label="Collapse to rail">
             <Chevron dir={settings.dock === 'left' ? 'left' : 'right'} />
@@ -185,19 +185,22 @@ export function Panel(props: Props) {
         <div class="empty">
           {offline ? (
             <>
-              <b>Tracker not running</b>
-              <span>Start Tapps Tracker and the overlay will connect on its own.</span>
+              <span class="pill off">
+                <i class="dot" aria-hidden="true" /> Tracker not running
+              </span>
+              <span>Start Tapps Tracker and the overlay connects on its own.</span>
             </>
           ) : state?.mid_game_attach ? (
             <>
-              <b>Joined mid-game</b>
+              <span class="pill">
+                <i class="dot" aria-hidden="true" /> Joined mid-game
+              </span>
               <span>The library can't be known for this game. Odds return next game.</span>
             </>
           ) : (
-            <>
-              <b>Waiting for a match</b>
-              <span>Queue up — the deck fills in when the game starts.</span>
-            </>
+            <span class="pill">
+              <i class="dot" aria-hidden="true" /> Waiting for a match…
+            </span>
           )}
         </div>
       )}

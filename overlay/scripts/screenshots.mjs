@@ -59,7 +59,7 @@ async function shot(name, fixture, size, steps) {
   console.log(name, JSON.stringify(h));
   await ctx.close();
 }
-const openPanel = async (page) => { await page.click('button[aria-label="Open the deck panel"]'); await page.waitForTimeout(100); };
+const openPanel = async (page) => { await page.click('button[aria-label="Open the deck panel"]'); await page.mouse.move(400, 400); await page.waitForTimeout(100); };
 await shot('rail-game', 'game', { width: 44, height: 210 });
 await shot('rail-offline', 'offline', { width: 44, height: 210 });
 await shot('panel-game', 'game', { width: 322, height: 560 }, openPanel);

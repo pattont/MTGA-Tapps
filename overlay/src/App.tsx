@@ -217,6 +217,30 @@ export function App() {
     }, Math.max(1, prefs.returnAfterSeconds) * 1000);
   }, [clearReturn, collapse]);
 
+  // Between games the panel folds back into the rail on its own; when the
+  // next game starts it comes back the way it was (open, and pinned or not).
+  const restoreAfterGame = useRef<{ pinned: boolean } | null>(null);
+  const wasActive = useRef<boolean | null>(null);
+  const gameActive = Boolean(payload?.state?.game_active) && !payload?.state?.mid_game_attach;
+  useEffect(() => {
+    const before = wasActive.current;
+    wasActive.current = gameActive;
+    if (before === null || before === gameActive) return;
+    if (!gameActive) {
+      if (layoutRef.current.layout === 'panel') {
+        restoreAfterGame.current = { pinned: layoutRef.current.pinned };
+        void collapse();
+      }
+    } else if (restoreAfterGame.current) {
+      const { pinned } = restoreAfterGame.current;
+      restoreAfterGame.current = null;
+      void (async () => {
+        const info = await tauri.invoke<LayoutInfo>('set_layout', { layout: 'panel', contentHeight: lastHeight.current });
+        setLayout(info.pinned === pinned ? info : await tauri.invoke<LayoutInfo>('set_pinned', { pinned }));
+      })();
+    }
+  }, [gameActive, collapse]);
+
   // The tray's Settings… shows the window even without Arena; closing the
   // flyout hands visibility back to the Arena rule.
   const flyoutWasOpen = useRef(false);

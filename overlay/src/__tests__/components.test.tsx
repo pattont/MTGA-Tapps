@@ -84,11 +84,15 @@ describe('Panel', () => {
   });
 
   it('has empty states for idle and offline', () => {
-    const { rerender } = render(<Panel {...panelProps({ payload: idlePayload() })} />);
-    expect(screen.getByText('Waiting for a match')).toBeTruthy();
+    const { container, rerender } = render(<Panel {...panelProps({ payload: idlePayload() })} />);
+    expect(screen.getByText(/Waiting for a match/)).toBeTruthy();
+    expect(screen.getByText('Tapps Tracker')).toBeTruthy();
+    // Between games: no turn box, no subtitle — the pill says it all.
+    expect(container.querySelector('.turn')).toBeNull();
+    expect(container.querySelector('.head .deck span')).toBeNull();
     rerender(<Panel {...panelProps({ payload: offlinePayload(), link: 'offline' })} />);
-    expect(screen.getByText('Tracker not running')).toBeTruthy();
-    expect(screen.getByText('Tracker offline')).toBeTruthy();
+    expect(screen.getByText(/Tracker not running/)).toBeTruthy();
+    expect(container.querySelector('.pill.off')).toBeTruthy();
   });
 });
 

@@ -26,7 +26,7 @@ export function Rail({ payload, link, landsInPlay, onOpenPanel, onOpenSettings, 
           : 'Waiting for a match';
   const danger = state && active ? landDanger(state, landsInPlay) : false;
   return (
-    <div class="rail" role="group" aria-label="Tapps Overlay" title={status ?? undefined}>
+    <div class="rail" role="group" aria-label="Tapps Tracker" title={status ?? undefined}>
       <img class="logo" src={appIcon} width={22} height={22} alt="Tapps Tracker" onMouseDown={onDragStart} draggable={false} />
       <div class="sep" />
       <div class="cell">
