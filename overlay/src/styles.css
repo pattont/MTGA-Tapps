@@ -1,8 +1,9 @@
 /* Tapps Overlay — the rail and the panel.
    Ported from docs/plans/overlay-mockup.html; the window itself is
-   transparent, the rail/panel paint a neutral dark tint at --opacity (no
-   backdrop blur — it costs a compositor pass per frame on both platforms)
-   with hairlines between rows, the way game overlays usually read. */
+   transparent, the rail/panel paint a fixed charcoal tint (no backdrop blur
+   — it costs a compositor pass per frame on both platforms) with hairlines
+   between rows, the way game overlays usually read; --opacity fades the
+   whole overlay. */
 
 :root {
   --bg: #101418;
@@ -16,7 +17,8 @@
   --accent-strong: #f0c66c;
   --success: #7bd88f;
   --danger: #f28b82;
-  --opacity: 0.6;
+  --opacity: 1;
+  --tint: rgba(24, 28, 34, 0.68);
   --hairline: rgba(255, 255, 255, 0.09);
   color-scheme: dark;
 }
@@ -78,11 +80,19 @@ img {
   height: 100%;
 }
 
+/* The opacity slider fades the overlay itself — tint, text, controls — but
+   never the settings flyout, which must stay readable to turn it back up. */
+.rail-host,
+.panel,
+.hover {
+  opacity: var(--opacity);
+}
+
 .rail {
   width: 44px;
   height: 100%;
   max-height: 100%;
-  background: rgba(0, 0, 0, var(--opacity));
+  background: var(--tint);
   border: 0;
   border-radius: 6px;
   padding: 7px 0 5px;
@@ -222,7 +232,7 @@ img {
 .panel {
   width: 322px;
   height: 100%;
-  background: rgba(0, 0, 0, var(--opacity));
+  background: var(--tint);
   border: 0;
   border-radius: 6px;
   overflow: hidden;
@@ -239,7 +249,7 @@ img {
   border-bottom: 1px solid var(--hairline);
   cursor: grab;
   flex: none;
-  background: rgba(0, 0, 0, 0.18);
+  background: rgba(0, 0, 0, 0.16);
 }
 
 .head:active {

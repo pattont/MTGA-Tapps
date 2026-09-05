@@ -79,7 +79,7 @@ function browserShell(): Shell {
 export function defaultSettings(): Settings {
   return {
     background: true,
-    opacity: 0.6,
+    opacity: 1,
     panelMaxHeightPct: 70,
     dock: 'right',
     returnAfterSeconds: 4,
