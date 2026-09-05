@@ -316,7 +316,7 @@ export function App() {
   return (
     <div
       ref={rootRef}
-      class={`root ${dockClass} ${layout.layout === 'panel' ? 'is-panel' : 'is-rail'}`}
+      class={`root ${dockClass} ${layout.layout === 'panel' ? 'is-panel' : 'is-rail'} ${settings.background ? 'has-bg' : 'no-bg'}`}
       style={{ '--opacity': settings.opacity } as never}
       onMouseEnter={onPointerEnter}
       onMouseLeave={onPointerLeave}

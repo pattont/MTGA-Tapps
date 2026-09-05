@@ -55,18 +55,23 @@ pub const PANEL_MIN_HEIGHT: i32 = 160;
 /// Vertical gap kept from the work area's top and bottom when clamping.
 const EDGE_MARGIN: i32 = 8;
 
-pub fn size_for(layout: Layout, content_height: i32, work_area: &Rect) -> Size {
+pub fn size_for(layout: Layout, content_height: i32, work_area: &Rect, max_height_pct: u32) -> Size {
     match layout {
         Layout::Rail => Size { width: RAIL_WIDTH, height: RAIL_HEIGHT },
         Layout::Panel => Size {
             width: PANEL_WIDTH,
-            height: fit_height(content_height, work_area),
+            height: fit_height(content_height, work_area, max_height_pct),
         },
     }
 }
 
-pub fn fit_height(content_height: i32, work_area: &Rect) -> i32 {
-    let max = (work_area.height - 2 * EDGE_MARGIN).max(PANEL_MIN_HEIGHT);
+/// The panel's height: its content, between the minimum and the smaller of
+/// the work area and `max_height_pct` percent of the screen — a long list
+/// scrolls inside rather than running the length of the monitor.
+pub fn fit_height(content_height: i32, work_area: &Rect, max_height_pct: u32) -> i32 {
+    let pct = max_height_pct.clamp(30, 100) as i64;
+    let by_pct = (work_area.height as i64 * pct / 100) as i32;
+    let max = by_pct.min(work_area.height - 2 * EDGE_MARGIN).max(PANEL_MIN_HEIGHT);
     content_height.clamp(PANEL_MIN_HEIGHT, max)
 }
 
@@ -170,12 +175,15 @@ mod tests {
 
     #[test]
     fn rail_and_panel_sizes() {
-        assert_eq!(size_for(Layout::Rail, 9999, &WORK), Size { width: 44, height: RAIL_HEIGHT });
-        assert_eq!(size_for(Layout::Panel, 620, &WORK), Size { width: 322, height: 620 });
+        assert_eq!(size_for(Layout::Rail, 9999, &WORK, 100), Size { width: 44, height: RAIL_HEIGHT });
+        assert_eq!(size_for(Layout::Panel, 620, &WORK, 100), Size { width: 322, height: 620 });
         // Taller than the screen -> capped with the edge margin.
-        assert_eq!(size_for(Layout::Panel, 3000, &WORK).height, 1055 - 16);
+        assert_eq!(size_for(Layout::Panel, 3000, &WORK, 100).height, 1055 - 16);
+        // The max-height setting caps a long list to a share of the screen.
+        assert_eq!(size_for(Layout::Panel, 3000, &WORK, 70).height, 1055 * 70 / 100);
+        assert_eq!(size_for(Layout::Panel, 500, &WORK, 70).height, 500);
         // Never below the minimum.
-        assert_eq!(size_for(Layout::Panel, 10, &WORK).height, PANEL_MIN_HEIGHT);
+        assert_eq!(size_for(Layout::Panel, 10, &WORK, 70).height, PANEL_MIN_HEIGHT);
     }
 
     #[test]

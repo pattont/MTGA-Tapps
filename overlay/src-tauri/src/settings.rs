@@ -64,7 +64,13 @@ pub struct Positions {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
+    /// Paint the dark ground behind the rail and panel. Off by default: over
+    /// the board a solid block is a distraction; text with a shadow is not.
+    pub background: bool,
     pub opacity: f64,
+    /// The panel never grows past this share of the screen's height (30–100);
+    /// the list scrolls inside it instead.
+    pub panel_max_height_pct: u32,
     pub dock: Dock,
     pub return_after_seconds: u32,
     pub open_pinned: bool,
@@ -84,7 +90,9 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            background: false,
             opacity: 0.94,
+            panel_max_height_pct: 70,
             dock: Dock::Right,
             return_after_seconds: 4,
             open_pinned: true,
@@ -119,6 +127,10 @@ impl Settings {
             self.opacity = 0.94;
         }
         self.return_after_seconds = self.return_after_seconds.clamp(1, 60);
+        if self.panel_max_height_pct == 0 {
+            self.panel_max_height_pct = 70;
+        }
+        self.panel_max_height_pct = self.panel_max_height_pct.clamp(30, 100);
         if self.api_url.trim().is_empty() {
             self.api_url = Settings::default().api_url;
         }

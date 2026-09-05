@@ -705,6 +705,54 @@ img {
   padding: 3px 8px;
 }
 
+/* ------------------------------------------------ no background (default) */
+
+/* Over the board the dark block is a distraction; the text carries a
+   shadow instead and the row stripes go, while the small controls and the
+   odds boxes keep their own ground so they still read as controls. */
+.no-bg .rail,
+.no-bg .panel {
+  background: transparent;
+  border-color: transparent;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 85%), 0 0 6px rgb(0 0 0 / 60%);
+}
+
+.no-bg .head,
+.no-bg .lands,
+.no-bg .tools {
+  border-bottom-color: rgba(255, 255, 255, 0.12);
+}
+
+.no-bg .lands {
+  background: none;
+}
+
+.no-bg .row:nth-child(even) {
+  background: transparent;
+}
+
+.no-bg .row:hover {
+  background: rgba(16, 20, 24, 0.75);
+}
+
+.no-bg .rail .sep {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.no-bg .mbar,
+.no-bg .rail .bar {
+  background: rgba(16, 20, 24, 0.6);
+}
+
+.no-bg .fly,
+.no-bg .hover {
+  text-shadow: none;
+}
+
+.fly .r.off {
+  opacity: 0.45;
+}
+
 /* --------------------------------------------------------- docked edges */
 
 /* Docked right: the right side is the screen edge. */

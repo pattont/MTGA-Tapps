@@ -49,7 +49,11 @@ export interface Hotkeys {
 }
 
 export interface Settings {
+  /** Paint the dark ground behind the rail and panel (off: text over the board). */
+  background: boolean;
   opacity: number;
+  /** The panel never grows past this share of the screen height (30–100). */
+  panelMaxHeightPct: number;
   dock: Dock;
   returnAfterSeconds: number;
   openPinned: boolean;

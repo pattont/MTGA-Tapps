@@ -62,12 +62,16 @@ async function shot(name, fixture, size, steps) {
 const openPanel = async (page) => { await page.click('button[aria-label="Open the deck panel"]'); await page.mouse.move(400, 400); await page.waitForTimeout(100); };
 await shot('rail-game', 'game', { width: 44, height: 210 });
 await shot('rail-offline', 'offline', { width: 44, height: 210 });
-await shot('panel-game', 'game', { width: 322, height: 560 }, openPanel);
+await shot('panel-game', 'game', { width: 322, height: 560 }, async (page) => { await openPanel(page); await page.click('button[aria-label="Settings"]'); await page.click('text=Background'); await page.click('button[aria-label="Close settings"]'); });
 await shot('panel-hover', 'game', { width: 322, height: 560 }, async (page) => { await openPanel(page); await page.hover('.row:nth-of-type(4)'); });
 await shot('panel-flyout', 'game', { width: 322, height: 560 }, async (page) => { await openPanel(page); await page.click('button[aria-label="Settings"]'); });
 await shot('panel-brawl', 'brawl', { width: 322, height: 560 }, openPanel);
 await shot('panel-idle', 'idle', { width: 322, height: 200 }, openPanel);
 await shot('panel-offline', 'offline', { width: 322, height: 200 }, openPanel);
+const board = async (page) => { await page.addStyleTag({ content: 'body{background:radial-gradient(900px 500px at 60% 40%, #4d6a8a 0%, #2d4a6a 45%, #6b3a2a 100%) !important}' }); };
+await shot('rail-nobg', 'game', { width: 44, height: 210 }, board);
+await shot('panel-nobg', 'game', { width: 322, height: 560 }, async (page) => { await board(page); await openPanel(page); });
+await shot('panel-nobg-flyout', 'game', { width: 322, height: 560 }, async (page) => { await board(page); await openPanel(page); await page.click('button[aria-label="Settings"]'); });
 await shot('panel-all-lands', 'game', { width: 322, height: 640 }, async (page) => { await openPanel(page); await page.click('button[aria-label="Settings"]'); await page.click('text=Every land'); await page.click('button[aria-label="Close settings"]'); });
 await browser.close();
 server.close();
