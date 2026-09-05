@@ -1012,7 +1012,7 @@ describe('App', () => {
         tcgplayer: [],
       },
       platform: { system: 'macos', collection_export: true },
-      overlay: { enabled: false, available: true, running: false, binary: '/tmp/tapps-overlay', error: null },
+      overlay: { enabled: false, available: true, running: false, binary: '/tmp/tapps-overlay', log: '/tmp/data/overlay.log', error: null },
     };
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (String(url) === '/api/settings/overlay') {

@@ -74,7 +74,7 @@ def test_manager_starts_with_api_url_and_stops(tmp_path):
         launched.append(process)
         return process
 
-    manager = OverlayManager(binary=binary, settings_path=tmp_path / "settings.json", popen=popen)
+    manager = OverlayManager(binary=binary, settings_path=tmp_path / "settings.json", popen=popen, log_dir=tmp_path / "data")
     manager.configure("http://127.0.0.1:8123")
     assert manager.available
     assert manager.running is False
@@ -82,8 +82,10 @@ def test_manager_starts_with_api_url_and_stops(tmp_path):
     status = manager.set_enabled(True)
     assert status["running"] is True
     assert status["enabled"] is True
-    assert launched[0].args == [str(binary), "--api", "http://127.0.0.1:8123"]
+    assert launched[0].args == [str(binary), "--log", str(tmp_path / "data" / "overlay.log"), "--api", "http://127.0.0.1:8123"]
     assert launched[0].kwargs["cwd"] == str(tmp_path)
+    assert (tmp_path / "data" / "overlay-stderr.log").exists()
+    assert status["log"] == str(tmp_path / "data" / "overlay.log")
     if os.name != "nt":
         assert stat.S_IMODE(binary.stat().st_mode) & 0o111, "exec bit restored before launch"
 
@@ -106,7 +108,7 @@ def test_manager_restarts_when_the_dashboard_url_changes(tmp_path):
         launched.append(process)
         return process
 
-    manager = OverlayManager(binary=binary, settings_path=tmp_path / "settings.json", popen=popen)
+    manager = OverlayManager(binary=binary, settings_path=tmp_path / "settings.json", popen=popen, log_dir=tmp_path)
     manager.configure("http://127.0.0.1:8765")
     manager.set_enabled(True)
     manager.configure("http://127.0.0.1:8766")
@@ -133,7 +135,7 @@ def test_refresh_turns_the_setting_off_when_the_overlay_quits_itself(tmp_path):
         processes.append(process)
         return process
 
-    manager = OverlayManager(binary=binary, settings_path=tmp_path / "settings.json", popen=popen)
+    manager = OverlayManager(binary=binary, settings_path=tmp_path / "settings.json", popen=popen, log_dir=tmp_path)
     seen = []
     manager.add_listener(seen.append)
     manager.set_enabled(True)
@@ -142,12 +144,13 @@ def test_refresh_turns_the_setting_off_when_the_overlay_quits_itself(tmp_path):
     status = manager.refresh()
     assert status["running"] is False
     assert status["enabled"] is False
+    assert "exited with code 0" in status["error"]
     assert seen[-1]["running"] is False
 
 
 def test_settings_api_exposes_and_toggles_the_overlay(tmp_path, monkeypatch):
     binary = _fake_binary(tmp_path)
-    manager = OverlayManager(binary=binary, settings_path=tmp_path / "settings.json", popen=FakeProcess)
+    manager = OverlayManager(binary=binary, settings_path=tmp_path / "settings.json", popen=FakeProcess, log_dir=tmp_path)
     monkeypatch.setattr(overlay_launcher, "_manager", manager)
 
     code, body = settings_api.handle_post("/api/settings/overlay", {"enabled": True})
@@ -170,7 +173,7 @@ def test_settings_api_exposes_and_toggles_the_overlay(tmp_path, monkeypatch):
 
 
 def test_overlay_status_in_settings_get(tmp_path, monkeypatch):
-    manager = OverlayManager(binary=_fake_binary(tmp_path), settings_path=tmp_path / "settings.json", popen=FakeProcess)
+    manager = OverlayManager(binary=_fake_binary(tmp_path), settings_path=tmp_path / "settings.json", popen=FakeProcess, log_dir=tmp_path)
     monkeypatch.setattr(overlay_launcher, "_manager", manager)
     code, body = settings_api.handle_get("/api/settings", None)
     assert code == 200
@@ -179,6 +182,7 @@ def test_overlay_status_in_settings_get(tmp_path, monkeypatch):
         "available": True,
         "running": False,
         "binary": str(manager.binary),
+        "log": str(tmp_path / "overlay.log"),
         "error": None,
     }
 

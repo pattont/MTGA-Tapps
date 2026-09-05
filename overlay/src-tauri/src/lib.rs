@@ -7,6 +7,7 @@
 //! the settings file.
 
 mod arena;
+mod diag;
 mod dock;
 mod settings;
 
@@ -103,12 +104,45 @@ fn monitor_rects(window: &WebviewWindow) -> Vec<(Rect, Option<String>)> {
         .collect()
 }
 
-/// The monitor the window should dock on: the remembered one when it still
-/// exists, else the one under the cursor, else the primary.
-fn target_monitor(window: &WebviewWindow, runtime: &Runtime) -> Rect {
+/// Index of the monitor holding the centre of Arena's window, in
+/// `available_monitors()` order. Units differ per platform (see
+/// `ArenaStatus::bounds`), so the comparison is done in the matching ones.
+fn arena_monitor_index(window: &WebviewWindow, bounds: (i32, i32, i32, i32)) -> Option<usize> {
+    let (x, y, w, h) = bounds;
+    if w <= 0 || h <= 0 {
+        return None;
+    }
+    let centre = (x + w / 2, y + h / 2);
+    #[cfg(target_os = "macos")]
+    {
+        let rects: Vec<Rect> = monitor_rects(window).into_iter().map(|(r, _)| r).collect();
+        return rects.iter().position(|r| r.contains(centre.0, centre.1));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let monitors = window.available_monitors().ok()?;
+        monitors.iter().position(|m| {
+            let p = m.position();
+            let s = m.size();
+            Rect { x: p.x, y: p.y, width: s.width as i32, height: s.height as i32 }.contains(centre.0, centre.1)
+        })
+    }
+}
+
+/// The monitor the window should dock on: Arena's (when it has a window and
+/// "follow Arena" is on), else the remembered one when it still exists, else
+/// the one under the cursor, else the primary.
+fn target_monitor(window: &WebviewWindow, runtime: &Runtime, follow_arena: bool) -> Rect {
     let monitors = monitor_rects(window);
     if monitors.is_empty() {
         return Rect { x: 0, y: 0, width: 1920, height: 1080 };
+    }
+    if follow_arena {
+        if let Some(index) = runtime.last_arena.bounds.and_then(|b| arena_monitor_index(window, b)) {
+            if let Some((rect, _)) = monitors.get(index) {
+                return *rect;
+            }
+        }
     }
     if let Some(name) = runtime.monitor.as_ref() {
         if let Some((rect, _)) = monitors.iter().find(|(_, n)| n.as_deref() == Some(name.as_str())) {
@@ -130,7 +164,7 @@ fn apply_geometry(app: &AppHandle) {
     let state = app.state::<AppState>();
     let settings = state.settings.lock().unwrap().clone();
     let mut runtime = state.runtime.lock().unwrap();
-    let area = target_monitor(&window, &runtime);
+    let area = target_monitor(&window, &runtime, settings.follow_arena);
     let size = dock::size_for(runtime.layout, runtime.content_height, &area);
     let y = match settings.dock {
         Dock::Left => settings.positions.left_y,
@@ -144,10 +178,48 @@ fn apply_geometry(app: &AppHandle) {
     let (x, y) = dock::docked_position(settings.dock, size, &area, y, float_at);
     runtime.snapping = true;
     runtime.placed_at = Some((x, y));
-    let _ = window.set_size(LogicalSize::new(size.width, size.height));
-    let _ = window.set_position(LogicalPosition::new(x, y));
+    let sized = window.set_size(LogicalSize::new(size.width, size.height));
+    let placed = window.set_position(LogicalPosition::new(x, y));
     runtime.snapping = false;
+    diag::log(format!(
+        "geometry: layout={:?} dock={:?} monitor={:?} size={}x{} at ({}, {}) set_size={:?} set_position={:?}",
+        runtime.layout, settings.dock, area, size.width, size.height, x, y, sized.err(), placed.err()
+    ));
 }
+
+/// Over a fullscreen Arena (its own Space) a floating window is not enough:
+/// the window must also be a full-screen auxiliary that joins every Space,
+/// at a level above the fullscreen window. Tauri's `set_always_on_top`
+/// resets the level to floating, so this runs after every call to it.
+#[cfg(target_os = "macos")]
+fn raise_above_fullscreen(window: &WebviewWindow) {
+    // NSWindowCollectionBehavior
+    const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
+    const STATIONARY: usize = 1 << 4;
+    const IGNORES_CYCLE: usize = 1 << 6;
+    const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
+    // NSPopUpMenuWindowLevel: above floating and modal panels, below the
+    // screen saver and system alerts.
+    const LEVEL: isize = 101;
+    let target = window.clone();
+    let _ = window.run_on_main_thread(move || {
+        let Ok(ptr) = target.ns_window() else {
+            diag::log("macos: no NSWindow to raise");
+            return;
+        };
+        let ns: &objc2::runtime::AnyObject = unsafe { &*(ptr as *const objc2::runtime::AnyObject) };
+        unsafe {
+            let _: () = objc2::msg_send![ns, setLevel: LEVEL];
+            let _: () = objc2::msg_send![
+                ns,
+                setCollectionBehavior: CAN_JOIN_ALL_SPACES | STATIONARY | IGNORES_CYCLE | FULL_SCREEN_AUXILIARY
+            ];
+        }
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn raise_above_fullscreen(_window: &WebviewWindow) {}
 
 fn refresh_visibility(app: &AppHandle) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else { return };
@@ -155,10 +227,19 @@ fn refresh_visibility(app: &AppHandle) {
     let runtime = state.runtime.lock().unwrap();
     let show = !runtime.hidden_by_user && !runtime.hidden_for_focus;
     if show {
-        let _ = window.show();
-        let _ = window.set_always_on_top(true);
+        let shown = window.show();
+        let top = window.set_always_on_top(true);
+        raise_above_fullscreen(&window);
+        diag::log(format!(
+            "show: show={:?} always_on_top={:?} is_visible={:?}",
+            shown.err(), top.err(), window.is_visible().ok()
+        ));
     } else {
-        let _ = window.hide();
+        let hidden = window.hide();
+        diag::log(format!(
+            "hide: by_user={} for_focus={} hide={:?}",
+            runtime.hidden_by_user, runtime.hidden_for_focus, hidden.err()
+        ));
     }
 }
 
@@ -228,7 +309,7 @@ fn save_settings(app: &AppHandle) {
     let state = app.state::<AppState>();
     let settings = state.settings.lock().unwrap().clone();
     if let Err(err) = settings.save(&state.settings_path) {
-        eprintln!("overlay: could not save settings: {err}");
+        diag::log(format!("could not save settings: {err}"));
     }
 }
 
@@ -248,7 +329,9 @@ fn register_hotkeys(app: &AppHandle) {
             toggle_layout(app);
         }
     }) {
-        eprintln!("overlay: hotkey {toggle_key} unavailable: {err}");
+        diag::log(format!("hotkey {toggle_key} unavailable: {err}"));
+    } else {
+        diag::log(format!("hotkey {toggle_key} registered (toggle)"));
     }
     let visibility_key = visibility.clone();
     if let Err(err) = shortcuts.on_shortcut(visibility.as_str(), move |app, _shortcut, event| {
@@ -256,7 +339,9 @@ fn register_hotkeys(app: &AppHandle) {
             toggle_hidden(app);
         }
     }) {
-        eprintln!("overlay: hotkey {visibility_key} unavailable: {err}");
+        diag::log(format!("hotkey {visibility_key} unavailable: {err}"));
+    } else {
+        diag::log(format!("hotkey {visibility_key} registered (visibility)"));
     }
 }
 
@@ -368,16 +453,22 @@ fn start_arena_poll(app: AppHandle) {
         .name("arena-poll".into())
         .spawn(move || loop {
             let status = arena::probe();
-            let (changed, hide_setting) = {
+            let (changed, moved, hide_setting) = {
                 let state = app.state::<AppState>();
                 let mut runtime = state.runtime.lock().unwrap();
                 let changed = runtime.last_arena != status;
+                let moved = status.bounds.is_some() && runtime.last_arena.bounds != status.bounds;
                 runtime.last_arena = status;
-                let hide_setting = state.settings.lock().unwrap().hide_when_arena_not_in_front;
-                (changed, hide_setting)
+                let settings = state.settings.lock().unwrap();
+                (changed, moved && settings.follow_arena, settings.hide_when_arena_not_in_front)
             };
             if changed {
+                diag::log(format!("arena: {status:?}"));
                 let _ = app.emit("arena-status", status);
+            }
+            if moved {
+                // Arena's window appeared or moved: dock on its monitor.
+                apply_geometry(&app);
             }
             // Hide only when Arena is running and something else took focus;
             // the overlay itself having focus (the flyout) never hides it.
@@ -514,7 +605,14 @@ fn hide_overlay(app: AppHandle) {
 
 #[tauri::command]
 fn quit_overlay(app: AppHandle) {
+    diag::log("quit requested by the page");
     app.exit(0);
+}
+
+/// The page's console for things worth keeping (errors, link changes).
+#[tauri::command]
+fn page_log(message: String) {
+    diag::log(format!("page: {message}"));
 }
 
 // ---------------------------------------------------------------------------
@@ -539,8 +637,9 @@ fn api_url_from_args() -> Option<String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // A second launch just shows the first one.
+            diag::log(format!("second instance asked to show us: {args:?}"));
             {
                 let state = app.state::<AppState>();
                 state.runtime.lock().unwrap().hidden_by_user = false;
@@ -550,6 +649,10 @@ pub fn run() {
             sync_tray(app);
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .on_page_load(|webview, payload| {
+            diag::log(format!("webview {:?}: {:?}", payload.event(), payload.url().as_str()));
+            let _ = webview;
+        })
         .invoke_handler(tauri::generate_handler![
             get_settings,
             update_settings,
@@ -561,6 +664,7 @@ pub fn run() {
             platform,
             hide_overlay,
             quit_overlay,
+            page_log,
         ])
         .setup(|app| {
             let settings_path = app
@@ -568,10 +672,20 @@ pub fn run() {
                 .app_config_dir()
                 .map(|dir| dir.join(SETTINGS_FILE))
                 .unwrap_or_else(|_| std::path::PathBuf::from(SETTINGS_FILE));
+            let log_path = diag::path_from_args()
+                .unwrap_or_else(|| settings_path.with_file_name("overlay.log"));
+            diag::open(&log_path);
+            diag::log(format!(
+                "Tapps Overlay {} starting: settings={} args={:?}",
+                env!("CARGO_PKG_VERSION"),
+                settings_path.display(),
+                std::env::args().skip(1).collect::<Vec<_>>()
+            ));
             let mut settings = Settings::load(&settings_path);
             if let Some(url) = api_url_from_args() {
                 settings.api_url = url;
             }
+            diag::log(format!("settings: dock={:?} api={} hide_when_arena_not_in_front={}", settings.dock, settings.api_url, settings.hide_when_arena_not_in_front));
             let runtime = Runtime {
                 monitor: settings.monitor.clone(),
                 ..Runtime::default()
@@ -590,18 +704,27 @@ pub fn run() {
                 let _ = window.set_always_on_top(true);
                 let _ = window.set_visible_on_all_workspaces(true);
                 let _ = window.set_skip_taskbar(true);
+                raise_above_fullscreen(&window);
                 let moved_handle = handle.clone();
-                window.on_window_event(move |event| {
-                    if let WindowEvent::Moved(position) = event {
-                        on_moved(&moved_handle, position.x, position.y);
-                    }
+                window.on_window_event(move |event| match event {
+                    WindowEvent::Moved(position) => on_moved(&moved_handle, position.x, position.y),
+                    WindowEvent::Focused(focused) => diag::log(format!("window focused={focused}")),
+                    WindowEvent::Destroyed => diag::log("window destroyed"),
+                    _ => {}
                 });
             }
+            if app.get_webview_window(MAIN_WINDOW).is_none() {
+                diag::log("no main window — the window failed to build");
+            }
             apply_geometry(&handle);
-            build_tray(&handle)?;
+            match build_tray(&handle) {
+                Ok(()) => diag::log("tray built"),
+                Err(err) => diag::log(format!("tray failed: {err}")),
+            }
             register_hotkeys(&handle);
             refresh_visibility(&handle);
             start_arena_poll(handle.clone());
+            diag::log("setup complete");
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -630,7 +753,7 @@ fn on_moved(app: &AppHandle, physical_x: i32, physical_y: i32) {
     let (dock, size, area) = {
         let settings = state.settings.lock().unwrap();
         let runtime = state.runtime.lock().unwrap();
-        let area = target_monitor(&window, &runtime);
+        let area = target_monitor(&window, &runtime, settings.follow_arena);
         (settings.dock, dock::size_for(runtime.layout, runtime.content_height, &area), area)
     };
     let (x, y) = dock::constrain_drag(dock, (logical.x, logical.y), size, &area);

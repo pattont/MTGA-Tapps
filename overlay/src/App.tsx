@@ -4,7 +4,7 @@ import { Panel } from './components/Panel';
 import { Rail } from './components/Rail';
 import { formatPct, type Row } from './model';
 import { OverlayPoller } from './poll';
-import { tauri } from './tauri';
+import { log, tauri } from './tauri';
 import type { Link, LayoutInfo, OverlayPayload, Settings, SortKey } from './types';
 
 /** Dwell on the rail before the panel flies out. */
@@ -80,6 +80,7 @@ export function App() {
         tauri.invoke<LayoutInfo>('get_layout'),
       ]);
       if (disposed) return;
+      log(`shell ready: platform=${os} layout=${current.layout} visible=${current.visible} api=${initial.apiUrl}`);
       setSettings(initial);
       setPlatform(os);
       setLayout(current);
@@ -106,7 +107,13 @@ export function App() {
   useEffect(() => {
     if (!settings) return;
     if (!pollerRef.current) {
-      pollerRef.current = new OverlayPoller(settings.apiUrl, { onPayload: setPayload, onLink: setLink });
+      pollerRef.current = new OverlayPoller(settings.apiUrl, {
+        onPayload: setPayload,
+        onLink: (next) => {
+          log(`tracker link: ${next}`);
+          setLink(next);
+        },
+      });
     } else {
       pollerRef.current.setBaseUrl(settings.apiUrl);
     }

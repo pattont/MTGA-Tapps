@@ -16,7 +16,10 @@ pub struct ArenaStatus {
     pub running: bool,
     /// Arena's window has keyboard focus.
     pub frontmost: bool,
-    /// Arena's window rectangle in physical screen pixels, when known.
+    /// Arena's window rectangle (x, y, width, height) when known: logical
+    /// points on macOS (what CGWindowList reports), physical pixels on
+    /// Windows (what GetWindowRect reports). `lib.rs` compares each against
+    /// monitors in the same units.
     pub bounds: Option<(i32, i32, i32, i32)>,
     /// The overlay itself has focus (the player is using the flyout) — never
     /// a reason to hide.
@@ -34,13 +37,14 @@ pub fn probe() -> ArenaStatus {
 #[cfg(target_os = "macos")]
 mod platform {
     use super::ArenaStatus;
+    use std::ffi::{c_char, c_void, CString};
     use std::process::Command;
 
     const BUNDLE_ID: &str = "com.wizards.mtga";
 
     /// `lsappinfo` ships with macOS, needs no Automation/Accessibility
-    /// permission (unlike System Events or CGWindowList), and answers in a
-    /// few milliseconds — the right trade for a once-a-second poll.
+    /// permission (unlike System Events or CGWindowList names), and answers
+    /// in a few milliseconds — the right trade for a once-a-second poll.
     fn frontmost_bundle_id() -> Option<String> {
         let front = Command::new("/usr/bin/lsappinfo").arg("front").output().ok()?;
         let asn = String::from_utf8_lossy(&front.stdout).trim().to_string();
@@ -61,21 +65,141 @@ mod platform {
         }
     }
 
-    fn running() -> bool {
-        Command::new("/usr/bin/pgrep")
-            .args(["-x", "MTGA"])
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
+    /// Arena's process id, when it is running.
+    fn arena_pid() -> Option<i32> {
+        let out = Command::new("/usr/bin/pgrep").args(["-x", "MTGA"]).output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        String::from_utf8_lossy(&out.stdout).lines().next()?.trim().parse().ok()
     }
+
+    // --- CGWindowList: the bounds of Arena's window without any permission
+    // prompt (window *names* need Screen Recording; owner pid, layer and
+    // bounds do not). Declared by hand so the crate needs no framework
+    // bindings for four C calls.
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct CGRect {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    }
+
+    const K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY: u32 = 1 << 0;
+    const K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS: u32 = 1 << 4;
+    const K_CG_NULL_WINDOW_ID: u32 = 0;
+    const K_CF_NUMBER_SINT32_TYPE: isize = 3;
+    const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGWindowListCopyWindowInfo(option: u32, relative_to_window: u32) -> *const c_void;
+        fn CGRectMakeWithDictionaryRepresentation(dict: *const c_void, rect: *mut CGRect) -> bool;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFArrayGetCount(array: *const c_void) -> isize;
+        fn CFArrayGetValueAtIndex(array: *const c_void, index: isize) -> *const c_void;
+        fn CFDictionaryGetValue(dict: *const c_void, key: *const c_void) -> *const c_void;
+        fn CFStringCreateWithCString(alloc: *const c_void, cstr: *const c_char, encoding: u32) -> *const c_void;
+        fn CFNumberGetValue(number: *const c_void, number_type: isize, out: *mut c_void) -> bool;
+        fn CFRelease(cf: *const c_void);
+    }
+
+    struct CfKey(*const c_void);
+
+    impl CfKey {
+        fn new(name: &str) -> Self {
+            let c = CString::new(name).expect("static key");
+            CfKey(unsafe { CFStringCreateWithCString(std::ptr::null(), c.as_ptr(), K_CF_STRING_ENCODING_UTF8) })
+        }
+    }
+
+    impl Drop for CfKey {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe { CFRelease(self.0) };
+            }
+        }
+    }
+
+    fn number_i32(value: *const c_void) -> Option<i32> {
+        if value.is_null() {
+            return None;
+        }
+        let mut out: i32 = 0;
+        let ok = unsafe { CFNumberGetValue(value, K_CF_NUMBER_SINT32_TYPE, &mut out as *mut i32 as *mut c_void) };
+        ok.then_some(out)
+    }
+
+    /// The largest on-screen, layer-0 window owned by `pid`, in points with
+    /// a top-left origin — the same frame Tauri reports monitors in.
+    fn window_bounds(pid: i32) -> Option<(i32, i32, i32, i32)> {
+        let list = unsafe {
+            CGWindowListCopyWindowInfo(
+                K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY | K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS,
+                K_CG_NULL_WINDOW_ID,
+            )
+        };
+        if list.is_null() {
+            return None;
+        }
+        let owner_key = CfKey::new("kCGWindowOwnerPID");
+        let layer_key = CfKey::new("kCGWindowLayer");
+        let bounds_key = CfKey::new("kCGWindowBounds");
+        let mut best: Option<(i32, i32, i32, i32)> = None;
+        let count = unsafe { CFArrayGetCount(list) };
+        for index in 0..count {
+            let dict = unsafe { CFArrayGetValueAtIndex(list, index) };
+            if dict.is_null() {
+                continue;
+            }
+            let owner = number_i32(unsafe { CFDictionaryGetValue(dict, owner_key.0) });
+            if owner != Some(pid) {
+                continue;
+            }
+            if number_i32(unsafe { CFDictionaryGetValue(dict, layer_key.0) }) != Some(0) {
+                continue;
+            }
+            let bounds = unsafe { CFDictionaryGetValue(dict, bounds_key.0) };
+            if bounds.is_null() {
+                continue;
+            }
+            let mut rect = CGRect::default();
+            if !unsafe { CGRectMakeWithDictionaryRepresentation(bounds, &mut rect) } {
+                continue;
+            }
+            let candidate = (rect.x as i32, rect.y as i32, rect.width as i32, rect.height as i32);
+            let area = candidate.2 as i64 * candidate.3 as i64;
+            let best_area = best.map(|b| b.2 as i64 * b.3 as i64).unwrap_or(-1);
+            if area > best_area {
+                best = Some(candidate);
+            }
+        }
+        unsafe { CFRelease(list) };
+        best
+    }
+
+    static LAST_FRONT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
     pub fn probe() -> ArenaStatus {
         let front = frontmost_bundle_id();
+        if let Ok(mut last) = LAST_FRONT.lock() {
+            if *last != front {
+                crate::diag::log(format!("arena: front app is now {front:?}"));
+                *last = front.clone();
+            }
+        }
         let frontmost = front.as_deref() == Some(BUNDLE_ID);
+        let pid = arena_pid();
         ArenaStatus {
-            running: frontmost || running(),
+            running: frontmost || pid.is_some(),
             frontmost,
-            bounds: None,
+            bounds: pid.and_then(window_bounds),
             overlay_frontmost: front.as_deref() == Some(super::OVERLAY_BUNDLE_ID),
         }
     }

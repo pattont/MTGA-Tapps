@@ -22,13 +22,19 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from .paths import PROJECT_ROOT
+from .paths import DATA_DIR, PROJECT_ROOT
 
 #: settings.json section that remembers whether the overlay should start.
 SETTINGS_SECTION = "overlay"
 
 #: Environment override for the overlay executable (development, testing).
 BINARY_ENV = "MTGA_TRACKER_OVERLAY_BIN"
+
+#: The overlay's own diagnostic log (placement, show/hide, Arena probe, page
+#: errors) and its raw stderr (panics), both in the tracker's data folder so
+#: "it didn't show up" has somewhere to look.
+OVERLAY_LOG = DATA_DIR / "overlay.log"
+OVERLAY_STDERR_LOG = DATA_DIR / "overlay-stderr.log"
 
 _MAC_APP_NAME = "Tapps Overlay.app"
 _MAC_EXECUTABLE = Path(_MAC_APP_NAME) / "Contents" / "MacOS" / "tapps-overlay"
@@ -145,10 +151,13 @@ class OverlayManager:
         binary: Optional[Path] = None,
         settings_path: Optional[Path] = None,
         popen: Callable[..., Any] = subprocess.Popen,
+        log_dir: Optional[Path] = None,
     ):
         self._binary_override = binary
         self._settings_path = settings_path
         self._popen = popen
+        self._log_dir = log_dir
+        self._stderr_file: Optional[Any] = None
         self._lock = threading.RLock()
         self._process: Optional[Any] = None
         self._api_url: Optional[str] = None
@@ -177,6 +186,14 @@ class OverlayManager:
             self._reap()
             return self._process is not None
 
+    @property
+    def log_path(self) -> Path:
+        return (self._log_dir / OVERLAY_LOG.name) if self._log_dir else OVERLAY_LOG
+
+    @property
+    def stderr_log_path(self) -> Path:
+        return (self._log_dir / OVERLAY_STDERR_LOG.name) if self._log_dir else OVERLAY_STDERR_LOG
+
     def status(self) -> Dict[str, Any]:
         binary = self.binary
         return {
@@ -184,6 +201,7 @@ class OverlayManager:
             "available": binary is not None,
             "running": self.running,
             "binary": str(binary) if binary else None,
+            "log": str(self.log_path),
             "error": self._last_error,
         }
 
@@ -237,16 +255,23 @@ class OverlayManager:
                 self._last_error = "The overlay is not included in this build."
                 return False
             self._ensure_executable(binary)
-            args = [str(binary)]
+            args = [str(binary), "--log", str(self.log_path)]
             if self._api_url:
                 args += ["--api", self._api_url]
+            stderr: Any = subprocess.DEVNULL
+            try:
+                self.stderr_log_path.parent.mkdir(parents=True, exist_ok=True)
+                self._stderr_file = open(self.stderr_log_path, "w", encoding="utf-8")
+                stderr = self._stderr_file
+            except OSError:
+                self._stderr_file = None
             try:
                 self._process = self._popen(
                     args,
                     cwd=str(binary.parent),
                     stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=stderr,
+                    stderr=stderr,
                     **_detached_kwargs(),
                 )
             except OSError as exc:
@@ -275,6 +300,16 @@ class OverlayManager:
                         pass
         except OSError:
             pass
+        self._close_stderr()
+
+    def _close_stderr(self) -> None:
+        handle = self._stderr_file
+        self._stderr_file = None
+        if handle is not None:
+            try:
+                handle.close()
+            except OSError:
+                pass
 
     def refresh(self) -> Dict[str, Any]:
         """Poll the child; if the player quit it from its own tray, remember
@@ -292,7 +327,9 @@ class OverlayManager:
     def _reap(self) -> None:
         process = self._process
         if process is not None and process.poll() is not None:
+            self._last_error = f"The overlay exited with code {process.returncode}; see {self.log_path}."
             self._process = None
+            self._close_stderr()
 
     @staticmethod
     def _ensure_executable(binary: Path) -> None:

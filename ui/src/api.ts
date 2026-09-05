@@ -1659,6 +1659,8 @@ export interface OverlaySettings {
   /** The overlay process is up right now. */
   running: boolean;
   binary: string | null;
+  /** The overlay's diagnostic log in the tracker's data folder. */
+  log: string;
   error: string | null;
 }
 

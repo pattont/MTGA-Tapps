@@ -95,6 +95,15 @@ export function defaultSettings(): Settings {
   };
 }
 
+/** Lines worth keeping in the shell's overlay.log (errors, link changes). */
+export function log(message: string): void {
+  if (isTauri()) {
+    void tauri.invoke('page_log', { message }).catch(() => undefined);
+  } else {
+    console.info(`[overlay] ${message}`);
+  }
+}
+
 export const tauri = {
   invoke: async <T,>(command: string, args?: Record<string, unknown>): Promise<T> =>
     (await loadShell()).invoke<T>(command, args),
