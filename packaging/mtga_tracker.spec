@@ -33,6 +33,59 @@ def _resolve_app_version() -> str:
 
 app_version = _resolve_app_version()
 
+
+def _windows_version_info(version: str, *, file_description: str, original_filename: str):
+    """A VERSIONINFO resource for the exe. An executable with no company,
+    product, or description is one more thing Windows Defender's heuristics
+    hold against an unsigned binary; this is free to add."""
+    if not is_windows:
+        return None
+    from PyInstaller.utils.win32.versioninfo import (
+        FixedFileInfo,
+        StringFileInfo,
+        StringStruct,
+        StringTable,
+        VarFileInfo,
+        VarStruct,
+        VSVersionInfo,
+    )
+
+    match = re.match(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?", version)
+    numbers = [int(part or 0) for part in (match.groups() if match else ())]
+    numbers = (numbers + [0, 0, 0, 0])[:4]
+    return VSVersionInfo(
+        ffi=FixedFileInfo(
+            filevers=tuple(numbers),
+            prodvers=tuple(numbers),
+            mask=0x3F,
+            flags=0x0,
+            OS=0x40004,
+            fileType=0x1,
+            subtype=0x0,
+            date=(0, 0),
+        ),
+        kids=[
+            StringFileInfo(
+                [
+                    StringTable(
+                        "040904B0",
+                        [
+                            StringStruct("CompanyName", "Travis Patton"),
+                            StringStruct("FileDescription", file_description),
+                            StringStruct("FileVersion", version),
+                            StringStruct("InternalName", original_filename.rsplit(".", 1)[0]),
+                            StringStruct("LegalCopyright", "MIT License"),
+                            StringStruct("OriginalFilename", original_filename),
+                            StringStruct("ProductName", "Tapps Tracker"),
+                            StringStruct("ProductVersion", version),
+                        ],
+                    )
+                ]
+            ),
+            VarFileInfo([VarStruct("Translation", [1033, 1200])]),
+        ],
+    )
+
 if not (ui_dist / "index.html").is_file():
     raise SystemExit("ui/dist is missing. Run `cd ui && npm run build` first.")
 
@@ -80,6 +133,11 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(app_icon) if (is_windows and app_icon) else None,
+    version=_windows_version_info(
+        app_version,
+        file_description="Tapps Tracker for MTG Arena",
+        original_filename="MTGA Tracker.exe",
+    ),
 )
 
 # Companion console tool: the Deck Downloader terminal UI. Built from the
@@ -124,6 +182,11 @@ dd_exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(app_icon) if (is_windows and app_icon) else None,
+    version=_windows_version_info(
+        app_version,
+        file_description="Tapps Tracker Deck Finder",
+        original_filename="MTGA Deck Downloader.exe",
+    ),
 )
 
 collection = COLLECT(

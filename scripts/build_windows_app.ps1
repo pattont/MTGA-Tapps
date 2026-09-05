@@ -30,6 +30,21 @@ Write-Host "==> Installing Python build dependencies"
 & $Python -m pip install -e ".[gui,build]"
 if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 
+# Windows Defender's ML heuristics (Trojan:Win32/Wacatac.*!ml) key heavily on
+# PyInstaller's prebuilt bootloader — the same bytes every PyInstaller-packed
+# piece of malware ships. Compiling the bootloader from source gives this
+# app its own bootloader bytes, which is the documented no-cost mitigation
+# (signing is the other one). Needs a C compiler (MSVC Build Tools; CI has
+# them); without one, fall back to the wheel with a warning.
+Write-Host "==> Rebuilding PyInstaller's bootloader from source (Defender false-positive mitigation)"
+& $Python -m pip install --no-cache-dir --force-reinstall --no-binary pyinstaller "pyinstaller>=6.10.0"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "!! Could not build the PyInstaller bootloader from source (no C compiler?) - using the prebuilt one."
+    Write-Host "   Expect Windows Defender to be more suspicious of this build."
+    & $Python -m pip install "pyinstaller>=6.10.0"
+    if ($LASTEXITCODE -ne 0) { throw "pip install pyinstaller failed" }
+}
+
 Write-Host "==> Running PyInstaller"
 & $Python -m PyInstaller --noconfirm --clean packaging/mtga_tracker.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }

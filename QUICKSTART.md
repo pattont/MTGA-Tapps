@@ -61,6 +61,15 @@ xattr -cr "/Applications/MTGA Tracker.app"
 
 On Windows, use SmartScreen's **More info → Run anyway** on the setup.exe or zip.
 
+If Windows Defender quarantines `MTGA Tracker.exe` as **Trojan:Win32/Wacatac**
+(the `!ml` suffix means a machine-learning guess, not a real match), that is a
+false positive: the app is unsigned, freshly built, tails Arena's log, and — for
+the collection exporter — reads Arena's memory, which is exactly the shape
+Defender's heuristics are trained to distrust. Open **Windows Security →
+Protection history**, pick the entry, choose **Restore** and then **Allow on
+device**. Each release is also submitted to Microsoft as a false positive, which
+clears the verdict for that build within a day or two.
+
 ## Option 2 — Run from source (development)
 
 ```bash
