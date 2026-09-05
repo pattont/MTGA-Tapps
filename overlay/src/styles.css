@@ -497,11 +497,17 @@ img {
 .row {
   display: grid;
   grid-template-columns: 18px 1fr auto;
-  align-items: center;
+  align-items: stretch;
   gap: 7px;
-  padding: 4px 8px 4px 7px;
+  padding: 0 0 0 7px;
   line-height: 1.15;
   border-top: 1px solid var(--hairline);
+}
+
+.row .mini,
+.row .body {
+  padding: 5px 0;
+  align-self: center;
 }
 
 .grp + .row,
@@ -525,15 +531,19 @@ img {
 }
 
 .row .right {
+  /* A darker column behind the numbers so they stand off the list. */
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 1px;
-  min-width: 40px;
+  justify-content: center;
+  gap: 2px;
+  min-width: 56px;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.28);
 }
 
 .row .cnt {
-  font-size: 13.5px;
+  font-size: 15px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   line-height: 1;
@@ -545,7 +555,7 @@ img {
 }
 
 .row .nm {
-  font-size: 13.5px;
+  font-size: 14.5px;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -597,24 +607,24 @@ img {
   gap: 2px;
   align-items: center;
   min-width: 0;
-  height: 12px;
+  height: 11px;
 }
 
 .mana img {
-  width: 11px;
-  height: 11px;
+  width: 10px;
+  height: 10px;
   filter: drop-shadow(0 1px 1px rgb(0 0 0 / 45%));
 }
 
 .mana .gen {
-  min-width: 11px;
-  height: 11px;
+  min-width: 10px;
+  height: 10px;
   padding: 0 2px;
-  border-radius: 6px;
+  border-radius: 5px;
   background: #cbd5d9;
   color: #1a1f24;
   font-style: normal;
-  font-size: 7.5px;
+  font-size: 7px;
   font-weight: 800;
   display: grid;
   place-items: center;
@@ -628,8 +638,8 @@ img {
 
 .pct {
   text-align: right;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 10.5px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
@@ -725,16 +735,21 @@ img {
 
 /* compact rows */
 
-.density-compact .row {
-  padding: 2px 8px 2px 7px;
+.density-compact .row .mini,
+.density-compact .row .body {
+  padding: 3px 0;
+}
+
+.density-compact .row .right {
+  padding: 2px 8px;
 }
 
 .density-compact .row .nm {
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .density-compact .row .cnt {
-  font-size: 12.5px;
+  font-size: 13.5px;
 }
 
 .density-compact .row .body {
