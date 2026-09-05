@@ -65,13 +65,23 @@ mod platform {
         }
     }
 
-    /// Arena's process id, when it is running.
+    /// Arena's process id, when it is running: by process name first, then
+    /// by bundle id through LaunchServices (covers a renamed executable).
     fn arena_pid() -> Option<i32> {
-        let out = Command::new("/usr/bin/pgrep").args(["-x", "MTGA"]).output().ok()?;
-        if !out.status.success() {
-            return None;
+        if let Ok(out) = Command::new("/usr/bin/pgrep").args(["-x", "MTGA"]).output() {
+            if out.status.success() {
+                if let Some(pid) = String::from_utf8_lossy(&out.stdout).lines().next().and_then(|l| l.trim().parse().ok()) {
+                    return Some(pid);
+                }
+            }
         }
-        String::from_utf8_lossy(&out.stdout).lines().next()?.trim().parse().ok()
+        let out = Command::new("/usr/bin/lsappinfo")
+            .args(["info", "-only", "pid", BUNDLE_ID])
+            .output()
+            .ok()?;
+        // "pid"=39523
+        let text = String::from_utf8_lossy(&out.stdout);
+        text.split('=').nth(1)?.trim().trim_matches('"').parse().ok()
     }
 
     // --- CGWindowList: the bounds of Arena's window without any permission
@@ -196,6 +206,13 @@ mod platform {
         }
         let frontmost = front.as_deref() == Some(BUNDLE_ID);
         let pid = arena_pid();
+        static LAST_PID: std::sync::Mutex<Option<i32>> = std::sync::Mutex::new(None);
+        if let Ok(mut last) = LAST_PID.lock() {
+            if *last != pid {
+                crate::diag::log(format!("arena: pid is now {pid:?}"));
+                *last = pid;
+            }
+        }
         ArenaStatus {
             running: frontmost || pid.is_some(),
             frontmost,

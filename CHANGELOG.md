@@ -8,9 +8,10 @@
   odds per card (within 2 / within 3 on hover), land drops for the next one,
   two, and three draws, a Play/Draw pill, and sort by odds, mana value, or
   name. Lands group into Basic / Nonbasic rows by default; in Brawl, drawn
-  singletons collapse into a Drawn group. Docks left or right (or floats),
-  pins or slides back into the rail when idle, hides when Arena isn't in
-  front, with opacity, click-through, density, and per-platform hotkeys
+  singletons collapse into a Drawn group. Shows only while Arena is running,
+  on Arena's screen (over a fullscreen Arena too); docks left or right (or
+  floats), pins or slides back into the rail when idle, steps aside when
+  Arena isn't in front, with opacity, click-through, density, and per-platform hotkeys
   (`Alt+Shift+T` / `⌥⇧T` toggles the panel, `Alt+Shift+H` / `⌥⇧H` hides)
   in its own ⚙ menu. Enable it from Settings → In-game overlay or the
   menu-bar icon's Show Overlay. It is a separate native app (Tauri v2,

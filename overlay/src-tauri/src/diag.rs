@@ -3,9 +3,10 @@
 //! Every notable step (placement, show/hide and why, the Arena probe
 //! flipping, hotkey and tray setup, page errors) writes one timestamped line.
 //! The tracker passes `--log <path>` so the file lands in its own data folder;
-//! standalone runs log next to overlay.json. Truncated on every launch.
+//! standalone runs log next to overlay.json. Appended across launches (each
+//! launch starts with a marker line) and started over once it passes 1 MB.
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -17,10 +18,16 @@ pub fn open(path: &Path) -> bool {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    match File::create(path) {
+    let oversized = std::fs::metadata(path).map(|m| m.len() > 1_000_000).unwrap_or(false);
+    let opened = if oversized {
+        File::create(path)
+    } else {
+        OpenOptions::new().create(true).append(true).open(path)
+    };
+    match opened {
         Ok(file) => {
             *SINK.lock().unwrap() = Some(file);
-            log(format!("log opened at {}", path.display()));
+            log(format!("---- launch: log {} at {}", if oversized { "restarted" } else { "opened" }, path.display()));
             true
         }
         Err(err) => {

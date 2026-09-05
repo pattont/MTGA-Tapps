@@ -35,8 +35,13 @@ struct Runtime {
     pinned: bool,
     /// The player hid it (hotkey / tray); stays hidden until they show it.
     hidden_by_user: bool,
-    /// Hidden because Arena is not in front.
-    hidden_for_focus: bool,
+    /// Hidden because Arena is not running, or not in front (setting).
+    hidden_for_arena: bool,
+    /// Shown regardless of Arena while the tray's Settings… flyout is open.
+    force_show: bool,
+    /// The monitor the window was last placed on. Sticky: it only changes
+    /// when Arena's window turns up on another one.
+    area: Option<Rect>,
     /// The panel's content height as measured by the page (logical px).
     content_height: i32,
     /// Monitor name the window is docked on, when known.
@@ -56,7 +61,9 @@ impl Default for Runtime {
             layout: Layout::Rail,
             pinned: true,
             hidden_by_user: false,
-            hidden_for_focus: false,
+            hidden_for_arena: true,
+            force_show: false,
+            area: None,
             content_height: 620,
             monitor: None,
             snapping: false,
@@ -130,8 +137,11 @@ fn arena_monitor_index(window: &WebviewWindow, bounds: (i32, i32, i32, i32)) -> 
 }
 
 /// The monitor the window should dock on: Arena's (when it has a window and
-/// "follow Arena" is on), else the remembered one when it still exists, else
-/// the one under the cursor, else the primary.
+/// "follow Arena" is on), else the one it is already on, else the remembered
+/// one when it still exists, else the one under the cursor, else the primary.
+/// The cursor only ever decides the very first placement — a window that
+/// re-docked to wherever the mouse happened to be would wander between
+/// screens every time its size changed.
 fn target_monitor(window: &WebviewWindow, runtime: &Runtime, follow_arena: bool) -> Rect {
     let monitors = monitor_rects(window);
     if monitors.is_empty() {
@@ -142,6 +152,11 @@ fn target_monitor(window: &WebviewWindow, runtime: &Runtime, follow_arena: bool)
             if let Some((rect, _)) = monitors.get(index) {
                 return *rect;
             }
+        }
+    }
+    if let Some(area) = runtime.area {
+        if monitors.iter().any(|(rect, _)| *rect == area) {
+            return area;
         }
     }
     if let Some(name) = runtime.monitor.as_ref() {
@@ -165,6 +180,7 @@ fn apply_geometry(app: &AppHandle) {
     let settings = state.settings.lock().unwrap().clone();
     let mut runtime = state.runtime.lock().unwrap();
     let area = target_monitor(&window, &runtime, settings.follow_arena);
+    runtime.area = Some(area);
     let size = dock::size_for(runtime.layout, runtime.content_height, &area);
     let y = match settings.dock {
         Dock::Left => settings.positions.left_y,
@@ -198,23 +214,34 @@ fn raise_above_fullscreen(window: &WebviewWindow) {
     const STATIONARY: usize = 1 << 4;
     const IGNORES_CYCLE: usize = 1 << 6;
     const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
-    // NSPopUpMenuWindowLevel: above floating and modal panels, below the
-    // screen saver and system alerts.
-    const LEVEL: isize = 101;
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGShieldingWindowLevel() -> i32;
+    }
     let target = window.clone();
     let _ = window.run_on_main_thread(move || {
         let Ok(ptr) = target.ns_window() else {
             diag::log("macos: no NSWindow to raise");
             return;
         };
+        // The shielding level is the one level above a captured
+        // (exclusive-fullscreen) display as well as above fullscreen
+        // Spaces; the window is only ever shown while Arena is running.
+        let level = unsafe { CGShieldingWindowLevel() } as isize;
+        let behavior = CAN_JOIN_ALL_SPACES | STATIONARY | IGNORES_CYCLE | FULL_SCREEN_AUXILIARY;
         let ns: &objc2::runtime::AnyObject = unsafe { &*(ptr as *const objc2::runtime::AnyObject) };
-        unsafe {
-            let _: () = objc2::msg_send![ns, setLevel: LEVEL];
-            let _: () = objc2::msg_send![
-                ns,
-                setCollectionBehavior: CAN_JOIN_ALL_SPACES | STATIONARY | IGNORES_CYCLE | FULL_SCREEN_AUXILIARY
-            ];
-        }
+        let (level_now, behavior_now, on_active_space): (isize, usize, bool) = unsafe {
+            let _: () = objc2::msg_send![ns, setLevel: level];
+            let _: () = objc2::msg_send![ns, setCollectionBehavior: behavior];
+            (
+                objc2::msg_send![ns, level],
+                objc2::msg_send![ns, collectionBehavior],
+                objc2::msg_send![ns, isOnActiveSpace],
+            )
+        };
+        diag::log(format!(
+            "macos: window level={level_now} (asked {level}) behavior={behavior_now:#x} (asked {behavior:#x}) on_active_space={on_active_space}"
+        ));
     });
 }
 
@@ -225,7 +252,7 @@ fn refresh_visibility(app: &AppHandle) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else { return };
     let state = app.state::<AppState>();
     let runtime = state.runtime.lock().unwrap();
-    let show = !runtime.hidden_by_user && !runtime.hidden_for_focus;
+    let show = !runtime.hidden_by_user && (runtime.force_show || !runtime.hidden_for_arena);
     if show {
         let shown = window.show();
         let top = window.set_always_on_top(true);
@@ -237,8 +264,8 @@ fn refresh_visibility(app: &AppHandle) {
     } else {
         let hidden = window.hide();
         diag::log(format!(
-            "hide: by_user={} for_focus={} hide={:?}",
-            runtime.hidden_by_user, runtime.hidden_for_focus, hidden.err()
+            "hide: by_user={} for_arena={} hide={:?}",
+            runtime.hidden_by_user, runtime.hidden_for_arena, hidden.err()
         ));
     }
 }
@@ -253,7 +280,7 @@ fn emit_layout(app: &AppHandle) {
             Layout::Panel => "panel".into(),
         },
         pinned: runtime.pinned,
-        visible: !runtime.hidden_by_user && !runtime.hidden_for_focus,
+        visible: !runtime.hidden_by_user && (runtime.force_show || !runtime.hidden_for_arena),
         dock: settings.dock,
     };
     let _ = app.emit("overlay-layout", info);
@@ -388,8 +415,12 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                     let state = app.state::<AppState>();
                     let mut runtime = state.runtime.lock().unwrap();
                     runtime.hidden_by_user = false;
+                    // Reachable without Arena: shown until the flyout closes.
+                    runtime.force_show = true;
                 }
+                sync_tray(app);
                 refresh_visibility(app);
+                emit_layout(app);
                 let _ = app.emit("overlay-open-settings", ());
             }
             TRAY_QUIT => app.exit(0),
@@ -470,14 +501,17 @@ fn start_arena_poll(app: AppHandle) {
                 // Arena's window appeared or moved: dock on its monitor.
                 apply_geometry(&app);
             }
-            // Hide only when Arena is running and something else took focus;
-            // the overlay itself having focus (the flyout) never hides it.
-            let should_hide = hide_setting && status.running && !status.frontmost && !status.overlay_frontmost;
+            // The overlay belongs to Arena: no Arena, no overlay. With the
+            // setting on it also steps aside while something else is in
+            // front — the overlay itself having focus (the flyout) never
+            // counts as "something else".
+            let should_hide = !status.running
+                || (hide_setting && !status.frontmost && !status.overlay_frontmost);
             let flip = {
                 let state = app.state::<AppState>();
                 let mut runtime = state.runtime.lock().unwrap();
-                if runtime.hidden_for_focus != should_hide {
-                    runtime.hidden_for_focus = should_hide;
+                if runtime.hidden_for_arena != should_hide {
+                    runtime.hidden_for_arena = should_hide;
                     true
                 } else {
                     false
@@ -486,6 +520,11 @@ fn start_arena_poll(app: AppHandle) {
             if flip {
                 refresh_visibility(&app);
                 emit_layout(&app);
+            } else if changed && status.running && status.frontmost {
+                // Arena (re)took the front: make sure we are still above it.
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+                    raise_above_fullscreen(&window);
+                }
             }
             std::thread::sleep(ARENA_POLL);
         })
@@ -537,16 +576,15 @@ fn set_layout(app: AppHandle, layout: String, content_height: Option<i32>) -> La
 
 #[tauri::command]
 fn set_content_height(app: AppHandle, height: i32) {
-    {
+    let resize = {
         let state = app.state::<AppState>();
-        state.runtime.lock().unwrap().content_height = height.max(0);
-    }
-    let is_panel = {
-        let state = app.state::<AppState>();
-        let panel = state.runtime.lock().unwrap().layout == Layout::Panel;
-        panel
+        let mut runtime = state.runtime.lock().unwrap();
+        let next = height.max(0);
+        let changed = runtime.content_height != next;
+        runtime.content_height = next;
+        changed && runtime.layout == Layout::Panel
     };
-    if is_panel {
+    if resize {
         apply_geometry(&app);
     }
 }
@@ -577,7 +615,7 @@ fn current_layout(app: &AppHandle) -> LayoutInfo {
             Layout::Panel => "panel".into(),
         },
         pinned: runtime.pinned,
-        visible: !runtime.hidden_by_user && !runtime.hidden_for_focus,
+        visible: !runtime.hidden_by_user && (runtime.force_show || !runtime.hidden_for_arena),
         dock: settings.dock,
     }
 }
@@ -607,6 +645,21 @@ fn hide_overlay(app: AppHandle) {
 fn quit_overlay(app: AppHandle) {
     diag::log("quit requested by the page");
     app.exit(0);
+}
+
+/// The ⚙ flyout closed: a window the tray forced open goes back to
+/// following Arena.
+#[tauri::command]
+fn flyout_closed(app: AppHandle) {
+    let was_forced = {
+        let state = app.state::<AppState>();
+        let mut runtime = state.runtime.lock().unwrap();
+        std::mem::replace(&mut runtime.force_show, false)
+    };
+    if was_forced {
+        refresh_visibility(&app);
+        emit_layout(&app);
+    }
 }
 
 /// The page's console for things worth keeping (errors, link changes).
@@ -664,6 +717,7 @@ pub fn run() {
             platform,
             hide_overlay,
             quit_overlay,
+            flyout_closed,
             page_log,
         ])
         .setup(|app| {

@@ -178,11 +178,10 @@ export function App() {
     if (layout.layout !== 'panel') return;
     const root = rootRef.current;
     if (!root || typeof ResizeObserver === 'undefined') return;
-    let last = -1;
     const report = () => {
       const height = contentHeight();
-      if (height !== null && height !== last) {
-        last = height;
+      // Only a real change reaches the shell: every report re-docks the window.
+      if (height !== null && height !== lastHeight.current) {
         lastHeight.current = height;
         void tauri.invoke('set_content_height', { height });
       }
@@ -217,6 +216,14 @@ export function App() {
       if (now.layout === 'panel' && !now.pinned && !flyoutRef.current) void collapse();
     }, Math.max(1, prefs.returnAfterSeconds) * 1000);
   }, [clearReturn, collapse]);
+
+  // The tray's Settings… shows the window even without Arena; closing the
+  // flyout hands visibility back to the Arena rule.
+  const flyoutWasOpen = useRef(false);
+  useEffect(() => {
+    if (flyoutWasOpen.current && !flyout) void tauri.invoke('flyout_closed');
+    flyoutWasOpen.current = flyout;
+  }, [flyout]);
 
   useEffect(() => {
     // An unpinned panel opened by hotkey or hover starts its clock at once;

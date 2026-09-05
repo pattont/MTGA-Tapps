@@ -324,7 +324,7 @@ export function SettingsPage() {
       <Section
         id="settings-overlay"
         title="In-game overlay"
-        description="A small always-on-top window beside Arena: a rail with the turn, the chance of a land on the next draw, and your library count, which opens into your full decklist with per-card draw odds. It only reads this tracker's local API, never the game. Dock it left or right, pin it, or hide it with Alt+Shift+H (⌥⇧H on macOS) — every other preference lives in the overlay's own ⚙ menu."
+        description="A small always-on-top window beside Arena: a rail with the turn, the chance of a land on the next draw, and your library count, which opens into your full decklist with per-card draw odds. It appears only while Arena is running, on the screen Arena is on, and it only reads this tracker's local API, never the game. Dock it left or right, pin it, or hide it with Alt+Shift+H (⌥⇧H on macOS) — every other preference lives in the overlay's own ⚙ menu."
       >
         {error ? (
           <p className="empty-state deckfinder-state">{error}</p>
@@ -436,7 +436,7 @@ function OverlayForm({
         </p>
       ) : (
         <p className="settings-hint">
-          {overlay.running ? 'Running' : 'Off'}
+          {overlay.running ? 'Running — it shows itself when Arena is up' : 'Off'}
           {overlay.enabled && !overlay.running ? ' — it will start with the tracker next time.' : '.'}{' '}
           Toggle it any time from the menu-bar icon (Show Overlay) or with the overlay's hotkeys:{' '}
           {macos ? '⌥⇧T' : 'Alt+Shift+T'} opens the deck panel, {macos ? '⌥⇧H' : 'Alt+Shift+H'} hides it.

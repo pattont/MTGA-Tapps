@@ -300,8 +300,9 @@ Turn it on from **Settings → In-game overlay** or the menu-bar icon's
 **Show Overlay**. Pin it to keep it open, or leave it unpinned and it slides
 back into the rail a few seconds after the cursor leaves. Dock it left or
 right (or float it), set its opacity, click-through, row density and hotkeys
-from its own ⚙ menu; `Alt+Shift+H` / `⌥⇧H` hides it. It hides itself when
-Arena isn't the front window and comes back when it is.
+from its own ⚙ menu; `Alt+Shift+H` / `⌥⇧H` hides it. It exists only while
+Arena does: it appears when Arena is running, on the screen Arena is on,
+steps aside while another app is in front, and vanishes when Arena quits.
 
 It reads only this tracker's local `GET /api/overlay` — never Arena's memory
 or screen — so it knows exactly what the tracker knows: your library from

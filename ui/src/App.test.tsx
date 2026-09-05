@@ -1058,7 +1058,7 @@ describe('App', () => {
     await act(async () => {
       fireEvent.click(overlayToggle);
     });
-    expect(await screen.findByText(/^Running/)).toBeInTheDocument();
+    expect(await screen.findByText(/^Running — it shows itself when Arena is up/)).toBeInTheDocument();
     expect(overlayToggle).toBeChecked();
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/settings/overlay',
