@@ -82,6 +82,9 @@ itself; a warm dashboard is faster still.
   (`docs/plans/OVERLAY_TRACKER_PLAN.md`). The overlay itself ships in a later
   release.
 
+- Recent Games, its Bo3 match rows, and Sessions load 30 rows instead of
+  25, so the tables' 15-a-page paging shows two full pages.
+
 ### In-game overlay (tracker-overlay branch, not in this release)
 
 - **In-game overlay.** A small always-on-top window beside Arena: a 44 px

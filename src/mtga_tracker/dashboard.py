@@ -2643,7 +2643,7 @@ def dashboard_snapshot(
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
                 WHERE {where}
                 ORDER BY g.started_at DESC
-                LIMIT 25
+                LIMIT 30
                 """,
                 params,
             )
@@ -2738,7 +2738,7 @@ def dashboard_snapshot(
                 WHERE {where} AND COALESCE(m.best_of, 1) >= 3
                 GROUP BY m.id
                 ORDER BY COALESCE(m.started_at, MIN(COALESCE(g.started_at, g.ended_at))) DESC, m.id DESC
-                LIMIT 25
+                LIMIT 30
                 """,
                 params,
             )
@@ -2761,7 +2761,7 @@ def dashboard_snapshot(
                 WHERE {where}
                 GROUP BY s.id
                 ORDER BY s.started_at DESC, s.id DESC
-                LIMIT 25
+                LIMIT 30
                 """,
                 params,
             )
@@ -3262,7 +3262,7 @@ def deck_detail(
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
                 WHERE {where}
                 ORDER BY g.started_at DESC
-                LIMIT 25
+                LIMIT 30
                 """,
                 params,
             )
