@@ -94,6 +94,15 @@ img {
   order: 1;
 }
 
+.dock-left .panel {
+  --edge-l: 4px;
+}
+
+.dock-right .panel,
+.dock-float .panel {
+  --edge-r: 4px;
+}
+
 .dock-left .gutter,
 .dock-float .gutter {
   order: 1;
@@ -247,8 +256,13 @@ img {
 
 /* --------------------------------------------------------------- panel */
 
+/* 297 px of content plus --edge-l / --edge-r: a few pixels of plain ground
+   on the screen-edge side so the text never sits hard against the bezel
+   (the window itself stays flush with the edge). */
 .panel {
-  width: 297px;
+  --edge-l: 0px;
+  --edge-r: 0px;
+  width: 301px;
   flex: none;
   height: 100%;
   background: rgba(24, 28, 34, var(--tint-alpha));
@@ -264,7 +278,7 @@ img {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
+  padding: 6px calc(8px + var(--edge-r)) 6px calc(8px + var(--edge-l));
   border-bottom: 1px solid var(--hairline);
   cursor: grab;
   flex: none;
@@ -353,7 +367,7 @@ img {
   grid-template-columns: 1fr auto auto auto;
   align-items: center;
   gap: 5px;
-  padding: 5px 8px;
+  padding: 5px calc(8px + var(--edge-r)) 5px calc(8px + var(--edge-l));
   border-bottom: 1px solid var(--hairline);
   background: linear-gradient(90deg, rgba(123, 216, 143, 0.07), transparent);
   flex: none;
@@ -408,7 +422,7 @@ img {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 8px;
+  padding: 4px calc(8px + var(--edge-r)) 4px calc(8px + var(--edge-l));
   white-space: nowrap;
   font-size: 10.5px;
   color: var(--muted);
@@ -497,7 +511,7 @@ img {
   letter-spacing: 0.14em;
   color: var(--subtle);
   text-transform: uppercase;
-  padding: 6px 8px 2px;
+  padding: 6px calc(8px + var(--edge-r)) 2px calc(8px + var(--edge-l));
   border-top: 1px solid var(--hairline);
 }
 
@@ -522,7 +536,7 @@ img {
   grid-template-columns: 1fr auto;
   align-items: stretch;
   gap: 7px;
-  padding: 0 0 0 9px;
+  padding: 0 0 0 calc(9px + var(--edge-l));
   line-height: 1.15;
   border-top: 1px solid var(--hairline);
 }
@@ -558,8 +572,8 @@ img {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  width: var(--band);
-  padding: 4px 4px;
+  width: calc(var(--band) + var(--edge-r));
+  padding: 4px calc(4px + var(--edge-r)) 4px 4px;
   text-align: center;
 }
 
@@ -576,7 +590,7 @@ img {
   top: 0;
   bottom: 0;
   right: 0;
-  width: var(--band);
+  width: calc(var(--band) + var(--edge-r));
   background: rgba(0, 0, 0, 0.28);
   pointer-events: none;
 }
@@ -594,7 +608,7 @@ img {
 
 /* Rows under an opened Lands row sit a step in, so they read as its children. */
 .row.sub {
-  padding-left: 23px;
+  padding-left: calc(23px + var(--edge-l));
 }
 
 /* The Sideboard row has a count but no odds; keep it as tall as the Lands
@@ -724,7 +738,7 @@ img {
 .note {
   font-size: 10px;
   color: var(--subtle);
-  padding: 6px 6px 2px;
+  padding: 6px calc(6px + var(--edge-r)) 2px calc(6px + var(--edge-l));
 }
 
 .empty {
@@ -782,7 +796,7 @@ img {
 }
 
 .density-compact .row .right {
-  padding: 2px 4px;
+  padding: 2px calc(4px + var(--edge-r)) 2px 4px;
 }
 
 .density-compact .row.side-row .right {

@@ -49,7 +49,9 @@ pub enum Layout {
 /// content and is capped to the work area by `fit_height`.
 pub const RAIL_WIDTH: i32 = 44;
 pub const RAIL_HEIGHT: i32 = 210;
-pub const PANEL_WIDTH: i32 = 297;
+/// 297 px of content plus 4 px of plain ground on the screen-edge side, so
+/// the text never sits hard against the bezel (the page adds that padding).
+pub const PANEL_WIDTH: i32 = 301;
 /// Transparent strip beside the panel, on the board side, where the hover
 /// card and the sideboard fly out to. Part of the window; clicks on the
 /// fully transparent pixels fall through on macOS.
@@ -58,9 +60,6 @@ pub const PANEL_MIN_HEIGHT: i32 = 160;
 
 /// Vertical gap kept from the work area's top and bottom when clamping.
 const EDGE_MARGIN: i32 = 8;
-/// Breathing room between a docked window and the screen's side edge, so
-/// the rail / panel never sits hard against the bezel.
-pub const SIDE_GAP: i32 = 6;
 
 /// `content_height` is the page's base (unscaled) measurement; `scale_pct`
 /// grows the window with the page's transform.
@@ -103,9 +102,9 @@ pub fn docked_position(
         value.clamp(lo, hi)
     };
     match dock {
-        Dock::Left => (work_area.x + SIDE_GAP, clamp_y(y.unwrap_or(centred_y))),
+        Dock::Left => (work_area.x, clamp_y(y.unwrap_or(centred_y))),
         Dock::Right => (
-            work_area.x + work_area.width - size.width - SIDE_GAP,
+            work_area.x + work_area.width - size.width,
             clamp_y(y.unwrap_or(centred_y)),
         ),
         Dock::Float => {
@@ -113,8 +112,8 @@ pub fn docked_position(
                 work_area.x + (work_area.width - size.width) / 2,
                 centred_y,
             ));
-            let lo_x = work_area.x + SIDE_GAP;
-            let hi_x = (work_area.x + work_area.width - size.width - SIDE_GAP).max(lo_x);
+            let lo_x = work_area.x;
+            let hi_x = (work_area.x + work_area.width - size.width).max(lo_x);
             (fx.clamp(lo_x, hi_x), clamp_y(fy))
         }
     }
@@ -187,8 +186,8 @@ mod tests {
     fn rail_and_panel_sizes() {
         assert_eq!(size_for(Layout::Rail, 9999, &WORK, 100, 100), Size { width: 44, height: RAIL_HEIGHT });
         assert_eq!(size_for(Layout::Rail, 9999, &WORK, 100, 150), Size { width: 66, height: RAIL_HEIGHT * 3 / 2 });
-        assert_eq!(size_for(Layout::Panel, 400, &WORK, 100, 150), Size { width: (297 + 196) * 3 / 2, height: 600 });
-        assert_eq!(size_for(Layout::Panel, 620, &WORK, 100, 100), Size { width: 297 + 196, height: 620 });
+        assert_eq!(size_for(Layout::Panel, 400, &WORK, 100, 150), Size { width: (301 + 196) * 3 / 2, height: 600 });
+        assert_eq!(size_for(Layout::Panel, 620, &WORK, 100, 100), Size { width: 301 + 196, height: 620 });
         // Taller than the screen -> capped with the edge margin.
         assert_eq!(size_for(Layout::Panel, 3000, &WORK, 100, 100).height, 1055 - 16);
         // The max-height setting caps a long list to a share of the screen.
@@ -201,26 +200,25 @@ mod tests {
     #[test]
     fn docked_right_is_flush_and_clamped() {
         let size = Size { width: 44, height: 300 };
-        // Six pixels off the side edge, docked either way.
-        assert_eq!(docked_position(Dock::Right, size, &WORK, None, None), (1870, 25 + (1055 - 300) / 2));
-        assert_eq!(docked_position(Dock::Right, size, &WORK, Some(-500), None), (1870, 33));
-        assert_eq!(docked_position(Dock::Right, size, &WORK, Some(5000), None), (1870, 25 + 1055 - 300 - 8));
-        assert_eq!(docked_position(Dock::Left, size, &WORK, Some(200), None), (6, 200));
+        assert_eq!(docked_position(Dock::Right, size, &WORK, None, None), (1876, 25 + (1055 - 300) / 2));
+        assert_eq!(docked_position(Dock::Right, size, &WORK, Some(-500), None), (1876, 33));
+        assert_eq!(docked_position(Dock::Right, size, &WORK, Some(5000), None), (1876, 25 + 1055 - 300 - 8));
+        assert_eq!(docked_position(Dock::Left, size, &WORK, Some(200), None), (0, 200));
     }
 
     #[test]
     fn float_remembers_and_clamps() {
-        let size = Size { width: 297, height: 620 };
+        let size = Size { width: 301, height: 620 };
         assert_eq!(docked_position(Dock::Float, size, &WORK, None, Some((100, 100))), (100, 100));
-        assert_eq!(docked_position(Dock::Float, size, &WORK, None, Some((-50, -50))), (6, 33));
-        assert_eq!(docked_position(Dock::Float, size, &WORK, None, Some((5000, 5000))), (1920 - 297 - 6, 25 + 1055 - 620 - 8));
+        assert_eq!(docked_position(Dock::Float, size, &WORK, None, Some((-50, -50))), (0, 33));
+        assert_eq!(docked_position(Dock::Float, size, &WORK, None, Some((5000, 5000))), (1920 - 301, 25 + 1055 - 620 - 8));
     }
 
     #[test]
     fn drag_on_a_docked_window_only_moves_vertically() {
         let size = Size { width: 44, height: 300 };
-        assert_eq!(constrain_drag(Dock::Right, (400, 300), size, &WORK), (1870, 300));
-        assert_eq!(constrain_drag(Dock::Left, (400, 300), size, &WORK), (6, 300));
+        assert_eq!(constrain_drag(Dock::Right, (400, 300), size, &WORK), (1876, 300));
+        assert_eq!(constrain_drag(Dock::Left, (400, 300), size, &WORK), (0, 300));
         assert_eq!(constrain_drag(Dock::Float, (400, 300), size, &WORK), (400, 300));
     }
 
