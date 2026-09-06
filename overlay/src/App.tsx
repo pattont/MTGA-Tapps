@@ -9,7 +9,6 @@ import { log, tauri } from './tauri';
 import type { Link, LayoutInfo, OverlayPayload, Settings, SortKey } from './types';
 
 /** Dwell on the rail before the panel flies out. */
-const RAIL_HOVER_MS = 320;
 /** Panel chrome (header + strip + tools) never scrolls; the list does. */
 const PANEL_MIN_HEIGHT = 160;
 
@@ -84,16 +83,10 @@ export function App() {
 
   const rootRef = useRef<HTMLDivElement>(null);
   const pollerRef = useRef<OverlayPoller | null>(null);
-  const returnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Last height reported to the shell, so re-opening the panel lands at the right size at once. */
   const lastHeight = useRef<number | null>(null);
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
-  const flyoutRef = useRef(flyout);
-  flyoutRef.current = flyout;
-  const settingsRef = useRef(settings);
-  settingsRef.current = settings;
 
   // --- shell wiring -------------------------------------------------------
   useEffect(() => {
@@ -167,8 +160,9 @@ export function App() {
     return measureContentHeight(panel, panel.querySelector<HTMLElement>('.list'), root?.querySelector<HTMLElement>('.fly') ?? null);
   }, []);
 
-  const openPanel = useCallback(async () => {
-    const info = await tauri.invoke<LayoutInfo>('set_layout', { layout: 'panel', contentHeight: lastHeight.current });
+  /** Open the panel; `pinned` overrides the "open pinned" setting (null = follow it). */
+  const openPanel = useCallback(async (pinned: boolean | null = null) => {
+    const info = await tauri.invoke<LayoutInfo>('set_layout', { layout: 'panel', contentHeight: lastHeight.current, pinned });
     setLayout(info);
   }, []);
 
@@ -226,26 +220,6 @@ export function App() {
     return () => observer.disconnect();
   }, [layout.layout, payload, settings?.lands, settings?.density, settings?.scale, sort, flyout, contentHeight]);
 
-  // --- unpinned return -------------------------------------------------------
-  const clearReturn = useCallback(() => {
-    if (returnTimer.current) {
-      clearTimeout(returnTimer.current);
-      returnTimer.current = null;
-    }
-  }, []);
-
-  const armReturn = useCallback(() => {
-    clearReturn();
-    const current = layoutRef.current;
-    const prefs = settingsRef.current;
-    if (current.layout !== 'panel' || current.pinned || !prefs || flyoutRef.current) return;
-    returnTimer.current = setTimeout(() => {
-      returnTimer.current = null;
-      const now = layoutRef.current;
-      if (now.layout === 'panel' && !now.pinned && !flyoutRef.current) void collapse();
-    }, Math.max(1, prefs.returnAfterSeconds) * 1000);
-  }, [clearReturn, collapse]);
-
   // Between games the panel folds back into the rail on its own; when the
   // next game starts it comes back the way it was (open, and pinned or not).
   const restoreAfterGame = useRef<{ pinned: boolean } | null>(null);
@@ -265,58 +239,23 @@ export function App() {
     } else if (restoreAfterGame.current) {
       const { pinned } = restoreAfterGame.current;
       restoreAfterGame.current = null;
-      void (async () => {
-        const info = await tauri.invoke<LayoutInfo>('set_layout', { layout: 'panel', contentHeight: lastHeight.current });
-        setLayout(info.pinned === pinned ? info : await tauri.invoke<LayoutInfo>('set_pinned', { pinned }));
-      })();
+      void openPanel(pinned);
     }
-  }, [gameActive, collapse]);
+  }, [gameActive, collapse, openPanel]);
 
-  // The tray's Settings… shows the window even without Arena; closing the
-  // flyout hands visibility back to the Arena rule.
-  const flyoutWasOpen = useRef(false);
+  // The shell owns hovering: it watches the real cursor (the page's mouse
+  // events are unreliable in a never-key overlay window), opens the panel
+  // unpinned when the rail is hovered and folds an unpinned panel away once
+  // the cursor has been off it for the return delay. It needs to know what
+  // the page has flown out: the ⚙ flyout holds the panel open, and the
+  // sideboard makes the gutter count as "over the panel". The flyout
+  // closing also hands a window the tracker's menu forced open back to the
+  // Arena rule.
   useEffect(() => {
-    if (flyoutWasOpen.current && !flyout) void tauri.invoke('flyout_closed');
-    flyoutWasOpen.current = flyout;
-  }, [flyout]);
+    void tauri.invoke('set_page_open', { flyout, sideboard: sideboardOpen });
+  }, [flyout, sideboardOpen]);
 
-  useEffect(() => {
-    // An unpinned panel opened by hotkey or hover starts its clock at once;
-    // the pointer entering cancels it and leaving re-arms it. Closing the
-    // settings flyout re-arms it too.
-    if (layout.layout === 'panel' && !layout.pinned && !flyout) armReturn();
-    else clearReturn();
-    return clearReturn;
-  }, [layout.layout, layout.pinned, flyout, armReturn, clearReturn]);
-
-  const onPointerEnter = useCallback(() => {
-    clearReturn();
-  }, [clearReturn]);
-
-  const onPointerLeave = useCallback(() => {
-    setHover(null);
-    if (hoverTimer.current) {
-      clearTimeout(hoverTimer.current);
-      hoverTimer.current = null;
-    }
-    armReturn();
-  }, [armReturn]);
-
-  // --- rail hover opens the panel -----------------------------------------
-  const onRailEnter = useCallback(() => {
-    if (hoverTimer.current) clearTimeout(hoverTimer.current);
-    hoverTimer.current = setTimeout(() => {
-      hoverTimer.current = null;
-      if (layoutRef.current.layout === 'rail' && !flyout) void openPanel();
-    }, RAIL_HOVER_MS);
-  }, [openPanel, flyout]);
-
-  const onRailLeave = useCallback(() => {
-    if (hoverTimer.current) {
-      clearTimeout(hoverTimer.current);
-      hoverTimer.current = null;
-    }
-  }, []);
+  const onPointerLeave = useCallback(() => setHover(null), []);
 
   // --- hover card ----------------------------------------------------------
   const onHover = useCallback((row: Row | null, box: { top: number; bottom: number } | null) => {
@@ -347,7 +286,6 @@ export function App() {
       ref={rootRef}
       class={`root ${dockClass} ${layout.layout === 'panel' ? 'is-panel' : 'is-rail'} ${(layout.layout === 'panel' ? settings.opacity : settings.railOpacity) > 0 ? 'has-bg' : 'no-bg'} names-${settings.nameColor}`}
       style={{ '--tint-alpha': tintAlpha(settings.opacity), '--rail-alpha': tintAlpha(settings.railOpacity), '--scale': settings.scale / 100 } as never}
-      onMouseEnter={onPointerEnter}
       onMouseLeave={onPointerLeave}
     >
       {layout.layout === 'panel' ? (
@@ -415,12 +353,12 @@ export function App() {
           </div>
         </>
       ) : (
-        <div class="rail-host" onMouseEnter={onRailEnter} onMouseLeave={onRailLeave}>
+        <div class="rail-host">
           <Rail
             payload={payload}
             link={link}
             landsInPlay={landsInPlay}
-            onOpenPanel={openPanel}
+            onOpenPanel={() => void openPanel()}
             onOpenSettings={() => {
               setFlyout(true);
               void openPanel();

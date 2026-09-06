@@ -468,10 +468,12 @@ img {
   background: rgba(95, 212, 196, 0.12);
 }
 
+/* FINAL: magenta, a colour nothing else in the overlay uses, so the
+   results-screen state reads at a glance. */
 .tools .pd.over {
-  color: var(--muted);
-  border-color: var(--border);
-  background: var(--panel-strong);
+  color: #f26ad4;
+  border-color: rgba(242, 106, 212, 0.55);
+  background: rgba(242, 106, 212, 0.14);
 }
 
 .tools .pd.draw {

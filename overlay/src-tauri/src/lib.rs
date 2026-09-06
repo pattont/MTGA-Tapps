@@ -25,6 +25,13 @@ use settings::{Dock, Settings};
 const MAIN_WINDOW: &str = "main";
 const SETTINGS_FILE: &str = "overlay.json";
 const ARENA_POLL: Duration = Duration::from_secs(1);
+/// The cursor watch (rail hover opens the panel; an unpinned panel folds
+/// away after the cursor has been off it for the return delay). Done here
+/// from the real cursor position rather than from the page's mouse events:
+/// a non-activating overlay is never the key window, and WebKit does not
+/// deliver hover / mouseleave reliably to one.
+const CURSOR_POLL: Duration = Duration::from_millis(100);
+const RAIL_HOVER_OPEN: Duration = Duration::from_millis(300);
 
 /// Everything about the window that is not a saved preference.
 #[derive(Debug, Clone)]
@@ -55,6 +62,15 @@ struct Runtime {
     /// that intermediate Moved must not be mistaken for a drag and saved.
     placed_when: Option<std::time::Instant>,
     last_arena: ArenaStatus,
+    /// The page's ⚙ flyout is open: an unpinned panel must not fold away.
+    flyout_open: bool,
+    /// The sideboard flies out into the transparent gutter: while it shows,
+    /// the whole window counts as "over the panel" for the cursor watch.
+    sideboard_open: bool,
+    /// Hovering the rail opens the panel — but not straight after the panel
+    /// folded away under the cursor (game end, return timer): the cursor has
+    /// to leave the rail once first, or it would spring back open.
+    rail_hover_armed: bool,
 }
 
 impl Default for Runtime {
@@ -72,6 +88,9 @@ impl Default for Runtime {
             placed_at: None,
             placed_when: None,
             last_arena: ArenaStatus::default(),
+            flyout_open: false,
+            sideboard_open: false,
+            rail_hover_armed: true,
         }
     }
 }
@@ -321,13 +340,21 @@ fn emit_layout(app: &AppHandle) {
     let _ = app.emit("overlay-layout", info);
 }
 
-fn set_layout_inner(app: &AppHandle, layout: Layout) {
+/// Switch layouts. Opening the panel pins it per the "open pinned" setting
+/// unless `pinned` says otherwise (a hover-opened panel is never pinned: it
+/// came out because the cursor is there and goes back when it leaves).
+fn set_layout_inner(app: &AppHandle, layout: Layout, pinned: Option<bool>) {
     {
         let state = app.state::<AppState>();
         let mut runtime = state.runtime.lock().unwrap();
         runtime.layout = layout;
-        if layout == Layout::Panel {
-            runtime.pinned = state.settings.lock().unwrap().open_pinned;
+        match layout {
+            Layout::Panel => {
+                runtime.pinned = pinned.unwrap_or_else(|| state.settings.lock().unwrap().open_pinned);
+            }
+            Layout::Rail => {
+                runtime.rail_hover_armed = false;
+            }
         }
     }
     apply_geometry(app);
@@ -353,7 +380,7 @@ fn toggle_layout(app: &AppHandle) {
             Layout::Panel => Layout::Rail,
         }
     };
-    set_layout_inner(app, next);
+    set_layout_inner(app, next, None);
 }
 
 fn toggle_hidden(app: &AppHandle) {
@@ -534,13 +561,13 @@ fn update_settings(app: AppHandle, state: tauri::State<AppState>, settings: Sett
 }
 
 #[tauri::command]
-fn set_layout(app: AppHandle, layout: String, content_height: Option<i32>) -> LayoutInfo {
+fn set_layout(app: AppHandle, layout: String, content_height: Option<i32>, pinned: Option<bool>) -> LayoutInfo {
     if let Some(height) = content_height {
         let state = app.state::<AppState>();
         state.runtime.lock().unwrap().content_height = height.max(0);
     }
     let target = if layout == "panel" { Layout::Panel } else { Layout::Rail };
-    set_layout_inner(&app, target);
+    set_layout_inner(&app, target, pinned);
     current_layout(&app)
 }
 
@@ -616,19 +643,111 @@ fn quit_overlay(app: AppHandle) {
     app.exit(0);
 }
 
-/// The ⚙ flyout closed: a window the tracker's menu forced open goes back to
-/// following Arena.
+/// What the page has flown out (the ⚙ flyout, the sideboard). The flyout
+/// closing also hands a window the tracker's menu forced open back to the
+/// Arena rule.
 #[tauri::command]
-fn flyout_closed(app: AppHandle) {
+fn set_page_open(app: AppHandle, flyout: bool, sideboard: bool) {
     let was_forced = {
         let state = app.state::<AppState>();
         let mut runtime = state.runtime.lock().unwrap();
-        std::mem::replace(&mut runtime.force_show, false)
+        runtime.flyout_open = flyout;
+        runtime.sideboard_open = sideboard;
+        !flyout && std::mem::replace(&mut runtime.force_show, false)
     };
     if was_forced {
         refresh_visibility(&app);
         emit_layout(&app);
     }
+}
+
+/// Is the cursor over the overlay? In the panel layout the transparent
+/// gutter beside the panel does not count (it is the board) unless the
+/// sideboard is flown out into it. Compared in logical coordinates: on
+/// macOS the cursor and the window can be scaled by different monitors.
+fn cursor_over_overlay(window: &WebviewWindow, layout: Layout, dock: Dock, scale_pct: u32, whole_window: bool) -> bool {
+    let (Ok(cursor), Ok(position), Ok(size)) = (window.cursor_position(), window.outer_position(), window.outer_size()) else {
+        return false;
+    };
+    let window_scale = window.scale_factor().unwrap_or(1.0);
+    let cursor_scale = window
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|m| m.scale_factor())
+        .unwrap_or(window_scale);
+    let (cx, cy) = (cursor.x / cursor_scale, cursor.y / cursor_scale);
+    let (mut x0, y0) = (position.x as f64 / window_scale, position.y as f64 / window_scale);
+    let (mut x1, y1) = (x0 + size.width as f64 / window_scale, y0 + size.height as f64 / window_scale);
+    if layout == Layout::Panel && !whole_window {
+        let gutter = dock::PANEL_GUTTER as f64 * scale_pct.clamp(50, 200) as f64 / 100.0;
+        // The gutter sits on the board side: right of a left-docked panel, left otherwise.
+        match dock {
+            Dock::Left => x1 -= gutter,
+            Dock::Right | Dock::Float => x0 += gutter,
+        }
+    }
+    cx >= x0 && cx < x1 && cy >= y0 && cy < y1
+}
+
+fn start_cursor_watch(app: AppHandle) {
+    std::thread::Builder::new()
+        .name("cursor-watch".into())
+        .spawn(move || {
+            let mut inside_since: Option<std::time::Instant> = None;
+            let mut outside_since: Option<std::time::Instant> = None;
+            loop {
+                std::thread::sleep(CURSOR_POLL);
+                let Some(window) = app.get_webview_window(MAIN_WINDOW) else { continue };
+                let (layout, pinned, visible, flyout, sideboard, dock, scale, return_after) = {
+                    let state = app.state::<AppState>();
+                    let runtime = state.runtime.lock().unwrap();
+                    let settings = state.settings.lock().unwrap();
+                    (
+                        runtime.layout,
+                        runtime.pinned,
+                        !runtime.hidden_by_user && (runtime.force_show || !runtime.hidden_for_arena),
+                        runtime.flyout_open,
+                        runtime.sideboard_open,
+                        settings.dock,
+                        settings.scale,
+                        Duration::from_secs(u64::from(settings.return_after_seconds.max(1))),
+                    )
+                };
+                if !visible {
+                    inside_since = None;
+                    outside_since = None;
+                    continue;
+                }
+                let now = std::time::Instant::now();
+                let inside = cursor_over_overlay(&window, layout, dock, scale, flyout || sideboard);
+                if inside {
+                    outside_since = None;
+                    inside_since.get_or_insert(now);
+                } else {
+                    inside_since = None;
+                    outside_since.get_or_insert(now);
+                    let state = app.state::<AppState>();
+                    state.runtime.lock().unwrap().rail_hover_armed = true;
+                }
+                match layout {
+                    Layout::Rail => {
+                        let armed = app.state::<AppState>().runtime.lock().unwrap().rail_hover_armed;
+                        if inside && armed && inside_since.map_or(false, |t| now.duration_since(t) >= RAIL_HOVER_OPEN) {
+                            diag::log("cursor: over the rail — opening the panel (unpinned)");
+                            set_layout_inner(&app, Layout::Panel, Some(false));
+                        }
+                    }
+                    Layout::Panel => {
+                        if !pinned && !flyout && !inside && outside_since.map_or(false, |t| now.duration_since(t) >= return_after) {
+                            diag::log("cursor: off the unpinned panel — folding back into the rail");
+                            set_layout_inner(&app, Layout::Rail, None);
+                        }
+                    }
+                }
+            }
+        })
+        .expect("cursor watch thread");
 }
 
 /// The page's console for things worth keeping (errors, link changes).
@@ -679,7 +798,7 @@ pub fn run() {
             platform,
             hide_overlay,
             quit_overlay,
-            flyout_closed,
+            set_page_open,
             page_log,
         ])
         .setup(|app| {
@@ -736,6 +855,7 @@ pub fn run() {
             register_hotkeys(&handle);
             refresh_visibility(&handle);
             start_arena_poll(handle.clone());
+            start_cursor_watch(handle.clone());
             diag::log("setup complete");
             Ok(())
         })

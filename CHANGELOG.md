@@ -96,10 +96,14 @@ itself; a warm dashboard is faster still.
   fold into one row that opens to indented Basic / Nonbasic rows by
   default; in Brawl, drawn
   singletons collapse into a Drawn group. The final library stays up (marked
-  FINAL) through Arena's results screen and clears when you leave it. Shows
-  only while Arena is running, on Arena's screen (over a fullscreen Arena
-  too); docks left or right (or floats), pins or slides back into the rail
-  when idle, steps aside when Arena isn't in front. Sits on a charcoal tint
+  FINAL, in magenta) through Arena's results screen and clears when you
+  leave it. Shows only while Arena is running, on Arena's screen (over a
+  fullscreen Arena too); docks left or right (or floats) a few pixels off
+  the screen edge. Hovering the rail slides the panel out unpinned; an
+  unpinned panel folds back into the rail once the cursor has been off it
+  for the return delay (the shell watches the real cursor, so this works
+  even though the overlay never takes focus), pinning keeps it out, and it
+  steps aside when Arena isn't in front. Sits on a charcoal tint
   with hairlines between rows and no box border; text is always fully
   visible and the Panel opacity slider drives only the tint (about 88 %
   charcoal at 100, gone at 0, default 60) — the minimized rail has its own

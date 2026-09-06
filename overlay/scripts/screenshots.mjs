@@ -44,6 +44,7 @@ const brawl = { ...inGame, deck_name:'Azorius Control', format_label:'Historic B
 const payloads = {
   game: { tracker:{state:'live',updated_at:'x',session_id:'s'}, state: inGame, head_to_head:{wins:1,losses:2} },
   brawl: { tracker:{state:'live',updated_at:'x',session_id:'s'}, state: brawl, head_to_head:null },
+  final: { tracker:{state:'live',updated_at:'x',session_id:'s'}, state: { ...inGame, game_active:false, game_over:true }, head_to_head:{wins:2,losses:2} },
   idle: { tracker:{state:'idle',updated_at:null,session_id:'s'}, state: { ...inGame, game_active:false, deck_name:null, cards:[], library_size:0, deck_size:0 }, head_to_head:null },
 };
 
@@ -74,6 +75,7 @@ await shot('panel-sideboard', 'game', { width: 493, height: 560 }, async (page) 
 await shot('panel-left-hover', 'game', { width: 493, height: 560 }, async (page) => { await board(page); await openPanel(page); await page.click('button[aria-label="Settings"]'); await page.click('[aria-label="Dock"] button:has-text("Left")'); await page.click('button[aria-label="Close settings"]'); await page.hover('.list-body .row:nth-of-type(4)'); });
 await shot('panel-flyout', 'game', { width: 493, height: 560 }, async (page) => { await openPanel(page); await page.click('button[aria-label="Settings"]'); });
 await shot('panel-brawl', 'brawl', { width: 493, height: 560 }, openPanel);
+await shot('panel-final', 'final', { width: 493, height: 560 }, async (page) => { await board(page); await openPanel(page); });
 await shot('panel-idle', 'idle', { width: 493, height: 200 }, openPanel);
 await shot('panel-offline', 'offline', { width: 493, height: 200 }, openPanel);
 await shot('rail-nobg', 'game', { width: 44, height: 210 }, board);

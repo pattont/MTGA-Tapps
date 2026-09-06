@@ -51,9 +51,12 @@ function browserShell(): Shell {
         case 'update_settings':
           settings = args.settings as Settings;
           return settings as T;
-        case 'set_layout':
-          layout = { ...layout, layout: args.layout as LayoutInfo['layout'] };
+        case 'set_layout': {
+          const next = args.layout as LayoutInfo['layout'];
+          const pinned = next === 'panel' ? (typeof args.pinned === 'boolean' ? args.pinned : (settings?.openPinned ?? true)) : layout.pinned;
+          layout = { ...layout, layout: next, pinned };
           return layout as T;
+        }
         case 'set_pinned':
           layout = { ...layout, pinned: Boolean(args.pinned) };
           return layout as T;
