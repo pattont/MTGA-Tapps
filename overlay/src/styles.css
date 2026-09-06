@@ -110,7 +110,7 @@ img {
   width: 44px;
   height: 100%;
   max-height: 100%;
-  background: rgba(24, 28, 34, var(--tint-alpha));
+  background: rgba(24, 28, 34, var(--rail-alpha, var(--tint-alpha)));
   border: 0;
   border-radius: 6px;
   padding: 7px 0 5px;
@@ -588,6 +588,11 @@ img {
   width: 100%;
   text-align: left;
   color: inherit;
+}
+
+/* Rows under an opened Lands row sit a step in, so they read as its children. */
+.row.sub {
+  padding-left: 23px;
 }
 
 /* The Sideboard row has a count but no odds; keep it as tall as the Lands

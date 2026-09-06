@@ -40,11 +40,11 @@ export function deckColors(cards: { mana_cost: string | null }[]): string[] {
   return ['W', 'U', 'B', 'R', 'G'].filter((c) => letters.has(c));
 }
 
-function CardRow({ row, exhausted, onHover }: { row: Row; exhausted: boolean; onHover: Props['onHover'] }) {
+function CardRow({ row, exhausted, onHover, sub }: { row: Row; exhausted: boolean; onHover: Props['onHover']; sub?: boolean }) {
   const tone = row.left > 0 ? oddsTone(row.odds['1']) : 'cold';
   return (
     <div
-      class={`row${exhausted ? ' dim' : ''}`}
+      class={`row${exhausted ? ' dim' : ''}${sub ? ' sub' : ''}`}
       onMouseEnter={(event) => {
         const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
         onHover(row, { top: rect.top, bottom: rect.bottom });
@@ -166,7 +166,6 @@ export function Panel(props: Props) {
           </div>
           <div class="list">
             <div class="list-body">
-            {sections && sections.spells.length > 0 ? <div class="grp">Spells</div> : null}
             {sections?.spells.map((row) => (
               <CardRow key={row.key} row={row} exhausted={row.left === 0} onHover={onHover} />
             ))}
@@ -194,7 +193,7 @@ export function Panel(props: Props) {
               </button>
             ) : null}
             {landsOpen
-              ? sections?.lands.map((row) => <CardRow key={row.key} row={row} exhausted={row.left === 0} onHover={onHover} />)
+              ? sections?.lands.map((row) => <CardRow key={row.key} row={row} exhausted={row.left === 0} onHover={onHover} sub />)
               : null}
             {sections && sections.drawn.length > 0 ? (
               <>

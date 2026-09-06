@@ -345,8 +345,8 @@ export function App() {
   return (
     <div
       ref={rootRef}
-      class={`root ${dockClass} ${layout.layout === 'panel' ? 'is-panel' : 'is-rail'} ${settings.opacity > 0 ? 'has-bg' : 'no-bg'} names-${settings.nameColor}`}
-      style={{ '--tint-alpha': tintAlpha(settings.opacity), '--scale': settings.scale / 100 } as never}
+      class={`root ${dockClass} ${layout.layout === 'panel' ? 'is-panel' : 'is-rail'} ${(layout.layout === 'panel' ? settings.opacity : settings.railOpacity) > 0 ? 'has-bg' : 'no-bg'} names-${settings.nameColor}`}
+      style={{ '--tint-alpha': tintAlpha(settings.opacity), '--rail-alpha': tintAlpha(settings.railOpacity), '--scale': settings.scale / 100 } as never}
       onMouseEnter={onPointerEnter}
       onMouseLeave={onPointerLeave}
     >

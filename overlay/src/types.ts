@@ -62,6 +62,8 @@ export interface Hotkeys {
 export interface Settings {
   /** Background slider, 0–1: only the charcoal ground (≈88 % at 1, gone at 0); text is always fully visible. */
   opacity: number;
+  /** The same, for the minimized rail on its own (it is small enough to want its own setting). */
+  railOpacity: number;
   /** Size of everything, percent (50–200). */
   scale: number;
   /** The panel never grows past this share of the screen height (30–100). */

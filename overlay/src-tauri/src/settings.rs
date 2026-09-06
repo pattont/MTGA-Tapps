@@ -77,6 +77,9 @@ pub struct Settings {
     /// at about 88 % at 1.0 and is gone at 0.0. Default 0.6 leaves room
     /// to make it more visible.
     pub opacity: f64,
+    /// The same slider for the minimized rail alone; it is small enough that
+    /// people want it darker (or lighter) than the panel.
+    pub rail_opacity: f64,
     /// Size of everything, percent (50–200). The page lays out at its base
     /// size and is scaled; the window grows to match.
     pub scale: u32,
@@ -104,6 +107,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             opacity: 0.6,
+            rail_opacity: 0.6,
             scale: 100,
             panel_max_height_pct: 70,
             dock: Dock::Right,
@@ -139,6 +143,9 @@ impl Settings {
     pub fn clamped(mut self) -> Self {
         if !(0.0..=1.0).contains(&self.opacity) || self.opacity.is_nan() {
             self.opacity = 0.6;
+        }
+        if !(0.0..=1.0).contains(&self.rail_opacity) || self.rail_opacity.is_nan() {
+            self.rail_opacity = 0.6;
         }
         self.return_after_seconds = self.return_after_seconds.clamp(1, 60);
         if self.scale == 0 {
@@ -187,6 +194,7 @@ mod tests {
         let weird: Settings = serde_json::from_str(r#"{"opacity": 7, "returnAfterSeconds": 0, "apiUrl": " "}"#).unwrap();
         let fixed = weird.clamped();
         assert_eq!(fixed.opacity, 0.6);
+        assert_eq!(fixed.rail_opacity, 0.6);
         assert_eq!(fixed.return_after_seconds, 1);
         assert_eq!(fixed.api_url, "http://127.0.0.1:8765");
         // Missing fields take defaults (a file from an older version keeps working).

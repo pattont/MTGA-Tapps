@@ -92,15 +92,18 @@ itself; a warm dashboard is faster still.
   percentages; no per-card bar, every pixel goes to the text) — land drops
   for the next one,
   two, and three draws, a Play/Draw pill, and sort by odds, mana value, or
-  name. Lands group into Basic / Nonbasic rows by default; in Brawl, drawn
+  name. The list starts straight at the cards (no "Spells" caption); Lands
+  fold into one row that opens to indented Basic / Nonbasic rows by
+  default; in Brawl, drawn
   singletons collapse into a Drawn group. The final library stays up (marked
   FINAL) through Arena's results screen and clears when you leave it. Shows
   only while Arena is running, on Arena's screen (over a fullscreen Arena
   too); docks left or right (or floats), pins or slides back into the rail
   when idle, steps aside when Arena isn't in front. Sits on a charcoal tint
   with hairlines between rows and no box border; text is always fully
-  visible and the Opacity slider drives only the tint (about 88 % charcoal
-  at 100, gone at 0, default 60), while Scale sizes everything from 50 % to
+  visible and the Panel opacity slider drives only the tint (about 88 %
+  charcoal at 100, gone at 0, default 60) — the minimized rail has its own
+  Rail opacity slider — while Scale sizes everything from 50 % to
   200 %; Max panel height (share of
   the screen, default 70 %; the list scrolls inside), click-through,
   density, and per-platform hotkeys (`Alt+Shift+T` / `⌥⇧T`

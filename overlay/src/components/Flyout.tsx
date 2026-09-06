@@ -79,7 +79,7 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
         </button>
       </div>
       <label class="r">
-        <span>Opacity</span>
+        <span>Panel opacity</span>
         <input
           type="range"
           min="0"
@@ -90,6 +90,19 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
           aria-label="Background opacity"
         />
         <span class="v">{Math.round(settings.opacity * 100)}%</span>
+      </label>
+      <label class="r">
+        <span>Rail opacity</span>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          step="5"
+          value={Math.round(settings.railOpacity * 100)}
+          onInput={(event) => onChange({ ...settings, railOpacity: Number((event.currentTarget as HTMLInputElement).value) / 100 })}
+          aria-label="Minimized rail background opacity"
+        />
+        <span class="v">{Math.round(settings.railOpacity * 100)}%</span>
       </label>
       <label class="r">
         <span>Scale</span>

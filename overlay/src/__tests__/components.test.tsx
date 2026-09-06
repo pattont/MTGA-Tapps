@@ -63,8 +63,10 @@ describe('Panel', () => {
     expect(screen.getByText('Nonbasic lands')).toBeTruthy();
     expect(container.querySelectorAll('.pips img').length).toBe(1);
     expect(container.querySelector('.pips img')?.getAttribute('alt')).toBe('R');
-    const groups = Array.from(container.querySelectorAll('.grp')).map((g) => g.textContent);
-    expect(groups[0]).toBe('Spells');
+    // No "Spells" caption: the list starts straight at the cards, and the
+    // opened land rows sit a step in under the Lands row.
+    expect(container.querySelector('.grp')).toBeNull();
+    expect(container.querySelectorAll('.row.sub').length).toBe(2);
   });
 
   it('dims exhausted rows in 60-card and collapses them in Brawl', () => {
