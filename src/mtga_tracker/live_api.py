@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -691,15 +692,96 @@ def build_status_payload(db_path: Path) -> Dict[str, Any]:
     }
 
 
-def build_overlay_payload(db_path: Path) -> Dict[str, Any]:
+#: The overlay polls three times a second; between console lines the live
+#: row is byte-for-byte the same, so the encoded answer (and its ETag) is
+#: kept per database and handed straight back while the row's identity —
+#: its timestamp, overlay state, opponent, game, and the derived
+#: live/idle/offline state — has not moved. One SELECT per unchanged poll.
+_overlay_response_cache: Dict[str, Tuple[Tuple[Any, ...], bytes, str]] = {}
+
+
+#: One read-only connection per database for the poll's live-row check:
+#: opening a connection is most of the cost of an unchanged poll. Guarded
+#: by a lock because the dashboard serves each request on its own thread.
+_poll_connections: Dict[str, sqlite3.Connection] = {}
+_poll_lock = threading.Lock()
+
+
+def _poll_live_status(db_uri: str) -> Optional[Dict[str, Any]]:
+    with _poll_lock:
+        conn = _poll_connections.get(db_uri)
+        if conn is None:
+            conn = sqlite3.connect(db_uri, uri=True, check_same_thread=False)
+            conn.execute("PRAGMA query_only = ON")
+            _poll_connections[db_uri] = conn
+        try:
+            return _live_status(conn)
+        except sqlite3.Error:
+            # A closed or replaced database (reset, restore): reopen next time.
+            _poll_connections.pop(db_uri, None)
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+            raise
+
+
+def reset_poll_connections() -> None:
+    """Drop the poll's read-only connections and memo (the database was
+    replaced or reset); the next poll reopens."""
+    with _poll_lock:
+        for conn in _poll_connections.values():
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+        _poll_connections.clear()
+    _overlay_response_cache.clear()
+
+
+def overlay_response(db_path: Path) -> Tuple[bytes, str]:
+    """`GET /api/overlay` as (JSON bytes, ETag), memoised while the live row
+    is unchanged."""
+    import hashlib
+
+    path = Path(db_path).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"Database not found: {path}")
+    db_uri = path.as_uri() + "?mode=ro"
+    now = datetime.now()
+    status = _poll_live_status(db_uri)
+    key = (
+        status.get("updated_at") if status else None,
+        status.get("overlay_json") if status else None,
+        status.get("opponent_name") if status else None,
+        status.get("game_id") if status else None,
+        status.get("session_id") if status else None,
+        _tracker_state(status, now),
+    )
+    cached = _overlay_response_cache.get(db_uri)
+    if cached is not None and cached[0] == key:
+        return cached[1], cached[2]
+    payload = json.dumps(build_overlay_payload(db_path, status=status, now=now), separators=(",", ":")).encode("utf-8")
+    etag = '"' + hashlib.sha1(payload).hexdigest()[:20] + '"'
+    _overlay_response_cache[db_uri] = (key, payload, etag)
+    return payload, etag
+
+
+def build_overlay_payload(
+    db_path: Path,
+    *,
+    status: Optional[Dict[str, Any]] = None,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
     """The in-game overlay's poll target: tracker state, the library state the
     tracker last wrote (see overlay_state.py), and the head-to-head record the
     overlay header shows next to the opponent's name."""
     db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
-    now = datetime.now()
+    now = now or datetime.now()
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
-        status = _live_status(conn)
+        if status is None:
+            status = _live_status(conn)
         state_raw = status.get("overlay_json") if status else None
         state: Optional[Dict[str, Any]] = None
         if state_raw:

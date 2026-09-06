@@ -314,3 +314,27 @@ def test_overlay_endpoint_etag_304_and_cors(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_overlay_response_memo_follows_the_live_row(tmp_path):
+    """The encoded answer is reused while the live row is unchanged and
+    rebuilt the moment it moves (a new console line, a new state)."""
+    from mtga_tracker import live_api
+
+    state = idle_overlay_state(game_active=True, deck_name="Skellies")
+    db_path = _store_with_live(tmp_path, state)
+    first, etag_first = live_api.overlay_response(db_path)
+    again, etag_again = live_api.overlay_response(db_path)
+    assert again is first and etag_again == etag_first
+
+    changed = dict(state, deck_name="Rats")
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "UPDATE live_status SET overlay_json = ?, updated_at = ? WHERE id = 1",
+        (json.dumps(changed), datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    third, etag_third = live_api.overlay_response(db_path)
+    assert etag_third != etag_first
+    assert json.loads(third)["state"]["deck_name"] == "Rats"

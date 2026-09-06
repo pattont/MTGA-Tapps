@@ -5571,6 +5571,11 @@ def cached_response(
 def clear_response_cache() -> None:
     with _response_cache_lock:
         _response_cache.clear()
+    # A write (a reset that replaces the file, above all) must not leave the
+    # overlay poll reading a connection to the old database.
+    from . import live_api
+
+    live_api.reset_poll_connections()
 
 
 
@@ -5929,27 +5934,37 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
-        if request_path in ("/api/live", "/api/overlay"):
+        if request_path == "/api/overlay":
+            from . import live_api
+
+            # The overlay polls three times a second during a game; an
+            # unchanged live row is answered from live_api's memo (one
+            # SELECT) and, with the matching If-None-Match, as a bodiless 304.
+            headers = {"Cache-Control": "no-store", **_OVERLAY_CORS_HEADERS}
+            try:
+                payload, etag = live_api.overlay_response(self.db_path)
+            except Exception as exc:  # noqa: BLE001 - the poll must always answer
+                status = 404 if isinstance(exc, FileNotFoundError) else 500
+                body = json.dumps({"error": f"{type(exc).__name__}: {exc}"}).encode("utf-8")
+                _send_bytes(self, status, body, "application/json; charset=utf-8", headers)
+                return
+            headers["ETag"] = etag
+            if self.headers.get("If-None-Match") == etag:
+                self.send_response(304)
+                for name, value in headers.items():
+                    self.send_header(name, value)
+                self.end_headers()
+                return
+            _send_bytes(self, 200, payload, "application/json; charset=utf-8", headers)
+            return
+        if request_path == "/api/live":
             from . import live_api
 
             handled = live_api.handle_get(request_path, parse_qs(parsed.query), self.db_path)
             if handled is not None:
                 status, body = handled
                 payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
-                headers = {"Cache-Control": "no-store"}
-                if request_path == "/api/overlay" and status == 200:
-                    # The overlay polls twice a second; an unchanged library
-                    # must cost nothing to answer or to receive.
-                    etag = '"' + hashlib.sha1(payload).hexdigest()[:20] + '"'
-                    headers["ETag"] = etag
-                    headers.update(_OVERLAY_CORS_HEADERS)
-                    if self.headers.get("If-None-Match") == etag:
-                        self.send_response(304)
-                        for name, value in headers.items():
-                            self.send_header(name, value)
-                        self.end_headers()
-                        return
-                _send_bytes(self, status, payload, "application/json; charset=utf-8", headers)
+                _send_bytes(self, status, payload, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
                 return
         if request_path == "/api/settings":
             from . import settings_api

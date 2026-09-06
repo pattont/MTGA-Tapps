@@ -125,8 +125,12 @@ itself; a warm dashboard is faster still.
   icon of its own. It is a separate native app (Tauri v2, Preact
   page) that polls `GET /api/overlay` with ETags (three times a second in a
   game, and the tracker reads Arena's log four times a second) and loads
-  card images from Scryfall on hover — nothing else, and never the game —
-  so it costs the tracker nothing. Release builds include it;
+  card images from Scryfall on hover — nothing else, and never the game.
+  An unchanged poll is one indexed read on a kept-open connection, about
+  0.05 ms, and the log check with nothing new is about 0.01 ms, so it costs
+  the tracker nothing. Off means off: turning the overlay off stops its
+  process and it does not start with the tracker again until turned on; a
+  fresh install starts with it off. Release builds include it;
   building from source needs Rust (`scripts/build_overlay.sh`; `--fast` for
   an incremental iteration build that takes seconds).
 - **`GET /api/overlay`**: the library the tracker knows (deck minus what has

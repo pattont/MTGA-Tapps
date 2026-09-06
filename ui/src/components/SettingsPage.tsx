@@ -340,7 +340,7 @@ export function SettingsPage() {
       <Section
         id="settings-deck-ai"
         title="Deck AI"
-        description="Identify your opponent's deck with an AI provider. Exactly one small request per completed game, sent in the background after the game ends and only when at least three opponent cards were revealed — tracking never waits on it. The request contains only the names of the cards your opponent revealed: never your deck, your account, or your log. The answer becomes the Opponent Deck Type on the game page. Nothing else uses the key — the live scoreboard's colors come from Arena's local card database, and its mid-game deck label is a local guess that reuses names from earlier games. The key is stored locally in settings.json and only ever sent to the provider you choose."
+        description="Names your opponent's deck after each game: one small request to the provider you pick, in the background, carrying only the names of the cards they revealed (at least three) — never your deck, account, or log. The answer becomes the game's Opponent Deck Type. The key lives in settings.json and goes nowhere else."
       >
         {error ? (
           <p className="empty-state deckfinder-state">{error}</p>
