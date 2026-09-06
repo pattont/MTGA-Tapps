@@ -4,7 +4,8 @@ The in-game overlay for Tapps Tracker: a Tauri v2 app (Rust shell, Preact
 page) that sits beside MTG Arena and shows the turn, the chance of a land on
 the next draw, the library count, and — in its panel — the full decklist
 with per-card draw odds. It reads the tracker's local `GET /api/overlay`
-and nothing else. Design and behaviour: `docs/plans/OVERLAY_TRACKER_PLAN.md`.
+and, when you hover a card, that card's image from Scryfall — nothing
+else. Design and behaviour: `docs/plans/OVERLAY_TRACKER_PLAN.md`.
 
 ## Layout
 

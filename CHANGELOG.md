@@ -85,11 +85,14 @@ itself; a warm dashboard is faster still.
 ### In-game overlay (tracker-overlay branch, not in this release)
 
 - **In-game overlay.** A small always-on-top window beside Arena: a 44 px
-  rail with the turn, the chance of a land on the next draw, and the library
-  count, opening into a 301 px panel with the full decklist — each card's
+  rail — drawn a step larger than the panel — with the turn, the chance of
+  a land on the next draw, the library count and an arrow that opens the
+  301 px panel with the full decklist — each card's
   name over its mana cost, copies left over next-draw odds centred in a slim
-  darker band on the right (within 2 / within 3 on hover; odds are whole
-  percentages; no per-card bar, every pixel goes to the text) — land drops
+  darker band on the right (hover a row for the card itself, from Scryfall, with next draw /
+  within 2 / within 3 under it; the card hides itself a couple of seconds
+  later; odds are whole percentages; no per-card bar, every pixel goes to
+  the text) — land drops
   for the next one,
   two, and three draws, a Play/Draw pill, and sort by odds, mana value, or
   name. The list starts straight at the cards (no "Spells" caption); Lands
@@ -113,12 +116,16 @@ itself; a warm dashboard is faster still.
   density, and per-platform hotkeys (`Alt+Shift+T` / `⌥⇧T`
   toggles the panel, `Alt+Shift+H` / `⌥⇧H` hides) in its own ⚙ menu. Enable
   it from Settings → In-game overlay or the menu bar's Start Overlay; the
+  Settings page shows Running / Off on its own line, like the sidebar's
+  Live Scoreboard, with the hotkeys under it; the
   menu shows an Overlay: Running/Stopped line under the tracker's, an
   overlay section (Start/Stop Overlay, Overlay Settings) and a tracker
   section (Stop Tracking, Tracker Settings) — the overlay adds no menu-bar
   icon of its own. It is a separate native app (Tauri v2, Preact
-  page) that polls `GET /api/overlay` with ETags — nothing else, and never
-  the game — so it costs the tracker nothing. Release builds include it;
+  page) that polls `GET /api/overlay` with ETags (three times a second in a
+  game, and the tracker reads Arena's log four times a second) and loads
+  card images from Scryfall on hover — nothing else, and never the game —
+  so it costs the tracker nothing. Release builds include it;
   building from source needs Rust (`scripts/build_overlay.sh`; `--fast` for
   an incremental iteration build that takes seconds).
 - **`GET /api/overlay`**: the library the tracker knows (deck minus what has

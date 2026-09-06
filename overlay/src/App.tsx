@@ -19,13 +19,21 @@ interface HoverCard {
   bottom: number;
 }
 
-/** Approximate height of the hover card (title + four lines). */
-const HOVER_CARD_HEIGHT = 98;
+/** Height of the hover card: the card image (184 wide at 488:680) plus the odds block. */
+const HOVER_CARD_HEIGHT = 256 + 98;
+/** The hover card hides itself this long after the last row it was shown for. */
+export const HOVER_LINGER_MS = 2500;
+/** The minimised rail draws a step larger than the panel at the same Scale setting. */
+export const RAIL_BOOST = 1.2;
 
-/** Card top: below the row, or above it when there is no room below. */
-export function hoverCardTop(rowTop: number, rowBottom: number, viewportHeight: number): number {
-  if (rowBottom + 2 + HOVER_CARD_HEIGHT <= viewportHeight) return rowBottom + 2;
-  return Math.max(2, rowTop - 2 - HOVER_CARD_HEIGHT);
+/** Card top: level with the row, kept whole inside the window. */
+export function hoverCardTop(rowTop: number, _rowBottom: number, viewportHeight: number): number {
+  return Math.max(2, Math.min(rowTop, viewportHeight - HOVER_CARD_HEIGHT - 2));
+}
+
+/** Scryfall's image for a card by exact name (the front face of a double-faced card). */
+export function cardImageUrl(name: string): string {
+  return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}&format=image&version=normal`;
 }
 
 function verticalPadding(element: HTMLElement | null): number {
@@ -258,8 +266,27 @@ export function App() {
   const onPointerLeave = useCallback(() => setHover(null), []);
 
   // --- hover card ----------------------------------------------------------
+  // Shown for the row under the cursor and gone HOVER_LINGER_MS after the
+  // last row it was shown for: mouseleave is not reliable in this window,
+  // so the card must not depend on it to go away.
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onHover = useCallback((row: Row | null, box: { top: number; bottom: number } | null) => {
-    setHover(row && box ? { row, top: box.top, bottom: box.bottom } : null);
+    if (hoverTimer.current) {
+      clearTimeout(hoverTimer.current);
+      hoverTimer.current = null;
+    }
+    if (row && box) {
+      setHover({ row, top: box.top, bottom: box.bottom });
+      hoverTimer.current = setTimeout(() => {
+        hoverTimer.current = null;
+        setHover(null);
+      }, HOVER_LINGER_MS);
+    } else {
+      setHover(null);
+    }
+  }, []);
+  useEffect(() => () => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
   }, []);
 
   const hoverStyle = useMemo(() => {
@@ -285,7 +312,7 @@ export function App() {
     <div
       ref={rootRef}
       class={`root ${dockClass} ${layout.layout === 'panel' ? 'is-panel' : 'is-rail'} ${(layout.layout === 'panel' ? settings.opacity : settings.railOpacity) > 0 ? 'has-bg' : 'no-bg'} names-${settings.nameColor}`}
-      style={{ '--tint-alpha': tintAlpha(settings.opacity), '--rail-alpha': tintAlpha(settings.railOpacity), '--scale': settings.scale / 100 } as never}
+      style={{ '--tint-alpha': tintAlpha(settings.opacity), '--rail-alpha': tintAlpha(settings.railOpacity), '--scale': (settings.scale / 100) * (layout.layout === 'rail' ? RAIL_BOOST : 1) } as never}
       onMouseLeave={onPointerLeave}
     >
       {layout.layout === 'panel' ? (
@@ -311,6 +338,7 @@ export function App() {
           <div class={`gutter side-${side}`}>
             {hover ? (
               <div class="hover" style={hoverStyle} role="tooltip">
+                <img class="card-img" src={cardImageUrl(hover.row.name)} alt="" draggable={false} onError={(event) => ((event.currentTarget as HTMLImageElement).style.display = 'none')} />
                 <b>{hover.row.name}</b>
                 <div class="r">
                   <span>Next draw</span>
@@ -357,6 +385,7 @@ export function App() {
           <Rail
             payload={payload}
             link={link}
+            dock={settings.dock}
             landsInPlay={landsInPlay}
             onOpenPanel={() => void openPanel()}
             onOpenSettings={() => {

@@ -1,19 +1,20 @@
 import appIcon from '../icons/app.png';
 import { formatWhole, landDanger, showsLibrary } from '../model';
 import type { Link, OverlayPayload } from '../types';
-import { Gear } from './Icons';
+import { Chevron, Gear } from './Icons';
 
 interface Props {
   payload: OverlayPayload | null;
   link: Link;
+  dock: 'left' | 'right' | 'float';
   landsInPlay: number | null;
   onOpenPanel: () => void;
   onOpenSettings: () => void;
   onDragStart: (event: MouseEvent) => void;
 }
 
-/** The 44px rail: icon (drag handle), turn, land %, library, DECK, gear. */
-export function Rail({ payload, link, landsInPlay, onOpenPanel, onOpenSettings, onDragStart }: Props) {
+/** The 44px rail: icon (drag handle), turn, land %, library, open-panel arrow, gear. */
+export function Rail({ payload, link, dock, landsInPlay, onOpenPanel, onOpenSettings, onDragStart }: Props) {
   const state = payload?.state ?? null;
   const active = showsLibrary(state);
   const status =
@@ -53,8 +54,9 @@ export function Rail({ payload, link, landsInPlay, onOpenPanel, onOpenSettings, 
         </span>
       </div>
       <div class="sep" />
-      <button type="button" class="btn gold" onClick={onOpenPanel} aria-label="Open the deck panel">
-        DECK
+      {/* Points the way the panel opens: toward the board, away from the docked edge. */}
+      <button type="button" class="open" onClick={onOpenPanel} title="Open the deck panel" aria-label="Open the deck panel">
+        <Chevron dir={dock === 'left' ? 'right' : 'left'} />
       </button>
       <button type="button" class="gear" onClick={onOpenSettings} aria-label="Overlay settings">
         <Gear />

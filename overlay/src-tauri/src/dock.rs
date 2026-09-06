@@ -47,8 +47,10 @@ pub enum Layout {
 
 /// Fixed rail footprint and the panel's width; the panel's height follows its
 /// content and is capped to the work area by `fit_height`.
-pub const RAIL_WIDTH: i32 = 44;
-pub const RAIL_HEIGHT: i32 = 210;
+/// The page lays the rail out at 44×210 and draws it 1.2× larger than the
+/// panel at the same Scale setting (App.tsx RAIL_BOOST); the window is that.
+pub const RAIL_WIDTH: i32 = 53;
+pub const RAIL_HEIGHT: i32 = 252;
 /// 297 px of content plus 4 px of plain ground on the screen-edge side, so
 /// the text never sits hard against the bezel (the page adds that padding).
 pub const PANEL_WIDTH: i32 = 301;
@@ -184,8 +186,8 @@ mod tests {
 
     #[test]
     fn rail_and_panel_sizes() {
-        assert_eq!(size_for(Layout::Rail, 9999, &WORK, 100, 100), Size { width: 44, height: RAIL_HEIGHT });
-        assert_eq!(size_for(Layout::Rail, 9999, &WORK, 100, 150), Size { width: 66, height: RAIL_HEIGHT * 3 / 2 });
+        assert_eq!(size_for(Layout::Rail, 9999, &WORK, 100, 100), Size { width: RAIL_WIDTH, height: RAIL_HEIGHT });
+        assert_eq!(size_for(Layout::Rail, 9999, &WORK, 100, 150), Size { width: RAIL_WIDTH * 3 / 2, height: RAIL_HEIGHT * 3 / 2 });
         assert_eq!(size_for(Layout::Panel, 400, &WORK, 100, 150), Size { width: (301 + 196) * 3 / 2, height: 600 });
         assert_eq!(size_for(Layout::Panel, 620, &WORK, 100, 100), Size { width: 301 + 196, height: 620 });
         // Taller than the screen -> capped with the edge margin.

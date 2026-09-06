@@ -49,12 +49,15 @@ const payloads = {
 };
 
 mkdirSync(new URL('../shots/', import.meta.url), { recursive: true });
+// A stand-in for Scryfall's card image (488x680) so hover shots need no network.
+const cardSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 488 680"><rect width="488" height="680" rx="22" fill="#265634"/><rect x="18" y="18" width="452" height="644" rx="14" fill="none" stroke="#c8be96" stroke-width="6"/><rect x="40" y="90" width="408" height="310" fill="#467850"/><text x="48" y="60" font-family="sans-serif" font-size="26" fill="#f0e6c8">Card image</text><text x="48" y="440" font-family="sans-serif" font-size="20" fill="#f0e6c8">Instant</text></svg>`;
 const browser = await chromium.launch(process.env.PLAYWRIGHT_CHROMIUM ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM } : {});
 async function shot(name, fixture, size, steps) {
   const ctx = await browser.newContext({ viewport: size, deviceScaleFactor: 2 });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.log('PAGE ERROR', name, e.message));
   page.on('console', (m) => { if (m.type() === 'error') console.log('CONSOLE', name, m.text()); });
+  await page.route('https://api.scryfall.com/**', (route) => route.fulfill({ status: 200, contentType: 'image/svg+xml', body: cardSvg }));
   await page.route('**/api/overlay', (route) => fixture === 'offline' ? route.abort() : route.fulfill({ status: 200, contentType: 'application/json', headers: { ETag: '"1"' }, body: JSON.stringify(payloads[fixture]) }));
   await page.goto('http://127.0.0.1:5199/');
   await page.waitForTimeout(400);
@@ -67,8 +70,8 @@ async function shot(name, fixture, size, steps) {
 }
 const board = async (page) => { await page.addStyleTag({ content: 'body{background:radial-gradient(900px 500px at 60% 40%, #4d6a8a 0%, #2d4a6a 45%, #6b3a2a 100%) !important}' }); };
 const openPanel = async (page) => { await page.click('button[aria-label="Open the deck panel"]'); await page.mouse.move(400, 400); await page.waitForTimeout(100); };
-await shot('rail-game', 'game', { width: 44, height: 210 });
-await shot('rail-offline', 'offline', { width: 44, height: 210 });
+await shot('rail-game', 'game', { width: 53, height: 252 });
+await shot('rail-offline', 'offline', { width: 53, height: 252 });
 await shot('panel-game', 'game', { width: 497, height: 560 }, openPanel);
 await shot('panel-hover', 'game', { width: 497, height: 560 }, async (page) => { await board(page); await openPanel(page); await page.hover('.list-body .row:nth-of-type(4)'); });
 await shot('panel-sideboard', 'game', { width: 497, height: 560 }, async (page) => { await board(page); await openPanel(page); await page.click('.land-row'); await page.click('.side-row'); await page.mouse.move(10, 10); });
@@ -78,9 +81,9 @@ await shot('panel-brawl', 'brawl', { width: 497, height: 560 }, openPanel);
 await shot('panel-final', 'final', { width: 497, height: 560 }, async (page) => { await board(page); await openPanel(page); });
 await shot('panel-idle', 'idle', { width: 497, height: 200 }, openPanel);
 await shot('panel-offline', 'offline', { width: 497, height: 200 }, openPanel);
-await shot('rail-nobg', 'game', { width: 44, height: 210 }, board);
+await shot('rail-nobg', 'game', { width: 53, height: 252 }, board);
 // The rail's own opacity slider: 0 leaves the rail bare while the panel keeps its default tint.
-await shot('rail-op0', 'game', { width: 44, height: 210 }, async (page) => { await board(page); await page.evaluate(() => { const root = document.querySelector('.root'); root.classList.remove('has-bg'); root.classList.add('no-bg'); root.style.setProperty('--rail-alpha', '0'); }); });
+await shot('rail-op0', 'game', { width: 53, height: 252 }, async (page) => { await board(page); await page.evaluate(() => { const root = document.querySelector('.root'); root.classList.remove('has-bg'); root.classList.add('no-bg'); root.style.setProperty('--rail-alpha', '0'); }); });
 await shot('panel-nobg', 'game', { width: 497, height: 560 }, async (page) => { await board(page); await openPanel(page); });
 await shot('panel-op100', 'game', { width: 497, height: 560 }, async (page) => { await board(page); await openPanel(page); await page.click('button[aria-label="Settings"]'); await page.evaluate(() => { const el = document.querySelector('input[aria-label="Background opacity"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(el, '100'); el.dispatchEvent(new Event('input', { bubbles: true })); }); await page.click('button[aria-label="Close settings"]'); });
 await shot('panel-op20', 'game', { width: 497, height: 560 }, async (page) => { await board(page); await openPanel(page); await page.click('button[aria-label="Settings"]'); await page.evaluate(() => { const el = document.querySelector('input[aria-label="Background opacity"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(el, '20'); el.dispatchEvent(new Event('input', { bubbles: true })); }); await page.click('button[aria-label="Close settings"]'); });

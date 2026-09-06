@@ -1054,11 +1054,13 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'In-game overlay' })).toBeInTheDocument();
     const overlayToggle = screen.getByLabelText(/Show the overlay while Tapps Tracker is running/);
     expect(overlayToggle).not.toBeChecked();
-    expect(screen.getByText(/⌥⇧T opens the deck panel/)).toBeInTheDocument();
+    expect(screen.getByText('⌥⇧T')).toBeInTheDocument();
+    expect(screen.getByText('Off')).toBeInTheDocument();
     await act(async () => {
       fireEvent.click(overlayToggle);
     });
-    expect(await screen.findByText(/^Running — it shows itself when Arena is up/)).toBeInTheDocument();
+    expect(await screen.findByText('Running')).toBeInTheDocument();
+    expect(screen.getByText('Shows itself when Arena is up.')).toBeInTheDocument();
     expect(overlayToggle).toBeChecked();
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/settings/overlay',

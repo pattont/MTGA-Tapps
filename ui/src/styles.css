@@ -4118,6 +4118,44 @@ tr.deck-change-row-out .card-link {
   font-size: 0.82rem;
 }
 
+/* Overlay state line on the Settings page: a dot and one word, coloured
+   like the sidebar's Live Scoreboard entry (green running, muted off). */
+.settings-status {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.settings-status-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--subtle);
+  align-self: center;
+}
+
+.settings-status-running .settings-status-label {
+  color: var(--success);
+}
+
+.settings-status-running .settings-status-dot {
+  background: var(--success);
+}
+
+.settings-status-off .settings-status-label {
+  color: var(--muted);
+}
+
+.settings-status-note {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
 /* Tracker info block on the Settings page. */
 .settings-info {
   display: grid;
@@ -4143,6 +4181,18 @@ tr.deck-change-row-out .card-link {
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.82rem;
+}
+
+/* The overlay's hotkey rows sit inside a .settings-form, which already has margins. */
+.settings-info-tight {
+  margin: 0;
+  gap: 6px;
+}
+
+.settings-info-row dd.settings-info-plain {
+  font-family: inherit;
+  font-size: 0.85rem;
+  color: var(--muted);
 }
 
 /* Buttons that are really links (e.g. "Open Database Health"). */

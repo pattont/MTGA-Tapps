@@ -138,7 +138,10 @@ class TrackerRuntimeMixin:
 
                 self._process_new_events()
                 self._live_heartbeat()
-                time.sleep(0.5)
+                # A quarter second, not half: with nothing new in the log
+                # this is one stat call, and it halves the worst-case lag
+                # between a draw in Arena and the overlay showing it.
+                time.sleep(0.25)
         except KeyboardInterrupt:
             self._print_line("\n" + "=" * 75)
             self._print_line("🛑 Stopping tracker...")

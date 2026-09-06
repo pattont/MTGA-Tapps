@@ -324,7 +324,7 @@ export function SettingsPage() {
       <Section
         id="settings-overlay"
         title="In-game overlay"
-        description="A small always-on-top window beside Arena: a rail with the turn, the chance of a land on the next draw, and your library count, which opens into your full decklist with per-card draw odds. It appears only while Arena is running, on the screen Arena is on, and it only reads this tracker's local API, never the game. Dock it left or right, pin it, or hide it with Alt+Shift+H (⌥⇧H on macOS) — every other preference lives in the overlay's own ⚙ menu."
+        description="A small always-on-top window beside Arena: your library, per-card draw odds and land drops. It shows only while Arena is running and reads only this tracker's local API — never the game. Looks and behaviour live in the overlay's own ⚙ menu."
       >
         {error ? (
           <p className="empty-state deckfinder-state">{error}</p>
@@ -418,8 +418,20 @@ function OverlayForm({
   }
 
   const macos = platform?.system === 'macos';
+  const status = !overlay.available
+    ? { tone: 'off', label: 'Not in this build', note: 'Release builds ship it; from a checkout, run scripts/build_overlay.sh first.' }
+    : overlay.running
+      ? { tone: 'running', label: 'Running', note: 'Shows itself when Arena is up.' }
+      : overlay.enabled
+        ? { tone: 'off', label: 'Off', note: 'Starts with the tracker next time.' }
+        : { tone: 'off', label: 'Off', note: null };
   return (
     <div className="settings-form">
+      <p className={`settings-status settings-status-${status.tone}`} role="status">
+        <span aria-hidden="true" className="settings-status-dot" />
+        <span className="settings-status-label">{status.label}</span>
+        {status.note ? <span className="settings-status-note">{status.note}</span> : null}
+      </p>
       <label className="settings-check">
         <input
           checked={overlay.running}
@@ -429,22 +441,20 @@ function OverlayForm({
         />
         Show the overlay while Tapps Tracker is running
       </label>
-      {!overlay.available ? (
-        <p className="settings-hint">
-          This build doesn't include the overlay. Release builds ship it; from a checkout, run{' '}
-          <code>scripts/build_overlay.sh</code> first.
-        </p>
-      ) : (
-        <p className="settings-hint">
-          {overlay.running ? 'Running — it shows itself when Arena is up' : 'Off'}
-          {overlay.enabled && !overlay.running ? ' — it will start with the tracker next time.' : '.'}{' '}
-          Start or stop it any time from the menu-bar icon (Start / Stop Overlay) or use the overlay's hotkeys:{' '}
-          {macos ? '⌥⇧T' : 'Alt+Shift+T'} opens the deck panel, {macos ? '⌥⇧H' : 'Alt+Shift+H'} hides it.
-          {macos
-            ? ' On macOS it sits over Arena in windowed and fullscreen-windowed modes; Arena in exclusive fullscreen covers it.'
-            : ' Arena in exclusive fullscreen covers it — use borderless windowed.'}
-        </p>
-      )}
+      <dl className="settings-info settings-info-tight">
+        <div className="settings-info-row">
+          <dt>Deck panel</dt>
+          <dd>{macos ? '⌥⇧T' : 'Alt+Shift+T'}</dd>
+        </div>
+        <div className="settings-info-row">
+          <dt>Hide / show</dt>
+          <dd>{macos ? '⌥⇧H' : 'Alt+Shift+H'}</dd>
+        </div>
+        <div className="settings-info-row">
+          <dt>Also from</dt>
+          <dd className="settings-info-plain">The menu-bar icon: Start / Stop Overlay, Overlay Settings.</dd>
+        </div>
+      </dl>
       {error ? (
         <p className="collection-export-status collection-export-fail" role="alert">
           {error}

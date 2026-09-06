@@ -32,7 +32,7 @@ function panelProps(overrides: Partial<Parameters<typeof Panel>[0]> = {}) {
 
 describe('Rail', () => {
   it('shows turn, land odds and library during a game', () => {
-    render(<Rail payload={inGamePayload()} link="online" landsInPlay={4} onOpenPanel={noop} onOpenSettings={noop} onDragStart={noop} />);
+    render(<Rail payload={inGamePayload()} link="online" dock="right" landsInPlay={4} onOpenPanel={noop} onOpenSettings={noop} onDragStart={noop} />);
     expect(screen.getByText('5')).toBeTruthy();
     expect(screen.getByText('27%')).toBeTruthy();
     expect(screen.getByText('41')).toBeTruthy();
@@ -40,7 +40,7 @@ describe('Rail', () => {
   });
 
   it('shows dashes and a status dot when the tracker is down', () => {
-    const { container } = render(<Rail payload={offlinePayload()} link="offline" landsInPlay={null} onOpenPanel={noop} onOpenSettings={noop} onDragStart={noop} />);
+    const { container } = render(<Rail payload={offlinePayload()} link="offline" dock="right" landsInPlay={null} onOpenPanel={noop} onOpenSettings={noop} onDragStart={noop} />);
     expect(container.querySelector('.rail-status.off')).toBeTruthy();
     expect(container.querySelector('.rail')?.getAttribute('title')).toBe('Tracker not running');
   });
@@ -153,8 +153,10 @@ describe('App helpers', () => {
     expect(hoverSide('right')).toBe('left');
     expect(hoverSide('left')).toBe('right');
     expect(hoverSide('float')).toBe('left');
-    expect(hoverCardTop(100, 118, 600)).toBe(120);
-    expect(hoverCardTop(540, 558, 600)).toBe(440);
+    // Level with the row, kept whole inside the window (card image + odds = 354).
+    expect(hoverCardTop(100, 118, 600)).toBe(100);
+    expect(hoverCardTop(540, 558, 600)).toBe(600 - 354 - 2);
+    expect(hoverCardTop(0, 18, 600)).toBe(2);
   });
 
   it('measures the natural panel height from chrome plus the full list', () => {

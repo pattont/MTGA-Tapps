@@ -17,8 +17,8 @@
         "label": "main",
         "title": "Tapps Tracker",
         "url": "index.html",
-        "width": 44,
-        "height": 210,
+        "width": 53,
+        "height": 252,
         "decorations": false,
         "transparent": true,
         "shadow": false,
@@ -35,7 +35,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* ipc: http://ipc.localhost; img-src 'self' data: https://api.scryfall.com https://cards.scryfall.io; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
     }
   },
   "bundle": {

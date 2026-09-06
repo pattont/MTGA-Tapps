@@ -2,8 +2,8 @@
  * The state poll: conditional GETs against the tracker's /api/overlay.
  *
  * `If-None-Match` turns an unchanged library into a 304 that allocates and
- * parses nothing. The interval backs off with what is happening — half a
- * second during a game, two seconds between games, ten when the tracker is
+ * parses nothing. The interval backs off with what is happening — every
+ * 300 ms during a game, two seconds between games, ten when the tracker is
  * unreachable — and stops entirely while the window is hidden (the caller
  * pauses it), so an idle overlay does no work at all.
  */
@@ -11,7 +11,7 @@
 import type { Link, OverlayPayload } from './types';
 
 export const INTERVALS = {
-  inGame: 500,
+  inGame: 300,
   idle: 2000,
   offline: 10_000,
 } as const;

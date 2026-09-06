@@ -159,15 +159,39 @@ def _seat_colors(conn: sqlite3.Connection, game_id: Optional[str]) -> Dict[str, 
     return out
 
 
+#: The overlay polls several times a second during a game and the record
+#: against this opponent cannot change until the game ends (which brings a
+#: new game id), so one lookup per (opponent, game) is enough.
+_head_to_head_cache: Dict[Tuple[str, str, Optional[str]], Optional[Dict[str, Any]]] = {}
+
+
 def _head_to_head(
     conn: sqlite3.Connection,
     opponent_name: Optional[str],
     current_game_id: Optional[str],
+    cache_scope: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Lifetime record vs this opponent name (the current game excluded)."""
+    """Lifetime record vs this opponent name (the current game excluded).
+    With a `cache_scope` (the database path) the answer is memoised per
+    (database, opponent, game) for the overlay's poll."""
     name = str(opponent_name or "").strip()
     if not name:
         return None
+    if cache_scope is None or current_game_id is None:
+        return _head_to_head_query(conn, name, current_game_id)
+    key = (cache_scope, name, current_game_id)
+    if key in _head_to_head_cache:
+        return _head_to_head_cache[key]
+    result = _head_to_head_query(conn, name, current_game_id)
+    if len(_head_to_head_cache) > 32:
+        _head_to_head_cache.clear()
+    _head_to_head_cache[key] = result
+    return result
+
+
+def _head_to_head_query(
+    conn: sqlite3.Connection, name: str, current_game_id: Optional[str]
+) -> Optional[Dict[str, Any]]:
     try:
         row = conn.execute(
             """
@@ -687,7 +711,7 @@ def build_overlay_payload(db_path: Path) -> Dict[str, Any]:
                 state = None
         head_to_head = None
         if state and state.get("game_active") and status:
-            head_to_head = _head_to_head(conn, status.get("opponent_name"), status.get("game_id"))
+            head_to_head = _head_to_head(conn, status.get("opponent_name"), status.get("game_id"), cache_scope=db_uri)
     tracker_state = _tracker_state(status, now)
     if tracker_state == "offline":
         # A stale row must not keep a finished game's library on screen.

@@ -31,7 +31,7 @@ const ARENA_POLL: Duration = Duration::from_secs(1);
 /// a non-activating overlay is never the key window, and WebKit does not
 /// deliver hover / mouseleave reliably to one.
 const CURSOR_POLL: Duration = Duration::from_millis(100);
-const RAIL_HOVER_OPEN: Duration = Duration::from_millis(300);
+const RAIL_HOVER_OPEN: Duration = Duration::from_millis(250);
 
 /// Everything about the window that is not a saved preference.
 #[derive(Debug, Clone)]

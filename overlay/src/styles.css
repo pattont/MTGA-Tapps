@@ -202,29 +202,27 @@ img {
   transition: width 200ms ease;
 }
 
-.rail .btn {
-  width: 34px;
-  height: 22px;
+/* The open-panel arrow: the same square button as the panel's collapse
+   chevron, a size up so it reads as the rail's main control. */
+.rail .open {
+  width: 26px;
+  height: 24px;
   border-radius: 4px;
   border: 1px solid var(--border);
   background: var(--panel-strong);
   display: grid;
   place-items: center;
-  font-size: 8.5px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  color: var(--muted);
+  color: var(--accent-strong);
 }
 
-.rail .btn.gold {
-  color: #1a1408;
-  background: linear-gradient(180deg, #f0c66c, #d7aa49);
-  border-color: #b98c2c;
-  box-shadow: 0 1px 0 rgb(0 0 0 / 35%);
+.rail .open svg {
+  width: 14px;
+  height: 14px;
 }
 
-.rail .btn.gold:hover {
-  background: linear-gradient(180deg, #f6d283, #e0b455);
+.rail .open:hover {
+  color: var(--text);
+  border-color: var(--accent);
 }
 
 .rail .gear {
@@ -887,8 +885,9 @@ img {
   width: 184px;
   background: var(--panel-strong);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 6px 9px;
+  border-radius: 6px;
+  padding: 0 9px 6px;
+  overflow: hidden;
   font-size: 10.5px;
   box-shadow: 0 12px 30px rgb(0 0 0 / 50%);
   z-index: 3;
@@ -903,6 +902,17 @@ img {
 .gutter.side-right .hover,
 .gutter.side-right .sideboard {
   left: 6px;
+}
+
+/* The card itself, Scryfall's "normal" image (488:680), full width of the
+   card; the odds block sits under it at the same width. */
+.hover .card-img {
+  display: block;
+  width: calc(100% + 18px);
+  margin: 0 -9px 6px;
+  aspect-ratio: 488 / 680;
+  object-fit: cover;
+  background: rgba(0, 0, 0, 0.35);
 }
 
 .hover b {
