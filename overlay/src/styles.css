@@ -248,7 +248,7 @@ img {
 /* --------------------------------------------------------------- panel */
 
 .panel {
-  width: 322px;
+  width: 297px;
   flex: none;
   height: 100%;
   background: rgba(24, 28, 34, var(--tint-alpha));
@@ -517,15 +517,14 @@ img {
 
 .row {
   display: grid;
-  grid-template-columns: 18px 1fr auto;
+  grid-template-columns: 1fr auto;
   align-items: stretch;
   gap: 7px;
-  padding: 0 0 0 7px;
+  padding: 0 0 0 9px;
   line-height: 1.15;
   border-top: 1px solid var(--hairline);
 }
 
-.row .mini,
 .row .body {
   padding: 5px 0;
   align-self: center;
@@ -591,6 +590,12 @@ img {
   color: inherit;
 }
 
+/* The Sideboard row has a count but no odds; keep it as tall as the Lands
+   row (count + % + padding) so the two folded rows line up. */
+.row.side-row .right {
+  min-height: calc(15px + 2px + 10.5px + 8px);
+}
+
 .row .nm svg {
   vertical-align: -1px;
   margin-left: 2px;
@@ -622,43 +627,35 @@ img {
   text-overflow: ellipsis;
 }
 
-.nm.land,
-.fill-land {
+.nm.land {
   color: #7bd88f;
 }
 
-.nm.creature,
-.fill-creature {
+.nm.creature {
   color: #e8b86d;
 }
 
-.nm.instant,
-.fill-instant {
+.nm.instant {
   color: #8ab4f8;
 }
 
-.nm.sorcery,
-.fill-sorcery {
+.nm.sorcery {
   color: #b79df7;
 }
 
-.nm.ench,
-.fill-ench {
+.nm.ench {
   color: #d48fe8;
 }
 
-.nm.artifact,
-.fill-artifact {
+.nm.artifact {
   color: #b8c4d0;
 }
 
-.nm.walker,
-.fill-walker {
+.nm.walker {
   color: #f0a58f;
 }
 
-.nm.other,
-.fill-other {
+.nm.other {
   color: var(--muted);
 }
 
@@ -717,28 +714,6 @@ img {
   font-weight: 600;
 }
 
-.mini {
-  display: grid;
-  place-items: center;
-}
-
-.mbar {
-  display: block;
-  width: 18px;
-  height: 4px;
-  border-radius: 2px;
-  background: #2b343e;
-  overflow: hidden;
-}
-
-.mbar b {
-  display: block;
-  height: 100%;
-  border-radius: 2px;
-  background: currentColor;
-  transition: width 200ms ease;
-}
-
 .note {
   font-size: 10px;
   color: var(--subtle);
@@ -795,13 +770,16 @@ img {
 
 /* compact rows */
 
-.density-compact .row .mini,
 .density-compact .row .body {
   padding: 3px 0;
 }
 
 .density-compact .row .right {
   padding: 2px 4px;
+}
+
+.density-compact .row.side-row .right {
+  min-height: calc(13.5px + 2px + 10.5px + 4px);
 }
 
 .density-compact .row .nm {
@@ -853,7 +831,6 @@ img {
   background: rgba(255, 255, 255, 0.18);
 }
 
-.no-bg .mbar,
 .no-bg .rail .bar {
   background: rgba(16, 20, 24, 0.6);
 }

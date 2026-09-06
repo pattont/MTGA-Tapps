@@ -41,7 +41,6 @@ export function deckColors(cards: { mana_cost: string | null }[]): string[] {
 }
 
 function CardRow({ row, exhausted, onHover }: { row: Row; exhausted: boolean; onHover: Props['onHover'] }) {
-  const frac = row.total > 0 ? (100 * row.left) / row.total : 0;
   const tone = row.left > 0 ? oddsTone(row.odds['1']) : 'cold';
   return (
     <div
@@ -52,11 +51,6 @@ function CardRow({ row, exhausted, onHover }: { row: Row; exhausted: boolean; on
       }}
       onMouseLeave={() => onHover(null, null)}
     >
-      <span class="mini">
-        <i class="mbar">
-          <b class={`fill-${typeClass(row.type_category)}`} style={{ width: `${frac}%` }} />
-        </i>
-      </span>
       <span class="body">
         <span class={`nm ${typeClass(row.type_category)}`} title={row.name}>
           {row.name}
@@ -184,11 +178,6 @@ export function Panel(props: Props) {
                 aria-expanded={landsOpen}
                 aria-label={`Lands, ${state.lands_left} of ${state.lands_total} left`}
               >
-                <span class="mini">
-                  <i class="mbar">
-                    <b class="fill-land" style={{ width: `${state.lands_total > 0 ? (100 * state.lands_left) / state.lands_total : 0}%` }} />
-                  </i>
-                </span>
                 <span class="body">
                   <span class="nm land">
                     Lands <Chevron dir={landsOpen ? 'down' : 'right'} />
@@ -223,7 +212,6 @@ export function Panel(props: Props) {
                 aria-expanded={sideboardOpen}
                 aria-label={`Sideboard, ${sideboardCount} cards`}
               >
-                <span class="mini" />
                 <span class="body">
                   <span class="nm other">
                     Sideboard <Chevron dir={sideboardOpen ? 'down' : 'right'} />

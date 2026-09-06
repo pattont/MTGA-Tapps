@@ -49,7 +49,7 @@ pub enum Layout {
 /// content and is capped to the work area by `fit_height`.
 pub const RAIL_WIDTH: i32 = 44;
 pub const RAIL_HEIGHT: i32 = 210;
-pub const PANEL_WIDTH: i32 = 322;
+pub const PANEL_WIDTH: i32 = 297;
 /// Transparent strip beside the panel, on the board side, where the hover
 /// card and the sideboard fly out to. Part of the window; clicks on the
 /// fully transparent pixels fall through on macOS.
@@ -184,8 +184,8 @@ mod tests {
     fn rail_and_panel_sizes() {
         assert_eq!(size_for(Layout::Rail, 9999, &WORK, 100, 100), Size { width: 44, height: RAIL_HEIGHT });
         assert_eq!(size_for(Layout::Rail, 9999, &WORK, 100, 150), Size { width: 66, height: RAIL_HEIGHT * 3 / 2 });
-        assert_eq!(size_for(Layout::Panel, 400, &WORK, 100, 150), Size { width: (322 + 196) * 3 / 2, height: 600 });
-        assert_eq!(size_for(Layout::Panel, 620, &WORK, 100, 100), Size { width: 322 + 196, height: 620 });
+        assert_eq!(size_for(Layout::Panel, 400, &WORK, 100, 150), Size { width: (297 + 196) * 3 / 2, height: 600 });
+        assert_eq!(size_for(Layout::Panel, 620, &WORK, 100, 100), Size { width: 297 + 196, height: 620 });
         // Taller than the screen -> capped with the edge margin.
         assert_eq!(size_for(Layout::Panel, 3000, &WORK, 100, 100).height, 1055 - 16);
         // The max-height setting caps a long list to a share of the screen.
@@ -206,10 +206,10 @@ mod tests {
 
     #[test]
     fn float_remembers_and_clamps() {
-        let size = Size { width: 322, height: 620 };
+        let size = Size { width: 297, height: 620 };
         assert_eq!(docked_position(Dock::Float, size, &WORK, None, Some((100, 100))), (100, 100));
         assert_eq!(docked_position(Dock::Float, size, &WORK, None, Some((-50, -50))), (0, 33));
-        assert_eq!(docked_position(Dock::Float, size, &WORK, None, Some((5000, 5000))), (1920 - 322, 25 + 1055 - 620 - 8));
+        assert_eq!(docked_position(Dock::Float, size, &WORK, None, Some((5000, 5000))), (1920 - 297, 25 + 1055 - 620 - 8));
     }
 
     #[test]

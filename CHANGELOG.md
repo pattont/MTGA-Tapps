@@ -86,10 +86,11 @@ itself; a warm dashboard is faster still.
 
 - **In-game overlay.** A small always-on-top window beside Arena: a 44 px
   rail with the turn, the chance of a land on the next draw, and the library
-  count, opening into a panel with the full decklist — each card's name over
-  its mana cost, copies left over next-draw odds centred in a slim darker
-  band on the right (within 2 / within 3 on hover; odds are whole
-  percentages) — land drops for the next one,
+  count, opening into a 297 px panel with the full decklist — each card's
+  name over its mana cost, copies left over next-draw odds centred in a slim
+  darker band on the right (within 2 / within 3 on hover; odds are whole
+  percentages; no per-card bar, every pixel goes to the text) — land drops
+  for the next one,
   two, and three draws, a Play/Draw pill, and sort by odds, mana value, or
   name. Lands group into Basic / Nonbasic rows by default; in Brawl, drawn
   singletons collapse into a Drawn group. The final library stays up (marked
