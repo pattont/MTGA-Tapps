@@ -185,7 +185,9 @@ UI changes require vitest, tsc, lint, and a fresh `npm run build` (the dashboard
   `overlay/`. No Rust toolchain → the overlay is skipped with a warning and the Settings
   page reports "not in this build"; CI sets `OVERLAY_REQUIRED=1` so releases always carry
   it. `overlay_launcher.overlay_binary_candidates()` lists every location the tracker looks
-  in (env `MTGA_TRACKER_OVERLAY_BIN` overrides). The overlay's frontend and Rust tests:
+  in (env `MTGA_TRACKER_OVERLAY_BIN` overrides). `scripts/build_overlay.sh --fast` (`-Fast`)
+  uses the incremental `fast` cargo profile for iteration — seconds instead of a fat-LTO
+  relink; never ship it. The overlay's frontend and Rust tests:
   `cd overlay && npm test && cargo test --manifest-path src-tauri/Cargo.toml`.
 - `.github/workflows/release.yml` builds both OS artifacts and attaches them to a **draft**
   GitHub Release on a `v*` tag or manual dispatch. Publishing the draft is the human "go"

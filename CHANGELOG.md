@@ -115,7 +115,8 @@ itself; a warm dashboard is faster still.
   icon of its own. It is a separate native app (Tauri v2, Preact
   page) that polls `GET /api/overlay` with ETags — nothing else, and never
   the game — so it costs the tracker nothing. Release builds include it;
-  building from source needs Rust (`scripts/build_overlay.sh`).
+  building from source needs Rust (`scripts/build_overlay.sh`; `--fast` for
+  an incremental iteration build that takes seconds).
 - **`GET /api/overlay`**: the library the tracker knows (deck minus what has
   left it, from the kept opening hand on), per-card hypergeometric odds,
   land-drop odds, format, opponent, turn, play/draw, and the head-to-head

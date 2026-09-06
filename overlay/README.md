@@ -43,3 +43,12 @@ macOS, `%APPDATA%\com.tappstracker.overlay\` on Windows).
 tracker's own build scripts call them; with no Rust toolchain installed they
 skip the overlay and the tracker still builds (the Settings page then says
 the overlay is not in this build).
+
+While iterating, pass `--fast` (`-Fast` on Windows): it builds the `fast`
+cargo profile — release settings minus fat LTO and the single codegen unit,
+incremental, in its own `target/fast/` so it never evicts the release
+cache — and stages that binary instead. A rebuild after a CSS or Rust
+change then takes seconds rather than a full relink, and Start/Stop Overlay
+in the menu bar picks it up as usual. The first `--fast` build compiles
+every dependency once. Both scripts also skip `npm ci` unless
+`package-lock.json` changed. Ship the plain build.

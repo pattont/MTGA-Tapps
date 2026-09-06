@@ -30,3 +30,15 @@ codegen-units = 1
 panic = "abort"
 strip = true
 opt-level = "z"
+
+# Local iteration: same as release minus the slow parts (fat LTO over every
+# dependency, one codegen unit, size optimisation). Its own target/fast/
+# directory, so switching between it and a real release build never throws
+# the other's cache away. scripts/build_overlay.sh --fast uses it.
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+strip = false
+opt-level = 1
