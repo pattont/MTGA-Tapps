@@ -4118,42 +4118,123 @@ tr.deck-change-row-out .card-link {
   font-size: 0.82rem;
 }
 
-/* Overlay state line on the Settings page: a dot and one word, coloured
-   like the sidebar's Live Scoreboard entry (green running, muted off). */
-.settings-status {
-  display: flex;
-  align-items: baseline;
-  gap: 9px;
-  margin: 0;
-  font-size: 0.95rem;
-  font-weight: 600;
+/* In-game overlay card on the Settings page: one status row (dot, title,
+   one sentence, the action) over a row of hotkey chips. The dot and title
+   take the sidebar's Live Scoreboard colours: green on, muted off. */
+.overlay-card {
+  display: grid;
+  margin: 12px 16px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  max-width: 720px;
 }
 
-.settings-status-dot {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
+.overlay-card-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+}
+
+.overlay-card-dot {
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: var(--subtle);
-  align-self: center;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--subtle) 18%, transparent);
 }
 
-.settings-status-running .settings-status-label {
+.overlay-card-on .overlay-card-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 22%, transparent);
+}
+
+.overlay-card-stopped .overlay-card-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.overlay-card-text {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.overlay-card-title {
+  margin: 0;
+  font-size: 1.02rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.overlay-card-on .overlay-card-title {
   color: var(--success);
 }
 
-.settings-status-running .settings-status-dot {
-  background: var(--success);
-}
-
-.settings-status-off .settings-status-label {
-  color: var(--muted);
-}
-
-.settings-status-note {
+.overlay-card-detail {
+  margin: 0;
   color: var(--muted);
   font-size: 0.85rem;
-  font-weight: 400;
+  line-height: 1.45;
+}
+
+.overlay-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.overlay-card-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  padding: 11px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--row-alt-bg);
+  border-radius: 0 0 8px 8px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.overlay-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.overlay-key kbd {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.overlay-key-note {
+  white-space: normal;
+  color: var(--subtle);
+}
+
+.overlay-card-error {
+  margin: 0 18px 14px;
+}
+
+@media (max-width: 640px) {
+  .overlay-card-main {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .overlay-card-actions {
+    grid-column: 2;
+  }
 }
 
 /* Tracker info block on the Settings page. */
@@ -4181,18 +4262,6 @@ tr.deck-change-row-out .card-link {
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.82rem;
-}
-
-/* The overlay's hotkey rows sit inside a .settings-form, which already has margins. */
-.settings-info-tight {
-  margin: 0;
-  gap: 6px;
-}
-
-.settings-info-row dd.settings-info-plain {
-  font-family: inherit;
-  font-size: 0.85rem;
-  color: var(--muted);
 }
 
 /* Buttons that are really links (e.g. "Open Database Health"). */

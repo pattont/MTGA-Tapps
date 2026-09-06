@@ -153,9 +153,9 @@ describe('App helpers', () => {
     expect(hoverSide('right')).toBe('left');
     expect(hoverSide('left')).toBe('right');
     expect(hoverSide('float')).toBe('left');
-    // Level with the row, kept whole inside the window (card image + odds = 354).
+    // Level with the row, kept whole inside the window (card image + odds = 446).
     expect(hoverCardTop(100, 118, 600)).toBe(100);
-    expect(hoverCardTop(540, 558, 600)).toBe(600 - 354 - 2);
+    expect(hoverCardTop(540, 558, 600)).toBe(600 - 446 - 2);
     expect(hoverCardTop(0, 18, 600)).toBe(2);
   });
 

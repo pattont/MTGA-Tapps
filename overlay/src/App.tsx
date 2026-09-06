@@ -19,8 +19,8 @@ interface HoverCard {
   bottom: number;
 }
 
-/** Height of the hover card: the card image (184 wide at 488:680) plus the odds block. */
-const HOVER_CARD_HEIGHT = 256 + 98;
+/** Height of the hover card: the card image (250 wide at 488:680) plus the odds block. */
+const HOVER_CARD_HEIGHT = 348 + 98;
 /** The hover card hides itself this long after the last row it was shown for. */
 export const HOVER_LINGER_MS = 2500;
 /** The minimised rail draws a step larger than the panel at the same Scale setting. */

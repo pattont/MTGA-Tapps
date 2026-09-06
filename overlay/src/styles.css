@@ -882,13 +882,13 @@ img {
 
 .hover {
   position: absolute;
-  width: 184px;
+  width: 250px;
   background: var(--panel-strong);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 0 9px 6px;
+  padding: 0 10px 7px;
   overflow: hidden;
-  font-size: 10.5px;
+  font-size: 11.5px;
   box-shadow: 0 12px 30px rgb(0 0 0 / 50%);
   z-index: 3;
   pointer-events: none;
@@ -908,8 +908,8 @@ img {
    card; the odds block sits under it at the same width. */
 .hover .card-img {
   display: block;
-  width: calc(100% + 18px);
-  margin: 0 -9px 6px;
+  width: calc(100% + 20px);
+  margin: 0 -10px 7px;
   aspect-ratio: 488 / 680;
   object-fit: cover;
   background: rgba(0, 0, 0, 0.35);
@@ -917,7 +917,7 @@ img {
 
 .hover b {
   display: block;
-  font-size: 11.5px;
+  font-size: 12.5px;
   margin-bottom: 3px;
   color: #e8b86d;
   white-space: nowrap;

@@ -324,7 +324,7 @@ export function SettingsPage() {
       <Section
         id="settings-overlay"
         title="In-game overlay"
-        description="A small always-on-top window beside Arena: your library, per-card draw odds and land drops. It shows only while Arena is running and reads only this tracker's local API — never the game. Looks and behaviour live in the overlay's own ⚙ menu."
+        description="A small always-on-top window beside Arena with your library, per-card draw odds and land drops. It runs as its own small process, shows only while Arena is up, and reads only this tracker's local API — never the game."
       >
         {error ? (
           <p className="empty-state deckfinder-state">{error}</p>
@@ -405,7 +405,7 @@ function OverlayForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function toggle(enabled: boolean) {
+  async function setEnabled(enabled: boolean) {
     setBusy(true);
     setError(null);
     try {
@@ -418,45 +418,64 @@ function OverlayForm({
   }
 
   const macos = platform?.system === 'macos';
-  const status = !overlay.available
-    ? { tone: 'off', label: 'Not in this build', note: 'Release builds ship it; from a checkout, run scripts/build_overlay.sh first.' }
+  // One card, one sentence, one action. "Off" is the whole story for people
+  // who never want the overlay: no process runs and none will start.
+  const state = !overlay.available
+    ? {
+        tone: 'unavailable',
+        title: 'Not in this build',
+        detail: 'Release builds ship the overlay. From a checkout, run scripts/build_overlay.sh first.',
+      }
     : overlay.running
-      ? { tone: 'running', label: 'Running', note: 'Shows itself when Arena is up.' }
+      ? { tone: 'on', title: 'Overlay is on', detail: 'Running now, and it starts with the tracker. It shows itself when Arena is up.' }
       : overlay.enabled
-        ? { tone: 'off', label: 'Off', note: 'Starts with the tracker next time.' }
-        : { tone: 'off', label: 'Off', note: null };
+        ? { tone: 'stopped', title: 'Overlay is on', detail: 'Not running right now — it starts with the tracker next time.' }
+        : { tone: 'off', title: 'Overlay is off', detail: 'Nothing runs. Turn it on to launch it now and with the tracker from then on.' };
+
   return (
-    <div className="settings-form">
-      <p className={`settings-status settings-status-${status.tone}`} role="status">
-        <span aria-hidden="true" className="settings-status-dot" />
-        <span className="settings-status-label">{status.label}</span>
-        {status.note ? <span className="settings-status-note">{status.note}</span> : null}
-      </p>
-      <label className="settings-check">
-        <input
-          checked={overlay.running}
-          disabled={busy || !overlay.available}
-          type="checkbox"
-          onChange={(event) => void toggle(event.target.checked)}
-        />
-        Show the overlay while Tapps Tracker is running
-      </label>
-      <dl className="settings-info settings-info-tight">
-        <div className="settings-info-row">
-          <dt>Deck panel</dt>
-          <dd>{macos ? '⌥⇧T' : 'Alt+Shift+T'}</dd>
+    <div className={`overlay-card overlay-card-${state.tone}`}>
+      <div className="overlay-card-main">
+        <span aria-hidden="true" className="overlay-card-dot" />
+        <div className="overlay-card-text">
+          <p className="overlay-card-title" role="status">
+            {state.title}
+          </p>
+          <p className="overlay-card-detail">{state.detail}</p>
         </div>
-        <div className="settings-info-row">
-          <dt>Hide / show</dt>
-          <dd>{macos ? '⌥⇧H' : 'Alt+Shift+H'}</dd>
+        {overlay.available ? (
+          <div className="overlay-card-actions">
+            {overlay.running ? (
+              <button className="deck-neutral-button" disabled={busy} type="button" onClick={() => void setEnabled(false)}>
+                Turn off
+              </button>
+            ) : (
+              <>
+                <button className="deck-export-button" disabled={busy} type="button" onClick={() => void setEnabled(true)}>
+                  {overlay.enabled ? 'Start now' : 'Turn on'}
+                </button>
+                {overlay.enabled ? (
+                  <button className="deck-neutral-button" disabled={busy} type="button" onClick={() => void setEnabled(false)}>
+                    Turn off
+                  </button>
+                ) : null}
+              </>
+            )}
+          </div>
+        ) : null}
+      </div>
+      {overlay.available ? (
+        <div className="overlay-card-keys">
+          <span className="overlay-key">
+            Deck panel <kbd>{macos ? '⌥⇧T' : 'Alt+Shift+T'}</kbd>
+          </span>
+          <span className="overlay-key">
+            Hide / show <kbd>{macos ? '⌥⇧H' : 'Alt+Shift+H'}</kbd>
+          </span>
+          <span className="overlay-key overlay-key-note">Looks and behaviour: the overlay's ⚙ menu. Also in the menu bar: Start / Stop Overlay.</span>
         </div>
-        <div className="settings-info-row">
-          <dt>Also from</dt>
-          <dd className="settings-info-plain">The menu-bar icon: Start / Stop Overlay, Overlay Settings.</dd>
-        </div>
-      </dl>
+      ) : null}
       {error ? (
-        <p className="collection-export-status collection-export-fail" role="alert">
+        <p className="collection-export-status collection-export-fail overlay-card-error" role="alert">
           {error}
         </p>
       ) : null}

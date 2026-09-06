@@ -1052,16 +1052,13 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Export to .csv' })).toBeInTheDocument();
     // The in-game overlay toggle drives /api/settings/overlay and reflects the answer.
     expect(screen.getByRole('heading', { name: 'In-game overlay' })).toBeInTheDocument();
-    const overlayToggle = screen.getByLabelText(/Show the overlay while Tapps Tracker is running/);
-    expect(overlayToggle).not.toBeChecked();
+    expect(screen.getByText('Overlay is off')).toBeInTheDocument();
     expect(screen.getByText('⌥⇧T')).toBeInTheDocument();
-    expect(screen.getByText('Off')).toBeInTheDocument();
     await act(async () => {
-      fireEvent.click(overlayToggle);
+      fireEvent.click(screen.getByRole('button', { name: 'Turn on' }));
     });
-    expect(await screen.findByText('Running')).toBeInTheDocument();
-    expect(screen.getByText('Shows itself when Arena is up.')).toBeInTheDocument();
-    expect(overlayToggle).toBeChecked();
+    expect(await screen.findByText('Overlay is on')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Turn off' })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/settings/overlay',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ enabled: true }) }),

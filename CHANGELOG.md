@@ -89,7 +89,7 @@ itself; a warm dashboard is faster still.
   a land on the next draw, the library count and an arrow that opens the
   301 px panel with the full decklist — each card's
   name over its mana cost, copies left over next-draw odds centred in a slim
-  darker band on the right (hover a row for the card itself, from Scryfall, with next draw /
+  darker band on the right (hover a row for the card itself, 250 px wide from Scryfall, with next draw /
   within 2 / within 3 under it; the card hides itself a couple of seconds
   later; odds are whole percentages; no per-card bar, every pixel goes to
   the text) — land drops
@@ -116,8 +116,9 @@ itself; a warm dashboard is faster still.
   density, and per-platform hotkeys (`Alt+Shift+T` / `⌥⇧T`
   toggles the panel, `Alt+Shift+H` / `⌥⇧H` hides) in its own ⚙ menu. Enable
   it from Settings → In-game overlay or the menu bar's Start Overlay; the
-  Settings page shows Running / Off on its own line, like the sidebar's
-  Live Scoreboard, with the hotkeys under it; the
+  Settings page shows one card — Overlay is on / off, one sentence, and a
+  Turn on / Turn off button (off means nothing runs and nothing will start
+  with the tracker) over the hotkeys; the
   menu shows an Overlay: Running/Stopped line under the tracker's, an
   overlay section (Start/Stop Overlay, Overlay Settings) and a tracker
   section (Stop Tracking, Tracker Settings) — the overlay adds no menu-bar
