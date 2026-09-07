@@ -2,6 +2,84 @@
 
 ## Unreleased
 
+- Recent Games, its Bo3 match rows, and Sessions load 30 rows instead of
+  25, so the tables' 15-a-page paging shows two full pages.
+
+- **Fewer "unknown log entry" diagnostics.** Arena's ordinary client
+  chatter — its own requests (`==> GetFormats …`), the server's answers,
+  scene changes, and the connection and startup notes — is now named for
+  what it is instead of landing in `mtga_tracker_unhandled_annotations.log`
+  and the raw-payload archive on every launch (dozens of entries per
+  session, hundreds over a day of tab-switching). Nothing about tracking
+  changes: every line was and is still processed; the diagnostic file now
+  holds only things the tracker has genuinely never seen. The archive gets
+  cleaned up too: a one-time pass drops the chatter already stored (then
+  compacts the file), and from now on archived payloads are kept for 30
+  days — it is a diagnostics buffer, nothing reads it back after that.
+
+### In-game overlay (tracker-overlay branch, not in this release)
+
+- **In-game overlay.** A small always-on-top window beside Arena: a 44 px
+  rail — drawn a step larger than the panel — with the turn, the chance of
+  a land on the next draw, the library count and an arrow that opens the
+  301 px panel with the full decklist — each card's
+  name over its mana cost, copies left over next-draw odds centred in a slim
+  darker band on the right (hover a row for the card itself, 250 px wide from Scryfall, with next draw /
+  within 2 / within 3 under it; the card hides itself a couple of seconds
+  later; odds are whole percentages; no per-card bar, every pixel goes to
+  the text) — land drops
+  for the next one,
+  two, and three draws, a Play/Draw pill, and sort by odds, mana value, or
+  name. The list starts straight at the cards (no "Spells" caption); Lands
+  fold into one row that opens to indented Basic / Nonbasic rows by
+  default; in Brawl, drawn
+  singletons collapse into a Drawn group. The final library stays up (marked
+  FINAL, in magenta) through Arena's results screen and clears when you
+  leave it. Shows only while Arena is running, on Arena's screen (over a
+  fullscreen Arena too); docks flush left or right (or floats), with a few
+  pixels of plain ground between the text and the screen edge. Hovering the rail slides the panel out unpinned; an
+  unpinned panel folds back into the rail once the cursor has been off it
+  for the return delay (the shell watches the real cursor, so this works
+  even though the overlay never takes focus), pinning keeps it out, and it
+  steps aside when Arena isn't in front. Sits on a charcoal tint
+  with hairlines between rows and no box border; text is always fully
+  visible and the Panel opacity slider drives only the tint (about 88 %
+  charcoal at 100, gone at 0, default 60) — the minimized rail has its own
+  Rail opacity slider — while Scale sizes everything from 50 % to
+  200 %; Max panel height (share of
+  the screen, default 70 %; the list scrolls inside), click-through,
+  density, and per-platform hotkeys (`Alt+Shift+T` / `⌥⇧T`
+  toggles the panel, `Alt+Shift+H` / `⌥⇧H` hides) in its own ⚙ menu. Enable
+  it from Settings → In-game overlay or the menu bar's Start Overlay; the
+  Settings page shows one card — Overlay is on / off, one sentence, and a
+  Turn on / Turn off button (off means nothing runs and nothing will start
+  with the tracker) over the hotkeys; the
+  menu shows an Overlay: Running/Stopped line under the tracker's, an
+  overlay section (Start/Stop Overlay, Overlay Settings) and a tracker
+  section (Stop Tracking, Tracker Settings) — the overlay adds no menu-bar
+  icon of its own. It is a separate native app (Tauri v2, Preact
+  page) that polls `GET /api/overlay` with ETags (three times a second in a
+  game, and the tracker reads Arena's log four times a second) and loads
+  card images from Scryfall on hover — nothing else, and never the game.
+  An unchanged poll is one indexed read on a kept-open connection, about
+  0.05 ms, and the log check with nothing new is about 0.01 ms, so it costs
+  the tracker nothing. Off means off: turning the overlay off stops its
+  process and it does not start with the tracker again until turned on; a
+  fresh install starts with it off. Release builds include it;
+  building from source needs Rust (`scripts/build_overlay.sh`; `--fast` for
+  an incremental iteration build that takes seconds).
+- **`GET /api/overlay`**: the library the tracker knows (deck minus what has
+  left it, from the kept opening hand on), per-card hypergeometric odds,
+  land-drop odds, format, opponent, turn, play/draw, and the head-to-head
+  record — with an ETag so unchanged states answer 304.
+- **Fixed: the Live Scoreboard lost the previous game at midnight.** Its
+  "today's games" list went by calendar day, so a game played at 23:58 had
+  no outcome and no record at 00:05 and the Previous Game chip went blank.
+  The list now also carries the current tracker session's games and always
+  the most recent finished game.
+
+## 0.6.2
+
 ### Windows installer — read this if Defender complains
 
 Windows Defender has been quarantining `MTGA Tracker.exe` from the 0.6.1
@@ -81,82 +159,6 @@ itself; a warm dashboard is faster still.
   rewritten for Tauri v2 with the rail/panel design mockup
   (`docs/plans/OVERLAY_TRACKER_PLAN.md`). The overlay itself ships in a later
   release.
-
-- Recent Games, its Bo3 match rows, and Sessions load 30 rows instead of
-  25, so the tables' 15-a-page paging shows two full pages.
-
-- **Fewer "unknown log entry" diagnostics.** Arena's ordinary client
-  chatter — its own requests (`==> GetFormats …`), the server's answers,
-  scene changes, and the connection and startup notes — is now named for
-  what it is instead of landing in `mtga_tracker_unhandled_annotations.log`
-  and the raw-payload archive on every launch (dozens of entries per
-  session, hundreds over a day of tab-switching). Nothing about tracking
-  changes: every line was and is still processed; the diagnostic file now
-  holds only things the tracker has genuinely never seen. The archive gets
-  cleaned up too: a one-time pass drops the chatter already stored (then
-  compacts the file), and from now on archived payloads are kept for 30
-  days — it is a diagnostics buffer, nothing reads it back after that.
-
-### In-game overlay (tracker-overlay branch, not in this release)
-
-- **In-game overlay.** A small always-on-top window beside Arena: a 44 px
-  rail — drawn a step larger than the panel — with the turn, the chance of
-  a land on the next draw, the library count and an arrow that opens the
-  301 px panel with the full decklist — each card's
-  name over its mana cost, copies left over next-draw odds centred in a slim
-  darker band on the right (hover a row for the card itself, 250 px wide from Scryfall, with next draw /
-  within 2 / within 3 under it; the card hides itself a couple of seconds
-  later; odds are whole percentages; no per-card bar, every pixel goes to
-  the text) — land drops
-  for the next one,
-  two, and three draws, a Play/Draw pill, and sort by odds, mana value, or
-  name. The list starts straight at the cards (no "Spells" caption); Lands
-  fold into one row that opens to indented Basic / Nonbasic rows by
-  default; in Brawl, drawn
-  singletons collapse into a Drawn group. The final library stays up (marked
-  FINAL, in magenta) through Arena's results screen and clears when you
-  leave it. Shows only while Arena is running, on Arena's screen (over a
-  fullscreen Arena too); docks flush left or right (or floats), with a few
-  pixels of plain ground between the text and the screen edge. Hovering the rail slides the panel out unpinned; an
-  unpinned panel folds back into the rail once the cursor has been off it
-  for the return delay (the shell watches the real cursor, so this works
-  even though the overlay never takes focus), pinning keeps it out, and it
-  steps aside when Arena isn't in front. Sits on a charcoal tint
-  with hairlines between rows and no box border; text is always fully
-  visible and the Panel opacity slider drives only the tint (about 88 %
-  charcoal at 100, gone at 0, default 60) — the minimized rail has its own
-  Rail opacity slider — while Scale sizes everything from 50 % to
-  200 %; Max panel height (share of
-  the screen, default 70 %; the list scrolls inside), click-through,
-  density, and per-platform hotkeys (`Alt+Shift+T` / `⌥⇧T`
-  toggles the panel, `Alt+Shift+H` / `⌥⇧H` hides) in its own ⚙ menu. Enable
-  it from Settings → In-game overlay or the menu bar's Start Overlay; the
-  Settings page shows one card — Overlay is on / off, one sentence, and a
-  Turn on / Turn off button (off means nothing runs and nothing will start
-  with the tracker) over the hotkeys; the
-  menu shows an Overlay: Running/Stopped line under the tracker's, an
-  overlay section (Start/Stop Overlay, Overlay Settings) and a tracker
-  section (Stop Tracking, Tracker Settings) — the overlay adds no menu-bar
-  icon of its own. It is a separate native app (Tauri v2, Preact
-  page) that polls `GET /api/overlay` with ETags (three times a second in a
-  game, and the tracker reads Arena's log four times a second) and loads
-  card images from Scryfall on hover — nothing else, and never the game.
-  An unchanged poll is one indexed read on a kept-open connection, about
-  0.05 ms, and the log check with nothing new is about 0.01 ms, so it costs
-  the tracker nothing. Off means off: turning the overlay off stops its
-  process and it does not start with the tracker again until turned on; a
-  fresh install starts with it off. Release builds include it;
-  building from source needs Rust (`scripts/build_overlay.sh`; `--fast` for
-  an incremental iteration build that takes seconds).
-- **`GET /api/overlay`**: the library the tracker knows (deck minus what has
-  left it, from the kept opening hand on), per-card hypergeometric odds,
-  land-drop odds, format, opponent, turn, play/draw, and the head-to-head
-  record — with an ETag so unchanged states answer 304.
-- **Fixed: the Live Scoreboard lost the previous game at midnight.** Its
-  "today's games" list went by calendar day, so a game played at 23:58 had
-  no outcome and no record at 00:05 and the Previous Game chip went blank.
-  The list now also carries the current tracker session's games and always
-  the most recent finished game.
 
 ## 0.6.1
 
