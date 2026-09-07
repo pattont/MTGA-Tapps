@@ -77,3 +77,27 @@ def test_router_classifies_non_ui_constructed_support_entries():
     assert router.route(_entry('[UnityCrossThreadLogger]<== RankGetCombinedRankInfo(abc) {"constructedClass":"Gold"}')).category == "rank"
     assert router.route(_entry('[UnityCrossThreadLogger]<== EventJoin {"eventId":"Ladder"}')).category == "event_lifecycle"
     assert router.route(_entry('[UnityCrossThreadLogger]<== StartHook(abc) {"InventoryInfo":{}}')).category == "inventory"
+
+
+def test_router_names_ordinary_client_chatter():
+    """Client requests, server answers, scene changes and startup notes are
+    not game state, but they are not unknown either — an "unknown" is
+    written to the diagnostics log and archived as a raw payload, and a
+    launch used to produce dozens of them."""
+    router = EventRouter()
+    cases = {
+        '[UnityCrossThreadLogger]==> GetFormats {"id":"d45c","request":"{ }"}': "client_request",
+        '[UnityCrossThreadLogger]==> GraphGetGraphState {"id":"7539","request":"{\\"GraphId\\":\\"NPE_Tutorial\\"}"}': "client_request",
+        "[UnityCrossThreadLogger]06/09/2026 17:12:40\n<== GetFormats(d45c)\n{\"formats\":[]}": "server_response",
+        "[UnityCrossThreadLogger]9/6/2026 5:12:40 PM": "timestamp",
+        '[UnityCrossThreadLogger]Client.SceneChange {"fromSceneName":"None","toSceneName":"Home"}': "scene",
+        "[UnityCrossThreadLogger]Got non-message event: Wizards.Arena.TcpConnection.TcpOpenedEvent": "client_info",
+        '[UnityCrossThreadLogger]FrontDoorConnectionAWS.Open {"creator":"ArenaGlobals.Constructor"}': "client_info",
+        "[UnityCrossThreadLogger]Loading SqlLocalizationManager from file: G:/x.mtga {}": "client_info",
+        "[UnityCrossThreadLogger]Default currency for SKUs: EUR": "client_info",
+    }
+    for body, expected in cases.items():
+        assert router.route(_entry(body)).category == expected, body
+    assert router.stats.unknown_count == 0
+    # Still unknown: something genuinely new.
+    assert router.route(_entry("[UnityCrossThreadLogger]some new arena thing")).category == "unknown"

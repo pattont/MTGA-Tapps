@@ -85,6 +85,15 @@ itself; a warm dashboard is faster still.
 - Recent Games, its Bo3 match rows, and Sessions load 30 rows instead of
   25, so the tables' 15-a-page paging shows two full pages.
 
+- **Fewer "unknown log entry" diagnostics.** Arena's ordinary client
+  chatter — its own requests (`==> GetFormats …`), the server's answers,
+  scene changes, and the connection and startup notes — is now named for
+  what it is instead of landing in `mtga_tracker_unhandled_annotations.log`
+  and the raw-payload archive on every launch (dozens of entries per
+  session, hundreds over a day of tab-switching). Nothing about tracking
+  changes: every line was and is still processed; the diagnostic file now
+  holds only things the tracker has genuinely never seen.
+
 ### In-game overlay (tracker-overlay branch, not in this release)
 
 - **In-game overlay.** A small always-on-top window beside Arena: a 44 px

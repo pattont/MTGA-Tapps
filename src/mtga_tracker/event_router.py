@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -28,6 +30,12 @@ class RoutedLogEvent:
     data: Optional[Any] = None
     malformed_json: bool = False
     timestamp_failure: bool = False
+
+
+#: A header followed by nothing but a date and time (Arena writes one before
+#: each server answer; when the answer is on the same physical line it is
+#: caught above, when the answer never came this is all there is).
+_TIMESTAMP_ONLY_RE = re.compile(r"^\[[^\]]+\]\s*\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}[ t]\d{1,2}:\d{2}:\d{2}(?:\s*[ap]\.?m\.?)?\s*$")
 
 
 class EventRouter:
@@ -99,6 +107,30 @@ class EventRouter:
             return "inventory"
         if "connectionmanager" in body_lower or body_lower.startswith("matchmaking:"):
             return "connection"
+        # Ordinary client chatter, none of it game state: the client's own
+        # requests ("==> GetFormats {...}"), the server's answers (a
+        # timestamp line followed by "<== Name(id)"), scene changes, and
+        # the connection / startup notes. Named so they are neither logged
+        # as unknown nor archived as raw payloads on every launch.
+        if "client.scenechange" in body_lower:
+            return "scene"
+        if "==> " in body_lower.split("\n", 1)[0]:
+            return "client_request"
+        if "\n<== " in body_lower or body_lower.startswith("<== "):
+            return "server_response"
+        if any(
+            marker in body_lower
+            for marker in (
+                "tcpopenedevent",
+                "frontdoorconnection",
+                "got non-message event",
+                "sqllocalizationmanager",
+                "default currency for skus",
+            )
+        ):
+            return "client_info"
+        if _TIMESTAMP_ONLY_RE.match(body_lower):
+            return "timestamp"
         return "unknown"
 
     @staticmethod
