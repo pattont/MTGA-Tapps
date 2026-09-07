@@ -824,3 +824,49 @@ def test_migration_v24_leaves_stats_alone_without_card_texts(tmp_path, monkeypat
         ).fetchone()
     # No ability texts readable -> zeroing everything would be data loss.
     assert row[0] == 2
+
+
+def test_raw_payload_archive_purges_client_chatter_and_keeps_30_days(tmp_path):
+    """v28 drops archived 'unknown' rows that were only Arena's client chatter;
+    every launch then prunes rows older than the retention window. A real
+    unknown, and anything recent, stays."""
+    from datetime import datetime, timedelta
+
+    from mtga_tracker.payload_codec import compress_payload, decode_payload
+
+    db_path = tmp_path / "analytics.sqlite3"
+    now = datetime(2026, 9, 7, 12, 0, 0)
+    old = (now - timedelta(days=45)).isoformat()
+    recent = (now - timedelta(days=2)).isoformat()
+    rows = [
+        ("unknown", recent, '[UnityCrossThreadLogger]==> GetFormats {"id":"1","request":"{ }"}'),
+        ("unknown", recent, "[UnityCrossThreadLogger]06/09/2026 17:12:40\n<== GetFormats(1)\n{}"),
+        ("unknown", recent, '[UnityCrossThreadLogger]Client.SceneChange {"toSceneName":"Home"}'),
+        ("unknown", recent, "[UnityCrossThreadLogger]Default currency for SKUs: EUR"),
+        ("unknown", recent, "[UnityCrossThreadLogger]some genuinely new arena thing"),
+        ("connection_error", recent, "[UnityCrossThreadLogger]TcpConnection.ProcessRead.Exception boom"),
+        ("connection_error", old, "[UnityCrossThreadLogger]TcpConnection.ProcessRead.Exception ancient"),
+    ]
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            "insert into tracker_sessions (id, started_at) values ('session-1', '2026-07-29T00:00:00')"
+        )
+        conn.executemany(
+            "insert into raw_game_payloads (session_id, created_at, payload_type, payload_json) values ('session-1', ?, ?, ?)",
+            [(created, kind, compress_payload(text)) for kind, created, text in rows],
+        )
+        conn.execute("delete from schema_migrations where version = 28")
+        AnalyticsStore.apply_pending_migrations(conn)
+        # The per-launch prune with a fixed clock, so the test is not date-bound.
+        AnalyticsStore.prune_raw_payload_archive(conn, now=now)
+
+    with sqlite3.connect(db_path) as check:
+        kept = [
+            (kind, decode_payload(blob).split("]", 1)[1][:20])
+            for kind, blob in check.execute("select payload_type, payload_json from raw_game_payloads order by id")
+        ]
+    assert kept == [
+        ("unknown", "some genuinely new a"),
+        ("connection_error", "TcpConnection.Proces"),
+    ]

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .log_sanitize import scrub_raw_log
-from .payload_codec import compress_payload
+from .payload_codec import compress_payload, decode_payload
 
 
 _PREVIOUS_TURN_DURATION_RE = re.compile(
@@ -689,6 +689,7 @@ class AnalyticsStore:
             # defaults them to removal) — same recount, new rules.
             (26, AnalyticsStore._migrate_v24_reclassify_removal_stats),
             (27, AnalyticsStore._migrate_v27_clear_self_named_opponents),
+            (28, AnalyticsStore._migrate_v28_purge_archived_client_chatter),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -702,12 +703,18 @@ class AnalyticsStore:
             )
             ran.append(version)
         conn.commit()
-        if 11 in ran:
+        # The raw payload archive is a diagnostics/replay buffer, not history:
+        # nothing in the app reads it back after a month. Keep 30 days.
+        pruned = AnalyticsStore.prune_raw_payload_archive(conn)
+        if 11 in ran or 28 in ran:
             # Compaction only frees pages; VACUUM returns them to the OS.
             # Must run outside any transaction, hence after the commit above.
             print("🗜️  Reclaiming disk space from the payload archive (VACUUM)…")
             conn.execute("VACUUM")
             print("🗜️  Done — database file compacted.")
+        elif pruned:
+            # Freed pages are reused by later writes; no VACUUM for a routine prune.
+            pass
         # Cheap per-launch maintenance: refreshes stale query-planner stats
         # for whichever indexes need it (no-op most launches).
         try:
@@ -1829,6 +1836,63 @@ class AnalyticsStore:
                 f"UPDATE game_participant_stats SET {set_clause} WHERE participant_id = ?",
                 (*assignments.values(), participant_id),
             )
+
+    #: How long rows in the raw payload archive are kept. It exists for parser
+    #: diagnostics and reprocessing of recent games; a month covers both.
+    RAW_PAYLOAD_RETENTION_DAYS = 30
+
+    @staticmethod
+    def prune_raw_payload_archive(conn: sqlite3.Connection, *, now: Optional[datetime] = None) -> int:
+        """Delete archived payloads older than RAW_PAYLOAD_RETENTION_DAYS.
+        Returns the number of rows removed."""
+        cutoff = (now or datetime.now()) - timedelta(days=AnalyticsStore.RAW_PAYLOAD_RETENTION_DAYS)
+        try:
+            with conn:
+                removed = conn.execute(
+                    "DELETE FROM raw_game_payloads WHERE created_at < ?",
+                    (cutoff.isoformat(),),
+                ).rowcount
+        except sqlite3.Error:
+            return 0
+        return int(removed or 0)
+
+    #: First lines of archived "unknown" entries that are Arena's ordinary
+    #: client chatter (see event_router: the router now names them, so new
+    #: ones are no longer archived). Matched against the scrubbed text.
+    _CLIENT_CHATTER_RE = re.compile(
+        r"^\[UnityCrossThreadLogger\]\s*(?:"
+        r"==> |"
+        r"\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}[ T]\d{1,2}:\d{2}:\d{2}(?:\s*[AaPp]\.?[Mm]\.?)?\s*(?:\n|$)|"
+        r"Client\.SceneChange|"
+        r"Got non-message event|"
+        r"FrontDoorConnection|"
+        r"Loading SqlLocalizationManager|"
+        r"Default currency for SKUs"
+        r")",
+    )
+
+    @staticmethod
+    def _migrate_v28_purge_archived_client_chatter(conn: sqlite3.Connection) -> None:
+        """Drop archived 'unknown' payloads that were only Arena's client
+        chatter — its own requests, the server's answers, scene changes and
+        startup notes — which every launch used to add by the dozen. Nothing
+        reads them; they were most of the archive on a long-running install.
+        """
+        cursor = conn.execute(
+            "SELECT id, payload_json FROM raw_game_payloads WHERE payload_type = 'unknown'"
+        )
+        doomed: list = []
+        while True:
+            batch = cursor.fetchmany(1000)
+            if not batch:
+                break
+            for row_id, payload in batch:
+                head = decode_payload(payload)[:400]
+                if AnalyticsStore._CLIENT_CHATTER_RE.match(head):
+                    doomed.append((row_id,))
+        if doomed:
+            conn.executemany("DELETE FROM raw_game_payloads WHERE id = ?", doomed)
+            print(f"🗜️  Dropped {len(doomed)} archived client-chatter payloads.")
 
     @staticmethod
     def _migrate_v27_clear_self_named_opponents(conn: sqlite3.Connection) -> None:

@@ -150,9 +150,10 @@ def test_migration_v11_compresses_legacy_payload_rows(tmp_path):
         conn.execute(
             """
             INSERT INTO raw_game_payloads (session_id, created_at, payload_type, payload_json)
-            VALUES ('session-1', '2026-06-01T00:00:00', 'unknown', ?)
+            VALUES ('session-1', ?, 'unknown', ?)
             """,
-            (legacy,),
+            # Dated now: migrations also apply the 30-day archive retention.
+            (datetime.now().isoformat(), legacy),
         )
         conn.execute("DELETE FROM schema_migrations WHERE version = 11")
     AnalyticsStore.apply_pending_migrations(conn)

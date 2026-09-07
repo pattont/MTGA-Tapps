@@ -92,7 +92,10 @@ itself; a warm dashboard is faster still.
   and the raw-payload archive on every launch (dozens of entries per
   session, hundreds over a day of tab-switching). Nothing about tracking
   changes: every line was and is still processed; the diagnostic file now
-  holds only things the tracker has genuinely never seen.
+  holds only things the tracker has genuinely never seen. The archive gets
+  cleaned up too: a one-time pass drops the chatter already stored (then
+  compacts the file), and from now on archived payloads are kept for 30
+  days — it is a diagnostics buffer, nothing reads it back after that.
 
 ### In-game overlay (tracker-overlay branch, not in this release)
 
