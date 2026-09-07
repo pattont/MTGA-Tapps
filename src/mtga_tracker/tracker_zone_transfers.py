@@ -171,6 +171,22 @@ class TrackerZoneTransferMixin:
                 seat_id = None
             if seat_id in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
                 card_name = self.card_db.get_card_name(grp_id)
+                # A "Card #N" placeholder is only worth keeping when N is a
+                # card the local card DB has yet to learn (the startup
+                # backfill heals those). When the object behind the draw is
+                # not a card at all — an ability object stood in for the
+                # drawn card in the packet, its grpId an ability id — the
+                # placeholder can never resolve and would sit in the deck
+                # stats and the DB audit forever. Count the draw, skip the row.
+                object_type = str(card_obj.get("type") or "")
+                if str(card_name).startswith("Card #") and object_type != "GameObjectType_Card":
+                    self._append_diagnostic_log(
+                        "Tracker: draw recorded against a non-card object, skipped - "
+                        f"type={object_type or '?'} grpId={grp_id} "
+                        f"instance={card_obj.get('instanceId')} source={card_obj.get('objectSourceGrpId')}",
+                        annotation,
+                    )
+                    return
                 card_types = card_obj.get("cardTypes") or []
                 type_category = self._get_card_type_category(card_types)
                 if type_category == "Other":

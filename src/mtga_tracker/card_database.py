@@ -238,6 +238,25 @@ class CardDatabase:
             pass
         return None
 
+    def knows_grp_id(self, grp_id: int) -> Optional[bool]:
+        """Whether Arena's card database has a Cards row for this grpId.
+
+        None when the database cannot be reached — callers must treat that
+        as "don't know", never as "not a card".
+        """
+        db_path = self._resolve_mtga_db_path()
+        if not db_path:
+            return None
+        try:
+            conn = self._connect_mtga_db(db_path)
+            try:
+                row = conn.execute('SELECT 1 FROM "Cards" WHERE "GrpId" = ? LIMIT 1', (int(grp_id),)).fetchone()
+            finally:
+                conn.close()
+        except Exception:
+            return None
+        return row is not None
+
     @staticmethod
     def _parse_ability_mapping(raw: Optional[str]) -> Dict[int, int]:
         """Parse MTGA AbilityIds/HiddenAbilityIds text into {abilityGrpId: localizationId}."""

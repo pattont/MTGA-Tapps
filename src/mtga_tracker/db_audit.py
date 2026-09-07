@@ -306,7 +306,27 @@ def _missing_deck_name_findings(conn: sqlite3.Connection) -> Iterable[AuditFindi
         )
 
 
+#: Tables whose display_name can carry a "Card #N" placeholder.
+_CARD_LABEL_TABLES = ("game_card_summary", "game_opening_hand_cards", "game_drawn_cards")
+
+
+def _arena_knows_grp_id(grp_id: int, cache: dict) -> Optional[bool]:
+    """Ask Arena's local card database whether N is a card at all. None when
+    the database is not reachable from here (a dashboard-only machine)."""
+    if grp_id in cache:
+        return cache[grp_id]
+    try:
+        from .card_database import CardDatabase
+
+        answer = CardDatabase().knows_grp_id(grp_id)
+    except Exception:
+        answer = None
+    cache[grp_id] = answer
+    return answer
+
+
 def _unknown_card_label_findings(conn: sqlite3.Connection) -> Iterable[AuditFinding]:
+    known: dict = {}
     for table_name, column_name in (
         ("game_card_summary", "display_name"),
         ("game_opening_hand_cards", "display_name"),
@@ -320,6 +340,30 @@ def _unknown_card_label_findings(conn: sqlite3.Connection) -> Iterable[AuditFind
             """
         ):
             row_id, display_name = row
+            match = re.match(r"^Card #(\d+)$", str(display_name or ""))
+            grp_id = int(match.group(1)) if match else None
+            # Two different situations wear the same label. A card the local
+            # card DB has not learned yet heals on a later launch. An id that
+            # is not a card in Arena's database at all (an ability object
+            # stood in for a drawn card) never will — that row is noise and
+            # the repair removes it.
+            is_card = _arena_knows_grp_id(grp_id, known) if grp_id is not None else None
+            if is_card is False:
+                yield AuditFinding(
+                    code="UNKNOWN_CARD_LABEL",
+                    severity="warning",
+                    table_name=table_name,
+                    row_id=str(row_id),
+                    message=(
+                        f"{table_name}.{column_name} has label {display_name!r}, but {grp_id} is not a "
+                        "card in Arena's database (an ability or object id was recorded as a draw). "
+                        "It can never resolve; repair removes the row."
+                    ),
+                    current_value=display_name,
+                    suggested_value=None,
+                    repairable=True,
+                )
+                continue
             yield AuditFinding(
                 code="UNKNOWN_CARD_LABEL",
                 severity="warning",
@@ -335,6 +379,24 @@ def _unknown_card_label_findings(conn: sqlite3.Connection) -> Iterable[AuditFind
                 suggested_value=None,
                 repairable=False,
             )
+
+
+def _delete_unknown_card_label(conn: sqlite3.Connection, table_name: str, row_id: str, label: str) -> int:
+    """Remove one placeholder row and, once nothing references it, the
+    placeholder's cards row."""
+    if table_name not in _CARD_LABEL_TABLES:
+        return 0
+    deleted = conn.execute(f"DELETE FROM {table_name} WHERE id = ?", (row_id,)).rowcount
+    # The same draw is mirrored in game_drawn_cards; take it with the summary.
+    if table_name == "game_card_summary":
+        conn.execute("DELETE FROM game_drawn_cards WHERE display_name = ?", (label,))
+    still_used = any(
+        conn.execute(f"SELECT 1 FROM {table} WHERE display_name = ? LIMIT 1", (label,)).fetchone()
+        for table in _CARD_LABEL_TABLES
+    )
+    if not still_used:
+        conn.execute("DELETE FROM cards WHERE name = ?", (label,))
+    return int(deleted or 0)
 
 
 def _game_event_assignment_findings(conn: sqlite3.Connection) -> Iterable[AuditFinding]:
@@ -1002,6 +1064,10 @@ def repair_database(db_path: Path = DEFAULT_DB_PATH, *, backup: bool = False) ->
                 repaired_count += _repair_game_event_assignments(conn)
             elif finding.code == "EMPTY_GAME_RECORD":
                 repaired_count += _delete_empty_game(conn, finding.row_id)
+            elif finding.code == "UNKNOWN_CARD_LABEL" and finding.current_value:
+                repaired_count += _delete_unknown_card_label(
+                    conn, finding.table_name, finding.row_id, str(finding.current_value)
+                )
         AnalyticsStore.backfill_estimated_game_turn_times(conn)
         AnalyticsStore.backfill_game_turn_counts(conn)
         conn.commit()

@@ -592,3 +592,43 @@ def test_brawl_queue_labels():
     midweek = normalize_match_format("MWM_Brawl_20260811")
     assert midweek.family == "midweek_magic"
     assert midweek.is_brawl is False
+
+
+def test_audit_repairs_card_labels_that_are_not_cards(tmp_path, monkeypatch):
+    """'Card #N' rows come in two kinds: a card the local DB has not learned
+    (manual — it heals on a later launch) and an id Arena's database says is
+    not a card at all (an ability object recorded as a draw). Only the second
+    is repairable, and the repair removes the row, its drawn-cards mirror and
+    the orphaned placeholder cards row."""
+    from mtga_tracker import db_audit
+
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute("insert into tracker_sessions (id, started_at) values ('s1', '2026-09-01T00:00:00')")
+        conn.execute("insert into matches (id, session_id) values ('m1', 's1')")
+        conn.execute("insert into games (id, session_id, match_id, started_at, ended_at, total_turns, outcome) values ('g1', 's1', 'm1', '2026-09-01T22:00:00', '2026-09-01T22:20:00', 9, 'win')")
+        conn.execute("insert into participants (id, game_id, role) values ('p1', 'g1', 'player')")
+        conn.execute("insert into cards (id, name, primary_type, first_seen_at) values (1, 'Card #1156', 'Other', '2026-09-01T22:00:00')")
+        conn.execute("insert into cards (id, name, primary_type, first_seen_at) values (2, 'Card #120001', 'Other', '2026-09-01T22:00:00')")
+        conn.executemany(
+            "insert into game_card_summary (game_id, participant_id, card_id, display_name, type_category, played_count, drawn_count) values ('g1', 'p1', ?, ?, 'Other', 0, 1)",
+            [(1, "Card #1156"), (2, "Card #120001")],
+        )
+        conn.executemany(
+            "insert into game_drawn_cards (game_id, participant_id, card_id, display_name, type_category, draw_position, turn_number) values ('g1', 'p1', ?, ?, 'Other', ?, ?)",
+            [(1, "Card #1156", 1, 9), (2, "Card #120001", 2, 10)],
+        )
+
+    # Arena's DB: 1156 is not a card; 120001 is (a set the tracker's copy has not seen).
+    monkeypatch.setattr(db_audit, "_arena_knows_grp_id", lambda grp_id, cache: grp_id != 1156)
+
+    findings = [f for f in audit_database(db_path) if f.code == "UNKNOWN_CARD_LABEL"]
+    assert {(f.current_value, f.repairable) for f in findings} == {("Card #1156", True), ("Card #120001", False)}
+
+    result = repair_database(db_path)
+    assert result.repaired_count == 1
+    with sqlite3.connect(db_path) as check:
+        assert check.execute("select display_name from game_card_summary").fetchall() == [("Card #120001",)]
+        assert check.execute("select display_name from game_drawn_cards").fetchall() == [("Card #120001",)]
+        assert check.execute("select name from cards order by name").fetchall() == [("Card #120001",)]

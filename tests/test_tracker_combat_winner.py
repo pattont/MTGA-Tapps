@@ -7590,3 +7590,32 @@ def test_opponent_mulligans_tracked_from_player_state():
     tracker.game_state.reset()
     tracker.game_state.opponent_seat_id = 2
     assert tracker._opponent_mulligan_count() is None
+
+
+def test_draw_of_a_non_card_object_is_counted_but_not_recorded_as_a_card():
+    """A draw annotation can arrive with an ability object standing in for the
+    drawn card (its grpId an ability id, not a card). The card DB cannot name
+    it now or ever, so recording it as 'Card #N' leaves a permanent
+    UNKNOWN_CARD_LABEL in the deck stats. The draw still counts; the row is
+    skipped and a diagnostic line says what was seen. A real card the DB has
+    not learned yet keeps its placeholder, which the startup backfill heals."""
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.last_player_turn_number = 4
+    tracker.card_db.get_card_name = lambda grp_id: f"Card #{grp_id}"
+    tracker._print_event = lambda *args, **kwargs: None
+    logged = []
+    tracker._append_diagnostic_log = lambda message, annotation: logged.append(message)
+    zones = {10: {"type": "ZoneType_Library"}, 11: {"type": "ZoneType_Hand"}}
+
+    ability_obj = {"grpId": 188982, "instanceId": 1156, "ownerSeatId": 1, "type": "GameObjectType_Ability", "objectSourceGrpId": 96000}
+    tracker._handle_draw_zone_transfer(ability_obj, {}, {1156: ability_obj}, zones, 10, 11)
+    assert tracker.game_state.drawn_card_events.get(1, []) == []
+    assert tracker._seat_stats(1)["cards_drawn"] == 1
+    assert logged and "non-card object" in logged[0] and "grpId=188982" in logged[0]
+
+    unknown_card = {"grpId": 120001, "instanceId": 701, "ownerSeatId": 1, "type": "GameObjectType_Card", "cardTypes": ["CardType_Creature"]}
+    tracker._handle_draw_zone_transfer(unknown_card, {}, {701: unknown_card}, zones, 10, 11)
+    assert [event.card_name for event in tracker.game_state.drawn_card_events.get(1, [])] == ["Card #120001"]

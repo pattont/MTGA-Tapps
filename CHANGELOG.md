@@ -17,6 +17,17 @@
   compacts the file), and from now on archived payloads are kept for 30
   days — it is a diagnostics buffer, nothing reads it back after that.
 
+- **Fixed: "Card #N" rows that never resolve.** A draw could be recorded
+  against an ability object standing in for the drawn card, so the deck
+  stats kept a `Card #1156`-style row no card database could ever name,
+  and Database Health flagged it forever as a manual UNKNOWN_CARD_LABEL.
+  The draw is still counted but no longer recorded under a placeholder
+  (a diagnostic line says what was seen), and the audit now asks Arena's
+  card database whether N is a card at all: ids that are not become
+  repairable, and `db_audit --repair` removes those rows. Placeholders for
+  real cards the local database has not learned yet still heal themselves
+  on a later launch.
+
 ### In-game overlay (tracker-overlay branch, not in this release)
 
 - **In-game overlay.** A small always-on-top window beside Arena: a 44 px
