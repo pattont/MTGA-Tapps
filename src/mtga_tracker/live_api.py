@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -77,6 +78,57 @@ def _json_list(value: Any) -> List[str]:
     except (TypeError, ValueError):
         return []
     return [str(item) for item in parsed] if isinstance(parsed, list) else []
+
+
+def _open_readonly(db_uri: str, **kwargs: Any) -> sqlite3.Connection:
+    """Open a read-only connection, retrying once when SQLite says it could
+    not open the file. A `mode=ro` open of a WAL database can lose a race
+    with the writer's checkpoint (the -wal file it just listed is gone), and
+    a process at its open-file limit gets the same message; both are worth
+    one more try 50 ms later, and both are worth a diagnostic line when the
+    retry fails too, because the message itself explains nothing."""
+    try:
+        return sqlite3.connect(db_uri, uri=True, **kwargs)
+    except sqlite3.OperationalError as exc:
+        if "unable to open" not in str(exc).lower():
+            raise
+        time.sleep(0.05)
+        try:
+            return sqlite3.connect(db_uri, uri=True, **kwargs)
+        except sqlite3.OperationalError:
+            _log_cantopen(db_uri, exc)
+            raise
+
+
+def _log_cantopen(db_uri: str, exc: BaseException) -> None:
+    """Append what a "unable to open database file" needs to be understood:
+    whether the file and its WAL companions exist, and how close the process
+    is to its open-file limit."""
+    try:
+        from .paths import DATA_DIR
+
+        path = Path(db_uri.split("?", 1)[0].replace("file://", "")).expanduser()
+        exists = {suffix: (path.parent / (path.name + suffix)).exists() for suffix in ("", "-wal", "-shm")}
+        fds: Any = "?"
+        limit: Any = "?"
+        try:
+            import resource
+
+            limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+            fd_dir = Path("/dev/fd")
+            if fd_dir.is_dir():
+                fds = sum(1 for _ in fd_dir.iterdir())
+        except Exception:
+            pass
+        log_dir = DATA_DIR / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with open(log_dir / "dashboard-errors.log", "a", encoding="utf-8") as handle:
+            handle.write(
+                f"{datetime.now().isoformat()} {type(exc).__name__}: {exc} | files={exists} "
+                f"open_fds={fds} limit={limit}\n"
+            )
+    except Exception:
+        pass
 
 
 def _live_status(conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
@@ -565,7 +617,7 @@ def _events_payload(
 def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
     db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
     now = datetime.now()
-    with sqlite3.connect(db_uri, uri=True) as conn:
+    with _open_readonly(db_uri) as conn:
         conn.execute("PRAGMA query_only = ON")
         status = _live_status(conn)
         state = _tracker_state(status, now)
@@ -680,7 +732,7 @@ def build_status_payload(db_path: Path) -> Dict[str, Any]:
     """Cheap tracker-state-only payload for the sidebar's Live Log light."""
     db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
     now = datetime.now()
-    with sqlite3.connect(db_uri, uri=True) as conn:
+    with _open_readonly(db_uri) as conn:
         conn.execute("PRAGMA query_only = ON")
         status = _live_status(conn)
     return {
@@ -711,7 +763,7 @@ def _poll_live_status(db_uri: str) -> Optional[Dict[str, Any]]:
     with _poll_lock:
         conn = _poll_connections.get(db_uri)
         if conn is None:
-            conn = sqlite3.connect(db_uri, uri=True, check_same_thread=False)
+            conn = _open_readonly(db_uri, check_same_thread=False)
             conn.execute("PRAGMA query_only = ON")
             _poll_connections[db_uri] = conn
         try:
@@ -778,7 +830,7 @@ def build_overlay_payload(
     overlay header shows next to the opponent's name."""
     db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
     now = now or datetime.now()
-    with sqlite3.connect(db_uri, uri=True) as conn:
+    with _open_readonly(db_uri) as conn:
         conn.execute("PRAGMA query_only = ON")
         if status is None:
             status = _live_status(conn)

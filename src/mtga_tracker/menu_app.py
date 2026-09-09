@@ -37,7 +37,7 @@ from PyQt6.QtWidgets import (
 
 from .app import CallbackTextStream, UnifiedLauncher
 from .overlay_launcher import get_manager as get_overlay_manager
-from .paths import DATA_DIR
+from .paths import DATA_DIR, raise_open_file_limit
 from .settings import AppSettings, load_app_settings
 
 
@@ -497,6 +497,7 @@ class MenuBarController(QObject):
 
 def run_menu_app(args: Any) -> int:
     _set_macos_process_name(_APP_NAME)
+    raise_open_file_limit()
     QApplication.setApplicationName(_APP_NAME)
     QApplication.setApplicationDisplayName(_APP_NAME)
     QApplication.setOrganizationName(_APP_NAME)

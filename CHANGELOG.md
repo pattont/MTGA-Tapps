@@ -28,6 +28,16 @@
   real cards the local database has not learned yet still heal themselves
   on a later launch.
 
+- **Fixed: a stray "OperationalError: unable to open database file" on the
+  Live Scoreboard.** A read-only open of the database can lose a race with
+  the tracker's own WAL checkpoint, and a Mac app launched from Finder
+  starts with only 256 open files for Qt, the dashboard's per-request
+  connections and the browser's sockets to share — SQLite reports both as
+  the same unhelpful message. Read-only opens now retry once, the app
+  lifts its open-file limit at startup, and a failure that survives the
+  retry is written to `data/logs/dashboard-errors.log` with the file,
+  WAL and descriptor state that explains it.
+
 ### In-game overlay (tracker-overlay branch, not in this release)
 
 - **In-game overlay.** A small always-on-top window beside Arena: a 44 px

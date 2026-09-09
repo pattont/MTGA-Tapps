@@ -278,3 +278,26 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 # String versions for compatibility
 DATA_DIR_STR = str(DATA_DIR)
 LOGS_DIR_STR = str(LOGS_DIR)
+
+
+def raise_open_file_limit(target: int = 4096) -> Optional[int]:
+    """Lift the process's soft open-file limit toward `target` (never above
+    the hard limit). A macOS app launched from Finder or `open` starts with
+    a soft limit of 256; Qt, the dashboard's per-request SQLite connections
+    (three descriptors each in WAL mode) and the browser's sockets can walk
+    into it over a long idle day, and SQLite reports EMFILE as the
+    unhelpful "unable to open database file". Returns the new soft limit,
+    or None where limits do not apply (Windows)."""
+    try:
+        import resource
+    except ImportError:
+        return None
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        wanted = target if hard == resource.RLIM_INFINITY else min(target, hard)
+        if soft < wanted:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (wanted, hard))
+            return wanted
+        return soft
+    except (ValueError, OSError):
+        return None

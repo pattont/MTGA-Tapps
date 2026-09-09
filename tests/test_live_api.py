@@ -1,4 +1,6 @@
 import json
+
+import pytest
 from datetime import datetime, timedelta
 
 from mtga_tracker.analytics import AnalyticsStore, SessionSnapshot
@@ -842,3 +844,39 @@ def test_games_list_always_has_the_most_recent_game(tmp_path):
     store.close()
     payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
     assert [game["id"] for game in payload["games"]] == ["SH:match:1:game:1"]
+
+
+def test_readonly_open_retries_once_on_cantopen(monkeypatch, tmp_path):
+    """A `mode=ro` open that loses the WAL-checkpoint race (or hits the
+    open-file limit) says "unable to open database file"; one retry a
+    moment later is the difference between a blip and a red banner."""
+    import sqlite3 as _sqlite3
+
+    from mtga_tracker import live_api
+
+    calls = []
+    real_connect = _sqlite3.connect
+
+    def flaky(*args, **kwargs):
+        calls.append(args[0] if args else kwargs.get("database"))
+        if len(calls) == 1:
+            raise _sqlite3.OperationalError("unable to open database file")
+        return real_connect(":memory:")
+
+    monkeypatch.setattr(live_api.sqlite3, "connect", flaky)
+    monkeypatch.setattr(live_api.time, "sleep", lambda _s: None)
+    conn = live_api._open_readonly("file:/nowhere/x.sqlite3?mode=ro")
+    assert len(calls) == 2
+    conn.close()
+
+    # Any other error is not retried.
+    calls.clear()
+
+    def locked(*args, **kwargs):
+        calls.append(args[0] if args else kwargs.get("database"))
+        raise _sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(live_api.sqlite3, "connect", locked)
+    with pytest.raises(_sqlite3.OperationalError):
+        live_api._open_readonly("file:/nowhere/x.sqlite3?mode=ro")
+    assert len(calls) == 1
