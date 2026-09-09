@@ -37,7 +37,6 @@ const RAIL_HOVER_OPEN: Duration = Duration::from_millis(250);
 #[derive(Debug, Clone)]
 struct Runtime {
     layout: Layout,
-    pinned: bool,
     /// The player hid it (hotkey / tracker menu); stays hidden until they show it.
     hidden_by_user: bool,
     /// Hidden because Arena is not running, or not in front (setting).
@@ -77,7 +76,6 @@ impl Default for Runtime {
     fn default() -> Self {
         Self {
             layout: Layout::Rail,
-            pinned: true,
             hidden_by_user: false,
             hidden_for_arena: true,
             force_show: false,
@@ -106,6 +104,8 @@ struct AppState {
 struct LayoutInfo {
     layout: String,
     pinned: bool,
+    /// The deck panel is "on" (see Settings::panel_open).
+    panel_open: bool,
     visible: bool,
     dock: Dock,
 }
@@ -333,29 +333,46 @@ fn emit_layout(app: &AppHandle) {
             Layout::Rail => "rail".into(),
             Layout::Panel => "panel".into(),
         },
-        pinned: runtime.pinned,
+        pinned: settings.panel_pinned,
+        panel_open: settings.panel_open,
         visible: !runtime.hidden_by_user && (runtime.force_show || !runtime.hidden_for_arena),
         dock: settings.dock,
     };
     let _ = app.emit("overlay-layout", info);
 }
 
-/// Switch layouts. Opening the panel pins it per the "open pinned" setting
-/// unless `pinned` says otherwise (a hover-opened panel is never pinned: it
-/// came out because the cursor is there and goes back when it leaves).
-fn set_layout_inner(app: &AppHandle, layout: Layout, pinned: Option<bool>) {
-    {
+/// Why a layout change happened: the player asked (arrow, chevron, hotkey)
+/// or the overlay did it on its own (hover, the return delay, a game
+/// ending). Only the player's choice is remembered as `panel_open`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Why {
+    User,
+    Auto,
+}
+
+/// Switch layouts. A user-opened panel turns `panel_open` on and a
+/// user-closed one turns it off (both saved); automatic moves leave it
+/// alone, so a panel that folded away between games is still "on" and
+/// comes back.
+fn set_layout_inner(app: &AppHandle, layout: Layout, why: Why) {
+    let save = {
         let state = app.state::<AppState>();
         let mut runtime = state.runtime.lock().unwrap();
         runtime.layout = layout;
-        match layout {
-            Layout::Panel => {
-                runtime.pinned = pinned.unwrap_or_else(|| state.settings.lock().unwrap().open_pinned);
-            }
-            Layout::Rail => {
-                runtime.rail_hover_armed = false;
-            }
+        if layout == Layout::Rail {
+            runtime.rail_hover_armed = false;
         }
+        let mut settings = state.settings.lock().unwrap();
+        let open = layout == Layout::Panel;
+        if why == Why::User && settings.panel_open != open {
+            settings.panel_open = open;
+            true
+        } else {
+            false
+        }
+    };
+    if save {
+        save_settings(app);
     }
     apply_geometry(app);
     apply_click_through(app);
@@ -367,7 +384,7 @@ fn apply_click_through(app: &AppHandle) {
     let state = app.state::<AppState>();
     let settings = state.settings.lock().unwrap();
     let runtime = state.runtime.lock().unwrap();
-    let through = runtime.layout == Layout::Panel && runtime.pinned && settings.click_through_when_pinned;
+    let through = runtime.layout == Layout::Panel && settings.panel_pinned && settings.click_through_when_pinned;
     let _ = window.set_ignore_cursor_events(through);
 }
 
@@ -380,7 +397,7 @@ fn toggle_layout(app: &AppHandle) {
             Layout::Panel => Layout::Rail,
         }
     };
-    set_layout_inner(app, next, None);
+    set_layout_inner(app, next, Why::User);
 }
 
 fn toggle_hidden(app: &AppHandle) {
@@ -545,7 +562,12 @@ fn get_settings(state: tauri::State<AppState>) -> Settings {
 fn update_settings(app: AppHandle, state: tauri::State<AppState>, settings: Settings) -> Settings {
     let (hotkeys_changed, next) = {
         let mut current = state.settings.lock().unwrap();
-        let next = settings.clamped();
+        let mut next = settings.clamped();
+        // The page edits preferences; the panel's on/off and pin state are
+        // owned here (arrow, chevron, pin button, hotkey) and the page's
+        // copy can be stale — never let a slider save overwrite them.
+        next.panel_open = current.panel_open;
+        next.panel_pinned = current.panel_pinned;
         let hotkeys_changed = current.hotkeys() != next.hotkeys();
         *current = next.clone();
         (hotkeys_changed, next)
@@ -561,13 +583,14 @@ fn update_settings(app: AppHandle, state: tauri::State<AppState>, settings: Sett
 }
 
 #[tauri::command]
-fn set_layout(app: AppHandle, layout: String, content_height: Option<i32>, pinned: Option<bool>) -> LayoutInfo {
+fn set_layout(app: AppHandle, layout: String, content_height: Option<i32>, auto: Option<bool>) -> LayoutInfo {
     if let Some(height) = content_height {
         let state = app.state::<AppState>();
         state.runtime.lock().unwrap().content_height = height.max(0);
     }
     let target = if layout == "panel" { Layout::Panel } else { Layout::Rail };
-    set_layout_inner(&app, target, pinned);
+    let why = if auto.unwrap_or(false) { Why::Auto } else { Why::User };
+    set_layout_inner(&app, target, why);
     current_layout(&app)
 }
 
@@ -590,8 +613,9 @@ fn set_content_height(app: AppHandle, height: i32) {
 fn set_pinned(app: AppHandle, pinned: bool) -> LayoutInfo {
     {
         let state = app.state::<AppState>();
-        state.runtime.lock().unwrap().pinned = pinned;
+        state.settings.lock().unwrap().panel_pinned = pinned;
     }
+    save_settings(&app);
     apply_click_through(&app);
     emit_layout(&app);
     current_layout(&app)
@@ -611,7 +635,8 @@ fn current_layout(app: &AppHandle) -> LayoutInfo {
             Layout::Rail => "rail".into(),
             Layout::Panel => "panel".into(),
         },
-        pinned: runtime.pinned,
+        pinned: settings.panel_pinned,
+        panel_open: settings.panel_open,
         visible: !runtime.hidden_by_user && (runtime.force_show || !runtime.hidden_for_arena),
         dock: settings.dock,
     }
@@ -699,13 +724,14 @@ fn start_cursor_watch(app: AppHandle) {
             loop {
                 std::thread::sleep(CURSOR_POLL);
                 let Some(window) = app.get_webview_window(MAIN_WINDOW) else { continue };
-                let (layout, pinned, visible, flyout, sideboard, dock, scale, return_after) = {
+                let (layout, pinned, panel_on, visible, flyout, sideboard, dock, scale, return_after) = {
                     let state = app.state::<AppState>();
                     let runtime = state.runtime.lock().unwrap();
                     let settings = state.settings.lock().unwrap();
                     (
                         runtime.layout,
-                        runtime.pinned,
+                        settings.panel_pinned,
+                        settings.panel_open,
                         !runtime.hidden_by_user && (runtime.force_show || !runtime.hidden_for_arena),
                         runtime.flyout_open,
                         runtime.sideboard_open,
@@ -731,17 +757,21 @@ fn start_cursor_watch(app: AppHandle) {
                     state.runtime.lock().unwrap().rail_hover_armed = true;
                 }
                 match layout {
+                    // Hover only means something once the player has turned
+                    // the panel on and left it unpinned: then the rail is the
+                    // folded panel and hovering it unfolds it. A rail that was
+                    // never opened, or was closed, stays a rail.
                     Layout::Rail => {
                         let armed = app.state::<AppState>().runtime.lock().unwrap().rail_hover_armed;
-                        if inside && armed && inside_since.map_or(false, |t| now.duration_since(t) >= RAIL_HOVER_OPEN) {
-                            diag::log("cursor: over the rail — opening the panel (unpinned)");
-                            set_layout_inner(&app, Layout::Panel, Some(false));
+                        if panel_on && !pinned && inside && armed && inside_since.map_or(false, |t| now.duration_since(t) >= RAIL_HOVER_OPEN) {
+                            diag::log("cursor: over the rail — unfolding the panel");
+                            set_layout_inner(&app, Layout::Panel, Why::Auto);
                         }
                     }
                     Layout::Panel => {
                         if !pinned && !flyout && !inside && outside_since.map_or(false, |t| now.duration_since(t) >= return_after) {
                             diag::log("cursor: off the unpinned panel — folding back into the rail");
-                            set_layout_inner(&app, Layout::Rail, None);
+                            set_layout_inner(&app, Layout::Rail, Why::Auto);
                         }
                     }
                 }

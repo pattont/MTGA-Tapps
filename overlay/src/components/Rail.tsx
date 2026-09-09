@@ -13,22 +13,33 @@ interface Props {
   onDragStart: (event: MouseEvent) => void;
 }
 
-/** The 44px rail: icon (drag handle), turn, land %, library, open-panel arrow, gear. */
+/** Deck bar tone by what is left: green, yellow once half the deck is gone, red under 15 cards. */
+export function deckTone(librarySize: number, deckSize: number): 'ok' | 'warn' | 'low' {
+  if (librarySize < 15) return 'low';
+  if (deckSize > 0 && librarySize * 2 <= deckSize) return 'warn';
+  return 'ok';
+}
+
+/** The 44px rail: icon (drag handle), then Turn / Land / Deck as label-over-value
+ *  cells at one size, the open-panel arrow, and the gear. */
 export function Rail({ payload, link, dock, landsInPlay, onOpenPanel, onOpenSettings, onDragStart }: Props) {
   const state = payload?.state ?? null;
   const active = showsLibrary(state);
-  const status =
-    link !== 'online' || payload?.tracker.state === 'offline'
-      ? 'Tracker not running'
-      : state?.mid_game_attach
-        ? 'Joined mid-game'
-        : active
-          ? null
-          : 'Waiting for a match';
+  const offline = link !== 'online' || payload?.tracker.state === 'offline';
   const danger = state && active ? landDanger(state, landsInPlay) : false;
+  const tone = active && state ? deckTone(state.library_size, state.deck_size) : 'ok';
   return (
-    <div class="rail" role="group" aria-label="Tapps Tracker" title={status ?? undefined}>
-      <img class="logo" src={appIcon} width={22} height={22} alt="Tapps Tracker" onMouseDown={onDragStart} draggable={false} />
+    <div class="rail" role="group" aria-label="Tapps Tracker">
+      {/* The tracker link has no indicator while it works. When it does not,
+          the icon itself says so: dimmed, with a warning badge and a tooltip. */}
+      <span class={`logo-wrap${offline ? ' offline' : ''}`} title={offline ? 'Not connected to Tapps Tracker. Start the tracker; the overlay reconnects on its own.' : undefined}>
+        <img class="logo" src={appIcon} width={22} height={22} alt="Tapps Tracker" onMouseDown={onDragStart} draggable={false} />
+        {offline ? (
+          <i class="warn-badge" aria-label="Tracker not running">
+            !
+          </i>
+        ) : null}
+      </span>
       <div class="sep" />
       <div class="cell">
         <span class="k">Turn</span>
@@ -36,20 +47,23 @@ export function Rail({ payload, link, dock, landsInPlay, onOpenPanel, onOpenSett
       </div>
       <div class="sep" />
       <div class="cell" aria-label="Chance of a land on the next draw">
-        <span class={danger ? 'land danger' : 'land'}>{active && state ? formatWhole(state.land_odds['1']) : '—'}</span>
         <span class="k">Land</span>
+        <span class={`v land${danger ? ' danger' : ''}`}>{active && state ? formatWhole(state.land_odds['1']) : '—'}</span>
       </div>
+      <div class="sep" />
       <div class="cell" aria-label="Library">
-        <span class="lib">
+        <span class="k">Deck</span>
+        <span class="v lib">
           {active && state ? (
             <>
-              <b>{state.library_size}</b>/{state.deck_size}
+              <b>{state.library_size}</b>
+              <span class="of">/{state.deck_size}</span>
             </>
           ) : (
             '—'
           )}
         </span>
-        <span class="bar">
+        <span class={`bar ${tone}`}>
           <i style={{ width: active && state && state.deck_size > 0 ? `${(100 * state.library_size) / state.deck_size}%` : '0%' }} />
         </span>
       </div>
@@ -61,7 +75,6 @@ export function Rail({ payload, link, dock, landsInPlay, onOpenPanel, onOpenSett
       <button type="button" class="gear" onClick={onOpenSettings} aria-label="Overlay settings">
         <Gear />
       </button>
-      {status ? <span class={`rail-status ${link !== 'online' || payload?.tracker.state === 'offline' ? 'off' : ''}`} aria-hidden="true" /> : null}
     </div>
   );
 }

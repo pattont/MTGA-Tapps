@@ -72,6 +72,8 @@ const board = async (page) => { await page.addStyleTag({ content: 'body{backgrou
 const openPanel = async (page) => { await page.click('button[aria-label="Open the deck panel"]'); await page.mouse.move(400, 400); await page.waitForTimeout(100); };
 await shot('rail-game', 'game', { width: 53, height: 252 });
 await shot('rail-offline', 'offline', { width: 53, height: 252 });
+await shot('rail-warn', 'game', { width: 53, height: 252 }, async (page) => { await page.evaluate(() => { const b = document.querySelector('.rail .bar'); b.className = 'bar warn'; b.firstElementChild.style.width = '45%'; document.querySelector('.rail .v.lib b').textContent = '27'; }); });
+await shot('rail-low', 'game', { width: 53, height: 252 }, async (page) => { await page.evaluate(() => { const b = document.querySelector('.rail .bar'); b.className = 'bar low'; b.firstElementChild.style.width = '18%'; document.querySelector('.rail .v.lib b').textContent = '11'; }); });
 await shot('panel-game', 'game', { width: 563, height: 560 }, openPanel);
 await shot('panel-hover', 'game', { width: 563, height: 560 }, async (page) => { await board(page); await openPanel(page); await page.hover('.list-body .row:nth-of-type(4)'); });
 await shot('panel-sideboard', 'game', { width: 563, height: 560 }, async (page) => { await board(page); await openPanel(page); await page.click('.land-row'); await page.click('.side-row'); await page.mouse.move(10, 10); });

@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Panel, deckColors } from '../components/Panel';
-import { Rail } from '../components/Rail';
+import { Rail, deckTone } from '../components/Rail';
 import { hoverCardTop, hoverSide, measureContentHeight, tintAlpha } from '../App';
 import { defaultSettings } from '../tauri';
 import { brawlState, inGamePayload, idlePayload, offlinePayload } from './fixtures';
@@ -41,8 +41,12 @@ describe('Rail', () => {
 
   it('shows dashes and a status dot when the tracker is down', () => {
     const { container } = render(<Rail payload={offlinePayload()} link="offline" dock="right" landsInPlay={null} onOpenPanel={noop} onOpenSettings={noop} onDragStart={noop} />);
-    expect(container.querySelector('.rail-status.off')).toBeTruthy();
-    expect(container.querySelector('.rail')?.getAttribute('title')).toBe('Tracker not running');
+    // No status dot: a broken tracker link shows as a warning badge on the
+    // icon with a tooltip that says what to do; a working one shows nothing.
+    expect(container.querySelector('.logo-wrap.offline .warn-badge')).toBeTruthy();
+    expect(container.querySelector('.logo-wrap')?.getAttribute('title')).toMatch(/Not connected to Tapps Tracker/);
+    const online = render(<Rail payload={inGamePayload()} link="online" dock="right" landsInPlay={4} onOpenPanel={noop} onOpenSettings={noop} onDragStart={noop} />);
+    expect(online.container.querySelector('.warn-badge')).toBeNull();
   });
 });
 
@@ -145,6 +149,17 @@ describe('tintAlpha', () => {
     expect(tintAlpha(0.6)).toBeGreaterThan(0.7);
     expect(tintAlpha(0.6)).toBeLessThan(0.75);
     expect(tintAlpha(0)).toBe(0);
+  });
+});
+
+describe('deckTone', () => {
+  it('goes yellow at half the deck and red under 15 cards', () => {
+    expect(deckTone(41, 60)).toBe('ok');
+    expect(deckTone(30, 60)).toBe('warn');
+    expect(deckTone(15, 60)).toBe('warn');
+    expect(deckTone(14, 60)).toBe('low');
+    expect(deckTone(60, 100)).toBe('ok');
+    expect(deckTone(50, 100)).toBe('warn');
   });
 });
 

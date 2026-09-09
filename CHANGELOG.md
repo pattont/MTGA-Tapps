@@ -31,9 +31,11 @@
 ### In-game overlay (tracker-overlay branch, not in this release)
 
 - **In-game overlay.** A small always-on-top window beside Arena: a 44 px
-  rail — drawn a step larger than the panel — with the turn, the chance of
-  a land on the next draw, the library count and an arrow that opens the
-  301 px panel with the full decklist — each card's
+  rail — drawn a step larger than the panel — with Turn, Land and Deck as
+  label-over-value cells at one size (the deck bar goes yellow once half
+  the deck is gone and red under 15 cards; a lost tracker link shows as a
+  warning badge on the icon with a tooltip, not a dot) and an arrow that
+  opens the 301 px panel with the full decklist — each card's
   name over its mana cost, copies left over next-draw odds centred in a slim
   darker band on the right (hover a row for the card itself, 250 px wide from Scryfall, with next draw /
   within 2 / within 3 under it; the card hides itself a couple of seconds
@@ -48,11 +50,16 @@
   FINAL, in magenta) through Arena's results screen and clears when you
   leave it. Shows only while Arena is running, on Arena's screen (over a
   fullscreen Arena too); docks flush left or right (or floats), with a few
-  pixels of plain ground between the text and the screen edge. Hovering the rail slides the panel out unpinned; an
-  unpinned panel folds back into the rail once the cursor has been off it
-  for the return delay (the shell watches the real cursor, so this works
-  even though the overlay never takes focus), pinning keeps it out, and it
-  steps aside when Arena isn't in front. Sits on a charcoal tint
+  pixels of plain ground between the text and the screen edge. The panel
+  is on or off, and pinned or not, and both are remembered game to game
+  and across launches: the arrow (or hotkey) turns it on, the chevron
+  turns it off, the pin holds it out. On and unpinned, the rail is the
+  folded panel — hovering it unfolds it and it folds back once the cursor
+  has been off it for the return delay (the shell watches the real
+  cursor, so this works even though the overlay never takes focus). Off,
+  the rail is just a rail and hovering does nothing. Between games it
+  folds away and a pinned one comes straight back. It steps aside when
+  Arena isn't in front. Sits on a charcoal tint
   with hairlines between rows and no box border; text is always fully
   visible and the Panel opacity slider drives only the tint (about 88 %
   charcoal at 100, gone at 0, default 60) — the minimized rail has its own

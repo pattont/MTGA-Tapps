@@ -162,10 +162,6 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
         </span>
       </label>
       <label class="r">
-        <span>Open pinned by default</span>
-        <input type="checkbox" checked={settings.openPinned} onChange={(event) => onChange({ ...settings, openPinned: (event.currentTarget as HTMLInputElement).checked })} />
-      </label>
-      <label class="r">
         <span>Click-through when pinned</span>
         <input
           type="checkbox"

@@ -88,7 +88,14 @@ pub struct Settings {
     pub panel_max_height_pct: u32,
     pub dock: Dock,
     pub return_after_seconds: u32,
-    pub open_pinned: bool,
+    /// The deck panel is "on": the player opened it (arrow / hotkey) and has
+    /// not closed it (chevron / hotkey). Remembered across games and
+    /// launches. Off means the rail is just a rail — hovering it does nothing.
+    pub panel_open: bool,
+    /// Pinned stays out; unpinned slides out when the rail is hovered and
+    /// folds back after the cursor leaves. Toggled by the pin button,
+    /// remembered.
+    pub panel_pinned: bool,
     pub click_through_when_pinned: bool,
     pub lands: Lands,
     pub density: Density,
@@ -112,7 +119,8 @@ impl Default for Settings {
             panel_max_height_pct: 70,
             dock: Dock::Right,
             return_after_seconds: 4,
-            open_pinned: true,
+            panel_open: false,
+            panel_pinned: false,
             // Off by default: with it on, the panel can only be driven by the
             // hotkeys and the tray (every click reaches Arena instead).
             click_through_when_pinned: false,

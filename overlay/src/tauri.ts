@@ -41,7 +41,7 @@ async function loadShell(): Promise<Shell> {
 
 /** Development stand-in: settings live in memory, layout changes just resolve. */
 function browserShell(): Shell {
-  let layout: LayoutInfo = { layout: 'rail', pinned: true, visible: true, dock: 'right' };
+  let layout: LayoutInfo = { layout: 'rail', pinned: false, panelOpen: false, visible: true, dock: 'right' };
   let settings: Settings | null = null;
   return {
     async invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
@@ -53,8 +53,8 @@ function browserShell(): Shell {
           return settings as T;
         case 'set_layout': {
           const next = args.layout as LayoutInfo['layout'];
-          const pinned = next === 'panel' ? (typeof args.pinned === 'boolean' ? args.pinned : (settings?.openPinned ?? true)) : layout.pinned;
-          layout = { ...layout, layout: next, pinned };
+          const panelOpen = args.auto ? layout.panelOpen : next === 'panel';
+          layout = { ...layout, layout: next, panelOpen };
           return layout as T;
         }
         case 'set_pinned':
@@ -87,7 +87,8 @@ export function defaultSettings(): Settings {
     panelMaxHeightPct: 70,
     dock: 'right',
     returnAfterSeconds: 4,
-    openPinned: true,
+    panelOpen: false,
+    panelPinned: false,
     clickThroughWhenPinned: false,
     lands: 'grouped',
     density: 'comfortable',

@@ -81,7 +81,7 @@ export function measureContentHeight(panel: HTMLElement, list: HTMLElement | nul
 export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [platform, setPlatform] = useState('windows');
-  const [layout, setLayout] = useState<LayoutInfo>({ layout: 'rail', pinned: true, visible: true, dock: 'right' });
+  const [layout, setLayout] = useState<LayoutInfo>({ layout: 'rail', pinned: false, panelOpen: false, visible: true, dock: 'right' });
   const [payload, setPayload] = useState<OverlayPayload | null>(null);
   const [link, setLink] = useState<Link>('connecting');
   const [sort, setSort] = useState<SortKey>('odds');
@@ -168,17 +168,20 @@ export function App() {
     return measureContentHeight(panel, panel.querySelector<HTMLElement>('.list'), root?.querySelector<HTMLElement>('.fly') ?? null);
   }, []);
 
-  /** Open the panel; `pinned` overrides the "open pinned" setting (null = follow it). */
-  const openPanel = useCallback(async (pinned: boolean | null = null) => {
-    const info = await tauri.invoke<LayoutInfo>('set_layout', { layout: 'panel', contentHeight: lastHeight.current, pinned });
+  /** Open the panel. The player's doing (arrow, gear) turns the panel "on";
+   *  `auto` is the overlay restoring it at a game start. */
+  const openPanel = useCallback(async (auto = false) => {
+    const info = await tauri.invoke<LayoutInfo>('set_layout', { layout: 'panel', contentHeight: lastHeight.current, auto });
     setLayout(info);
   }, []);
 
-  const collapse = useCallback(async () => {
+  /** Fold into the rail. The chevron turns the panel "off"; `auto` (a game
+   *  ending) leaves it on, so it comes back next game. */
+  const collapse = useCallback(async (auto = false) => {
     setHover(null);
     setFlyout(false);
     setSideboardOpen(false);
-    const info = await tauri.invoke<LayoutInfo>('set_layout', { layout: 'rail', contentHeight: null });
+    const info = await tauri.invoke<LayoutInfo>('set_layout', { layout: 'rail', contentHeight: null, auto });
     setLayout(info);
   }, []);
 
@@ -228,9 +231,10 @@ export function App() {
     return () => observer.disconnect();
   }, [layout.layout, payload, settings?.lands, settings?.density, settings?.scale, sort, flyout, contentHeight]);
 
-  // Between games the panel folds back into the rail on its own; when the
-  // next game starts it comes back the way it was (open, and pinned or not).
-  const restoreAfterGame = useRef<{ pinned: boolean } | null>(null);
+  // Between games the panel folds back into the rail on its own. When the
+  // next game starts, a panel that is "on" and pinned comes straight back;
+  // one that is on and unpinned waits in the rail for a hover; one that is
+  // off stays a rail.
   const wasActive = useRef<boolean | null>(null);
   // "Active" for the fold-away rule includes the results screen: the
   // final library stays up until Arena leaves it (game_over clears).
@@ -240,14 +244,9 @@ export function App() {
     wasActive.current = gameActive;
     if (before === null || before === gameActive) return;
     if (!gameActive) {
-      if (layoutRef.current.layout === 'panel') {
-        restoreAfterGame.current = { pinned: layoutRef.current.pinned };
-        void collapse();
-      }
-    } else if (restoreAfterGame.current) {
-      const { pinned } = restoreAfterGame.current;
-      restoreAfterGame.current = null;
-      void openPanel(pinned);
+      if (layoutRef.current.layout === 'panel') void collapse(true);
+    } else if (layoutRef.current.panelOpen && layoutRef.current.pinned && layoutRef.current.layout === 'rail') {
+      void openPanel(true);
     }
   }, [gameActive, collapse, openPanel]);
 
@@ -325,7 +324,7 @@ export function App() {
             dock={settings.dock}
             sort={sort}
             onSort={setSort}
-            onCollapse={collapse}
+            onCollapse={() => void collapse()}
             onTogglePin={togglePin}
             onOpenSettings={() => setFlyout((v) => !v)}
             onDragStart={dragStart}

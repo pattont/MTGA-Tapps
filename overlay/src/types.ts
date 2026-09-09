@@ -70,7 +70,9 @@ export interface Settings {
   panelMaxHeightPct: number;
   dock: Dock;
   returnAfterSeconds: number;
-  openPinned: boolean;
+  /** Owned by the shell (arrow, chevron, pin, hotkey); echoed here so a save round-trips it. */
+  panelOpen: boolean;
+  panelPinned: boolean;
   clickThroughWhenPinned: boolean;
   lands: 'grouped' | 'all';
   density: 'comfortable' | 'compact';
@@ -87,7 +89,10 @@ export interface Settings {
 
 export interface LayoutInfo {
   layout: 'rail' | 'panel';
+  /** Pinned stays out; unpinned unfolds on rail hover and folds back after the cursor leaves. */
   pinned: boolean;
+  /** The player turned the panel on (arrow / hotkey) and has not closed it. */
+  panelOpen: boolean;
   visible: boolean;
   dock: Dock;
 }
