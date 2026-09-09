@@ -47,10 +47,10 @@ pub enum Layout {
 
 /// Fixed rail footprint and the panel's width; the panel's height follows its
 /// content and is capped to the work area by `fit_height`.
-/// The page lays the rail out at 48×210 and draws it 1.2× larger than the
+/// The page lays the rail out at 48×215 and draws it 1.2× larger than the
 /// panel at the same Scale setting (App.tsx RAIL_BOOST); the window is that.
 pub const RAIL_WIDTH: i32 = 58;
-pub const RAIL_HEIGHT: i32 = 252;
+pub const RAIL_HEIGHT: i32 = 258;
 /// 297 px of content plus 4 px of plain ground on the screen-edge side, so
 /// the text never sits hard against the bezel (the page adds that padding).
 pub const PANEL_WIDTH: i32 = 301;
