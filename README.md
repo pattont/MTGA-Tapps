@@ -384,6 +384,7 @@ guidance lives.
 - [docs/plans/OVERLAY_TRACKER_PLAN.md](docs/plans/OVERLAY_TRACKER_PLAN.md) — planned in-game overlay (Tauri v2), with design mockups
 - [docs/MTGA_LOG_FORMAT.md](docs/MTGA_LOG_FORMAT.md) — how Arena's log actually works
 - [docs/plans/MTGA_INSTALL_DISCOVERY.md](docs/plans/MTGA_INSTALL_DISCOVERY.md) — plan for finding Arena's card DB in standalone/non-default installs
+- [docs/plans/SCRY_TRACKING.md](docs/plans/SCRY_TRACKING.md) — plan for scry/surveil stats on the game and deck pages, and library knowledge (known top card, bottomed cards) in the overlay's odds
 - [docs/plans/linux_implementation.md](docs/plans/linux_implementation.md) — plan for Linux support (Arena under Steam/Proton or Wine), phased so CI verifies it before a Linux desktop exists
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release
 
