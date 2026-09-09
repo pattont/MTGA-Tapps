@@ -1,11 +1,11 @@
-# Scry, Surveil and Library Knowledge — Plan
+# Scry and Surveil Tracking — Plan
 
 Today the tracker sees a scry and writes one word about it: the timeline
-says "You: scried" with no count, nothing is persisted, the deck and game
-pages have no idea it happened, and the overlay keeps quoting draw odds it
-could sharpen — after a scry-to-top the player *knows* the next card, and
-the overlay still says "27 %". This plan covers all four: the log, the
-data, the pages, and the overlay.
+says "You: scried" with no count, nothing is persisted, and the deck and
+game pages have no idea it happened. This plan covers the log, the data,
+the game and deck pages, and the Live Scoreboard. The overlay is
+deliberately left alone: it stays a decklist with odds, and scry does not
+touch it (see §6).
 
 ## 1. What the log gives us
 
@@ -44,15 +44,11 @@ have not seen their exact shape in this repo's fixtures:
   the zone-transfer path; the plan must not double count them.
 - **Reorder-and-look effects** that are not scry (Ponder, Brainstorm,
   "look at the top card"): these arrive as `RevealedCardCreated` /
-  `ZoneTransfer` traffic, not as a scry annotation. Out of scope for the
-  stat, but Ponder's "put back in any order" is the same *library
-  knowledge* the overlay wants — noted for step 6.
+  `ZoneTransfer` traffic, not as a scry annotation. Out of scope.
 
 **Step 0 of the work is a log sample of each:** cast Opt, a surveil card
-(Thought Scour / any "surveil 1"), Ponder, and get scried against by an
-opponent, then keep the four snippets under `tests/fixtures/scry/`.
-`AnnotationType_Shuffle` (already recognised, currently ignored) is the
-event that ends any library knowledge.
+(any "surveil 1"), and get scried against by an opponent, then keep the
+three snippets under `tests/fixtures/scry/`.
 
 ## 2. Data model
 
@@ -142,56 +138,28 @@ event count is recoverable; the card totals stay NULL for old games).
 
 ## 5. Live Scoreboard
 
-Nothing structural: it renders `game_events`, so the new lines and the
-`scry` style show up on their own. Add the style's badge colour (a
-library-ish blue) next to `ability` in `LiveLogPage`'s style map.
+Nothing structural: it renders `game_events`, so the new lines show up on
+their own. Two touches so they read as what they are:
 
-## 6. Overlay — library knowledge
+- The new `scry` style gets its own badge (a library-ish blue) next to
+  `ability` in `LiveLogPage`'s style map, so "scried 2 — kept [Opt] on
+  top, bottomed [Plains]" is not filed under generic abilities.
+- The scoreboard's per-side stat chips (the ones that show cards drawn
+  and the like mid-game) gain a **Scried n · ⬆ top · ⬇ bottom** chip once
+  the first scry happens in the game, fed from the same live seat stats
+  the row is written from. Absent until then — most games never scry, and
+  an empty chip is noise.
 
-This is the part that changes what the player sees mid-game.
+## 6. Overlay — unchanged
 
-**State.** `overlay_state.build_overlay_state` gains two inputs from the
-tracker's game state:
-
-- `known_top: List[str]` — card names known to be on top, in order
-  (from the player's scry `topIds`, extended later by Ponder-style
-  reorders). Cleared by `AnnotationType_Shuffle`, and popped from the
-  front on each draw (the draw path already sees the instance id; matching
-  on it is exact, not by name).
-- `bottomed: int` — cards known to be at the bottom since the last
-  shuffle. They are still in the library but not reachable in the next
-  few draws.
-
-**Odds.** With `k = len(known_top)` and `b = bottomed`:
-
-- The next `k` draws are certain: the known cards get 100 % for their
-  slot and every other card gets 0 % for "next draw" while a known card
-  is on top. Show it as the truth it is, not as a probability.
-- Beyond the known cards, the hypergeometric pool is
-  `library_size − k − b` (the unknown middle), and each card's remaining
-  copies exclude any copy sitting in `known_top`. "Within 2 / within 3"
-  become: certain for the known slots, hypergeometric for the rest.
-- `land_odds` follow the same rule, so the rail's LAND figure reads 100 %
-  or 0 % after a scry, then goes back to odds.
-- Bottomed cards are *excluded* from the pool rather than counted as
-  copies left: a Plains sent under is not coming for a long time. They
-  still show in the list (they are in the deck) but with a "bottom" marker
-  and dash odds, so the count of copies stays honest.
-
-**Panel.** A one-line strip under Land Drops, only while `known_top` is
-non-empty: `TOP  Llanowar Elves · Opt` (in draw order). Rows for those
-cards get a small `top` tag where the odds would be; bottomed rows get
-`bottom`. The FINAL/PLAY pill area is untouched.
-
-**Rail.** No new element: LAND already reflects it through `land_odds`.
-
-**Edge cases the tests must cover:** scry to top then draw (strip shrinks,
-odds return); scry both to bottom (nothing on top, `bottomed = 2`, pool
-shrinks by 2); shuffle after a scry (everything clears); opponent scry
-(no effect on the player's overlay); surveil to graveyard (the card leaves
-the library through the normal zone-transfer path — `known_top` must not
-also list it); a known-top card that is an unresolvable object (skipped,
-diagnostics line, per the draw fix).
+Scry is intentionally not modelled in the overlay. The overlay's job is
+the decklist and its odds; adding "known top card" logic means a second
+set of odds rules, a strip that appears and disappears, tags on rows, and
+a shuffle/draw bookkeeping path — all of which have to be right every time
+or the overlay is lying, and none of which the player needs, because
+Arena already showed them the card they just scried. The overlay keeps
+quoting the plain hypergeometric odds, which are correct in expectation
+over the remaining library. If that ever changes, it is a separate plan.
 
 ## 7. Tests
 
@@ -201,9 +169,8 @@ diagnostics line, per the draw fix).
   `game_library_events` rows with names for the player and NULL names for
   the opponent; no double count of surveil graveyard cards against
   `cards_milled`.
-- `tests/test_overlay.py`: the odds rules above, one case each; the strip
-  in the panel (`overlay/src/__tests__/components.test.tsx`) and the
-  `top` / `bottom` row tags.
+- Live Scoreboard: the `scry` badge renders; the chip appears only after
+  the first scry.
 - Migration: columns added NULL, backfill counts "scried" lines only.
 - Dashboard API: game payload carries the group; deck payload carries the
   averages, `bottom_rate`, and `bottomed_most`.
@@ -212,14 +179,13 @@ diagnostics line, per the draw fix).
 
 | Step | Scope | Effort |
 | --- | --- | --- |
-| 0 | Capture the four log samples (Opt, surveil, Ponder, opponent scry) into fixtures | ½ session, needs a few games |
+| 0 | Capture the three log samples (Opt, surveil, opponent scry) into fixtures | ½ session, needs a few games |
 | 1 | Annotation handler + seat stats + timeline lines + `game_library_events` + migration/backfill | 1 session |
 | 2 | Game page group, deck page rows + bottom rate + bottomed-most, API | ½–1 session |
-| 3 | Overlay: `known_top` / `bottomed` state, odds rules, strip and row tags | 1 session |
+| 3 | Live Scoreboard badge and chip | ¼ session |
 | 4 | Surveil, once its shape is confirmed (same handler, second `kind`) | ½ session |
-| 5 | Ponder-style reorders feeding `known_top` (no stat, overlay only) | later, separable |
 
-Steps 1–3 are the feature the question asks for; 4 and 5 are the natural
-extensions and can ship in later releases without touching the schema
-again (surveil columns are created in step 1 and simply stay NULL until
-step 4 fills them).
+Steps 1–3 are the feature; 4 is the natural extension and ships in a later
+release without touching the schema again (surveil columns are created in
+step 1 and simply stay NULL until step 4 fills them). About two sessions
+in total.
