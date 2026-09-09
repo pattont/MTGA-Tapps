@@ -1,5 +1,5 @@
 import appIcon from '../icons/app.png';
-import { formatWhole, landDanger, showsLibrary } from '../model';
+import { landDanger, showsLibrary } from '../model';
 import type { Link, OverlayPayload } from '../types';
 import { Chevron, Gear } from './Icons';
 
@@ -48,12 +48,21 @@ export function Rail({ payload, link, dock, landsInPlay, onOpenPanel, onOpenSett
       <div class="sep" />
       <div class="cell" aria-label="Chance of a land on the next draw">
         <span class="k">Land</span>
-        <span class={`v land${danger ? ' danger' : ''}`}>{active && state ? formatWhole(state.land_odds['1']) : '—'}</span>
+        <span class={`v land${danger ? ' danger' : ''}`}>
+          {active && state ? (
+            <>
+              {Math.round(state.land_odds['1'])}
+              <span class="of">%</span>
+            </>
+          ) : (
+            '—'
+          )}
+        </span>
       </div>
       <div class="sep" />
       <div class="cell" aria-label="Library">
         <span class="k">Deck</span>
-        <span class="v lib">
+        <span class={`v lib${active && state && state.deck_size >= 100 ? ' wide' : ''}`}>
           {active && state ? (
             <>
               <b>{state.library_size}</b>

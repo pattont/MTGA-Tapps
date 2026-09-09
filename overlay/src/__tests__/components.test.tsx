@@ -34,7 +34,7 @@ describe('Rail', () => {
   it('shows turn, land odds and library during a game', () => {
     render(<Rail payload={inGamePayload()} link="online" dock="right" landsInPlay={4} onOpenPanel={noop} onOpenSettings={noop} onDragStart={noop} />);
     expect(screen.getByText('5')).toBeTruthy();
-    expect(screen.getByText('27%')).toBeTruthy();
+    expect(screen.getByText('27').closest('.v.land')?.textContent).toBe('27%');
     expect(screen.getByText('41')).toBeTruthy();
     expect(screen.getByRole('button', { name: /open the deck panel/i })).toBeTruthy();
   });
