@@ -86,6 +86,14 @@ class GameState:
             "tokens_destroyed": 0,
             "tokens_sacrificed": 0,
             "tokens_exiled": 0,
+            # Scry: how many times this seat scried, how many cards those
+            # scries looked at, and where they went. Counts work for both
+            # seats (Arena lists the card instance ids even when the cards
+            # themselves are hidden); names are only known for the player.
+            "scries": 0,
+            "scry_cards": 0,
+            "scry_top": 0,
+            "scry_bottom": 0,
         }
         return {1: base.copy(), 2: base.copy()}
 

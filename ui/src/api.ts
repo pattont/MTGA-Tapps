@@ -640,6 +640,12 @@ export interface DeckInteractionSide {
   tokens_destroyed: number | null;
   tokens_sacrificed: number | null;
   tokens_exiled: number | null;
+  scries: number | null;
+  scry_cards: number | null;
+  scry_top: number | null;
+  scry_bottom: number | null;
+  /** Share of scried cards sent to the bottom (whole percent), all games. */
+  scry_bottom_pct: number | null;
 }
 
 /** Per-game interaction averages for both seats, mirroring the game page. */
@@ -647,6 +653,8 @@ export interface DeckInteractionProfile {
   games_tracked: number;
   player: DeckInteractionSide;
   opponent: DeckInteractionSide;
+  /** The player's most-bottomed cards with this deck (top 10). */
+  bottomed_most?: { display_name: string; count: number }[];
 }
 
 /** Match-level records by queue. Only splits with matches are present. */
@@ -883,6 +891,26 @@ export interface GameParticipantStatsRow {
   tokens_destroyed?: number | null;
   tokens_sacrificed?: number | null;
   tokens_exiled?: number | null;
+  /* Scry — null on games recorded before it was tracked. */
+  scries?: number | null;
+  scry_cards?: number | null;
+  scry_top?: number | null;
+  scry_bottom?: number | null;
+}
+
+/** One scry (later: surveil) of a game. Names are only known for the player. */
+export interface GameLibraryEvent {
+  id: number;
+  role: 'player' | 'opponent' | null;
+  turn_number: number | null;
+  kind: 'scry' | 'surveil';
+  looked: number;
+  kept_top: number;
+  bottomed: number;
+  to_graveyard: number;
+  source_card: string | null;
+  top_names: string[] | null;
+  bottom_names: string[] | null;
 }
 
 export interface GameAnnotation {
@@ -950,6 +978,7 @@ export interface GameDetail {
   opponent: GameParticipant;
   annotation?: GameAnnotation;
   participant_stats: GameParticipantStatsRow[];
+  library_events?: GameLibraryEvent[];
   opening_hand: GameOpeningHandRow[];
   mulligan_hands?: MulliganHand[];
   drawn: GameDrawnCardRow[];

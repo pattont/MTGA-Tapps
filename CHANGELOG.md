@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Scry is tracked.** Every scry is counted per seat — how many scries,
+  how many cards they looked at, and how many went to the top vs the
+  bottom — for both you and the opponent (Arena lists the card ids even
+  when the opponent's cards stay hidden). The timeline line says what
+  actually happened instead of a bare "scried": `You: scried 2 — kept
+  [Opt] on top, bottomed [Plains]` (the opponent's reads `scried 2 — 1
+  top, 1 bottom`), with its own **Scry** badge in the game timeline and
+  the Live Feed. The game page and the deck page show Scries, Cards
+  scried, Scried to top and Scried to bottom under **Cards** in Combat &
+  Resources; the deck page adds a **Bottom rate** (the share of scried
+  cards you send under — a high number is a deck unhappy with its top)
+  and a "Bottomed most when scrying" line naming the cards. Historical
+  games get their scry count back from their timelines (the old lines
+  carry no amounts, so their card totals stay blank). Surveil is not yet
+  counted.
+
 - Recent Games, its Bo3 match rows, and Sessions load 30 rows instead of
   25, so the tables' 15-a-page paging shows two full pages.
 

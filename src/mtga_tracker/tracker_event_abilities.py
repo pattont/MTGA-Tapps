@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set
 
+from .annotations import AnnotationDetails
+
 
 class TrackerAbilitiesMixin:
     """Focused event helpers used by TrackerEventsMixin."""
@@ -242,16 +244,140 @@ class TrackerAbilitiesMixin:
             turn_override=active_turn_override or self._ability_turn_override(owner_seat),
         )
 
-    def _handle_scry_annotation(self, affected_ids: List[int], card_obj: Dict[str, Any]) -> None:
-        """Handle scry annotations."""
-        if not affected_ids or not card_obj:
-            return
-        owner_seat = card_obj.get("ownerSeatId")
-        self._flush_pending_turn_header_for_seat(owner_seat)
-        self._print_event(
-            self._format_actor_event("🔮", owner_seat, "scried"),
-            "ability",
+    def _handle_scry_annotation(
+        self,
+        annotation: Dict[str, Any],
+        game_objects_by_id: Optional[Dict[int, Dict[str, Any]]] = None,
+    ) -> None:
+        """Count a scry and say where the cards went.
+
+        Arena reports a scry once the player has ordered the cards:
+        ``affectedIds`` are the card instance ids looked at, ``topIds`` /
+        ``bottomIds`` split them by destination, and ``affectorId`` is the
+        scry ability instance (whose controller is the seat that scried and
+        whose ``objectSourceGrpId`` is the card that granted the scry). The
+        player's own cards were shown to them, so their objects carry a
+        grpId and can be named; the opponent's stay hidden — counts only.
+        """
+        affected_ids = [
+            int(value) for value in (annotation.get("affectedIds") or []) if isinstance(value, int)
+        ]
+        details = AnnotationDetails.from_annotation(annotation)
+        top_ids = list(details.top_ids)
+        bottom_ids = list(details.bottom_ids)
+        if not top_ids and not bottom_ids:
+            if not affected_ids:
+                return
+            # Older/odd shapes: no split, so all we know is what was looked at.
+            top_ids = affected_ids
+        looked = len(top_ids) + len(bottom_ids)
+
+        affector_id = annotation.get("affectorId")
+        ability_obj = (
+            self._lookup_object(int(affector_id), game_objects_by_id)
+            if isinstance(affector_id, int)
+            else {}
         )
+        seat = ability_obj.get("controllerSeatId") or ability_obj.get("ownerSeatId")
+        if seat is None:
+            for instance_id in top_ids + bottom_ids:
+                card = self._lookup_object(instance_id, game_objects_by_id)
+                seat = card.get("ownerSeatId") or card.get("controllerSeatId")
+                if seat is not None:
+                    break
+        if seat not in (self.game_state.player_seat_id, self.game_state.opponent_seat_id):
+            return
+        seat = int(seat)
+
+        stats = self._seat_stats(seat)
+        if stats is not None:
+            stats["scries"] = int(stats.get("scries", 0)) + 1
+            stats["scry_cards"] = int(stats.get("scry_cards", 0)) + looked
+            stats["scry_top"] = int(stats.get("scry_top", 0)) + len(top_ids)
+            stats["scry_bottom"] = int(stats.get("scry_bottom", 0)) + len(bottom_ids)
+
+        source_card: Optional[str] = None
+        source_grp_id = ability_obj.get("objectSourceGrpId")
+        if isinstance(source_grp_id, int) and source_grp_id > 0:
+            source_card = self.card_db.get_card_name(int(source_grp_id))
+
+        is_player = seat == self.game_state.player_seat_id
+        top_names = self._scried_card_names(top_ids, game_objects_by_id) if is_player else []
+        bottom_names = (
+            self._scried_card_names(bottom_ids, game_objects_by_id) if is_player else []
+        )
+
+        self._flush_pending_turn_header_for_seat(seat)
+        self._print_event(
+            self._format_actor_event(
+                "🔮",
+                seat,
+                self._scry_line_text(len(top_ids), len(bottom_ids), top_names, bottom_names),
+                turn_override=self._ability_turn_override(seat),
+            ),
+            "scry",
+        )
+        self._record_library_event(
+            seat,
+            kind="scry",
+            looked=looked,
+            kept_top=len(top_ids),
+            bottomed=len(bottom_ids),
+            to_graveyard=0,
+            source_card=source_card,
+            top_names=top_names if is_player else None,
+            bottom_names=bottom_names if is_player else None,
+        )
+
+    def _scried_card_names(
+        self,
+        instance_ids: List[int],
+        game_objects_by_id: Optional[Dict[int, Dict[str, Any]]],
+    ) -> List[str]:
+        """Names of the player's scried cards, in Arena's order. Ids whose
+        object is not a real card (or is still hidden) are left out rather
+        than placeholdered — same rule as the draw path."""
+        names: List[str] = []
+        for instance_id in instance_ids:
+            obj = self._lookup_object(instance_id, game_objects_by_id)
+            grp_id = obj.get("grpId")
+            if not isinstance(grp_id, int) or grp_id <= 0:
+                continue
+            obj_type = obj.get("type")
+            if obj_type is not None and obj_type != "GameObjectType_Card":
+                continue
+            names.append(self.card_db.get_card_name(int(grp_id)))
+        return names
+
+    @staticmethod
+    def _scry_line_text(
+        kept_top: int,
+        bottomed: int,
+        top_names: List[str],
+        bottom_names: List[str],
+    ) -> str:
+        """``scried 2 — kept [Opt] on top, bottomed [Plains]`` and its
+        variants; the opponent's version carries counts only."""
+        looked = kept_top + bottomed
+        parts: List[str] = []
+        if kept_top:
+            if top_names and len(top_names) == kept_top:
+                listed = ", ".join(f"[{name}]" for name in top_names)
+                parts.append(f"kept {listed} on top")
+            elif looked == kept_top:
+                parts.append("kept all on top" if kept_top > 1 else "kept it on top")
+            else:
+                parts.append(f"{kept_top} top")
+        if bottomed:
+            if bottom_names and len(bottom_names) == bottomed:
+                listed = ", ".join(f"[{name}]" for name in bottom_names)
+                parts.append(f"bottomed {listed}")
+            elif looked == bottomed:
+                parts.append("bottomed both" if bottomed == 2 else ("bottomed all" if bottomed > 2 else "bottomed it"))
+            else:
+                parts.append(f"{bottomed} bottom")
+        summary = ", ".join(parts)
+        return f"scried {looked} — {summary}" if summary else f"scried {looked}"
 
     def _handle_tapped_untapped_permanent(
         self,

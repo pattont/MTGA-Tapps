@@ -662,6 +662,23 @@ a {
   font-weight: 500;
 }
 
+/* Deck page: the cards bottomed most often when scrying, one line under
+   Combat & Resources. */
+.bottomed-most {
+  margin: 0.75rem 0 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.bottomed-most-label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.bottomed-most-item {
+  white-space: nowrap;
+}
+
 /* Totals row (<tfoot>) at the bottom of card tables. */
 .table-footer-row td {
   border-top: 2px solid var(--border);
@@ -3331,6 +3348,7 @@ tbody tr:hover {
 .timeline-chip-zone { color: #9d6fe8; }
 .timeline-chip-life_gain { color: var(--success); }
 .timeline-chip-life_loss { color: #ef6c8d; }
+.timeline-chip-scry { color: #6f9be8; }
 
 :root[data-theme="light"] .timeline-chip-stack { color: #0a4f8f; }
 :root[data-theme="light"] .timeline-chip-stack_resolve { color: #0d9488; }
@@ -3340,6 +3358,7 @@ tbody tr:hover {
 :root[data-theme="light"] .timeline-chip-counter { color: #0e7f8c; }
 :root[data-theme="light"] .timeline-chip-zone { color: #5b21b6; }
 :root[data-theme="light"] .timeline-chip-life_loss { color: #b3264e; }
+:root[data-theme="light"] .timeline-chip-scry { color: #2d5bb9; }
 
 /* ---- Back to top ---- */
 

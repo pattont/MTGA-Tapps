@@ -13,6 +13,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   combat_damage: 'Combat Damage',
   damage: 'Damage',
   ability: 'Ability',
+  scry: 'Scry',
   stack: 'Stack',
   stack_resolve: 'Stack Resolve',
   stack_fail: 'Stack Fail',

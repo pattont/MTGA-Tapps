@@ -1185,6 +1185,63 @@ class TrackerAnalyticsMixin:
         except sqlite3.Error:
             return
 
+    def _record_library_event(
+        self,
+        seat_id: Optional[int],
+        *,
+        kind: str,
+        looked: int,
+        kept_top: int,
+        bottomed: int,
+        to_graveyard: int,
+        source_card: Optional[str],
+        top_names: Optional[List[str]],
+        bottom_names: Optional[List[str]],
+    ) -> None:
+        """Best-effort ``game_library_events`` row for a scry (later: surveil).
+
+        The per-seat totals in game_participant_stats are the sums of these
+        rows; the rows themselves are what answer "which cards did I bottom
+        with this deck". Names are only recorded for the player (NULL for
+        the opponent, whose cards stay hidden)."""
+        if not self.game_state.game_start_time:
+            return
+        if self._is_untracked_match():
+            return
+        conn = self._analytics_connect()
+        if conn is None:
+            return
+        try:
+            game_id = self._current_game_id()
+            participant_id = self._participant_id_for_seat(game_id, seat_id)
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO game_library_events (
+                        game_id, participant_id, turn_number, event_time, kind,
+                        looked, kept_top, bottomed, to_graveyard,
+                        source_card, top_names, bottom_names
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        game_id,
+                        participant_id,
+                        self.game_state.turn_number or None,
+                        self._now().isoformat(),
+                        kind,
+                        int(looked),
+                        int(kept_top),
+                        int(bottomed),
+                        int(to_graveyard),
+                        source_card,
+                        json.dumps(list(top_names)) if top_names is not None else None,
+                        json.dumps(list(bottom_names)) if bottom_names is not None else None,
+                    ),
+                )
+        except sqlite3.Error:
+            return
+
     def _persist_participant_stats(
         self,
         conn: sqlite3.Connection,
@@ -1240,9 +1297,13 @@ class TrackerAnalyticsMixin:
                 tokens_created,
                 tokens_destroyed,
                 tokens_sacrificed,
-                tokens_exiled
+                tokens_exiled,
+                scries,
+                scry_cards,
+                scry_top,
+                scry_bottom
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(game_id, participant_id) DO UPDATE SET
                 attack_steps = excluded.attack_steps,
                 attacking_creatures = excluded.attacking_creatures,
@@ -1278,7 +1339,11 @@ class TrackerAnalyticsMixin:
                 tokens_created = excluded.tokens_created,
                 tokens_destroyed = excluded.tokens_destroyed,
                 tokens_sacrificed = excluded.tokens_sacrificed,
-                tokens_exiled = excluded.tokens_exiled
+                tokens_exiled = excluded.tokens_exiled,
+                scries = excluded.scries,
+                scry_cards = excluded.scry_cards,
+                scry_top = excluded.scry_top,
+                scry_bottom = excluded.scry_bottom
             """,
             (
                 game_id,
@@ -1318,6 +1383,10 @@ class TrackerAnalyticsMixin:
                 int(stats.get("tokens_destroyed", 0)),
                 int(stats.get("tokens_sacrificed", 0)),
                 int(stats.get("tokens_exiled", 0)),
+                int(stats.get("scries", 0)),
+                int(stats.get("scry_cards", 0)),
+                int(stats.get("scry_top", 0)),
+                int(stats.get("scry_bottom", 0)),
             ),
         )
 

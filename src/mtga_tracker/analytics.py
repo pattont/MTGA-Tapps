@@ -316,10 +316,36 @@ class AnalyticsStore:
                 tokens_destroyed INTEGER,
                 tokens_sacrificed INTEGER,
                 tokens_exiled INTEGER,
+                scries INTEGER,
+                scry_cards INTEGER,
+                scry_top INTEGER,
+                scry_bottom INTEGER,
+                surveils INTEGER,
+                surveil_cards INTEGER,
+                surveil_graveyard INTEGER,
                 UNIQUE(game_id, participant_id),
                 FOREIGN KEY(game_id) REFERENCES games(id),
                 FOREIGN KEY(participant_id) REFERENCES participants(id)
             );
+
+            CREATE TABLE IF NOT EXISTS game_library_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id TEXT NOT NULL,
+                participant_id TEXT,
+                turn_number INTEGER,
+                event_time TEXT,
+                kind TEXT NOT NULL,
+                looked INTEGER NOT NULL DEFAULT 0,
+                kept_top INTEGER NOT NULL DEFAULT 0,
+                bottomed INTEGER NOT NULL DEFAULT 0,
+                to_graveyard INTEGER NOT NULL DEFAULT 0,
+                source_card TEXT,
+                top_names TEXT,
+                bottom_names TEXT,
+                FOREIGN KEY(game_id) REFERENCES games(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_game_library_events_game
+                ON game_library_events(game_id, participant_id);
 
             CREATE TABLE IF NOT EXISTS game_turns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -690,6 +716,7 @@ class AnalyticsStore:
             (26, AnalyticsStore._migrate_v24_reclassify_removal_stats),
             (27, AnalyticsStore._migrate_v27_clear_self_named_opponents),
             (28, AnalyticsStore._migrate_v28_purge_archived_client_chatter),
+            (29, AnalyticsStore._migrate_v29_scry_stats),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -1870,6 +1897,72 @@ class AnalyticsStore:
         r"Default currency for SKUs"
         r")",
     )
+
+    #: Per-seat library-look columns (nullable: an old game reads "not
+    #: tracked", not 0). Surveil's stay NULL until its log shape is handled.
+    _LIBRARY_STAT_COLUMNS = (
+        "scries",
+        "scry_cards",
+        "scry_top",
+        "scry_bottom",
+        "surveils",
+        "surveil_cards",
+        "surveil_graveyard",
+    )
+
+    @staticmethod
+    def _migrate_v29_scry_stats(conn: sqlite3.Connection) -> None:
+        """Scry tracking: per-seat scry columns, the per-event
+        game_library_events table, and a backfill of the scry COUNT for
+        historical games from their timelines. Old timelines only say
+        "scried" (no amount, no destinations), so only ``scries`` is
+        recoverable; the card totals stay NULL for those games. Games with
+        no timeline rows stay NULL throughout ("not tracked")."""
+        existing = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(game_participant_stats)")
+        }
+        for column in AnalyticsStore._LIBRARY_STAT_COLUMNS:
+            if column not in existing:
+                conn.execute(
+                    f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER"
+                )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS game_library_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id TEXT NOT NULL,
+                participant_id TEXT,
+                turn_number INTEGER,
+                event_time TEXT,
+                kind TEXT NOT NULL,
+                looked INTEGER NOT NULL DEFAULT 0,
+                kept_top INTEGER NOT NULL DEFAULT 0,
+                bottomed INTEGER NOT NULL DEFAULT 0,
+                to_graveyard INTEGER NOT NULL DEFAULT 0,
+                source_card TEXT,
+                top_names TEXT,
+                bottom_names TEXT,
+                FOREIGN KEY(game_id) REFERENCES games(id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_game_library_events_game "
+            "ON game_library_events(game_id, participant_id)"
+        )
+        conn.execute(
+            """
+            UPDATE game_participant_stats AS s
+            SET scries = (
+                SELECT COUNT(*) FROM game_events e
+                WHERE e.game_id = s.game_id
+                  AND e.participant_id = s.participant_id
+                  AND e.text LIKE '%: scried%'
+            )
+            WHERE s.scries IS NULL
+              AND EXISTS (SELECT 1 FROM game_events e WHERE e.game_id = s.game_id)
+            """
+        )
 
     @staticmethod
     def _migrate_v28_purge_archived_client_chatter(conn: sqlite3.Connection) -> None:

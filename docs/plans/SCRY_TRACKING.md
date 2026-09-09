@@ -1,11 +1,16 @@
 # Scry and Surveil Tracking — Plan
 
-Today the tracker sees a scry and writes one word about it: the timeline
-says "You: scried" with no count, nothing is persisted, and the deck and
-game pages have no idea it happened. This plan covers the log, the data,
-the game and deck pages, and the Live Scoreboard. The overlay is
-deliberately left alone: it stays a decklist with odds, and scry does not
-touch it (see §6).
+**Status: steps 0–3 implemented (scry). Step 4 (surveil) is open.** What
+shipped differs from the text below in two places, noted inline: the
+scry annotation's real shape (§1) and where the rows live on the game
+and deck pages (§4 — under *Cards*, not a separate *Library* group).
+
+Before this, the tracker saw a scry and wrote one word about it: the
+timeline said "You: scried" with no count, nothing was persisted, and the
+deck and game pages had no idea it happened. This plan covers the log,
+the data, the game and deck pages, and the Live Scoreboard. The overlay
+is deliberately left alone: it stays a decklist with odds, and scry does
+not touch it (see §6).
 
 ## 1. What the log gives us
 
@@ -21,17 +26,25 @@ choice (not when the ability is put on the stack):
 ```
 
 - `topIds` and `bottomIds` are instance ids of the cards, in their new
-  order. Together they are the scry amount. Either list can be empty.
+  order. Together they are the scry amount. Either list can be empty (an
+  empty one arrives as `{"key": "bottomIds"}` with no value at all).
 - For the **player's own scry** the instance ids resolve to game objects
   with a `grpId`, so the tracker knows *which* card stayed on top and which
   went under. For the **opponent's** scry the objects are hidden — counts
   only, which is still the stat.
 - `AnnotationDetails` (`annotations.py`) already parses `topIds` /
-  `bottomIds`; `_handle_scry_annotation` in `tracker_event_abilities.py`
-  currently ignores them.
-- The scrying seat: `affectedIds[0]` is the seat; the ability's
-  `controllerSeatId` agrees. The source card is the ability object's
-  `objectSourceGrpId` (Simulacrum Synthesizer, Opt, …).
+  `bottomIds`.
+- **As captured from a real Player.log (three scries, 2026-09-09):**
+  `affectedIds` is *not* the seat — it is the list of card instance ids
+  looked at (`[170, 169]`), i.e. `topIds + bottomIds`. The scrying seat
+  comes from the ability object named by `affectorId` (its
+  `controllerSeatId`; it is a `GameObjectType_Ability` with grpId
+  `100685`, the generic scry ability, and `objectSourceGrpId` = the card
+  that granted the scry). The card objects and the ability object arrive
+  in an *earlier* packet — the one where the player is shown the cards —
+  so the tracker resolves them from its object snapshots. The
+  implementation falls back to the cards' `ownerSeatId` when the ability
+  object was never seen.
 
 Two neighbours have to be settled from real logs before coding, because I
 have not seen their exact shape in this repo's fixtures:
@@ -47,8 +60,11 @@ have not seen their exact shape in this repo's fixtures:
   `ZoneTransfer` traffic, not as a scry annotation. Out of scope.
 
 **Step 0 of the work is a log sample of each:** cast Opt, a surveil card
-(any "surveil 1"), and get scried against by an opponent, then keep the
-three snippets under `tests/fixtures/scry/`.
+(any "surveil 1"), and get scried against by an opponent. *Done for the
+player's own scry* — the packets are reproduced in
+`tests/test_scry_tracking.py` (`_look_packet` / `_scry_packet`). No
+surveil and no opponent scry has been captured yet; the opponent path is
+implemented from the same shape with hidden objects.
 
 ## 2. Data model
 
@@ -118,19 +134,19 @@ event count is recoverable; the card totals stay NULL for old games).
 
 ## 4. Dashboard
 
-- **Game page** (`GameDetailPage`): a new group in Combat & Resources,
-  "Library", after Cards: Scries · Cards scried · Kept on top · Bottomed ·
-  Surveils · To graveyard. Same two-column you/opponent layout as the
-  other groups. Below it (or in the timeline, which already gets the
-  lines) nothing more is needed for v1.
+- **Game page** (`GameDetailPage`): *as built,* the rows live in the
+  existing **Cards** group of Combat & Resources (no separate "Library"
+  group): Scries · Cards scried · Scried to top · Scried to bottom. Plain
+  rows — a "3 (1 top · 2 bottom)" cell was tried and does not fit the
+  Cards column at common widths. Surveil rows join the group in step 4.
 - **Deck page** (`DeckDetailPage`): the same rows appear automatically in
   the per-game averages once the columns are in `_INTERACTION_STAT_COLUMNS`.
-  Add one derived figure that is actually decision-useful: **bottom
+  Plus one derived figure that is actually decision-useful: **Bottom
   rate** = `scry_bottom / scry_cards` ("with this deck you bottom 38 % of
-  what you scry" — a high number is a deck that is happy with its top,
-  a low one is fishing). And, from `game_library_events`, a small
-  "Bottomed most" list (card name × count) for the player's deck — the
-  first thing a brewer will look for.
+  what you scry" — a high number is a deck that is unhappy with its top,
+  a low one keeps what it sees). And, from `game_library_events`, a
+  "Bottomed most when scrying" line (card name × count) under the
+  section for the player's deck — the first thing a brewer will look for.
 - **API**: game and deck payloads carry the new columns; a
   `library_events` list per game for the game page; `bottomed_most` on
   the deck page (top 10).
@@ -144,11 +160,9 @@ their own. Two touches so they read as what they are:
 - The new `scry` style gets its own badge (a library-ish blue) next to
   `ability` in `LiveLogPage`'s style map, so "scried 2 — kept [Opt] on
   top, bottomed [Plains]" is not filed under generic abilities.
-- The scoreboard's per-side stat chips (the ones that show cards drawn
-  and the like mid-game) gain a **Scried n · ⬆ top · ⬇ bottom** chip once
-  the first scry happens in the game, fed from the same live seat stats
-  the row is written from. Absent until then — most games never scry, and
-  an empty chip is noise.
+- No per-side scry chip at the top of the scoreboard: the feed line
+  already says everything, and the scoreboard header is for the numbers
+  that change the game.
 
 ## 6. Overlay — unchanged
 
@@ -169,21 +183,20 @@ over the remaining library. If that ever changes, it is a separate plan.
   `game_library_events` rows with names for the player and NULL names for
   the opponent; no double count of surveil graveyard cards against
   `cards_milled`.
-- Live Scoreboard: the `scry` badge renders; the chip appears only after
-  the first scry.
+- Live Feed / timeline: the `scry` badge renders.
 - Migration: columns added NULL, backfill counts "scried" lines only.
 - Dashboard API: game payload carries the group; deck payload carries the
   averages, `bottom_rate`, and `bottomed_most`.
 
 ## 8. Order and effort
 
-| Step | Scope | Effort |
-| --- | --- | --- |
-| 0 | Capture the three log samples (Opt, surveil, opponent scry) into fixtures | ½ session, needs a few games |
-| 1 | Annotation handler + seat stats + timeline lines + `game_library_events` + migration/backfill | 1 session |
-| 2 | Game page group, deck page rows + bottom rate + bottomed-most, API | ½–1 session |
-| 3 | Live Scoreboard badge and chip | ¼ session |
-| 4 | Surveil, once its shape is confirmed (same handler, second `kind`) | ½ session |
+| Step | Scope | Effort | Status |
+| --- | --- | --- | --- |
+| 0 | Capture the three log samples (Opt, surveil, opponent scry) into fixtures | ½ session, needs a few games | own scry captured; surveil and opponent scry still wanted |
+| 1 | Annotation handler + seat stats + timeline lines + `game_library_events` + migration/backfill | 1 session | done (schema v29) |
+| 2 | Cards-group rows on game and deck pages + bottom rate + bottomed-most, API | ½–1 session | done |
+| 3 | Live Feed / timeline badge | ¼ session | done |
+| 4 | Surveil, once its shape is confirmed (same handler, second `kind`) | ½ session | open |
 
 Steps 1–3 are the feature; 4 is the natural extension and ships in a later
 release without touching the schema again (surveil columns are created in

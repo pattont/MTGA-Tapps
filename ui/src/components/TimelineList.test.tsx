@@ -147,3 +147,31 @@ describe('TimelineList card references', () => {
     expect(screen.queryByText('Unholy Annex // Ritual Chamber')).not.toBeInTheDocument();
   });
 });
+
+describe('scry lines', () => {
+  it('badge scry events as Scry rather than a generic ability', () => {
+    const rows: GameTimelineRow[] = [
+      {
+        turn_number: 2,
+        phase: 'main',
+        step: null,
+        event_type: 'scry',
+        actor_role: 'player',
+        text: '[2:00] You: scried 2 — kept [Opt] on top, bottomed [Plains]',
+        text_segments: [
+          { kind: 'text', text: '[2:00] You: scried 2 — kept [' },
+          { kind: 'card', text: 'Opt', card_name: 'Opt' },
+          { kind: 'text', text: '] on top, bottomed [' },
+          { kind: 'card', text: 'Plains', card_name: 'Plains', card_type: 'Land' },
+          { kind: 'text', text: ']' },
+        ],
+        player_life: 20,
+        opponent_life: 20,
+      },
+    ];
+    render(<TimelineList rows={rows} showFilters={false} />);
+    const badge = screen.getByText('Scry');
+    expect(badge.className).toContain('timeline-chip-scry');
+    expect(screen.getByText(/scried 2/)).toBeTruthy();
+  });
+});

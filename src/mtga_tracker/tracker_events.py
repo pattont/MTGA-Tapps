@@ -296,7 +296,7 @@ class TrackerEventsMixin(
             return
 
         elif "AnnotationType_Scry" in ann_type:
-            self._handle_scry_annotation(affected_ids, card_obj)
+            self._handle_scry_annotation(annotation, game_objects_by_id)
             return
 
         if "AnnotationType_ZoneTransfer" in ann_type and self._known_zone_transfer_category(

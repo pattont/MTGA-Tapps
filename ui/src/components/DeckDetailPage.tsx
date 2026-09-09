@@ -837,7 +837,7 @@ export function DeckDetailPage({
     if (value == null) {
       return '—';
     }
-    if (key === 'land_replacement_pct') {
+    if (key === 'land_replacement_pct' || key === 'scry_bottom_pct') {
       return `${value}%`;
     }
     const drawn = drawnKey ? side?.[drawnKey] : null;
@@ -882,6 +882,11 @@ export function DeckDetailPage({
         ['Discarded', 'cards_discarded'],
         ['Milled', 'cards_milled'],
         ['Exiled', 'cards_exiled'],
+        ['Scries', 'scries'],
+        ['Cards scried', 'scry_cards'],
+        ['Scried to top', 'scry_top'],
+        ['Scried to bottom', 'scry_bottom'],
+        ['Bottom rate', 'scry_bottom_pct'],
       ],
     },
     {
@@ -1185,6 +1190,17 @@ export function DeckDetailPage({
         ) : (
           <p className="empty-state">No interaction telemetry recorded for this deck yet.</p>
         )}
+        {interaction?.bottomed_most && interaction.bottomed_most.length > 0 ? (
+          <p className="bottomed-most">
+            <span className="bottomed-most-label">Bottomed most when scrying:</span>{' '}
+            {interaction.bottomed_most.map((row, index) => (
+              <span key={row.display_name} className="bottomed-most-item">
+                {index > 0 ? ' · ' : ''}
+                <CardLink cardName={row.display_name} /> ×{row.count}
+              </span>
+            ))}
+          </p>
+        ) : null}
       </Section>
 
       <Section

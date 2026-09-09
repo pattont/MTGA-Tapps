@@ -1704,6 +1704,10 @@ _INTERACTION_STAT_COLUMNS = (
     "tokens_destroyed",
     "tokens_sacrificed",
     "tokens_exiled",
+    "scries",
+    "scry_cards",
+    "scry_top",
+    "scry_bottom",
 )
 
 
@@ -1743,6 +1747,12 @@ def _interaction_deck_profile(
             f"ROUND(100.0 * SUM({alias}.lands_replaced) / NULLIF(SUM({alias}.lands_lost), 0), 0)"
             f" AS {prefix}_land_replacement_pct"
         )
+        # Share of scried cards sent to the bottom: high = the deck is
+        # unhappy with its top, low = it keeps what it sees.
+        select_parts.append(
+            f"ROUND(100.0 * SUM({alias}.scry_bottom) / NULLIF(SUM({alias}.scry_cards), 0), 0)"
+            f" AS {prefix}_scry_bottom_pct"
+        )
     rows = _dict_rows(
         conn.execute(
             f"""
@@ -1766,12 +1776,78 @@ def _interaction_deck_profile(
         "counters_failed",
         "lands_unreplaced",
         "land_replacement_pct",
+        "scry_bottom_pct",
     ]
     return {
         "games_tracked": row["games_tracked"],
         "player": {key: row.get(f"p_{key}") for key in side_keys},
         "opponent": {key: row.get(f"o_{key}") for key in side_keys},
+        "bottomed_most": _deck_bottomed_most(conn, where, params),
     }
+
+
+def _game_library_events(conn: sqlite3.Connection, game_id: str) -> List[Dict[str, Any]]:
+    """Every scry (later: surveil) of one game, in order, with the player's
+    card names decoded; the opponent's rows carry counts only."""
+    try:
+        rows = _dict_rows(
+            conn.execute(
+                """
+                SELECT le.id, p.role, le.turn_number, le.kind, le.looked, le.kept_top,
+                       le.bottomed, le.to_graveyard, le.source_card,
+                       le.top_names, le.bottom_names
+                FROM game_library_events le
+                LEFT JOIN participants p ON p.id = le.participant_id
+                WHERE le.game_id = ?
+                ORDER BY le.id
+                """,
+                (game_id,),
+            )
+        )
+    except sqlite3.OperationalError:
+        return []
+    for row in rows:
+        for key in ("top_names", "bottom_names"):
+            raw = row.get(key)
+            try:
+                parsed = json.loads(raw) if raw else None
+            except (TypeError, ValueError):
+                parsed = None
+            row[key] = parsed if isinstance(parsed, list) else None
+    return rows
+
+
+def _deck_bottomed_most(
+    conn: sqlite3.Connection, where: str, params: List[Any], limit: int = 10
+) -> List[Dict[str, Any]]:
+    """The cards the player bottomed most often with this deck (from the
+    per-event scry rows, which carry names for the player's own scries)."""
+    counts: Dict[str, int] = {}
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT le.bottom_names
+            FROM game_library_events le
+            JOIN participants p ON p.id = le.participant_id AND p.role = 'player'
+            JOIN games g ON g.id = le.game_id
+            WHERE le.bottom_names IS NOT NULL AND {where}
+            """,
+            params,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    for (raw,) in rows:
+        try:
+            names = json.loads(raw or "[]")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(names, list):
+            continue
+        for name in names:
+            if isinstance(name, str) and name:
+                counts[name] = counts.get(name, 0) + 1
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return [{"display_name": name, "count": count} for name, count in ranked[:limit]]
 
 
 def _deck_mode_splits(match_rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -4132,7 +4208,11 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                   s.tokens_created,
                   s.tokens_destroyed,
                   s.tokens_sacrificed,
-                  s.tokens_exiled
+                  s.tokens_exiled,
+                  s.scries,
+                  s.scry_cards,
+                  s.scry_top,
+                  s.scry_bottom
                 FROM game_participant_stats s
                 JOIN participants p ON p.id = s.participant_id
                 WHERE s.game_id = ?
@@ -4141,6 +4221,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                 (game_id,),
             )
         )
+        library_events = _game_library_events(conn, game_id)
         opponent_colors = _opponent_color_letters(conn, game_id, opponent_participant_id)
         # Multi-account machines: flag which account played this game (shown
         # in the UI only when more than one account exists in the database).
@@ -4274,6 +4355,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         "opponent": opponent_payload,
         "annotation": annotation,
         "participant_stats": participant_stats,
+        "library_events": library_events,
         "opening_hand": opening_hand,
         "mulligan_hands": mulligan_hands,
         "drawn": drawn,

@@ -3357,3 +3357,51 @@ def test_combat_profile_covers_every_deck_not_just_the_first_forty(tmp_path):
     assert profiles["Deck 59"] == "Aggro"  # 20 damage over 5 turns
     play_draw_decks = {row["deck_name"] for row in snapshot["deck_play_draw"]}
     assert "Deck 59" in play_draw_decks
+
+
+def test_scry_totals_reach_the_game_and_deck_pages(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "update game_participant_stats set removal_played = 0, "
+            "scries = 2, scry_cards = 3, scry_top = 1, scry_bottom = 2 "
+            "where game_id = 'game-1' and participant_id = 'player-1'"
+        )
+        conn.execute(
+            "update game_participant_stats set scries = 1, scry_cards = 1, scry_top = 1, scry_bottom = 0 "
+            "where game_id = 'game-1' and participant_id = 'opponent-1'"
+        )
+        conn.executemany(
+            "insert into game_library_events (game_id, participant_id, turn_number, event_time, kind, "
+            "looked, kept_top, bottomed, to_graveyard, source_card, top_names, bottom_names) "
+            "values (?, ?, ?, ?, 'scry', ?, ?, ?, 0, ?, ?, ?)",
+            [
+                ("game-1", "player-1", 2, "2026-06-05T00:02:00", 2, 1, 1, "Opt",
+                 json.dumps(["Monastery Swiftspear"]), json.dumps(["Mountain"])),
+                ("game-1", "player-1", 5, "2026-06-05T00:05:00", 1, 0, 1, "Opt",
+                 json.dumps([]), json.dumps(["Mountain"])),
+                ("game-1", "opponent-1", 3, "2026-06-05T00:03:00", 1, 1, 0, None, None, None),
+            ],
+        )
+
+    game = game_detail(db_path, "game-1")
+    player = next(row for row in game["participant_stats"] if row["role"] == "player")
+    assert (player["scries"], player["scry_cards"], player["scry_top"], player["scry_bottom"]) == (
+        2, 3, 1, 2,
+    )
+    opponent = next(row for row in game["participant_stats"] if row["role"] == "opponent")
+    assert (opponent["scry_cards"], opponent["scry_top"], opponent["scry_bottom"]) == (1, 1, 0)
+    events = game["library_events"]
+    assert [event["role"] for event in events] == ["player", "player", "opponent"]
+    assert events[0]["top_names"] == ["Monastery Swiftspear"]
+    assert events[0]["bottom_names"] == ["Mountain"]
+    assert events[2]["top_names"] is None  # opponent: counts only
+
+    deck = deck_detail(db_path, "Boros Mouse")
+    interaction = deck["interaction_profile"]
+    you = interaction["player"]
+    # game-1 is the only game with the columns filled; game-2 is NULL (untracked).
+    assert (you["scries"], you["scry_cards"], you["scry_top"], you["scry_bottom"]) == (2, 3, 1, 2)
+    assert you["scry_bottom_pct"] == 67  # 2 of 3 scried cards went under
+    assert interaction["opponent"]["scry_bottom_pct"] == 0
+    assert interaction["bottomed_most"] == [{"display_name": "Mountain", "count": 2}]
