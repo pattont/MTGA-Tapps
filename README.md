@@ -1,14 +1,28 @@
+<p align="center">
+  <a href="https://tappstracker.com">
+    <img src="docs/images/hero.png" alt="Tapps Tracker — track every MTG Arena game, entirely on your machine" width="760">
+  </a>
+</p>
+
+<h3 align="center"><a href="https://tappstracker.com">tappstracker.com</a></h3>
+
+<p align="center">
+  Downloads for macOS and Windows, the full feature tour, and the changelog —
+  free, open source, no account, no cloud.
+</p>
+
+<p align="center">
+  <a href="../../releases"><img src="https://img.shields.io/badge/download-latest%20release-2ea44f" alt="Download the latest release"></a>
+  <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows-lightgrey" alt="Platforms">
+  <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License: AGPL-3.0">
+  <a href="https://discord.gg/ExfW3HaZgb"><img src="https://img.shields.io/badge/discord-join%20the%20community-5865F2" alt="Join the Discord"></a>
+</p>
+
 # Tapps Tracker
 
-**Track your Magic: The Gathering Arena games — entirely on your machine.**
-
 A real-time tracker that tails Arena's `Player.log`, a SQLite analytics store,
-and a full React dashboard. No account, no cloud, no uploads: your games, your
-data, your disk.
-
-![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)
-![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)
-![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows-lightgrey)
+a full React dashboard, and an in-game overlay. No account, no cloud, no
+uploads: your games, your data, your disk.
 
 > 💬 **Join the community on [Discord](https://discord.gg/ExfW3HaZgb)** — for
 > discussion, bug reports, and feature requests.
@@ -27,7 +41,11 @@ commander), the turn clock, session record, today's games, and a play-by-play
 feed that reads exactly like the per-game timeline — no separate window to
 manage. Between games the previous game's final scoreboard stays up until the
 next match starts.
-Prefer a terminal? The same tracker runs as a plain console command.
+
+**In-game overlay.** A slim rail docked beside Arena with the turn, the odds
+your next draw is a land, and cards left in your library — opening into a
+panel with your whole decklist and the chance of drawing each card next. On
+from the first launch, in every game mode, and it reads only the tracker.
 
 **Deck analytics.** Every deck gets a drill-down page tinted with its signature
 card's art: per-game combat and resource averages for both players, turn-pace
@@ -77,10 +95,9 @@ the Live Scoreboard shows your lifetime record against the commander across
 the table. Starting life and command-zone recasts are handled; Brawl is
 recognized from Arena's match format, never from deck size.
 
-**Deck Finder.** A bundled companion tool that browses current decklists from
-creators and sites (Moxfield, AetherHub, TCGplayer, magic.gg, MTGO, Untapped)
-and copies any list straight to your clipboard in Arena import format. Launch
-it from the menu bar or the dashboard sidebar.
+**Deck Finder.** Browse current decklists from creators and sites (Moxfield,
+AetherHub, TCGplayer, magic.gg, MTGO, Untapped) right inside the dashboard and
+copy any list to your clipboard in Arena import format.
 
 **The long game.** Match-level records (a Bo3 counts once, like the ladder
 does), win-rate trends, How Games End with per-reason percentages — concedes,
@@ -89,6 +106,50 @@ stats beside the rank chart, session habits and fatigue splits, format
 breakdowns, and a database health audit that can repair its own
 inconsistencies. Recorded timelines mean new tracker features retroactively
 backfill your old games.
+
+## In-game overlay
+
+A small always-on-top window docked beside Arena, on from the first launch.
+Turn it off (or back on) from **Settings → In-game overlay** or the
+menu-bar icon.
+
+### The rail
+
+<table>
+<tr>
+<td><img src="docs/images/overlay-rail.png" alt="The overlay's rail" height="300"></td>
+<td>
+What it shows at rest: the <b>turn</b>, the chance that your next <b>draw is a land</b>, and how much of your <b>deck</b> is left (the bar goes yellow once half the deck is gone, red under 15 cards).
+<br><br>
+The arrow opens the panel; the ⚙ opens the settings beside the rail.
+</td>
+</tr>
+</table>
+
+### The panel
+
+<img src="docs/images/overlay-panel.png" alt="The overlay's panel with a hovered card" width="560">
+
+Your full decklist with copies left and the chance of drawing each card
+next, land-drop odds for the next one, two and three draws, and a Play/Draw
+pill. Sort by odds, mana value or name. Hover a row and the card appears
+beside the panel with its next-draw, within-2 and within-3 odds. Lands fold
+into one row, the sideboard is a row, and in Brawl the cards already drawn
+collapse into a **Drawn** group. When the game ends the final library stays
+up, marked **FINAL**, until you leave the results screen.
+
+Pin the panel to keep it out, or leave it unpinned and the rail unfolds it on
+hover and folds it back a few seconds after the cursor leaves. Scale,
+opacity, dock side, max height, hotkeys (`Alt+Shift+T` / `⌥⇧T` toggles,
+`Alt+Shift+H` / `⌥⇧H` hides) and a **Restore defaults** button live in its ⚙
+menu. It appears only while Arena is running, on Arena's screen, and works
+in every game — including the practice and event modes the tracker doesn't
+save.
+
+It reads only this tracker's local `GET /api/overlay` (card images come from
+Scryfall), never Arena's memory or screen. **Arena in exclusive fullscreen
+covers every overlay; use windowed or borderless.** It is a separate ~5 MB
+native app (Tauri) shipped inside the tracker.
 
 ## Screenshots
 
@@ -140,43 +201,23 @@ name opening a page with your full history against them:
 >
 > ![Enable Detailed Logs (Plugin Support) under Account in MTG Arena's options](docs/images/detailed-logs-setting.png)
 
-**Install the app** (recommended): grab the installer for your OS from the
+**Install the app:** grab the installer for your OS from
+[tappstracker.com](https://tappstracker.com) or the
 [Releases page](../../releases) — on Windows, `MTGA-Tracker-<version>-setup.exe`
 gives you a Start Menu entry, an Apps & Features uninstaller, and in-place
 upgrades (a portable `-windows.zip` is also published); on macOS, a
-drag-to-Applications DMG. The Deck Finder is bundled inside the app on both
-platforms — one install gets you everything. Or build it yourself —
+drag-to-Applications DMG. One install gets you everything: the tracker, the
+dashboard, the in-game overlay, and the Deck Finder. The builds are unsigned,
+so expect a one-time Gatekeeper / SmartScreen prompt —
+[QUICKSTART.md](QUICKSTART.md) walks through it.
 
-```bash
-# macOS app / DMG
-scripts/build_macos_app.sh          # dist/MTGA Tracker.app
-scripts/build_macos_installer.sh    # dist/MTGA-Tracker.dmg
-```
-
-```powershell
-# Windows exe / zip
-powershell -ExecutionPolicy Bypass -File scripts\build_windows_app.ps1
-```
-
-**Or run from source:**
-
-```bash
-python3 -m venv venv && source venv/bin/activate
-pip install -e '.[dev,gui]'
-mtga-tracker-app        # tracker + dashboard (with the live Scoreboard), one command
-```
-
-See [QUICKSTART.md](QUICKSTART.md) for the full walkthrough, including the
-Gatekeeper/SmartScreen note for unsigned alpha builds.
+Then launch it, play a game, and open the dashboard from the menu-bar / tray
+icon. Prefer to build it or run it from source? See
+[Command-line tools](#command-line-tools) at the bottom.
 
 ## The dashboard
 
-`mtga-tracker-app` serves and opens it automatically; standalone:
-
-```bash
-cd ui && npm install && npm run build && cd ..
-venv/bin/python -m mtga_tracker.dashboard        # http://127.0.0.1:8765
-```
+`mtga-tracker-app` serves it and opens it in your browser automatically.
 
 | Route | What you get |
 | --- | --- |
@@ -197,51 +238,11 @@ JSON API: `GET /api/snapshot`, `/api/live`, `/api/overlay`, `/api/deck`,
 `POST /api/game/annotation` (your per-game notes and tags) and the Settings
 page's own `POST /api/settings/*`.
 
-Port busy? `--port 8766`. Lost the terminal? `lsof -ti tcp:8765 | xargs kill`.
-
-## Command-line tools
-
-| Command | Purpose |
-| --- | --- |
-| `mtga-tracker` | Console tracker only |
-| `mtga-tracker-app --no-gui` | Tracker + dashboard without the menu bar |
-| `python -m mtga_tracker.db_audit [--repair]` | Database consistency audit / safe self-repair |
-| `python -m mtga_tracker.draw_quality --card "Llanowar Elves"` | Draw-quality & flood/screw report |
-| `python -m mtga_tracker.payload_dump <game_id>` | Print a game's archived raw payloads as JSON |
-
-Ready-made SQL reports live in [`data/_queries/`](data/_queries/README.md):
-
-```bash
-sqlite3 data/mtga_tracker.sqlite3 < data/_queries/WinRateByDeck.sql
-```
-
-## AI deck identification (optional)
-
-With an API key, the tracker makes exactly one small request per completed
-game and names the opponent's deck — the Game Detail page shows it as the
-Opponent Deck Type, falling back to plain colors when there's no guess. The
-call runs in the background after the game ends (and only when at least three
-opponent cards were revealed), so tracking never waits on it.
-
-What leaves your machine is only the names of the cards your opponent
-revealed in that game — never your deck, your account, or your log. Nothing
-else uses the key: the live scoreboard's colors come from Arena's local card
-database, and its mid-game deck label is a local guess that reuses names
-from earlier games.
-
-Configure it on the dashboard's **Settings** page (gear icon, top right — or
-the "Settings" menu-bar entry): enable, pick a provider (OpenAI, Anthropic, or
-Gemini), paste your key, optionally set a model. The Settings page also holds
-your Deck Finder creators, a tracker-status readout, and the Database Health
-link. The choice is saved to `settings.json` at the top level of the project
-folder (installed builds keep it in the app data folder), and your key is only
-ever sent to the provider you chose. Without a key the feature simply stays off.
-
 ## Deck Finder
 
-The Deck Finder now lives **right inside the dashboard** — open it from the
-"Deck Finder" button at the bottom of the sidebar or the menu bar entry (no
-separate terminal window anymore). Pick a site (AetherHub, magic.gg, Moxfield,
+The Deck Finder lives **right inside the dashboard** — open it from the
+"Deck Finder" button at the bottom of the sidebar or the menu bar entry. Pick
+a site (AetherHub, magic.gg, Moxfield,
 MTGO, TCGplayer, or untapped.gg) and a format, and it lists matching decks in a
 table tuned to each site — win rates and matches for untapped.gg archetypes,
 event placings for tournament sites, and so on. Open any deck to see its list,
@@ -282,50 +283,27 @@ The memory-extraction technique is adapted from
 — full credit to them for working out how to find the collection in Arena's
 process memory.
 
-## In-game overlay
+## AI deck identification (optional)
 
-A small always-on-top window docked beside Arena, on from the first launch.
-Turn it off (or back on) from **Settings → In-game overlay** or the
-menu-bar icon.
+With an API key, the tracker makes exactly one small request per completed
+game and names the opponent's deck — the Game Detail page shows it as the
+Opponent Deck Type, falling back to plain colors when there's no guess. The
+call runs in the background after the game ends (and only when at least three
+opponent cards were revealed), so tracking never waits on it.
 
-### The rail
+What leaves your machine is only the names of the cards your opponent
+revealed in that game — never your deck, your account, or your log. Nothing
+else uses the key: the live scoreboard's colors come from Arena's local card
+database, and its mid-game deck label is a local guess that reuses names
+from earlier games.
 
-<table>
-<tr>
-<td><img src="docs/images/overlay-rail.png" alt="The overlay's rail" height="300"></td>
-<td>
-What it shows at rest: the <b>turn</b>, the chance that your next <b>draw is a land</b>, and how much of your <b>deck</b> is left (the bar goes yellow once half the deck is gone, red under 15 cards).
-<br><br>
-The arrow opens the panel; the ⚙ opens the settings beside the rail.
-</td>
-</tr>
-</table>
-
-### The panel
-
-<img src="docs/images/overlay-panel.png" alt="The overlay's panel with a hovered card" width="560">
-
-Your full decklist with copies left and the chance of drawing each card
-next, land-drop odds for the next one, two and three draws, and a Play/Draw
-pill. Sort by odds, mana value or name. Hover a row and the card appears
-beside the panel with its next-draw, within-2 and within-3 odds. Lands fold
-into one row, the sideboard is a row, and in Brawl the cards already drawn
-collapse into a **Drawn** group. When the game ends the final library stays
-up, marked **FINAL**, until you leave the results screen.
-
-Pin the panel to keep it out, or leave it unpinned and the rail unfolds it on
-hover and folds it back a few seconds after the cursor leaves. Scale,
-opacity, dock side, max height, hotkeys (`Alt+Shift+T` / `⌥⇧T` toggles,
-`Alt+Shift+H` / `⌥⇧H` hides) and a **Restore defaults** button live in its ⚙
-menu. It appears only while Arena is running, on Arena's screen, and works
-in every game — including the practice and event modes the tracker doesn't
-save.
-
-It reads only this tracker's local `GET /api/overlay` (card images come from
-Scryfall), never Arena's memory or screen. **Arena in exclusive fullscreen
-covers every overlay; use windowed or borderless.** It is a separate ~5 MB
-native app (Tauri) shipped inside the tracker; building from source needs
-Rust (`scripts/build_overlay.sh`).
+Configure it on the dashboard's **Settings** page (gear icon, top right — or
+the "Settings" menu-bar entry): enable, pick a provider (OpenAI, Anthropic, or
+Gemini), paste your key, optionally set a model. The Settings page also holds
+your Deck Finder creators, a tracker-status readout, and the Database Health
+link. The choice is saved to `settings.json` at the top level of the project
+folder (installed builds keep it in the app data folder), and your key is only
+ever sent to the provider you chose. Without a key the feature simply stays off.
 
 ## What isn't tracked
 
@@ -361,7 +339,7 @@ install, override with `MTGA_DATA_DIR`).
 Where things live:
 
 - Arena log — `~/Library/Logs/Wizards Of The Coast/MTGA/Player.log` (macOS),
-  `%APPDATA%\LocalLow\Wizards Of The Coast\MTGA\Player.log` (Windows)
+  `%USERPROFILE%\AppData\LocalLow\Wizards Of The Coast\MTGA\Player.log` (Windows)
 - Source runs — `data/mtga_tracker.sqlite3`, with `settings.json` and
   `deckfinder_config.json` at the top level of the project folder
 - Installed builds — `~/Library/Application Support/MTGA Tracker` (macOS),
@@ -369,6 +347,54 @@ Where things live:
 
 Don't run the source and installed trackers at the same time, and never copy a
 live database while a tracker owns it — use SQLite's backup API for migrations.
+
+## Command-line tools
+
+Everything above runs from the menu-bar / tray app; all of it is also
+available from a terminal.
+
+**Run from source:**
+
+```bash
+python3 -m venv venv && source venv/bin/activate
+pip install -e '.[dev,gui]'
+mtga-tracker-app        # tracker + dashboard (with the Live Scoreboard), one command
+```
+
+| Command | Purpose |
+| --- | --- |
+| `mtga-tracker-app` | Menu-bar / tray app: tracker + dashboard + overlay |
+| `mtga-tracker-app --no-gui` | Tracker + dashboard in one terminal, no menu bar |
+| `mtga-tracker` | Console tracker only |
+| `python -m mtga_tracker.dashboard` | Dashboard only (`http://127.0.0.1:8765`; build `ui/` first: `cd ui && npm install && npm run build`) |
+| `python -m mtga_deck_downloader` | The Deck Finder as a terminal UI (installed builds: `MTGA Tracker --deck-finder`) |
+| `python -m mtga_tracker.db_audit [--repair]` | Database consistency audit / safe self-repair |
+| `python -m mtga_tracker.draw_quality --card "Llanowar Elves"` | Draw-quality & flood/screw report |
+| `python -m mtga_tracker.payload_dump <game_id>` | Print a game's archived raw payloads as JSON |
+
+Port busy? `--port 8766`. Lost the terminal? `lsof -ti tcp:8765 | xargs kill`.
+
+Ready-made SQL reports live in [`data/_queries/`](data/_queries/README.md):
+
+```bash
+sqlite3 data/mtga_tracker.sqlite3 < data/_queries/WinRateByDeck.sql
+```
+
+**Build the installers yourself:**
+
+```bash
+# macOS app / DMG
+scripts/build_macos_app.sh          # dist/MTGA Tracker.app
+scripts/build_macos_installer.sh    # dist/MTGA-Tracker.dmg
+```
+
+```powershell
+# Windows exe / zip / setup.exe
+powershell -ExecutionPolicy Bypass -File scripts\build_windows_app.ps1
+```
+
+Both include the in-game overlay, which needs Rust
+(`scripts/build_overlay.sh` / `.ps1` build it on its own).
 
 ## Development
 
