@@ -19,10 +19,10 @@ interface HoverCard {
   bottom: number;
 }
 
-/** Height of the hover card: the card image (250 wide at 488:680) plus the odds block. */
-const HOVER_CARD_HEIGHT = 348 + 98;
-/** The hover card hides itself this long after the last row it was shown for. */
-export const HOVER_LINGER_MS = 2500;
+/** Width of the hover card: the gutter less its margins. */
+export const HOVER_CARD_WIDTH = 270;
+/** Height of the hover card: the card image (HOVER_CARD_WIDTH wide at 488:680) plus the odds block. */
+const HOVER_CARD_HEIGHT = Math.round((HOVER_CARD_WIDTH * 680) / 488) + 112;
 /** The minimised rail draws a step larger than the panel at the same Scale setting. */
 export const RAIL_BOOST = 1.2;
 
@@ -33,7 +33,7 @@ export function hoverCardTop(rowTop: number, _rowBottom: number, viewportHeight:
 
 /** Scryfall's image for a card by exact name (the front face of a double-faced card). */
 export function cardImageUrl(name: string): string {
-  return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}&format=image&version=normal`;
+  return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}&format=image&version=large`;
 }
 
 function verticalPadding(element: HTMLElement | null): number {
@@ -91,6 +91,8 @@ export function App() {
   const [link, setLink] = useState<Link>('connecting');
   const [sort, setSort] = useState<SortKey>('odds');
   const [hover, setHover] = useState<HoverCard | null>(null);
+  /** The cursor over the page, as the shell sees it (null when off the window). */
+  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
   const [flyout, setFlyout] = useState(false);
   const [sideboardOpen, setSideboardOpen] = useState(false);
 
@@ -123,6 +125,9 @@ export function App() {
         }),
         // Settings open beside whatever is showing — the rail stays a rail.
         await tauri.listen<void>('overlay-open-settings', () => setFlyout(true)),
+        // Hovering is the shell's to report: WebKit gives this never-focused
+        // window no mouse-move events until it is clicked.
+        await tauri.listen<{ x: number; y: number } | null>('overlay-cursor', (point) => setCursor(point)),
       );
     })();
     return () => {
@@ -279,30 +284,15 @@ export function App() {
     void tauri.invoke('set_page_open', { flyout, sideboard: sideboardOpen });
   }, [flyout, sideboardOpen]);
 
-  const onPointerLeave = useCallback(() => setHover(null), []);
-
   // --- hover card ----------------------------------------------------------
-  // Shown for the row under the cursor and gone HOVER_LINGER_MS after the
-  // last row it was shown for: mouseleave is not reliable in this window,
-  // so the card must not depend on it to go away.
-  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Shown for the row under the shell-reported cursor and gone the moment
+  // the cursor is off it (the panel hit-tests and calls this either way).
   const onHover = useCallback((row: Row | null, box: { top: number; bottom: number } | null) => {
-    if (hoverTimer.current) {
-      clearTimeout(hoverTimer.current);
-      hoverTimer.current = null;
-    }
-    if (row && box) {
-      setHover({ row, top: box.top, bottom: box.bottom });
-      hoverTimer.current = setTimeout(() => {
-        hoverTimer.current = null;
-        setHover(null);
-      }, HOVER_LINGER_MS);
-    } else {
-      setHover(null);
-    }
-  }, []);
-  useEffect(() => () => {
-    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    setHover((current) => {
+      if (!row || !box) return current === null ? current : null;
+      if (current && current.row.key === row.key && current.top === box.top) return current;
+      return { row, top: box.top, bottom: box.bottom };
+    });
   }, []);
 
   const hoverStyle = useMemo(() => {
@@ -329,7 +319,6 @@ export function App() {
       ref={rootRef}
       class={`root ${dockClass} ${layout.layout === 'panel' ? 'is-panel' : 'is-rail'} ${(layout.layout === 'panel' ? settings.opacity : settings.railOpacity) > 0 ? 'has-bg' : 'no-bg'} names-${settings.nameColor}`}
       style={{ '--tint-alpha': tintAlpha(settings.opacity), '--rail-alpha': tintAlpha(settings.railOpacity), '--scale': (settings.scale / 100) * (layout.layout === 'rail' ? RAIL_BOOST : 1), '--rail-boost': RAIL_BOOST } as never}
-      onMouseLeave={onPointerLeave}
     >
       {layout.layout === 'panel' ? (
         <>
@@ -346,6 +335,7 @@ export function App() {
             onOpenSettings={() => setFlyout((v) => !v)}
             onDragStart={dragStart}
             onHover={onHover}
+            cursor={cursor}
             sideboardOpen={sideboardOpen}
             onToggleSideboard={() => setSideboardOpen((v) => !v)}
           />

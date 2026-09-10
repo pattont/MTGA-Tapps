@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import { buildSections, formatPct, formatWhole, oddsTone, shortFormat, showsLibrary, typeClass, type Row } from '../model';
 import type { Link, OverlayPayload, Settings, SortKey } from '../types';
 import { Chevron, Gear, Pin } from './Icons';
@@ -24,6 +24,10 @@ interface Props {
   onOpenSettings: () => void;
   onDragStart: (event: MouseEvent) => void;
   onHover: (row: Row | null, box: { top: number; bottom: number } | null) => void;
+  /** Where the shell says the cursor is over the page (CSS px), or null when
+      it is off the window. Hovering is driven from here, not from mouse
+      events, which this never-focused window does not get until clicked. */
+  cursor: { x: number; y: number } | null;
   sideboardOpen: boolean;
   onToggleSideboard: () => void;
 }
@@ -40,17 +44,10 @@ export function deckColors(cards: { mana_cost: string | null }[]): string[] {
   return ['W', 'U', 'B', 'R', 'G'].filter((c) => letters.has(c));
 }
 
-function CardRow({ row, exhausted, onHover, sub }: { row: Row; exhausted: boolean; onHover: Props['onHover']; sub?: boolean }) {
+function CardRow({ row, exhausted, hot, sub }: { row: Row; exhausted: boolean; hot: boolean; sub?: boolean }) {
   const tone = row.left > 0 ? oddsTone(row.odds['1']) : 'cold';
   return (
-    <div
-      class={`row${exhausted ? ' dim' : ''}${sub ? ' sub' : ''}`}
-      onMouseEnter={(event) => {
-        const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-        onHover(row, { top: rect.top, bottom: rect.bottom });
-      }}
-      onMouseLeave={() => onHover(null, null)}
-    >
+    <div class={`row${exhausted ? ' dim' : ''}${sub ? ' sub' : ''}${hot ? ' hot' : ''}`} data-key={row.key}>
       <span class="body">
         <span class={`nm ${typeClass(row.type_category)}`} title={row.name}>
           {row.name}
@@ -68,10 +65,30 @@ function CardRow({ row, exhausted, onHover, sub }: { row: Row; exhausted: boolea
 }
 
 export function Panel(props: Props) {
-  const { payload, link, settings, pinned, sort, onSort, onCollapse, onTogglePin, onOpenSettings, onDragStart, onHover, sideboardOpen, onToggleSideboard } = props;
+  const { payload, link, settings, pinned, sort, onSort, onCollapse, onTogglePin, onOpenSettings, onDragStart, onHover, cursor, sideboardOpen, onToggleSideboard } = props;
   const state = payload?.state ?? null;
   const offline = link !== 'online' || payload?.tracker.state === 'offline';
   const sections = useMemo(() => (state ? buildSections(state, sort, settings.lands) : null), [state, sort, settings.lands]);
+  // The row under the shell-reported cursor: highlighted here, and reported
+  // up for the hover card. Gone the moment the cursor is off it.
+  const [hotKey, setHotKey] = useState<string | null>(null);
+  useEffect(() => {
+    const rowsByKey = new Map<string, Row>();
+    if (sections) {
+      for (const list of [sections.spells, sections.lands, sections.drawn]) for (const row of list) rowsByKey.set(row.key, row);
+    }
+    const hit = cursor && typeof document !== 'undefined' ? document.elementFromPoint(cursor.x, cursor.y) : null;
+    const el = hit instanceof Element ? hit.closest<HTMLElement>('.row[data-key]') : null;
+    const row = el ? rowsByKey.get(el.dataset.key ?? '') ?? null : null;
+    if (row && el) {
+      const rect = el.getBoundingClientRect();
+      setHotKey(row.key);
+      onHover(row, { top: rect.top, bottom: rect.bottom });
+    } else {
+      setHotKey(null);
+      onHover(null, null);
+    }
+  }, [cursor, sections, onHover]);
   const [showDrawn, setShowDrawn] = useState(false);
   // Lands fold into one row (total + next-draw %) until opened.
   const [landsOpen, setLandsOpen] = useState(false);
@@ -167,7 +184,7 @@ export function Panel(props: Props) {
           <div class="list">
             <div class="list-body">
             {sections?.spells.map((row) => (
-              <CardRow key={row.key} row={row} exhausted={row.left === 0} onHover={onHover} />
+              <CardRow key={row.key} row={row} exhausted={row.left === 0} hot={hotKey === row.key} />
             ))}
             {sections && sections.lands.length > 0 ? (
               <button
@@ -193,14 +210,14 @@ export function Panel(props: Props) {
               </button>
             ) : null}
             {landsOpen
-              ? sections?.lands.map((row) => <CardRow key={row.key} row={row} exhausted={row.left === 0} onHover={onHover} sub />)
+              ? sections?.lands.map((row) => <CardRow key={row.key} row={row} exhausted={row.left === 0} hot={hotKey === row.key} sub />)
               : null}
             {sections && sections.drawn.length > 0 ? (
               <>
                 <button type="button" class="grp grp-toggle" onClick={() => setShowDrawn((v) => !v)} aria-expanded={showDrawn}>
                   Drawn ({sections.drawn.length}) <Chevron dir={showDrawn ? 'down' : 'right'} />
                 </button>
-                {showDrawn ? sections.drawn.map((row) => <CardRow key={row.key} row={row} exhausted onHover={onHover} />) : null}
+                {showDrawn ? sections.drawn.map((row) => <CardRow key={row.key} row={row} exhausted hot={hotKey === row.key} />) : null}
               </>
             ) : null}
             {sideboardCount > 0 ? (

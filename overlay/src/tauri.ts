@@ -70,7 +70,19 @@ function browserShell(): Shell {
           return undefined as T;
       }
     },
-    async listen() {
+    async listen<T>(event: string, handler: (payload: T) => void) {
+      // The shell reports the cursor to the page; in a browser the mouse
+      // events it stands in for are available directly.
+      if (event === 'overlay-cursor' && typeof window !== 'undefined') {
+        const move = (e: MouseEvent) => handler({ x: e.clientX, y: e.clientY } as T);
+        const leave = () => handler(null as T);
+        window.addEventListener('mousemove', move);
+        document.documentElement.addEventListener('mouseleave', leave);
+        return () => {
+          window.removeEventListener('mousemove', move);
+          document.documentElement.removeEventListener('mouseleave', leave);
+        };
+      }
       return () => undefined;
     },
     async startDragging() {

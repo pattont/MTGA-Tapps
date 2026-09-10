@@ -701,9 +701,13 @@ fn set_page_open(app: AppHandle, flyout: bool, sideboard: bool) {
 /// gutter beside the panel does not count (it is the board) unless the
 /// sideboard is flown out into it. Compared in logical coordinates: on
 /// macOS the cursor and the window can be scaled by different monitors.
-fn cursor_over_overlay(window: &WebviewWindow, layout: Layout, dock: Dock, scale_pct: u32, whole_window: bool) -> bool {
+/// The cursor's position inside the window, in the window's logical
+/// pixels (the page's CSS pixels), or None when it is outside. Compared in
+/// logical coordinates: on macOS the cursor and the window can be scaled
+/// by different monitors.
+fn cursor_in_window(window: &WebviewWindow) -> Option<(f64, f64)> {
     let (Ok(cursor), Ok(position), Ok(size)) = (window.cursor_position(), window.outer_position(), window.outer_size()) else {
-        return false;
+        return None;
     };
     let window_scale = window.scale_factor().unwrap_or(1.0);
     let cursor_scale = window
@@ -713,17 +717,37 @@ fn cursor_over_overlay(window: &WebviewWindow, layout: Layout, dock: Dock, scale
         .map(|m| m.scale_factor())
         .unwrap_or(window_scale);
     let (cx, cy) = (cursor.x / cursor_scale, cursor.y / cursor_scale);
-    let (mut x0, y0) = (position.x as f64 / window_scale, position.y as f64 / window_scale);
-    let (mut x1, y1) = (x0 + size.width as f64 / window_scale, y0 + size.height as f64 / window_scale);
-    if layout == Layout::Panel && !whole_window {
-        let gutter = dock::PANEL_GUTTER as f64 * scale_pct.clamp(50, 200) as f64 / 100.0;
-        // The gutter sits on the board side: right of a left-docked panel, left otherwise.
-        match dock {
-            Dock::Left => x1 -= gutter,
-            Dock::Right | Dock::Float => x0 += gutter,
-        }
+    let (x0, y0) = (position.x as f64 / window_scale, position.y as f64 / window_scale);
+    let (w, h) = (size.width as f64 / window_scale, size.height as f64 / window_scale);
+    let (rx, ry) = (cx - x0, cy - y0);
+    (rx >= 0.0 && rx < w && ry >= 0.0 && ry < h).then_some((rx, ry))
+}
+
+/// Is the cursor over the overlay? In the panel layout the transparent
+/// gutter beside the panel does not count (it is the board) unless the
+/// sideboard or the settings are flown out into it.
+fn cursor_over_overlay(window: &WebviewWindow, point: Option<(f64, f64)>, layout: Layout, dock: Dock, scale_pct: u32, whole_window: bool) -> bool {
+    let Some((rx, _)) = point else { return false };
+    if layout != Layout::Panel || whole_window {
+        return true;
     }
-    cx >= x0 && cx < x1 && cy >= y0 && cy < y1
+    let Ok(size) = window.outer_size() else { return false };
+    let width = size.width as f64 / window.scale_factor().unwrap_or(1.0);
+    let gutter = dock::PANEL_GUTTER as f64 * scale_pct.clamp(50, 200) as f64 / 100.0;
+    // The gutter sits on the board side: right of a left-docked panel, left otherwise.
+    match dock {
+        Dock::Left => rx < width - gutter,
+        Dock::Right | Dock::Float => rx >= gutter,
+    }
+}
+
+/// Where the cursor is over the page, for the page's own hover handling:
+/// WebKit does not deliver mouse-move events to this never-key window
+/// until it is clicked, so the page cannot see hovering on its own.
+#[derive(Clone, Copy, PartialEq, serde::Serialize)]
+struct CursorPoint {
+    x: i32,
+    y: i32,
 }
 
 fn start_cursor_watch(app: AppHandle) {
@@ -732,6 +756,7 @@ fn start_cursor_watch(app: AppHandle) {
         .spawn(move || {
             let mut inside_since: Option<std::time::Instant> = None;
             let mut outside_since: Option<std::time::Instant> = None;
+            let mut last_point: Option<Option<CursorPoint>> = None;
             loop {
                 std::thread::sleep(CURSOR_POLL);
                 let Some(window) = app.get_webview_window(MAIN_WINDOW) else { continue };
@@ -757,7 +782,19 @@ fn start_cursor_watch(app: AppHandle) {
                     continue;
                 }
                 let now = std::time::Instant::now();
-                let inside = cursor_over_overlay(&window, layout, dock, scale, flyout || sideboard);
+                let point = cursor_in_window(&window);
+                // The page hit-tests the panel's rows itself; tell it where
+                // the cursor is whenever that changes (and once when it leaves).
+                let page_point = if layout == Layout::Panel {
+                    point.map(|(x, y)| CursorPoint { x: x.round() as i32, y: y.round() as i32 })
+                } else {
+                    None
+                };
+                if last_point != Some(page_point) {
+                    last_point = Some(page_point);
+                    let _ = app.emit("overlay-cursor", page_point);
+                }
+                let inside = cursor_over_overlay(&window, point, layout, dock, scale, flyout || sideboard);
                 if inside {
                     outside_since = None;
                     inside_since.get_or_insert(now);

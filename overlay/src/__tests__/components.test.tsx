@@ -25,6 +25,7 @@ function panelProps(overrides: Partial<Parameters<typeof Panel>[0]> = {}) {
     onOpenSettings: noop,
     onDragStart: noop,
     onHover: noop,
+    cursor: null,
     sideboardOpen: false,
     onToggleSideboard: noop,
     ...overrides,
@@ -86,17 +87,11 @@ describe('Panel', () => {
     expect(container.querySelectorAll('.row.dim').length).toBe(3);
   });
 
-  it('shows every land and reports hover boxes', () => {
-    const onHover = vi.fn();
-    const { container } = render(<Panel {...panelProps({ settings: { ...defaultSettings(), lands: 'all' }, onHover })} />);
+  it('shows every land when asked', () => {
+    render(<Panel {...panelProps({ settings: { ...defaultSettings(), lands: 'all' } })} />);
     fireEvent.click(screen.getByRole('button', { name: /^Lands,/ }));
     expect(screen.getByText('Mountain')).toBeTruthy();
     expect(screen.getByText('Rockface Village')).toBeTruthy();
-    const row = container.querySelector('.row') as HTMLElement;
-    fireEvent.mouseEnter(row);
-    expect(onHover).toHaveBeenCalledWith(expect.objectContaining({ name: expect.any(String) }), expect.objectContaining({ top: expect.any(Number) }));
-    fireEvent.mouseLeave(row);
-    expect(onHover).toHaveBeenLastCalledWith(null, null);
   });
 
   it('offers the sideboard as a row when the deck has one', () => {
@@ -169,9 +164,10 @@ describe('App helpers', () => {
     expect(hoverSide('right')).toBe('left');
     expect(hoverSide('left')).toBe('right');
     expect(hoverSide('float')).toBe('left');
-    // Level with the row, kept whole inside the window (card image + odds = 446).
+    // Level with the row, kept whole inside the window (card image 270 wide at
+    // 488:680 = 376, plus the odds block = 488).
     expect(hoverCardTop(100, 118, 600)).toBe(100);
-    expect(hoverCardTop(540, 558, 600)).toBe(600 - 446 - 2);
+    expect(hoverCardTop(540, 558, 600)).toBe(600 - 488 - 2);
     expect(hoverCardTop(0, 18, 600)).toBe(2);
   });
 
@@ -229,5 +225,30 @@ describe('Flyout', () => {
     expect(next.panelPinned).toBe(true);
     expect(next.positions).toEqual(current.positions);
     expect(next.monitor).toBe('DELL U2723QE');
+  });
+});
+
+describe('Panel hover', () => {
+  it('highlights the row under the shell-reported cursor and reports it, and clears when the cursor leaves', () => {
+    const onHover = vi.fn();
+    const { rerender, container } = render(<Panel {...panelProps({ onHover })} />);
+    const rows = container.querySelectorAll<HTMLElement>('.row[data-key]');
+    expect(rows.length).toBeGreaterThan(0);
+    const target = rows[1];
+    // jsdom has no layout: point elementFromPoint at the row ourselves.
+    const original = document.elementFromPoint;
+    document.elementFromPoint = () => target;
+    try {
+      rerender(<Panel {...panelProps({ onHover, cursor: { x: 40, y: 120 } })} />);
+      expect(target.classList.contains('hot')).toBe(true);
+      const call = onHover.mock.calls.at(-1)!;
+      expect(call[0].key).toBe(target.dataset.key);
+      // Cursor off the window: highlight and card go at once.
+      rerender(<Panel {...panelProps({ onHover, cursor: null })} />);
+      expect(target.classList.contains('hot')).toBe(false);
+      expect(onHover.mock.calls.at(-1)).toEqual([null, null]);
+    } finally {
+      document.elementFromPoint = original;
+    }
   });
 });

@@ -18,9 +18,12 @@ it on from **Settings → In-game overlay** or the menu bar's **Start Overlay**.
   drawing, sharp at any size and display scale.
 - **The panel.** The full decklist, one row per card: name over mana cost on
   the left, copies left over next-draw odds centred in a darker band on the
-  right. Hover a row (or click it) for the card itself, 250 px wide from
-  Scryfall, with the odds of drawing it next, within 2 and within 3 under
-  the image; it hides itself a couple of seconds later. Lands fold into one
+  right. Hover a row for the card itself, beside the panel and nearly the
+  width of the gutter, with the odds of drawing it next, within 2 and
+  within 3 under the image; the row lights up while the cursor is on it
+  and the card goes the moment it leaves — no clicking (the overlay never
+  takes focus, so the shell watches the real cursor and tells the page
+  where it is). Lands fold into one
   row that opens to indented Basic / Nonbasic rows; in Brawl, drawn
   singletons collapse into a Drawn group; a Sideboard row lists what is
   boarded. Above the list: land-drop odds for the next one, two and three
