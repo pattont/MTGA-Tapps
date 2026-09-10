@@ -1,18 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { formatTopVsBottom } from './CombatGroupColumns';
+import { withScryShare } from './CombatGroupColumns';
 
-describe('formatTopVsBottom', () => {
-  it('splits scried cards into a top/bottom share that sums to 100', () => {
-    expect(formatTopVsBottom(1, 2)).toBe('33%/67%');
-    expect(formatTopVsBottom(3, 5)).toBe('38%/62%');
-    expect(formatTopVsBottom(2, 0)).toBe('100%/0%');
+describe('withScryShare', () => {
+  it('appends the share of everything scried, in plain text', () => {
+    expect(withScryShare(1, 1, 2)).toBe('1 (33%)');
+    expect(withScryShare(2, 1, 2)).toBe('2 (67%)');
+    expect(withScryShare(3, 3, 5)).toBe('3 (38%)');
     // Per-game averages work the same way as totals.
-    expect(formatTopVsBottom(0.5, 1.5)).toBe('25%/75%');
+    expect(withScryShare(1.25, 1.25, 1.75)).toBe('1.25 (42%)');
   });
 
-  it('is absent until something has been scried', () => {
-    expect(formatTopVsBottom(0, 0)).toBeNull();
-    expect(formatTopVsBottom(null, 2)).toBeNull();
-    expect(formatTopVsBottom(undefined, undefined)).toBeNull();
+  it('shows the bare number until anything has been scried, and nothing when untracked', () => {
+    expect(withScryShare(0, 0, 0)).toBe('0');
+    expect(withScryShare(null, 1, 2)).toBeNull();
+    expect(withScryShare(undefined, undefined, undefined)).toBeNull();
   });
 });

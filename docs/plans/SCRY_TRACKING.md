@@ -138,13 +138,15 @@ event count is recoverable; the card totals stay NULL for old games).
 - **Game page** (`GameDetailPage`): *as built,* a **Scry** group in
   Combat & Resources directly under Cards (second column; Removal moved
   to lead the third column so the columns stay close to even): Scried ·
-  Cards scried · Scried Top · Scried Bottom · Top vs. Bottom ("38%/62%").
-  Plain rows — a "3 (1 top · 2 bottom)" cell was tried and does not fit
+  Cards scried · Scried Top · Scried Bottom, the last two with their share
+  of everything scried inline ("1 (33%)", same style as the number). Plain
+  rows — a "3 (1 top · 2 bottom)" cell was tried and does not fit
   the column at common widths. Surveil rows join the group in step 4.
 - **Deck page** (`DeckDetailPage`): the same rows appear automatically in
   the per-game averages once the columns are in `_INTERACTION_STAT_COLUMNS`.
-  Plus the same **Top vs. Bottom** split as the game page (a low top share
-  is a deck that is unhappy with its top, a high one keeps what it sees).
+  The Scried Top / Scried Bottom averages carry the same inline share as
+  the game page (a low top share is a deck that is unhappy with its top,
+  a high one keeps what it sees).
   A "Bottomed most when scrying" list from `game_library_events` was
   built and then *removed from the page*: per-card lists for every stat
   ("cards in hand when mulliganed", "bottomed most in mulligans", …) is a

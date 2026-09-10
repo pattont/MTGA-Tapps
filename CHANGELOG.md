@@ -19,9 +19,9 @@
   top, 1 bottom`), with its own **Scry** badge in the game timeline and
   the Live Feed. The game page and the deck page get a **Scry** group in
   Combat & Resources, under Cards — Scried, Cards scried, Scried Top,
-  Scried Bottom, and a **Top vs. Bottom** split ("38%/62%": the share of
-  scried cards you kept vs sent under) — and Removal moves to lead the
-  next column so the four columns stay close to even. Which cards were
+  Scried Bottom (the last two with their share of everything scried
+  inline, "1 (33%)") — and Removal moves to lead the next column so the
+  four columns stay close to even. Which cards were
   kept or bottomed is recorded per scry but not shown yet. Historical
   games get their scry count back from their timelines (the old lines
   carry no amounts, so their card totals stay blank). Surveil is not yet

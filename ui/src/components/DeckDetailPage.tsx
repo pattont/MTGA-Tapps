@@ -50,8 +50,8 @@ import { Badge } from './Badge';
 import {
   bucketCombatGroups,
   CombatGroupColumns,
-  formatTopVsBottom,
   withDrawnSuffix,
+  withScryShare,
 } from './CombatGroupColumns';
 import { ColorPips } from './ColorPips';
 import { CardLink } from './CardLink';
@@ -835,11 +835,11 @@ export function DeckDetailPage({
       null (hidden information) so their cells stay plain. */
   const interactionCell = (
     side: DeckInteractionSide | undefined,
-    key: keyof DeckInteractionSide | 'scry_top_vs_bottom',
+    key: keyof DeckInteractionSide,
     drawnKey?: keyof DeckInteractionSide,
   ): ReactNode => {
-    if (key === 'scry_top_vs_bottom') {
-      return formatTopVsBottom(side?.scry_top, side?.scry_bottom) ?? '—';
+    if (key === 'scry_top' || key === 'scry_bottom') {
+      return withScryShare(side?.[key], side?.scry_top, side?.scry_bottom) ?? '—';
     }
     const value = side?.[key];
     if (value == null) {
@@ -854,11 +854,7 @@ export function DeckDetailPage({
   };
   const interactionGroups: {
     title: string;
-    rows: [
-      string,
-      keyof DeckInteractionSide | 'scry_top_vs_bottom',
-      (keyof DeckInteractionSide)?,
-    ][];
+    rows: [string, keyof DeckInteractionSide, (keyof DeckInteractionSide)?][];
   }[] = [
     {
       title: 'Attack',
@@ -903,7 +899,6 @@ export function DeckDetailPage({
         ['Cards scried', 'scry_cards'],
         ['Scried Top', 'scry_top'],
         ['Scried Bottom', 'scry_bottom'],
-        ['Top vs. Bottom', 'scry_top_vs_bottom'],
       ],
     },
     {

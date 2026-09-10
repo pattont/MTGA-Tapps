@@ -20,21 +20,26 @@ export function withDrawnSuffix(played: ReactNode, drawn: ReactNode): ReactNode 
 }
 
 /**
- * "38%/62%": the share of scried cards kept on top vs sent to the bottom.
- * Works on per-game totals and on per-game averages alike (a ratio of
- * averages over the same games is the ratio of the sums). Null until
- * anything has been scried.
+ * "1 (33%)": a scried-to-top or scried-to-bottom count with its share of
+ * everything scried, in the same style as the number. Works on per-game
+ * totals and on per-game averages alike (a ratio of averages over the same
+ * games is the ratio of the sums). The share is left off until anything
+ * has been scried.
  */
 // eslint-disable-next-line react-refresh/only-export-components
-export function formatTopVsBottom(
+export function withScryShare(
+  value: number | null | undefined,
   top: number | null | undefined,
   bottom: number | null | undefined,
 ): string | null {
-  if (top == null || bottom == null || top + bottom <= 0) {
+  if (value == null) {
     return null;
   }
-  const topPct = Math.round((100 * top) / (top + bottom));
-  return `${topPct}%/${100 - topPct}%`;
+  const total = (top ?? 0) + (bottom ?? 0);
+  if (total <= 0) {
+    return String(value);
+  }
+  return `${value} (${Math.round((100 * value) / total)}%)`;
 }
 
 /**
