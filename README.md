@@ -194,53 +194,6 @@ name opening a page with your full history against them:
 
 ![All Opponents page](docs/images/opponents.png)
 
-## Quick start
-
-> [!CAUTION]
-> **The tracker cannot see your games unless "Detailed Logs" is enabled in
-> MTG Arena.** If everything looks fine but no games ever appear, this is
-> almost always why. In Arena: gear icon (top right) → **Adjust Options** →
-> **Account** → check **"Detailed Logs (Plugin Support)"** → restart Arena.
->
-> ![Enable Detailed Logs (Plugin Support) under Account in MTG Arena's options](docs/images/detailed-logs-setting.png)
-
-**Install the app:** grab the installer for your OS from
-[tappstracker.com](https://tappstracker.com) or the
-[Releases page](../../releases) — on Windows, `MTGA-Tracker-<version>-setup.exe`
-gives you a Start Menu entry, an Apps & Features uninstaller, and in-place
-upgrades (a portable `-windows.zip` is also published); on macOS, a
-drag-to-Applications DMG. One install gets you everything: the tracker, the
-dashboard, the in-game overlay, and the Deck Finder. The builds are unsigned,
-so expect a one-time Gatekeeper / SmartScreen prompt —
-[QUICKSTART.md](QUICKSTART.md) walks through it.
-
-Then launch it, play a game, and open the dashboard from the menu-bar / tray
-icon. Prefer to build it or run it from source? See
-[Command-line tools](#command-line-tools) at the bottom.
-
-## The dashboard
-
-`mtga-tracker-app` serves it and opens it in your browser automatically.
-
-| Route | What you get |
-| --- | --- |
-| `#/` | Overview: metrics, best deck, trends, ranked progress, recent games, decks, Brawl, opponents |
-| `#/live` | Live Scoreboard: the current game, session record, today's games, play-by-play |
-| `#/deck/<name>` | Deck drill-down: cards, mulligans, versions, land stats, streaks, vs-colors, commanders |
-| `#/game/<id>` | Game detail: draw quality, life chart, hands, timeline, notes |
-| `#/card/<name>` | Card drill-down: by-deck performance, repeat draws, opener impact |
-| `#/games` | Every tracked game with deck picker, format pills, and period filter |
-| `#/opponents` | Everyone you've been paired against; `#/opponent/<name>` for one opponent |
-| `#/deckfinder` | Deck Finder: browse and export decklists from creators and sites |
-| `#/settings` | In-game overlay, Deck AI, Deck Finder creators, collection export, tracker status |
-| `#/audit` | Database health findings |
-
-JSON API: `GET /api/snapshot`, `/api/live`, `/api/overlay`, `/api/deck`,
-`/api/game`, `/api/card`, `/api/cards?q=`, `/api/games`, `/api/opponents`,
-`/api/opponent`, `/api/version` — the dashboard is read-only except
-`POST /api/game/annotation` (your per-game notes and tags) and the Settings
-page's own `POST /api/settings/*`.
-
 ## Deck Finder
 
 The Deck Finder lives **right inside the dashboard** — open it from the
@@ -307,6 +260,53 @@ your Deck Finder creators, a tracker-status readout, and the Database Health
 link. The choice is saved to `settings.json` at the top level of the project
 folder (installed builds keep it in the app data folder), and your key is only
 ever sent to the provider you chose. Without a key the feature simply stays off.
+
+## Quick start
+
+> [!CAUTION]
+> **The tracker cannot see your games unless "Detailed Logs" is enabled in
+> MTG Arena.** If everything looks fine but no games ever appear, this is
+> almost always why. In Arena: gear icon (top right) → **Adjust Options** →
+> **Account** → check **"Detailed Logs (Plugin Support)"** → restart Arena.
+>
+> ![Enable Detailed Logs (Plugin Support) under Account in MTG Arena's options](docs/images/detailed-logs-setting.png)
+
+**Install the app:** grab the installer for your OS from
+[tappstracker.com](https://tappstracker.com) or the
+[Releases page](../../releases) — on Windows, `MTGA-Tracker-<version>-setup.exe`
+gives you a Start Menu entry, an Apps & Features uninstaller, and in-place
+upgrades (a portable `-windows.zip` is also published); on macOS, a
+drag-to-Applications DMG. One install gets you everything: the tracker, the
+dashboard, the in-game overlay, and the Deck Finder. The builds are unsigned,
+so expect a one-time Gatekeeper / SmartScreen prompt —
+[QUICKSTART.md](QUICKSTART.md) walks through it.
+
+Then launch it, play a game, and open the dashboard from the menu-bar / tray
+icon. Prefer to build it or run it from source? See
+[Command-line tools](#command-line-tools) at the bottom.
+
+## The dashboard
+
+`mtga-tracker-app` serves it and opens it in your browser automatically.
+
+| Route | What you get |
+| --- | --- |
+| `#/` | Overview: metrics, best deck, trends, ranked progress, recent games, decks, Brawl, opponents |
+| `#/live` | Live Scoreboard: the current game, session record, today's games, play-by-play |
+| `#/deck/<name>` | Deck drill-down: cards, mulligans, versions, land stats, streaks, vs-colors, commanders |
+| `#/game/<id>` | Game detail: draw quality, life chart, hands, timeline, notes |
+| `#/card/<name>` | Card drill-down: by-deck performance, repeat draws, opener impact |
+| `#/games` | Every tracked game with deck picker, format pills, and period filter |
+| `#/opponents` | Everyone you've been paired against; `#/opponent/<name>` for one opponent |
+| `#/deckfinder` | Deck Finder: browse and export decklists from creators and sites |
+| `#/settings` | In-game overlay, Deck AI, Deck Finder creators, collection export, tracker status |
+| `#/audit` | Database health findings |
+
+JSON API: `GET /api/snapshot`, `/api/live`, `/api/overlay`, `/api/deck`,
+`/api/game`, `/api/card`, `/api/cards?q=`, `/api/games`, `/api/opponents`,
+`/api/opponent`, `/api/version` — the dashboard is read-only except
+`POST /api/game/annotation` (your per-game notes and tags) and the Settings
+page's own `POST /api/settings/*`.
 
 ## What isn't tracked
 
