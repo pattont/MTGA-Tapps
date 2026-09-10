@@ -958,7 +958,7 @@ export function GameDetailPage({
             )}
           />
         ) : (
-          <p className="empty-state">No combat telemetry recorded for this game.</p>
+          <p className="empty-state">No combat stats recorded for this game.</p>
         )}
       </Section>
 
@@ -1097,7 +1097,7 @@ export function GameDetailPage({
           </div>
         ) : (detail.player.mulligans ?? 0) > 0 ? (
           <p className="mulligan-history-missing">
-            This game was recorded before mulligan-history support, so only the kept hand below was saved.
+            Mulligan history is not available for this game; only the kept hand below was saved.
           </p>
         ) : null}
         <SortableTable

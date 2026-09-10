@@ -1867,7 +1867,8 @@ def _combat_split_rows(conn: sqlite3.Connection, where: str, params: List[Any]) 
               ROUND(AVG(s.attack_steps), 1) AS avg_attack_steps,
               ROUND(AVG(s.life_gained), 1) AS avg_life_gained,
               ROUND(AVG(s.cards_drawn), 1) AS avg_cards_drawn,
-              ROUND(AVG(s.cards_discarded + s.cards_milled), 1) AS avg_cards_denied
+              ROUND(AVG(s.cards_discarded + s.cards_milled), 1) AS avg_cards_denied,
+              ROUND(AVG(g.duration_seconds), 0) AS avg_duration_seconds
             FROM game_participant_stats s
             JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
             JOIN games g ON g.id = s.game_id

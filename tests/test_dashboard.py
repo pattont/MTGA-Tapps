@@ -1991,6 +1991,8 @@ def test_dashboard_snapshot_reports_combat_profiles(tmp_path):
     assert split["Wins"]["avg_damage_dealt"] == 20.0
     assert split["Losses"]["avg_damage_dealt"] == 9.0
     assert split["Losses"]["avg_cards_denied"] == 5.0
+    assert split["Wins"]["avg_duration_seconds"] == 240
+    assert split["Losses"]["avg_duration_seconds"] == 300
 
 
 def test_deck_detail_includes_combat_profile(tmp_path):

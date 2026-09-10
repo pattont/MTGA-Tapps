@@ -93,6 +93,10 @@ it on from **Settings → In-game overlay** or the menu bar's **Start Overlay**.
   totals stay blank). Surveil is not yet counted.
 - Recent Games, its Bo3 match rows, and Sessions load 30 rows instead of
   25, so the tables' 15-a-page paging shows two full pages.
+- **Wins vs Losses** on the Overview gets an **Avg Game Time** column, and
+  its blurb (and the empty-state notes on the game and deck pages) no
+  longer talk about "telemetry" or what early tracker versions did not
+  record.
 - The Deck AI description on the Settings page is three sentences instead
   of a wall.
 

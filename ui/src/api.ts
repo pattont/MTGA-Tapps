@@ -106,6 +106,7 @@ export interface CombatSplitRow {
   avg_life_gained: number | null;
   avg_cards_drawn: number | null;
   avg_cards_denied: number | null;
+  avg_duration_seconds?: number | null;
 }
 
 export interface ScheduleRow {

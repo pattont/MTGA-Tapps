@@ -517,6 +517,13 @@ const combatSplitColumns: Column<CombatSplitRow>[] = [
     sortValue: (row) => row.avg_cards_denied,
     numeric: true,
   },
+  {
+    key: 'avg_duration_seconds',
+    header: 'Avg Game Time',
+    render: (row) => formatDuration(row.avg_duration_seconds),
+    sortValue: (row) => row.avg_duration_seconds ?? null,
+    numeric: true,
+  },
 ];
 
 const scheduleColumns: Column<ScheduleRow>[] = [
@@ -1205,9 +1212,7 @@ function Dashboard({
               <div>
                 <h3 id="overview-wvl-title">Wins vs Losses</h3>
                 <p className="section-description">
-                  How your games look when you win compared to when you lose. Per game, and only
-                  games with combat telemetry — early tracker versions didn&apos;t record it, so
-                  totals run below How Games End.
+                  How your games look when you win compared to when you lose. Per game.
                 </p>
               </div>
             </div>
@@ -1461,7 +1466,7 @@ function Dashboard({
       <Section
         id="decks"
         title="Decks"
-        description="Record plus combat telemetry per deck: damage pace, attacks, and lifegain. Profile is judged by damage dealt per turn."
+        description="Record plus combat stats per deck: damage pace, attacks, and lifegain. Profile is judged by damage dealt per turn."
       >
         <div className="table-filter table-filter-row">
           <input
