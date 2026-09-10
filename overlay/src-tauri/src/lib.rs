@@ -164,24 +164,50 @@ fn arena_monitor_index(window: &WebviewWindow, bounds: (i32, i32, i32, i32)) -> 
 /// The cursor only ever decides the very first placement — a window that
 /// re-docked to wherever the mouse happened to be would wander between
 /// screens every time its size changed.
-fn target_monitor(window: &WebviewWindow, runtime: &Runtime, follow_arena: bool) -> Rect {
+/// What target_monitor needs from the runtime, copied out under the lock
+/// so the window can be asked about monitors and the cursor WITHOUT any
+/// lock held: on Windows every window getter is a blocking round-trip to
+/// the main thread, and a background thread holding a lock across one
+/// deadlocks with a main-thread command waiting for that lock.
+#[derive(Clone)]
+struct MonitorHint {
+    follow_arena: bool,
+    arena_bounds: Option<(i32, i32, i32, i32)>,
+    area: Option<Rect>,
+    monitor: Option<String>,
+}
+
+impl MonitorHint {
+    fn take(state: &AppState) -> Self {
+        let settings = state.settings.lock().unwrap();
+        let runtime = state.runtime.lock().unwrap();
+        Self {
+            follow_arena: settings.follow_arena,
+            arena_bounds: runtime.last_arena.bounds,
+            area: runtime.area,
+            monitor: runtime.monitor.clone(),
+        }
+    }
+}
+
+fn target_monitor(window: &WebviewWindow, hint: &MonitorHint) -> Rect {
     let monitors = monitor_rects(window);
     if monitors.is_empty() {
         return Rect { x: 0, y: 0, width: 1920, height: 1080 };
     }
-    if follow_arena {
-        if let Some(index) = runtime.last_arena.bounds.and_then(|b| arena_monitor_index(window, b)) {
+    if hint.follow_arena {
+        if let Some(index) = hint.arena_bounds.and_then(|b| arena_monitor_index(window, b)) {
             if let Some((rect, _)) = monitors.get(index) {
                 return *rect;
             }
         }
     }
-    if let Some(area) = runtime.area {
+    if let Some(area) = hint.area {
         if monitors.iter().any(|(rect, _)| *rect == area) {
             return area;
         }
     }
-    if let Some(name) = runtime.monitor.as_ref() {
+    if let Some(name) = hint.monitor.as_ref() {
         if let Some((rect, _)) = monitors.iter().find(|(_, n)| n.as_deref() == Some(name.as_str())) {
             return *rect;
         }
@@ -204,11 +230,12 @@ fn target_monitor(window: &WebviewWindow, runtime: &Runtime, follow_arena: bool)
 /// ("Not Responding" on the first click of the arrow).
 fn apply_geometry(app: &AppHandle) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else { return };
+    let state = app.state::<AppState>();
+    // Monitor and cursor queries first, with nothing locked.
+    let area = target_monitor(&window, &MonitorHint::take(&state));
     let (layout, dock, area, size, x, y) = {
-        let state = app.state::<AppState>();
         let settings = state.settings.lock().unwrap().clone();
         let mut runtime = state.runtime.lock().unwrap();
-        let area = target_monitor(&window, &runtime, settings.follow_arena);
         runtime.area = Some(area);
         let size = dock::size_for(runtime.layout, runtime.content_height, &area, settings.panel_max_height, settings.scale, runtime.flyout_open);
         let y = match settings.dock {
@@ -336,10 +363,15 @@ fn refresh_visibility(app: &AppHandle) {
 }
 
 fn emit_layout(app: &AppHandle) {
+    let info = current_layout_info(app);
+    let _ = app.emit("overlay-layout", info);
+}
+
+fn current_layout_info(app: &AppHandle) -> LayoutInfo {
     let state = app.state::<AppState>();
     let settings = state.settings.lock().unwrap();
     let runtime = state.runtime.lock().unwrap();
-    let info = LayoutInfo {
+    LayoutInfo {
         layout: match runtime.layout {
             Layout::Rail => "rail".into(),
             Layout::Panel => "panel".into(),
@@ -348,8 +380,7 @@ fn emit_layout(app: &AppHandle) {
         panel_open: settings.panel_open,
         visible: !runtime.hidden_by_user && (runtime.force_show || !runtime.hidden_for_arena),
         dock: settings.dock,
-    };
-    let _ = app.emit("overlay-layout", info);
+    }
 }
 
 /// Why a layout change happened: the player asked (arrow, chevron, hotkey)
@@ -978,14 +1009,13 @@ fn on_moved(app: &AppHandle, physical_x: i32, physical_y: i32) {
             }
         }
     }
-    let (dock, size, area) = {
+    let area = target_monitor(&window, &MonitorHint::take(&state));
+    let (dock, size) = {
         let settings = state.settings.lock().unwrap();
         let runtime = state.runtime.lock().unwrap();
-        let area = target_monitor(&window, &runtime, settings.follow_arena);
         (
             settings.dock,
             dock::size_for(runtime.layout, runtime.content_height, &area, settings.panel_max_height, settings.scale, runtime.flyout_open),
-            area,
         )
     };
     let (x, y) = dock::constrain_drag(dock, (logical.x, logical.y), size, &area);
