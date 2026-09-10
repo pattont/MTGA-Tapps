@@ -12,8 +12,8 @@ it on from **Settings → In-game overlay** or the menu bar's **Start Overlay**.
   floating) with the app's card mark at the top and three cells — **Turn**,
   **Land** (the chance your next draw is a land) and **Deck** (cards left of
   the deck, with a bar that turns yellow once half the deck is gone and red
-  under 15 cards) — plus an arrow that opens the panel and a ⚙ for its
-  settings. When the tracker isn't reachable the card mark greys out and
+  under 15 cards) — plus an arrow that opens the panel and a ⚙ that opens
+  the settings beside the rail, without unfolding the panel. When the tracker isn't reachable the card mark greys out and
   carries a warning badge with the reason. The card mark is a vector
   drawing, sharp at any size and display scale.
 - **The panel.** The full decklist, one row per card: name over mana cost on
@@ -40,13 +40,16 @@ it on from **Settings → In-game overlay** or the menu bar's **Start Overlay**.
   front window. Flush with the screen edge, with a few pixels of plain
   ground between the text and the edge. Windows: exclusive-fullscreen
   covers every overlay; use windowed or borderless.
-- **Look and settings** (the ⚙ menu): a charcoal tint with hairlines
-  between rows and no box border, where **Panel opacity** drives only the
-  tint (text is always solid) and the rail has its own **Rail opacity**;
-  **Scale** from 50 % to 200 %; **Max panel height** as a share of the
-  screen (default 70 %; the list scrolls inside); click-through; density;
-  and the hotkeys — `Alt+Shift+T` / `⌥⇧T` toggles the panel, `Alt+Shift+H`
-  / `⌥⇧H` hides the overlay.
+- **Look and settings** (the ⚙ menu, which opens beside the panel or the
+  rail — never over the decklist): a charcoal tint with hairlines between
+  rows and no box border. **Scale** from 50 % to 200 %; **Rail opacity**
+  (default 90 %) and **Panel opacity** (default 80 %), which drive only the
+  tint — text is always solid; **Max panel height** in pixels (default
+  800, always capped by the screen; the list scrolls inside); dock;
+  click-through; density; the hotkeys — `Alt+Shift+T` / `⌥⇧T` toggles the
+  panel, `Alt+Shift+H` / `⌥⇧H` hides the overlay — and a **Restore
+  defaults** button that puts every preference back (the window's position
+  and the panel's on/pinned state stay).
 - **From the tracker.** The Settings page shows one card — *Overlay is on*
   / *Overlay is off*, one sentence, and a **Turn on** / **Turn off** button
   — over the hotkeys; off means nothing runs and nothing starts with the
