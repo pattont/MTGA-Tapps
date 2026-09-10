@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 500" width="1200" height="500" role="img" aria-labelledby="t">
+  <title id="t">Tapps Tracker — Track every MTG Arena game, entirely on your machine</title>
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f8e3a5"/><stop offset="0.42" stop-color="#e9b64f"/>
+      <stop offset="0.78" stop-color="#b5641f"/><stop offset="1" stop-color="#8a4a16"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0" r="0.6">
+      <stop offset="0" stop-color="#d7aa49" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#d7aa49" stop-opacity="0"/>
+    </radialGradient>
+    <style>
+      .sans { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+      .badge { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 15px; font-weight: 600; letter-spacing: 0.14em; fill: #5fd4c4; }
+      .h1 { font-size: 82px; font-weight: 800; letter-spacing: -0.02em; }
+      .lede { font-size: 23px; fill: #9aa7b5; }
+      .pill { font-size: 20px; font-weight: 600; fill: #7bd88f; }
+    </style>
+  </defs>
+  <ellipse cx="600" cy="0" rx="640" ry="300" fill="url(#glow)"/>
+  <g class="sans">
+    <rect x="330.5" y="24.5" width="539" height="45" rx="22.5" fill="rgba(95,212,196,0.09)" stroke="rgba(95,212,196,0.32)"/>
+    <text x="600" y="53" text-anchor="middle" class="badge">MACOS  •  WINDOWS  •  FREE  •  OPEN SOURCE</text>
+    <text x="600" y="168" text-anchor="middle" class="h1" fill="#edf2f7">Track every MTG Arena game</text>
+    <text x="600" y="262" text-anchor="middle" class="h1" fill="url(#gold)">Entirely on your machine</text>
+    <text x="600" y="325" text-anchor="middle" class="lede">Tapps Tracker follows your Magic: The Gathering Arena (MTGA) games in real time</text>
+    <text x="600" y="359" text-anchor="middle" class="lede">and turns them into deep, local analytics — live scoreboard, deck drill-downs,</text>
+    <text x="600" y="393" text-anchor="middle" class="lede">game forensics, opponent intelligence.</text>
+    <g transform="translate(329,432)">
+      <rect x="0.5" y="0.5" width="179" height="47" rx="23.5" fill="rgba(123,216,143,0.09)" stroke="rgba(123,216,143,0.32)"/>
+      <circle cx="26" cy="24" r="6" fill="#7bd88f" opacity="0.35"/>
+      <circle cx="26" cy="24" r="3.5" fill="#7bd88f"/>
+      <text x="99" y="31" text-anchor="middle" class="pill">No account</text>
+    </g>
+    <g transform="translate(523,432)">
+      <rect x="0.5" y="0.5" width="155" height="47" rx="23.5" fill="rgba(123,216,143,0.09)" stroke="rgba(123,216,143,0.32)"/>
+      <circle cx="26" cy="24" r="6" fill="#7bd88f" opacity="0.35"/>
+      <circle cx="26" cy="24" r="3.5" fill="#7bd88f"/>
+      <text x="87" y="31" text-anchor="middle" class="pill">No cloud</text>
+    </g>
+    <g transform="translate(693,432)">
+      <rect x="0.5" y="0.5" width="177" height="47" rx="23.5" fill="rgba(123,216,143,0.09)" stroke="rgba(123,216,143,0.32)"/>
+      <circle cx="26" cy="24" r="6" fill="#7bd88f" opacity="0.35"/>
+      <circle cx="26" cy="24" r="3.5" fill="#7bd88f"/>
+      <text x="98" y="31" text-anchor="middle" class="pill">Local-first</text>
+    </g>
+  </g>
+</svg>

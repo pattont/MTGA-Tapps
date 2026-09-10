@@ -1,6 +1,9 @@
 <p align="center">
   <a href="https://tappstracker.com">
-    <img src="docs/images/hero.png" alt="Tapps Tracker — track every MTG Arena game, entirely on your machine" width="760">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero-dark.svg">
+      <img src="docs/images/hero-light.svg" alt="Tapps Tracker — track every MTG Arena game, entirely on your machine" width="760">
+    </picture>
   </a>
 </p>
 

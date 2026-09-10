@@ -1,18 +1,5 @@
 # Changelog
 
-## Unreleased
-
-### Fixes
-
-- **Windows: upgrading left old files in the install folder.** The
-  installer only ever added and replaced files, so a program an earlier
-  version shipped and the new one does not — `MTGA Deck Downloader.exe`,
-  now folded into the tracker — stayed behind, and so did anything stale
-  in the bundled runtime folder. Setup now clears `_internal` and that
-  executable before installing. Tracked games and settings live outside
-  the install folder and are untouched. (Unpacking the zip over an older
-  extraction keeps old files the same way; unpack it into a fresh folder.)
-
 ## 0.6.3
 
 ### In-game overlay
@@ -170,6 +157,14 @@ the menu bar's **Stop Overlay**.
   does not understand. They now read `%USERPROFILE%\AppData\...`, which
   still hides the username and pastes straight into Explorer's address bar
   or a Run box.
+- **Windows: upgrading left old files in the install folder.** The
+  installer only ever added and replaced files, so a program an earlier
+  version shipped and the new one does not — `MTGA Deck Downloader.exe`,
+  now folded into the tracker — stayed behind, and so did anything stale
+  in the bundled runtime folder. Setup now clears `_internal` and that
+  executable before installing. Tracked games and settings live outside
+  the install folder and are untouched. (Unpacking the zip over an older
+  extraction keeps old files the same way; unpack it into a fresh folder.)
 
 ### Housekeeping
 
