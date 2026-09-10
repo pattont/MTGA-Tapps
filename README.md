@@ -284,8 +284,9 @@ process memory.
 
 ## In-game overlay
 
-A small always-on-top window docked beside Arena. Turn it on from
-**Settings → In-game overlay** or the menu-bar icon's **Start Overlay**.
+A small always-on-top window docked beside Arena, on from the first launch.
+Turn it off (or back on) from **Settings → In-game overlay** or the
+menu-bar icon.
 
 ### The rail
 

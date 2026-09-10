@@ -203,7 +203,7 @@ describe('Flyout', () => {
       opacity: 0.2,
       scale: 150,
       panelMaxHeight: 400,
-      dock: 'left' as const,
+      dock: 'right' as const,
       hotkeysWindows: { toggle: 'Ctrl+Alt+T', visibility: 'Ctrl+Alt+H' },
       panelOpen: true,
       panelPinned: true,
@@ -219,7 +219,7 @@ describe('Flyout', () => {
     expect(next.railOpacity).toBe(0.9);
     expect(next.scale).toBe(100);
     expect(next.panelMaxHeight).toBe(800);
-    expect(next.dock).toBe('right');
+    expect(next.dock).toBe('left');
     expect(next.hotkeysWindows.toggle).toBe('Alt+Shift+T');
     expect(next.panelOpen).toBe(true);
     expect(next.panelPinned).toBe(true);

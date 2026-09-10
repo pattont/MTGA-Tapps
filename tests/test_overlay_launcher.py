@@ -46,23 +46,24 @@ def _fake_binary(tmp_path: Path) -> Path:
 def test_enabled_flag_round_trips_without_touching_other_sections(tmp_path):
     path = tmp_path / "settings.json"
     path.write_text(json.dumps({"dashboard": {"port": 9000}}), encoding="utf-8")
-    assert load_overlay_enabled(path) is False
-    save_overlay_enabled(True, path)
+    # No overlay section yet: on by default.
     assert load_overlay_enabled(path) is True
-    document = json.loads(path.read_text(encoding="utf-8"))
-    assert document["dashboard"] == {"port": 9000}
-    assert document["overlay"] == {"enabled": True}
     save_overlay_enabled(False, path)
     assert load_overlay_enabled(path) is False
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert document["dashboard"] == {"port": 9000}
+    assert document["overlay"] == {"enabled": False}
+    save_overlay_enabled(True, path)
+    assert load_overlay_enabled(path) is True
 
 
-def test_missing_or_broken_settings_mean_disabled(tmp_path):
-    assert load_overlay_enabled(tmp_path / "missing.json") is False
+def test_missing_or_broken_settings_mean_the_default_on(tmp_path):
+    assert load_overlay_enabled(tmp_path / "missing.json") is True
     broken = tmp_path / "settings.json"
     broken.write_text("{not json", encoding="utf-8")
-    assert load_overlay_enabled(broken) is False
-    save_overlay_enabled(True, broken)
     assert load_overlay_enabled(broken) is True
+    save_overlay_enabled(False, broken)
+    assert load_overlay_enabled(broken) is False
 
 
 def test_manager_starts_with_api_url_and_stops(tmp_path):
@@ -200,7 +201,7 @@ def test_overlay_status_in_settings_get(tmp_path, monkeypatch):
     code, body = settings_api.handle_get("/api/settings", None)
     assert code == 200
     assert body["overlay"] == {
-        "enabled": False,
+        "enabled": True,  # on by default until turned off
         "available": True,
         "running": False,
         "binary": str(manager.binary),

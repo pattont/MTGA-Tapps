@@ -117,7 +117,7 @@ impl Default for Settings {
             rail_opacity: 0.9,
             scale: 100,
             panel_max_height: 800,
-            dock: Dock::Right,
+            dock: Dock::Left,
             return_after_seconds: 4,
             panel_open: false,
             panel_pinned: false,
@@ -208,7 +208,7 @@ mod tests {
         assert_eq!(fixed.return_after_seconds, 1);
         assert_eq!(fixed.api_url, "http://127.0.0.1:8765");
         // Missing fields take defaults (a file from an older version keeps working).
-        assert_eq!(fixed.dock, Dock::Right);
+        assert_eq!(fixed.dock, Dock::Left);
         assert_eq!(fixed.lands, Lands::Grouped);
     }
 

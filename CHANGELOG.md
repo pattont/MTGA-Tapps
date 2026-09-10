@@ -5,8 +5,9 @@
 ### In-game overlay
 
 A small always-on-top window beside Arena that shows the library the tracker
-knows and the odds of what you draw next. It is off on a fresh install; turn
-it on from **Settings → In-game overlay** or the menu bar's **Start Overlay**.
+knows and the odds of what you draw next. It is on from the first launch,
+docked to the left edge; turn it off from **Settings → In-game overlay** or
+the menu bar's **Stop Overlay**.
 
 - **The rail.** A slim strip docked to the left or right screen edge (or
   floating) with the app's card mark at the top and three cells — **Turn**,
@@ -56,7 +57,7 @@ it on from **Settings → In-game overlay** or the menu bar's **Start Overlay**.
 - **From the tracker.** The Settings page shows one card — *Overlay is on*
   / *Overlay is off*, one sentence, and a **Turn on** / **Turn off** button
   — over the hotkeys; off means nothing runs and nothing starts with the
-  tracker. The menu bar shows an *Overlay: Running / Stopped* line under
+  tracker until it is turned on again. The menu bar shows an *Overlay: Running / Stopped* line under
   the tracker's, with Start/Stop Overlay and Overlay Settings in their own
   section; the overlay adds no menu-bar icon of its own.
 - **Works in every game, tracked or not.** Jump In, Midweek Magic,

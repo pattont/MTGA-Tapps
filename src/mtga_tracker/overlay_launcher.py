@@ -110,17 +110,22 @@ def _settings_path() -> Path:
     return SETTINGS_PATH
 
 
+#: The overlay starts with the tracker unless the user has turned it off.
+OVERLAY_ENABLED_DEFAULT = True
+
+
 def load_overlay_enabled(path: Optional[Path] = None) -> bool:
-    """The saved "overlay.enabled" flag (off until the user turns it on)."""
+    """The saved "overlay.enabled" flag — on until the user turns it off
+    (a missing or unreadable settings file means the default)."""
     settings_path = path or _settings_path()
     try:
         document = json.loads(settings_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return False
+        return OVERLAY_ENABLED_DEFAULT
     section = document.get(SETTINGS_SECTION) if isinstance(document, dict) else None
     if not isinstance(section, dict):
-        return False
-    return bool(section.get("enabled", False))
+        return OVERLAY_ENABLED_DEFAULT
+    return bool(section.get("enabled", OVERLAY_ENABLED_DEFAULT))
 
 
 def save_overlay_enabled(enabled: bool, path: Optional[Path] = None) -> None:

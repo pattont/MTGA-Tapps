@@ -50,11 +50,12 @@ struct Runtime {
     content_height: i32,
     /// Monitor name the window is docked on, when known.
     monitor: Option<String>,
-    /// Set while we move the window ourselves so the Moved handler doesn't re-snap.
-    snapping: bool,
     /// Where we last put the window (logical). A Moved event that lands
     /// exactly there is the echo of our own placement, not a user drag —
-    /// otherwise the panel's clamped y would overwrite the rail's.
+    /// otherwise the panel's clamped y would overwrite the rail's. (There is
+    /// deliberately no "moving it ourselves" flag: on Windows the Moved
+    /// event is delivered synchronously inside set_position, on the same
+    /// thread, so the handler must never depend on a lock its caller holds.)
     placed_at: Option<(i32, i32)>,
     /// When we last placed the window. A resize can move the window's origin
     /// before our set_position lands (macOS keeps the bottom edge put), and
@@ -82,7 +83,6 @@ impl Default for Runtime {
             area: None,
             content_height: 620,
             monitor: None,
-            snapping: false,
             placed_at: None,
             placed_when: None,
             last_arena: ArenaStatus::default(),
@@ -196,33 +196,40 @@ fn target_monitor(window: &WebviewWindow, runtime: &Runtime, follow_arena: bool)
 }
 
 /// Size and place the window for the current layout / dock / remembered offset.
+///
+/// Everything is decided under the locks and the locks are released BEFORE
+/// the window is touched: on Windows, set_size / set_position deliver the
+/// Moved event synchronously on this very thread, and its handler takes
+/// the same locks — holding them across the call deadlocks the main thread
+/// ("Not Responding" on the first click of the arrow).
 fn apply_geometry(app: &AppHandle) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else { return };
-    let state = app.state::<AppState>();
-    let settings = state.settings.lock().unwrap().clone();
-    let mut runtime = state.runtime.lock().unwrap();
-    let area = target_monitor(&window, &runtime, settings.follow_arena);
-    runtime.area = Some(area);
-    let size = dock::size_for(runtime.layout, runtime.content_height, &area, settings.panel_max_height, settings.scale, runtime.flyout_open);
-    let y = match settings.dock {
-        Dock::Left => settings.positions.left_y,
-        Dock::Right => settings.positions.right_y,
-        Dock::Float => None,
+    let (layout, dock, area, size, x, y) = {
+        let state = app.state::<AppState>();
+        let settings = state.settings.lock().unwrap().clone();
+        let mut runtime = state.runtime.lock().unwrap();
+        let area = target_monitor(&window, &runtime, settings.follow_arena);
+        runtime.area = Some(area);
+        let size = dock::size_for(runtime.layout, runtime.content_height, &area, settings.panel_max_height, settings.scale, runtime.flyout_open);
+        let y = match settings.dock {
+            Dock::Left => settings.positions.left_y,
+            Dock::Right => settings.positions.right_y,
+            Dock::Float => None,
+        };
+        let float_at = match (settings.positions.float_x, settings.positions.float_y) {
+            (Some(x), Some(y)) => Some((x, y)),
+            _ => None,
+        };
+        let (x, y) = dock::docked_position(settings.dock, size, &area, y, float_at);
+        runtime.placed_at = Some((x, y));
+        runtime.placed_when = Some(std::time::Instant::now());
+        (runtime.layout, settings.dock, area, size, x, y)
     };
-    let float_at = match (settings.positions.float_x, settings.positions.float_y) {
-        (Some(x), Some(y)) => Some((x, y)),
-        _ => None,
-    };
-    let (x, y) = dock::docked_position(settings.dock, size, &area, y, float_at);
-    runtime.snapping = true;
-    runtime.placed_at = Some((x, y));
-    runtime.placed_when = Some(std::time::Instant::now());
     let sized = window.set_size(LogicalSize::new(size.width, size.height));
     let placed = window.set_position(LogicalPosition::new(x, y));
-    runtime.snapping = false;
     diag::log(format!(
         "geometry: layout={:?} dock={:?} monitor={:?} size={}x{} at ({}, {}) set_size={:?} set_position={:?}",
-        runtime.layout, settings.dock, area, size.width, size.height, x, y, sized.err(), placed.err()
+        layout, dock, area, size.width, size.height, x, y, sized.err(), placed.err()
     ));
 }
 
@@ -304,9 +311,16 @@ fn raise_above_fullscreen(_window: &WebviewWindow) {}
 
 fn refresh_visibility(app: &AppHandle) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else { return };
-    let state = app.state::<AppState>();
-    let runtime = state.runtime.lock().unwrap();
-    let show = !runtime.hidden_by_user && (runtime.force_show || !runtime.hidden_for_arena);
+    // Decided under the lock, done without it (see apply_geometry).
+    let (show, by_user, for_arena) = {
+        let state = app.state::<AppState>();
+        let runtime = state.runtime.lock().unwrap();
+        (
+            !runtime.hidden_by_user && (runtime.force_show || !runtime.hidden_for_arena),
+            runtime.hidden_by_user,
+            runtime.hidden_for_arena,
+        )
+    };
     if show {
         let shown = window.show();
         let top = window.set_always_on_top(true);
@@ -317,10 +331,7 @@ fn refresh_visibility(app: &AppHandle) {
         ));
     } else {
         let hidden = window.hide();
-        diag::log(format!(
-            "hide: by_user={} for_arena={} hide={:?}",
-            runtime.hidden_by_user, runtime.hidden_for_arena, hidden.err()
-        ));
+        diag::log(format!("hide: by_user={} for_arena={} hide={:?}", by_user, for_arena, hidden.err()));
     }
 }
 
@@ -381,10 +392,12 @@ fn set_layout_inner(app: &AppHandle, layout: Layout, why: Why) {
 
 fn apply_click_through(app: &AppHandle) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else { return };
-    let state = app.state::<AppState>();
-    let settings = state.settings.lock().unwrap();
-    let runtime = state.runtime.lock().unwrap();
-    let through = runtime.layout == Layout::Panel && settings.panel_pinned && settings.click_through_when_pinned;
+    let through = {
+        let state = app.state::<AppState>();
+        let settings = state.settings.lock().unwrap();
+        let runtime = state.runtime.lock().unwrap();
+        runtime.layout == Layout::Panel && settings.panel_pinned && settings.click_through_when_pinned
+    };
     let _ = window.set_ignore_cursor_events(through);
 }
 
@@ -952,9 +965,6 @@ fn on_moved(app: &AppHandle, physical_x: i32, physical_y: i32) {
     let logical = tauri::PhysicalPosition::new(physical_x, physical_y).to_logical::<i32>(scale);
     {
         let runtime = state.runtime.lock().unwrap();
-        if runtime.snapping {
-            return;
-        }
         if let Some((px, py)) = runtime.placed_at {
             // Allow a pixel of rounding between logical and physical.
             if (px - logical.x).abs() <= 1 && (py - logical.y).abs() <= 1 {
@@ -990,14 +1000,15 @@ fn on_moved(app: &AppHandle, physical_x: i32, physical_y: i32) {
             }
         }
     }
-    {
+    let snap = {
         let mut runtime = state.runtime.lock().unwrap();
         runtime.placed_at = Some((x, y));
-        if (x, y) != (logical.x, logical.y) {
-            runtime.snapping = true;
-            let _ = window.set_position(LogicalPosition::new(x, y));
-            runtime.snapping = false;
-        }
+        runtime.placed_when = Some(std::time::Instant::now());
+        (x, y) != (logical.x, logical.y)
+    };
+    if snap {
+        // Lock released first: this re-enters on_moved synchronously on Windows.
+        let _ = window.set_position(LogicalPosition::new(x, y));
     }
     save_settings(app);
 }

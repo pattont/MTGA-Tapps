@@ -99,7 +99,7 @@ export function defaultSettings(): Settings {
     railOpacity: 0.9,
     scale: 100,
     panelMaxHeight: 800,
-    dock: 'right',
+    dock: 'left',
     returnAfterSeconds: 4,
     panelOpen: false,
     panelPinned: false,
