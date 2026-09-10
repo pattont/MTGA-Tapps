@@ -67,7 +67,8 @@ export interface Settings {
   /** Size of everything, percent (50–200). */
   scale: number;
   /** The panel never grows past this share of the screen height (30–100). */
-  panelMaxHeightPct: number;
+  /** The panel's height cap in logical pixels (before Scale); the screen caps it too. */
+  panelMaxHeight: number;
   dock: Dock;
   returnAfterSeconds: number;
   /** Owned by the shell (arrow, chevron, pin, hotkey); echoed here so a save round-trips it. */

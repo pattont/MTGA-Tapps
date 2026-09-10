@@ -78,6 +78,11 @@ export function measureContentHeight(panel: HTMLElement, list: HTMLElement | nul
   return Math.max(PANEL_MIN_HEIGHT, natural, forFlyout);
 }
 
+/** Height the window needs for the settings flyout beside the rail (base px). */
+export function measureFlyoutHeight(flyout: HTMLElement): number {
+  return Math.ceil(flyout.offsetTop + flyout.scrollHeight + 10);
+}
+
 export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [platform, setPlatform] = useState('windows');
@@ -116,12 +121,8 @@ export function App() {
           setLayout(info);
           if (info.layout === 'rail') setHover(null);
         }),
-        await tauri.listen<void>('overlay-open-settings', () => {
-          setFlyout(true);
-          if (layoutRef.current.layout === 'rail') {
-            void tauri.invoke<LayoutInfo>('set_layout', { layout: 'panel', contentHeight: null }).then(setLayout);
-          }
-        }),
+        // Settings open beside whatever is showing — the rail stays a rail.
+        await tauri.listen<void>('overlay-open-settings', () => setFlyout(true)),
       );
     })();
     return () => {
@@ -205,12 +206,25 @@ export function App() {
   }, []);
 
   // Report the panel's natural height whenever its content changes so the
-  // window grows with the decklist and shrinks between games.
+  // window grows with the decklist and shrinks between games. With the
+  // settings flyout open beside the rail, report the flyout's height
+  // instead (kept apart from the panel's, which re-opens at its own size).
+  const railFlyoutHeight = useRef<number | null>(null);
   useEffect(() => {
-    if (layout.layout !== 'panel') return;
+    const railWithSettings = layout.layout === 'rail' && flyout;
+    if (layout.layout !== 'panel' && !railWithSettings) return;
     const root = rootRef.current;
     if (!root || typeof ResizeObserver === 'undefined') return;
     const report = () => {
+      if (railWithSettings) {
+        const fly = root.querySelector<HTMLElement>('.fly');
+        const height = fly ? measureFlyoutHeight(fly) : null;
+        if (height !== null && height !== railFlyoutHeight.current) {
+          railFlyoutHeight.current = height;
+          void tauri.invoke('set_content_height', { height });
+        }
+        return;
+      }
       const height = contentHeight();
       // Only a real change reaches the shell: every report re-docks the window.
       if (height !== null && height !== lastHeight.current) {
@@ -228,7 +242,10 @@ export function App() {
     if (body) observer.observe(body);
     else if (list) for (const child of Array.from(list.children)) observer.observe(child);
     report();
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (railWithSettings) railFlyoutHeight.current = null;
+    };
   }, [layout.layout, payload, settings?.lands, settings?.density, settings?.scale, sort, flyout, contentHeight]);
 
   // Between games the panel folds back into the rail on its own. When the
@@ -311,7 +328,7 @@ export function App() {
     <div
       ref={rootRef}
       class={`root ${dockClass} ${layout.layout === 'panel' ? 'is-panel' : 'is-rail'} ${(layout.layout === 'panel' ? settings.opacity : settings.railOpacity) > 0 ? 'has-bg' : 'no-bg'} names-${settings.nameColor}`}
-      style={{ '--tint-alpha': tintAlpha(settings.opacity), '--rail-alpha': tintAlpha(settings.railOpacity), '--scale': (settings.scale / 100) * (layout.layout === 'rail' ? RAIL_BOOST : 1) } as never}
+      style={{ '--tint-alpha': tintAlpha(settings.opacity), '--rail-alpha': tintAlpha(settings.railOpacity), '--scale': (settings.scale / 100) * (layout.layout === 'rail' ? RAIL_BOOST : 1), '--rail-boost': RAIL_BOOST } as never}
       onMouseLeave={onPointerLeave}
     >
       {layout.layout === 'panel' ? (
@@ -359,6 +376,9 @@ export function App() {
                 </div>
               </div>
             ) : null}
+            {flyout ? (
+              <Flyout settings={settings} platform={platform} onChange={updateSettings} onClose={() => setFlyout(false)} onQuit={quit} />
+            ) : null}
             {sideboardOpen && payload?.state?.sideboard?.length ? (
               <div class="sideboard" role="dialog" aria-label="Sideboard">
                 <div class="sb-head">Sideboard</div>
@@ -380,30 +400,27 @@ export function App() {
           </div>
         </>
       ) : (
-        <div class="rail-host">
-          <Rail
-            payload={payload}
-            link={link}
-            dock={settings.dock}
-            landsInPlay={landsInPlay}
-            onOpenPanel={() => void openPanel()}
-            onOpenSettings={() => {
-              setFlyout(true);
-              void openPanel();
-            }}
-            onDragStart={dragStart}
-          />
-        </div>
+        <>
+          <div class="rail-host">
+            <Rail
+              payload={payload}
+              link={link}
+              dock={settings.dock}
+              landsInPlay={landsInPlay}
+              onOpenPanel={() => void openPanel()}
+              onOpenSettings={() => setFlyout((v) => !v)}
+              onDragStart={dragStart}
+            />
+          </div>
+          {/* The settings open beside the rail, in the same gutter the panel
+              has; the shell widens the rail window while they are open. */}
+          {flyout ? (
+            <div class={`gutter side-${side}`}>
+              <Flyout settings={settings} platform={platform} onChange={updateSettings} onClose={() => setFlyout(false)} onQuit={quit} />
+            </div>
+          ) : null}
+        </>
       )}
-      {flyout ? (
-        <Flyout
-          settings={settings}
-          platform={platform}
-          onChange={updateSettings}
-          onClose={() => setFlyout(false)}
-          onQuit={quit}
-        />
-      ) : null}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Panel, deckColors } from '../components/Panel';
 import { Rail, deckTone } from '../components/Rail';
+import { Flyout } from '../components/Flyout';
 import { hoverCardTop, hoverSide, measureContentHeight, tintAlpha } from '../App';
 import { defaultSettings } from '../tauri';
 import { brawlState, inGamePayload, idlePayload, offlinePayload } from './fixtures';
@@ -189,5 +190,44 @@ describe('App helpers', () => {
     expect(measureContentHeight(tall, shortList)).toBe(330);
     expect(measureContentHeight({ offsetHeight: 90 } as HTMLElement, null)).toBe(160);
     expect(measureContentHeight({ offsetHeight: 90 } as HTMLElement, null, { offsetTop: 34, scrollHeight: 300 } as HTMLElement)).toBe(344);
+  });
+});
+
+describe('Flyout', () => {
+  it('orders the sliders Scale, Rail opacity, Panel opacity, Max panel height (in pixels)', () => {
+    render(<Flyout settings={defaultSettings()} platform="windows" onChange={() => undefined} onClose={() => undefined} onQuit={() => undefined} />);
+    const labels = Array.from(document.querySelectorAll('.fly label.r > span:first-child')).map((el) => el.textContent);
+    expect(labels.slice(0, 4)).toEqual(['Scale', 'Rail opacity', 'Panel opacity', 'Max panel height']);
+    expect(screen.getByText('800 px')).toBeTruthy();
+  });
+
+  it('restores every preference but keeps the window and the panel state', () => {
+    const current = {
+      ...defaultSettings(),
+      opacity: 0.2,
+      scale: 150,
+      panelMaxHeight: 400,
+      dock: 'left' as const,
+      hotkeysWindows: { toggle: 'Ctrl+Alt+T', visibility: 'Ctrl+Alt+H' },
+      panelOpen: true,
+      panelPinned: true,
+      positions: { leftY: 120, rightY: null, floatX: 40, floatY: 50 },
+      monitor: 'DELL U2723QE',
+    };
+    const onChange = vi.fn();
+    render(<Flyout settings={current} platform="windows" onChange={onChange} onClose={() => undefined} onQuit={() => undefined} />);
+    fireEvent.click(screen.getByText('Restore defaults'));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const next = onChange.mock.calls[0][0];
+    expect(next.opacity).toBe(0.8);
+    expect(next.railOpacity).toBe(0.9);
+    expect(next.scale).toBe(100);
+    expect(next.panelMaxHeight).toBe(800);
+    expect(next.dock).toBe('right');
+    expect(next.hotkeysWindows.toggle).toBe('Alt+Shift+T');
+    expect(next.panelOpen).toBe(true);
+    expect(next.panelPinned).toBe(true);
+    expect(next.positions).toEqual(current.positions);
+    expect(next.monitor).toBe('DELL U2723QE');
   });
 });

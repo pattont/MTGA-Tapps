@@ -57,32 +57,44 @@ pub const PANEL_WIDTH: i32 = 301;
 /// Transparent strip beside the panel, on the board side, where the hover
 /// card and the sideboard fly out to. Part of the window; clicks on the
 /// fully transparent pixels fall through on macOS.
-pub const PANEL_GUTTER: i32 = 262;
+pub const PANEL_GUTTER: i32 = 282;
+/// The same gutter beside the rail. The rail page is drawn a step larger
+/// (RAIL_BOOST 1.2 — RAIL_WIDTH/HEIGHT already include it) and the page
+/// counter-scales its gutter so the settings look the same beside the
+/// rail as beside the panel; the window has to lend it 1.2× the pixels.
+pub const RAIL_GUTTER: i32 = PANEL_GUTTER * 6 / 5;
 pub const PANEL_MIN_HEIGHT: i32 = 160;
 
 /// Vertical gap kept from the work area's top and bottom when clamping.
 const EDGE_MARGIN: i32 = 8;
 
 /// `content_height` is the page's base (unscaled) measurement; `scale_pct`
-/// grows the window with the page's transform.
-pub fn size_for(layout: Layout, content_height: i32, work_area: &Rect, max_height_pct: u32, scale_pct: u32) -> Size {
+/// grows the window with the page's transform. `max_height` is the
+/// panel's cap in logical pixels (the Max panel height setting). With the
+/// settings flyout open beside the rail, the rail window borrows the
+/// panel's gutter and grows tall enough for the flyout (`content_height`
+/// is then the flyout's measurement).
+pub fn size_for(layout: Layout, content_height: i32, work_area: &Rect, max_height: u32, scale_pct: u32, flyout_open: bool) -> Size {
     let scaled = |v: i32| (v as i64 * scale_pct.clamp(50, 200) as i64 / 100) as i32;
     match layout {
+        Layout::Rail if flyout_open => Size {
+            width: scaled(RAIL_WIDTH + RAIL_GUTTER),
+            height: fit_height(scaled(content_height).max(scaled(RAIL_HEIGHT)), work_area, u32::MAX),
+        },
         Layout::Rail => Size { width: scaled(RAIL_WIDTH), height: scaled(RAIL_HEIGHT) },
         Layout::Panel => Size {
             width: scaled(PANEL_WIDTH + PANEL_GUTTER),
-            height: fit_height(scaled(content_height), work_area, max_height_pct),
+            height: fit_height(scaled(content_height), work_area, max_height),
         },
     }
 }
 
 /// The panel's height: its content, between the minimum and the smaller of
-/// the work area and `max_height_pct` percent of the screen — a long list
-/// scrolls inside rather than running the length of the monitor.
-pub fn fit_height(content_height: i32, work_area: &Rect, max_height_pct: u32) -> i32 {
-    let pct = max_height_pct.clamp(30, 100) as i64;
-    let by_pct = (work_area.height as i64 * pct / 100) as i32;
-    let max = by_pct.min(work_area.height - 2 * EDGE_MARGIN).max(PANEL_MIN_HEIGHT);
+/// the work area and `max_height` pixels — a long list scrolls inside
+/// rather than running the length of the monitor.
+pub fn fit_height(content_height: i32, work_area: &Rect, max_height: u32) -> i32 {
+    let by_setting = max_height.min(i32::MAX as u32) as i32;
+    let max = by_setting.min(work_area.height - 2 * EDGE_MARGIN).max(PANEL_MIN_HEIGHT);
     content_height.clamp(PANEL_MIN_HEIGHT, max)
 }
 
@@ -186,17 +198,29 @@ mod tests {
 
     #[test]
     fn rail_and_panel_sizes() {
-        assert_eq!(size_for(Layout::Rail, 9999, &WORK, 100, 100), Size { width: RAIL_WIDTH, height: RAIL_HEIGHT });
-        assert_eq!(size_for(Layout::Rail, 9999, &WORK, 100, 150), Size { width: RAIL_WIDTH * 3 / 2, height: RAIL_HEIGHT * 3 / 2 });
-        assert_eq!(size_for(Layout::Panel, 400, &WORK, 100, 150), Size { width: (301 + 262) * 3 / 2, height: 600 });
-        assert_eq!(size_for(Layout::Panel, 620, &WORK, 100, 100), Size { width: 301 + 262, height: 620 });
+        assert_eq!(size_for(Layout::Rail, 9999, &WORK, 4000, 100, false), Size { width: RAIL_WIDTH, height: RAIL_HEIGHT });
+        assert_eq!(size_for(Layout::Rail, 9999, &WORK, 4000, 150, false), Size { width: RAIL_WIDTH * 3 / 2, height: RAIL_HEIGHT * 3 / 2 });
+        assert_eq!(size_for(Layout::Panel, 400, &WORK, 4000, 150, false), Size { width: (301 + 282) * 3 / 2, height: 600 });
+        assert_eq!(size_for(Layout::Panel, 620, &WORK, 4000, 100, false), Size { width: 301 + 282, height: 620 });
         // Taller than the screen -> capped with the edge margin.
-        assert_eq!(size_for(Layout::Panel, 3000, &WORK, 100, 100).height, 1055 - 16);
-        // The max-height setting caps a long list to a share of the screen.
-        assert_eq!(size_for(Layout::Panel, 3000, &WORK, 70, 100).height, 1055 * 70 / 100);
-        assert_eq!(size_for(Layout::Panel, 500, &WORK, 70, 100).height, 500);
+        assert_eq!(size_for(Layout::Panel, 3000, &WORK, 4000, 100, false).height, 1055 - 16);
+        // The max-height setting (pixels) caps a long list.
+        assert_eq!(size_for(Layout::Panel, 3000, &WORK, 800, 100, false).height, 800);
+        assert_eq!(size_for(Layout::Panel, 500, &WORK, 800, 100, false).height, 500);
         // Never below the minimum.
-        assert_eq!(size_for(Layout::Panel, 10, &WORK, 70, 100).height, PANEL_MIN_HEIGHT);
+        assert_eq!(size_for(Layout::Panel, 10, &WORK, 800, 100, false).height, PANEL_MIN_HEIGHT);
+    }
+
+    #[test]
+    fn rail_with_settings_open_borrows_the_gutter() {
+        // The flyout beside the rail: as wide as the panel's gutter, and as
+        // tall as the flyout needs (never shorter than the rail, never
+        // taller than the screen, ignoring the panel's own height cap).
+        let open = size_for(Layout::Rail, 640, &WORK, 300, 100, true);
+        assert_eq!(open, Size { width: RAIL_WIDTH + RAIL_GUTTER, height: 640 });
+        assert_eq!(size_for(Layout::Rail, 100, &WORK, 300, 100, true).height, RAIL_HEIGHT);
+        assert_eq!(size_for(Layout::Rail, 5000, &WORK, 300, 100, true).height, 1055 - 16);
+        assert_eq!(size_for(Layout::Rail, 640, &WORK, 300, 150, true).width, (RAIL_WIDTH + RAIL_GUTTER) * 3 / 2);
     }
 
     #[test]

@@ -86,11 +86,23 @@ img {
   min-width: 0;
 }
 
+/* Beside the rail the page is drawn RAIL_BOOST larger; the gutter undoes
+   that so the settings flyout is the same size it is beside the panel. */
+.is-rail .gutter {
+  transform: scale(calc(1 / var(--rail-boost, 1.2)));
+  transform-origin: top left;
+}
+
+.is-rail .gutter.side-left {
+  transform-origin: top right;
+}
+
 .dock-right .gutter {
   order: 0;
 }
 
-.dock-right .panel {
+.dock-right .panel,
+.dock-right .rail-host {
   order: 1;
 }
 
@@ -112,6 +124,7 @@ img {
 
 .rail-host {
   display: flex;
+  flex: 0 0 auto;
   height: 100%;
 }
 
@@ -1055,12 +1068,13 @@ img {
 
 /* ----------------------------------------------------- settings flyout */
 
+/* Lives in the gutter beside the panel (or the rail), toward the board,
+   like the hover card — never over the decklist. */
 .fly {
   position: absolute;
-  right: 8px;
-  top: 34px;
+  top: 8px;
   width: 268px;
-  max-height: calc(100% - 42px);
+  max-height: calc(100% - 16px);
   overflow-y: auto;
   overflow-x: hidden;
   background: var(--panel-strong);
@@ -1073,9 +1087,12 @@ img {
   scrollbar-width: thin;
 }
 
-.dock-left .fly {
-  right: auto;
-  left: 8px;
+.gutter.side-left .fly {
+  right: 6px;
+}
+
+.gutter.side-right .fly {
+  left: 6px;
 }
 
 .fly-head {
@@ -1137,6 +1154,11 @@ img {
   accent-color: var(--accent);
   margin: 0 4px;
   min-width: 60px;
+}
+
+/* The slider gives way before the label does: labels stay on one line. */
+.fly .r > span:first-child {
+  white-space: nowrap;
 }
 
 .fly input[type='checkbox'] {
@@ -1209,6 +1231,20 @@ img {
   padding-top: 6px;
   display: flex;
   justify-content: flex-end;
+}
+
+.fly .reset {
+  color: var(--muted);
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  margin-right: auto;
+}
+
+.fly .reset:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .fly .quit {

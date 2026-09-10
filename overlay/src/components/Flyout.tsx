@@ -1,4 +1,5 @@
 import { useState } from 'preact/hooks';
+import { defaultSettings } from '../tauri';
 import type { Settings } from '../types';
 import { Close } from './Icons';
 
@@ -8,6 +9,21 @@ interface Props {
   onChange: (next: Settings) => void;
   onClose: () => void;
   onQuit: () => void;
+}
+
+/**
+ * Every preference back to its default. What is not a preference stays:
+ * the window's remembered positions and monitor, and whether the panel is
+ * on and pinned (those belong to the arrow, chevron and pin).
+ */
+export function restoredDefaults(current: Settings): Settings {
+  return {
+    ...defaultSettings(),
+    panelOpen: current.panelOpen,
+    panelPinned: current.panelPinned,
+    positions: current.positions,
+    monitor: current.monitor,
+  };
 }
 
 /** "Alt+Shift+T" -> "⌥⇧T" on macOS, unchanged elsewhere. */
@@ -79,32 +95,6 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
         </button>
       </div>
       <label class="r">
-        <span>Panel opacity</span>
-        <input
-          type="range"
-          min="0"
-          max="100"
-          step="5"
-          value={Math.round(settings.opacity * 100)}
-          onInput={(event) => onChange({ ...settings, opacity: Number((event.currentTarget as HTMLInputElement).value) / 100 })}
-          aria-label="Background opacity"
-        />
-        <span class="v">{Math.round(settings.opacity * 100)}%</span>
-      </label>
-      <label class="r">
-        <span>Rail opacity</span>
-        <input
-          type="range"
-          min="0"
-          max="100"
-          step="5"
-          value={Math.round(settings.railOpacity * 100)}
-          onInput={(event) => onChange({ ...settings, railOpacity: Number((event.currentTarget as HTMLInputElement).value) / 100 })}
-          aria-label="Minimized rail background opacity"
-        />
-        <span class="v">{Math.round(settings.railOpacity * 100)}%</span>
-      </label>
-      <label class="r">
         <span>Scale</span>
         {/* Applied on release: a live rescale moves the slider under the cursor. */}
         <input
@@ -123,17 +113,43 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
         <span class="v">{pendingScale ?? settings.scale}%</span>
       </label>
       <label class="r">
+        <span>Rail opacity</span>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          step="5"
+          value={Math.round(settings.railOpacity * 100)}
+          onInput={(event) => onChange({ ...settings, railOpacity: Number((event.currentTarget as HTMLInputElement).value) / 100 })}
+          aria-label="Minimized rail background opacity"
+        />
+        <span class="v">{Math.round(settings.railOpacity * 100)}%</span>
+      </label>
+      <label class="r">
+        <span>Panel opacity</span>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          step="5"
+          value={Math.round(settings.opacity * 100)}
+          onInput={(event) => onChange({ ...settings, opacity: Number((event.currentTarget as HTMLInputElement).value) / 100 })}
+          aria-label="Background opacity"
+        />
+        <span class="v">{Math.round(settings.opacity * 100)}%</span>
+      </label>
+      <label class="r">
         <span>Max panel height</span>
         <input
           type="range"
-          min="30"
-          max="100"
-          step="5"
-          value={settings.panelMaxHeightPct}
-          onInput={(event) => onChange({ ...settings, panelMaxHeightPct: Number((event.currentTarget as HTMLInputElement).value) })}
-          aria-label="Max panel height, percent of the screen"
+          min="300"
+          max="1600"
+          step="20"
+          value={settings.panelMaxHeight}
+          onInput={(event) => onChange({ ...settings, panelMaxHeight: Number((event.currentTarget as HTMLInputElement).value) })}
+          aria-label="Max panel height, pixels"
         />
-        <span class="v">{settings.panelMaxHeightPct}%</span>
+        <span class="v">{settings.panelMaxHeight} px</span>
       </label>
       <div class="r">
         <span>Dock</span>
@@ -233,6 +249,9 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
         />
       </div>
       <div class="fly-foot">
+        <button type="button" class="reset" onClick={() => onChange(restoredDefaults(settings))}>
+          Restore defaults
+        </button>
         <button type="button" class="quit" onClick={onQuit}>
           Quit overlay
         </button>

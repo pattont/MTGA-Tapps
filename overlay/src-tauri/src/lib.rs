@@ -203,7 +203,7 @@ fn apply_geometry(app: &AppHandle) {
     let mut runtime = state.runtime.lock().unwrap();
     let area = target_monitor(&window, &runtime, settings.follow_arena);
     runtime.area = Some(area);
-    let size = dock::size_for(runtime.layout, runtime.content_height, &area, settings.panel_max_height_pct, settings.scale);
+    let size = dock::size_for(runtime.layout, runtime.content_height, &area, settings.panel_max_height, settings.scale, runtime.flyout_open);
     let y = match settings.dock {
         Dock::Left => settings.positions.left_y,
         Dock::Right => settings.positions.right_y,
@@ -602,7 +602,9 @@ fn set_content_height(app: AppHandle, height: i32) {
         let next = height.max(0);
         let changed = runtime.content_height != next;
         runtime.content_height = next;
-        changed && runtime.layout == Layout::Panel
+        // The rail's window only follows the content while the settings
+        // flyout is open beside it.
+        changed && (runtime.layout == Layout::Panel || runtime.flyout_open)
     };
     if resize {
         apply_geometry(&app);
@@ -673,13 +675,22 @@ fn quit_overlay(app: AppHandle) {
 /// Arena rule.
 #[tauri::command]
 fn set_page_open(app: AppHandle, flyout: bool, sideboard: bool) {
-    let was_forced = {
+    let (was_forced, resize) = {
         let state = app.state::<AppState>();
         let mut runtime = state.runtime.lock().unwrap();
+        let flyout_changed = runtime.flyout_open != flyout;
         runtime.flyout_open = flyout;
         runtime.sideboard_open = sideboard;
-        !flyout && std::mem::replace(&mut runtime.force_show, false)
+        (
+            !flyout && std::mem::replace(&mut runtime.force_show, false),
+            // The settings flyout opens beside the rail: the rail window
+            // widens by the gutter while it is open and shrinks back after.
+            flyout_changed && runtime.layout == Layout::Rail,
+        )
     };
+    if resize {
+        apply_geometry(&app);
+    }
     if was_forced {
         refresh_visibility(&app);
         emit_layout(&app);
@@ -763,7 +774,9 @@ fn start_cursor_watch(app: AppHandle) {
                     // never opened, or was closed, stays a rail.
                     Layout::Rail => {
                         let armed = app.state::<AppState>().runtime.lock().unwrap().rail_hover_armed;
-                        if panel_on && !pinned && inside && armed && inside_since.map_or(false, |t| now.duration_since(t) >= RAIL_HOVER_OPEN) {
+                        // With the settings open beside the rail the player is
+                        // in the settings, not asking for the deck.
+                        if panel_on && !pinned && !flyout && inside && armed && inside_since.map_or(false, |t| now.duration_since(t) >= RAIL_HOVER_OPEN) {
                             diag::log("cursor: over the rail — unfolding the panel");
                             set_layout_inner(&app, Layout::Panel, Why::Auto);
                         }
@@ -924,7 +937,7 @@ fn on_moved(app: &AppHandle, physical_x: i32, physical_y: i32) {
         let area = target_monitor(&window, &runtime, settings.follow_arena);
         (
             settings.dock,
-            dock::size_for(runtime.layout, runtime.content_height, &area, settings.panel_max_height_pct, settings.scale),
+            dock::size_for(runtime.layout, runtime.content_height, &area, settings.panel_max_height, settings.scale, runtime.flyout_open),
             area,
         )
     };

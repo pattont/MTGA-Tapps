@@ -74,8 +74,7 @@ pub struct Positions {
 pub struct Settings {
     /// The background slider, 0.0–1.0. Text, lines and numbers are always
     /// fully visible; this only drives the charcoal ground, which tops out
-    /// at about 88 % at 1.0 and is gone at 0.0. Default 0.6 leaves room
-    /// to make it more visible.
+    /// at about 88 % at 1.0 and is gone at 0.0.
     pub opacity: f64,
     /// The same slider for the minimized rail alone; it is small enough that
     /// people want it darker (or lighter) than the panel.
@@ -83,9 +82,10 @@ pub struct Settings {
     /// Size of everything, percent (50–200). The page lays out at its base
     /// size and is scaled; the window grows to match.
     pub scale: u32,
-    /// The panel never grows past this share of the screen's height (30–100);
-    /// the list scrolls inside it instead.
-    pub panel_max_height_pct: u32,
+    /// The panel never grows taller than this (logical pixels, before
+    /// Scale); the list scrolls inside it instead. Always capped by the
+    /// screen as well.
+    pub panel_max_height: u32,
     pub dock: Dock,
     pub return_after_seconds: u32,
     /// The deck panel is "on": the player opened it (arrow / hotkey) and has
@@ -113,10 +113,10 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            opacity: 0.6,
-            rail_opacity: 0.6,
+            opacity: 0.8,
+            rail_opacity: 0.9,
             scale: 100,
-            panel_max_height_pct: 70,
+            panel_max_height: 800,
             dock: Dock::Right,
             return_after_seconds: 4,
             panel_open: false,
@@ -149,21 +149,22 @@ impl Settings {
     }
 
     pub fn clamped(mut self) -> Self {
+        let defaults = Settings::default();
         if !(0.0..=1.0).contains(&self.opacity) || self.opacity.is_nan() {
-            self.opacity = 0.6;
+            self.opacity = defaults.opacity;
         }
         if !(0.0..=1.0).contains(&self.rail_opacity) || self.rail_opacity.is_nan() {
-            self.rail_opacity = 0.6;
+            self.rail_opacity = defaults.rail_opacity;
         }
         self.return_after_seconds = self.return_after_seconds.clamp(1, 60);
         if self.scale == 0 {
             self.scale = 100;
         }
         self.scale = self.scale.clamp(50, 200);
-        if self.panel_max_height_pct == 0 {
-            self.panel_max_height_pct = 70;
+        if self.panel_max_height == 0 {
+            self.panel_max_height = defaults.panel_max_height;
         }
-        self.panel_max_height_pct = self.panel_max_height_pct.clamp(30, 100);
+        self.panel_max_height = self.panel_max_height.clamp(200, 4000);
         if self.api_url.trim().is_empty() {
             self.api_url = Settings::default().api_url;
         }
@@ -201,13 +202,24 @@ mod tests {
 
         let weird: Settings = serde_json::from_str(r#"{"opacity": 7, "returnAfterSeconds": 0, "apiUrl": " "}"#).unwrap();
         let fixed = weird.clamped();
-        assert_eq!(fixed.opacity, 0.6);
-        assert_eq!(fixed.rail_opacity, 0.6);
+        assert_eq!(fixed.opacity, 0.8);
+        assert_eq!(fixed.rail_opacity, 0.9);
+        assert_eq!(fixed.panel_max_height, 800);
         assert_eq!(fixed.return_after_seconds, 1);
         assert_eq!(fixed.api_url, "http://127.0.0.1:8765");
         // Missing fields take defaults (a file from an older version keeps working).
         assert_eq!(fixed.dock, Dock::Right);
         assert_eq!(fixed.lands, Lands::Grouped);
+    }
+
+    #[test]
+    fn old_percent_height_files_fall_back_to_the_pixel_default() {
+        // A settings file written before the height became pixels carries
+        // panelMaxHeightPct, which is simply unknown now.
+        let old: Settings = serde_json::from_str(r#"{"panelMaxHeightPct": 70}"#).unwrap();
+        assert_eq!(old.clamped().panel_max_height, 800);
+        let tiny: Settings = serde_json::from_str(r#"{"panelMaxHeight": 10}"#).unwrap();
+        assert_eq!(tiny.clamped().panel_max_height, 200);
     }
 
     #[test]

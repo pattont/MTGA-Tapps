@@ -79,12 +79,14 @@ function browserShell(): Shell {
   };
 }
 
+/** Mirrors `Settings::default()` in settings.rs — the Restore defaults button
+    and the browser stub both use it. */
 export function defaultSettings(): Settings {
   return {
-    opacity: 0.6,
-    railOpacity: 0.6,
+    opacity: 0.8,
+    railOpacity: 0.9,
     scale: 100,
-    panelMaxHeightPct: 70,
+    panelMaxHeight: 800,
     dock: 'right',
     returnAfterSeconds: 4,
     panelOpen: false,
