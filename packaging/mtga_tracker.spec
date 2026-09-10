@@ -123,7 +123,13 @@ analysis = Analysis(
         (str(runtime_assets), "mtga_tracker/assets"),
         *overlay_datas,
     ],
-    hiddenimports=[],
+    # The dashboard's Deck Finder page runs inside THIS executable and loads
+    # the deck-downloader providers by name at runtime (deckfinder_api ->
+    # providers.registry -> importlib), which static analysis cannot see.
+    # Each exe has its own Python archive, so the terminal Deck Finder's
+    # analysis below bundling them does not help here: without this the
+    # packaged dashboard's Deck Finder shows no sites at all.
+    hiddenimports=["cloudscraper", "bs4"] + collect_submodules("mtga_deck_downloader"),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

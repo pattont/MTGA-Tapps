@@ -407,6 +407,38 @@ def test_settings_tracker_info_reads_live_status_paths(tmp_path):
     assert isinstance(body["platform"]["collection_export"], bool)
 
 
+def test_settings_paths_use_the_windows_home_placeholder(monkeypatch, tmp_path):
+    """On Windows the Settings page must not show ``~`` — Explorer cannot open
+    it — but ``%USERPROFILE%``, which it expands (and which still hides the
+    username)."""
+    from pathlib import Path
+
+    from mtga_tracker import rendering, settings_api
+
+    monkeypatch.setattr(rendering, "HOME_PLACEHOLDER", "%USERPROFILE%")
+    store = _store(tmp_path)
+    home = Path.home()
+    _log_line(
+        store,
+        "startup",
+        live=_live(
+            in_game=0,
+            log_path=str(home / "AppData" / "LocalLow" / "Wizards Of The Coast" / "MTGA" / "Player.log"),
+            card_db_path=str(home / "MTGA" / "Raw_CardDatabase_abc.mtga"),
+            db_path=str(home / "AppData" / "Local" / "MTGA Tracker" / "mtga_tracker.sqlite3"),
+            tracker_version="9.9.9",
+        ),
+    )
+    store.close()
+
+    _status, body = settings_api.handle_get("/api/settings", tmp_path / "tracker.sqlite3")
+    info = body["tracker"]
+    for key in ("monitoring", "card_db", "log_db"):
+        assert info[key].startswith("%USERPROFILE%"), info[key]
+        assert "~" not in info[key] and str(home) not in info[key]
+    assert info["log_db"].endswith("mtga_tracker.sqlite3")
+
+
 def test_missing_live_status_table_is_offline(tmp_path):
     # A database that never saw the new tracker: build one and drop the table.
     store = _store(tmp_path)

@@ -1445,7 +1445,16 @@ async function deckFinderJson<T>(response: Response): Promise<T> {
 
 export async function fetchDeckFinderProviders(signal?: AbortSignal): Promise<DeckFinderProvider[]> {
   const response = await fetch('/api/deckfinder/providers', { signal });
-  const body = await deckFinderJson<{ providers: DeckFinderProvider[] }>(response);
+  const body = await deckFinderJson<{ providers: DeckFinderProvider[]; errors?: string[] }>(response);
+  if (body.providers.length === 0) {
+    // Every site failed to load: say so (the first reason is usually the one).
+    const reason = body.errors?.[0];
+    throw new Error(
+      reason
+        ? `No deck sites could be loaded — ${reason}`
+        : 'No deck sites could be loaded. This build may be missing the Deck Finder components.',
+    );
+  }
   return body.providers;
 }
 

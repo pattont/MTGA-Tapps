@@ -81,14 +81,17 @@ def _save_deck_ai(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _tilde(value: Any) -> Optional[str]:
-    """Shorten an absolute path with the user's home directory to ~/..."""
+    """Hide the username in a path shown on the Settings page.
+
+    ``~/...`` on macOS and Linux; ``%USERPROFILE%\\...`` on Windows, where
+    ``~`` means nothing to Explorer or cmd but ``%USERPROFILE%`` expands, so
+    the shown path still pastes straight into the address bar.
+    """
     if not value:
         return None
-    text = str(value)
-    home = str(Path.home())
-    if home and text.startswith(home):
-        return "~" + text[len(home):]
-    return text
+    from .rendering import display_path_without_username
+
+    return display_path_without_username(value)
 
 
 def _deck_ai_summary() -> str:

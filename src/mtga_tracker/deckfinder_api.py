@@ -634,7 +634,13 @@ def write_creator_config(payload: Dict[str, Any]) -> Dict[str, Any]:
 def handle_get(path: str, query: Dict[str, List[str]]) -> Optional[Tuple[int, Dict[str, Any]]]:
     try:
         if path == "/api/deckfinder/providers":
-            return 200, {"providers": [_serialize_provider(p) for p in _providers()]}
+            providers = [_serialize_provider(p) for p in _providers()]
+            # Providers that failed to load are swallowed by the registry so
+            # one bad site never takes the rest down; when NONE loaded the
+            # page needs to say why rather than show an empty list.
+            from mtga_deck_downloader.providers.registry import LAST_PROVIDER_ERRORS
+
+            return 200, {"providers": providers, "errors": list(LAST_PROVIDER_ERRORS)}
         if path == "/api/deckfinder/sources":
             provider = _provider_by_key(query.get("provider", [""])[0])
             fmt = _match_format(query.get("format", [None])[0])

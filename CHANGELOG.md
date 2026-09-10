@@ -145,6 +145,17 @@ the menu bar's **Stop Overlay**.
   frame is now the tile's base layer and the art fades in over it once it
   has actually loaded; a request that has neither loaded nor failed after
   six seconds is treated as failed and the by-name fallback is tried.
+- **The packaged app's Deck Finder page was blank.** The installed tracker
+  did not carry the deck-site modules the Deck Finder loads at runtime
+  (only the terminal Deck Finder analysis did), so the dashboard was
+  offered no sites and drew an empty page. The installers now include
+  them, and if no site can be loaded the page says so — with the reason
+  — instead of showing nothing.
+- **Windows: the paths on the Settings page could not be opened.** Log DB
+  and the other paths hid the username as `~\AppData\...`, which Explorer
+  does not understand. They now read `%USERPROFILE%\AppData\...`, which
+  still hides the username and pastes straight into Explorer's address bar
+  or a Run box.
 
 ### Housekeeping
 
