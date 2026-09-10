@@ -1,4 +1,4 @@
-import railCard from '../icons/rail-card.png';
+import cardMark from '../icons/card-mark.svg';
 import { landDanger, showsLibrary } from '../model';
 import type { Link, OverlayPayload } from '../types';
 import { Chevron, Gear } from './Icons';
@@ -33,7 +33,7 @@ export function Rail({ payload, link, dock, landsInPlay, onOpenPanel, onOpenSett
       {/* The tracker link has no indicator while it works. When it does not,
           the icon itself says so: dimmed, with a warning badge and a tooltip. */}
       <span class={`logo-wrap${offline ? ' offline' : ''}`} title={offline ? 'Not connected to Tapps Tracker. Start the tracker; the overlay reconnects on its own.' : undefined}>
-        <img class="logo" src={railCard} width={20} height={27} alt="Tapps Tracker" onMouseDown={onDragStart} draggable={false} />
+        <img class="logo" src={cardMark} width={20} height={28} alt="Tapps Tracker" onMouseDown={onDragStart} draggable={false} />
         {offline ? (
           <i class="warn-badge" aria-label="Tracker not running">
             !

@@ -138,12 +138,15 @@ img {
   position: relative;
   display: block;
   width: 20px;
-  height: 27px;
+  height: 28px;
 }
 
+/* The card mark is an SVG (icons/card-mark.svg), so it stays sharp at the
+   rail's 20px and at any display scale. */
 .rail .logo {
   display: block;
-  border-radius: 3px;
+  width: 20px;
+  height: 28px;
   cursor: grab;
   filter: drop-shadow(0 1px 2px rgb(0 0 0 / 55%));
 }

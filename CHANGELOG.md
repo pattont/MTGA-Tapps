@@ -65,6 +65,11 @@
 
 ### In-game overlay (tracker-overlay branch, not in this release)
 
+- The rail's card icon is a vector drawing now (`overlay/src/icons/card-mark.svg`,
+  the app icon's card redrawn) instead of a 20-pixel crop of the raster
+  icon, so it is sharp at every size and display scale. The same file is
+  in the dashboard's `ui/public/icons/` for reuse.
+
 - **In-game overlay.** A small always-on-top window beside Arena: a 44 px
   rail — drawn a step larger than the panel — with Turn, Land and Deck as
   label-over-value cells at one size (the deck bar goes yellow once half

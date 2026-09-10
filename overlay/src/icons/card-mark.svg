@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 252" width="180" height="252">
+  <!-- Tapps card mark: the app icon's card, redrawn as vectors so it stays
+       crisp at 20px in the overlay rail and at 200px on a page. -->
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f1d27a"/>
+      <stop offset="0.45" stop-color="#d9ad4c"/>
+      <stop offset="1" stop-color="#a97a25"/>
+    </linearGradient>
+    <linearGradient id="goldLine" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#c8982f"/>
+      <stop offset="1" stop-color="#f0cf74"/>
+    </linearGradient>
+    <linearGradient id="face" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b2926"/>
+      <stop offset="1" stop-color="#181716"/>
+    </linearGradient>
+    <radialGradient id="gem" cx="0.38" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#ff7d7d"/>
+      <stop offset="0.45" stop-color="#e01f1f"/>
+      <stop offset="1" stop-color="#7a0909"/>
+    </radialGradient>
+    <linearGradient id="steel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e6e8ec"/>
+      <stop offset="1" stop-color="#9ea3aa"/>
+    </linearGradient>
+  </defs>
+
+  <!-- card body and gold frame -->
+  <rect x="7" y="7" width="166" height="238" rx="18" fill="url(#face)" stroke="url(#gold)" stroke-width="12"/>
+  <rect x="7" y="7" width="166" height="238" rx="18" fill="none" stroke="#5a4110" stroke-opacity="0.55" stroke-width="1"/>
+
+  <!-- inner hairline with notched corners -->
+  <path d="M36 28 H144 A8 8 0 0 0 152 36 V216 A8 8 0 0 0 144 224 H36 A8 8 0 0 0 28 216 V36 A8 8 0 0 0 36 28 Z"
+        fill="none" stroke="url(#gold)" stroke-width="2.5" stroke-linejoin="round"/>
+
+  <!-- trend line -->
+  <path d="M60 186 L94 156 L128 122" fill="none" stroke="url(#goldLine)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="60" cy="186" r="11" fill="url(#gold)" stroke="#7a5716" stroke-width="1"/>
+  <circle cx="94" cy="156" r="11" fill="url(#gold)" stroke="#7a5716" stroke-width="1"/>
+
+  <!-- crosshair with the gem -->
+  <g stroke="url(#steel)" stroke-width="4" stroke-linecap="round" fill="none">
+    <circle cx="128" cy="122" r="21"/>
+    <path d="M128 92 V101 M128 143 V152 M98 122 H107 M149 122 H158"/>
+  </g>
+  <circle cx="128" cy="122" r="12.5" fill="url(#gold)"/>
+  <circle cx="128" cy="122" r="9.5" fill="url(#gem)"/>
+  <circle cx="124.5" cy="118" r="2.6" fill="#ffffff" fill-opacity="0.75"/>
+</svg>
