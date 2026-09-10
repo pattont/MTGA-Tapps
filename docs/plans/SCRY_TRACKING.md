@@ -2,8 +2,9 @@
 
 **Status: steps 0–3 implemented (scry). Step 4 (surveil) is open.** What
 shipped differs from the text below in two places, noted inline: the
-scry annotation's real shape (§1) and where the rows live on the game
-and deck pages (§4 — under *Cards*, not a separate *Library* group).
+scry annotation's real shape (§1) and the group's name and place on the
+game and deck pages (§4 — a *Scry* group under *Cards* in the second
+column, not a *Library* group).
 
 Before this, the tracker saw a scry and wrote one word about it: the
 timeline said "You: scried" with no count, nothing was persisted, and the
@@ -134,11 +135,12 @@ event count is recoverable; the card totals stay NULL for old games).
 
 ## 4. Dashboard
 
-- **Game page** (`GameDetailPage`): *as built,* the rows live in the
-  existing **Cards** group of Combat & Resources (no separate "Library"
-  group): Scries · Cards scried · Scried to top · Scried to bottom. Plain
-  rows — a "3 (1 top · 2 bottom)" cell was tried and does not fit the
-  Cards column at common widths. Surveil rows join the group in step 4.
+- **Game page** (`GameDetailPage`): *as built,* a **Scry** group in
+  Combat & Resources directly under Cards (second column; Removal moved
+  to lead the third column so the columns stay close to even): Scried ·
+  Cards scried · Scried Top · Scried Bottom. Plain rows — a
+  "3 (1 top · 2 bottom)" cell was tried and does not fit the column at
+  common widths. Surveil rows join the group in step 4.
 - **Deck page** (`DeckDetailPage`): the same rows appear automatically in
   the per-game averages once the columns are in `_INTERACTION_STAT_COLUMNS`.
   Plus one derived figure that is actually decision-useful: **Bottom

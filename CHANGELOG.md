@@ -9,9 +9,10 @@
   actually happened instead of a bare "scried": `You: scried 2 — kept
   [Opt] on top, bottomed [Plains]` (the opponent's reads `scried 2 — 1
   top, 1 bottom`), with its own **Scry** badge in the game timeline and
-  the Live Feed. The game page and the deck page show Scries, Cards
-  scried, Scried to top and Scried to bottom under **Cards** in Combat &
-  Resources; the deck page adds a **Bottom rate** (the share of scried
+  the Live Feed. The game page and the deck page get a **Scry** group in
+  Combat & Resources, under Cards — Scried, Cards scried, Scried Top,
+  Scried Bottom — and Removal moves to lead the next column so the four
+  columns stay close to even; the deck page adds a **Bottom rate** (the share of scried
   cards you send under — a high number is a deck unhappy with its top)
   and a "Bottomed most when scrying" line naming the cards. Historical
   games get their scry count back from their timelines (the old lines

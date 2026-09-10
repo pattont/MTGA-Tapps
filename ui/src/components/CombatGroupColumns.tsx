@@ -72,8 +72,8 @@ export function CombatGroupColumns({ columns }: { columns: CombatGroupTable[][] 
 export function bucketCombatGroups(groups: CombatGroupTable[]): CombatGroupTable[][] {
   const buckets = [
     ['Attack', 'Block', 'Life'],
-    ['Cards', 'Removal'],
-    ['Bounce', 'Land Destruction'],
+    ['Cards', 'Scry'],
+    ['Removal', 'Bounce', 'Land Destruction'],
     ['Counter Magic', 'Tokens'],
   ];
   const byTitle = new Map(groups.map((group) => [group.title, group]));

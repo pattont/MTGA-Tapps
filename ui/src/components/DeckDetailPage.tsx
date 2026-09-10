@@ -882,10 +882,15 @@ export function DeckDetailPage({
         ['Discarded', 'cards_discarded'],
         ['Milled', 'cards_milled'],
         ['Exiled', 'cards_exiled'],
-        ['Scries', 'scries'],
+      ],
+    },
+    {
+      title: 'Scry',
+      rows: [
+        ['Scried', 'scries'],
         ['Cards scried', 'scry_cards'],
-        ['Scried to top', 'scry_top'],
-        ['Scried to bottom', 'scry_bottom'],
+        ['Scried Top', 'scry_top'],
+        ['Scried Bottom', 'scry_bottom'],
         ['Bottom rate', 'scry_bottom_pct'],
       ],
     },

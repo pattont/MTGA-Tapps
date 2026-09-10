@@ -566,12 +566,17 @@ export function GameDetailPage({
         ['Discarded', 'cards_discarded'],
         ['Milled', 'cards_milled'],
         ['Exiled', 'cards_exiled'],
-        // Scry counts are known for both seats: Arena lists the card ids
-        // even when the cards themselves stay hidden.
-        ['Scries', 'scries'],
+      ],
+    },
+    {
+      // Scry counts are known for both seats: Arena lists the card ids
+      // even when the cards themselves stay hidden.
+      title: 'Scry',
+      rows: [
+        ['Scried', 'scries'],
         ['Cards scried', 'scry_cards'],
-        ['Scried to top', 'scry_top'],
-        ['Scried to bottom', 'scry_bottom'],
+        ['Scried Top', 'scry_top'],
+        ['Scried Bottom', 'scry_bottom'],
       ],
     },
     {
