@@ -220,3 +220,15 @@ def test_binary_candidates_follow_the_platform(monkeypatch, platform):
         assert any(name.endswith("tapps-overlay.exe") for name in names)
     monkeypatch.setenv(overlay_launcher.BINARY_ENV, "/tmp/custom-overlay")
     assert str(overlay_launcher.overlay_binary_candidates()[0]) == "/tmp/custom-overlay"
+
+
+def test_frozen_mac_build_looks_in_contents_helpers_first(monkeypatch, tmp_path):
+    """The macOS bundle carries the overlay as Contents/Helpers/Tapps
+    Overlay.app (copied in after PyInstaller, which cannot hold a nested
+    .app in its data tree); that is the first place a frozen build looks."""
+    monkeypatch.setattr(overlay_launcher.sys, "platform", "darwin")
+    monkeypatch.setattr(overlay_launcher.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(overlay_launcher.sys, "executable", str(tmp_path / "MTGA Tracker.app" / "Contents" / "MacOS" / "MTGA Tracker"))
+    monkeypatch.delenv(overlay_launcher.BINARY_ENV, raising=False)
+    first = overlay_launcher.overlay_binary_candidates()[0]
+    assert first == tmp_path / "MTGA Tracker.app" / "Contents" / "Helpers" / "Tapps Overlay.app" / "Contents" / "MacOS" / "tapps-overlay"

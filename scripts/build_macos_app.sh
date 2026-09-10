@@ -23,6 +23,22 @@ cd "$ROOT_DIR"
 # that flow for unsigned distribution. MACOS_SIGN_IDENTITY overrides with a
 # real Developer ID when one is available.
 APP_PATH="$ROOT_DIR/dist/MTGA Tracker.app"
+
+# The overlay goes in as a real nested app under Contents/Helpers (where
+# macOS expects helper apps) rather than through PyInstaller's data tree,
+# which mangles a nested .app into "Tapps Overlay__dot__app" with symlinked
+# binaries that codesign refuses. overlay_launcher.py looks here first.
+OVERLAY_APP="$ROOT_DIR/overlay/build-out/Tapps Overlay.app"
+if [[ -d "$OVERLAY_APP" ]]; then
+  mkdir -p "$APP_PATH/Contents/Helpers"
+  rm -rf "$APP_PATH/Contents/Helpers/Tapps Overlay.app"
+  cp -R "$OVERLAY_APP" "$APP_PATH/Contents/Helpers/"
+  echo "Overlay: $APP_PATH/Contents/Helpers/Tapps Overlay.app"
+elif [[ "${OVERLAY_REQUIRED:-0}" == "1" ]]; then
+  echo "overlay/build-out/Tapps Overlay.app is missing and OVERLAY_REQUIRED=1" >&2
+  exit 1
+fi
+
 codesign --force --deep --sign "${MACOS_SIGN_IDENTITY:--}" "$APP_PATH"
 codesign --verify --deep --strict "$APP_PATH"
 echo "Signed ($([ -n "${MACOS_SIGN_IDENTITY:-}" ] && echo "identity: $MACOS_SIGN_IDENTITY" || echo "ad-hoc")): $APP_PATH"

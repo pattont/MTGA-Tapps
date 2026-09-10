@@ -74,6 +74,13 @@ def overlay_binary_candidates() -> List[Path]:
     if override:
         candidates.append(Path(override).expanduser())
     if getattr(sys, "frozen", False):
+        if sys.platform == "darwin":
+            # The macOS build copies the overlay's .app into the tracker
+            # bundle's Contents/Helpers (a real nested bundle, where Apple
+            # wants helper apps and where codesign --deep can seal it);
+            # PyInstaller's data tree would mangle a nested .app.
+            exe = Path(sys.executable).resolve()
+            candidates.append(exe.parent.parent / "Helpers" / _MAC_EXECUTABLE)
         for root in _frozen_roots():
             candidates.append(root / "overlay" / relative)
     overlay_dir = PROJECT_ROOT / "overlay"

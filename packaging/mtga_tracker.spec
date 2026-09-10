@@ -92,13 +92,16 @@ if not (ui_dist / "index.html").is_file():
 # The in-game overlay is a separate native app staged by
 # scripts/build_overlay.{sh,ps1}. Optional: a build without Rust simply
 # ships without it (the Settings page says so), so this never fails.
+# Windows: the exe rides along as a data file. macOS: NOT here — PyInstaller
+# lays data out under Contents/Frameworks with "." in directory names
+# mangled to "__dot__" and symlinks from Resources, which breaks a nested
+# .app for codesign; scripts/build_macos_app.sh copies the real
+# "Tapps Overlay.app" into Contents/Helpers after this build instead.
 overlay_out = project_root / "overlay" / "build-out"
 overlay_datas = []
-if is_macos and (overlay_out / "Tapps Overlay.app").is_dir():
-    overlay_datas.append((str(overlay_out / "Tapps Overlay.app"), "overlay/Tapps Overlay.app"))
-elif is_windows and (overlay_out / "tapps-overlay.exe").is_file():
+if is_windows and (overlay_out / "tapps-overlay.exe").is_file():
     overlay_datas.append((str(overlay_out / "tapps-overlay.exe"), "overlay"))
-if not overlay_datas:
+if is_windows and not overlay_datas:
     print("mtga_tracker.spec: no overlay build in overlay/build-out — packaging without the in-game overlay")
 
 app_icon = None
