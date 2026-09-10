@@ -21,17 +21,17 @@ export function withDrawnSuffix(played: ReactNode, drawn: ReactNode): ReactNode 
 
 /**
  * "1 (33%)": a scried-to-top or scried-to-bottom count with its share of
- * everything scried, in the same style as the number. Works on per-game
- * totals and on per-game averages alike (a ratio of averages over the same
- * games is the ratio of the sums). The share is left off until anything
- * has been scried.
+ * everything scried as the same small muted suffix as "(N drawn)". Works on
+ * per-game totals and on per-game averages alike (a ratio of averages over
+ * the same games is the ratio of the sums). The share is left off until
+ * anything has been scried.
  */
 // eslint-disable-next-line react-refresh/only-export-components
 export function withScryShare(
   value: number | null | undefined,
   top: number | null | undefined,
   bottom: number | null | undefined,
-): string | null {
+): ReactNode {
   if (value == null) {
     return null;
   }
@@ -39,7 +39,11 @@ export function withScryShare(
   if (total <= 0) {
     return String(value);
   }
-  return `${value} (${Math.round((100 * value) / total)}%)`;
+  return (
+    <span className="stat-with-drawn">
+      {value} <span className="stat-drawn-suffix">({Math.round((100 * value) / total)}%)</span>
+    </span>
+  );
 }
 
 /**
