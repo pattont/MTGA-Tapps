@@ -138,17 +138,18 @@ event count is recoverable; the card totals stay NULL for old games).
 - **Game page** (`GameDetailPage`): *as built,* a **Scry** group in
   Combat & Resources directly under Cards (second column; Removal moved
   to lead the third column so the columns stay close to even): Scried ·
-  Cards scried · Scried Top · Scried Bottom. Plain rows — a
-  "3 (1 top · 2 bottom)" cell was tried and does not fit the column at
-  common widths. Surveil rows join the group in step 4.
+  Cards scried · Scried Top · Scried Bottom · Top vs. Bottom ("38%/62%").
+  Plain rows — a "3 (1 top · 2 bottom)" cell was tried and does not fit
+  the column at common widths. Surveil rows join the group in step 4.
 - **Deck page** (`DeckDetailPage`): the same rows appear automatically in
   the per-game averages once the columns are in `_INTERACTION_STAT_COLUMNS`.
-  Plus one derived figure that is actually decision-useful: **Bottom
-  rate** = `scry_bottom / scry_cards` ("with this deck you bottom 38 % of
-  what you scry" — a high number is a deck that is unhappy with its top,
-  a low one keeps what it sees). And, from `game_library_events`, a
-  "Bottomed most when scrying" line (card name × count) under the
-  section for the player's deck — the first thing a brewer will look for.
+  Plus the same **Top vs. Bottom** split as the game page (a low top share
+  is a deck that is unhappy with its top, a high one keeps what it sees).
+  A "Bottomed most when scrying" list from `game_library_events` was
+  built and then *removed from the page*: per-card lists for every stat
+  ("cards in hand when mulliganed", "bottomed most in mulligans", …) is a
+  door best left closed for now. The per-event rows, card names included,
+  are still recorded, so the list can come back without a schema change.
 - **API**: game and deck payloads carry the new columns; a
   `library_events` list per game for the game page; `bottomed_most` on
   the deck page (top 10).
@@ -187,8 +188,8 @@ over the remaining library. If that ever changes, it is a separate plan.
   `cards_milled`.
 - Live Feed / timeline: the `scry` badge renders.
 - Migration: columns added NULL, backfill counts "scried" lines only.
-- Dashboard API: game payload carries the group; deck payload carries the
-  averages, `bottom_rate`, and `bottomed_most`.
+- Dashboard API: game payload carries the columns and `library_events`;
+  deck payload carries the averages.
 
 ## 8. Order and effort
 

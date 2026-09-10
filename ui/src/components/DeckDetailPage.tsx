@@ -47,7 +47,12 @@ import { fetchManaCosts, playedManaStats, seedManaCosts, type CardManaInfo } fro
 import { makeOpponentColorColumns } from '../opponentColorColumns';
 import { ManaCost } from './ManaCost';
 import { Badge } from './Badge';
-import { bucketCombatGroups, CombatGroupColumns, withDrawnSuffix } from './CombatGroupColumns';
+import {
+  bucketCombatGroups,
+  CombatGroupColumns,
+  formatTopVsBottom,
+  withDrawnSuffix,
+} from './CombatGroupColumns';
 import { ColorPips } from './ColorPips';
 import { CardLink } from './CardLink';
 import { CommanderBanner, commanderArtUrl } from './CommanderPanel';
@@ -830,14 +835,17 @@ export function DeckDetailPage({
       null (hidden information) so their cells stay plain. */
   const interactionCell = (
     side: DeckInteractionSide | undefined,
-    key: keyof DeckInteractionSide,
+    key: keyof DeckInteractionSide | 'scry_top_vs_bottom',
     drawnKey?: keyof DeckInteractionSide,
   ): ReactNode => {
+    if (key === 'scry_top_vs_bottom') {
+      return formatTopVsBottom(side?.scry_top, side?.scry_bottom) ?? '—';
+    }
     const value = side?.[key];
     if (value == null) {
       return '—';
     }
-    if (key === 'land_replacement_pct' || key === 'scry_bottom_pct') {
+    if (key === 'land_replacement_pct') {
       return `${value}%`;
     }
     const drawn = drawnKey ? side?.[drawnKey] : null;
@@ -846,7 +854,11 @@ export function DeckDetailPage({
   };
   const interactionGroups: {
     title: string;
-    rows: [string, keyof DeckInteractionSide, (keyof DeckInteractionSide)?][];
+    rows: [
+      string,
+      keyof DeckInteractionSide | 'scry_top_vs_bottom',
+      (keyof DeckInteractionSide)?,
+    ][];
   }[] = [
     {
       title: 'Attack',
@@ -891,7 +903,7 @@ export function DeckDetailPage({
         ['Cards scried', 'scry_cards'],
         ['Scried Top', 'scry_top'],
         ['Scried Bottom', 'scry_bottom'],
-        ['Bottom rate', 'scry_bottom_pct'],
+        ['Top vs. Bottom', 'scry_top_vs_bottom'],
       ],
     },
     {
@@ -1195,17 +1207,6 @@ export function DeckDetailPage({
         ) : (
           <p className="empty-state">No interaction telemetry recorded for this deck yet.</p>
         )}
-        {interaction?.bottomed_most && interaction.bottomed_most.length > 0 ? (
-          <p className="bottomed-most">
-            <span className="bottomed-most-label">Bottomed most when scrying:</span>{' '}
-            {interaction.bottomed_most.map((row, index) => (
-              <span key={row.display_name} className="bottomed-most-item">
-                {index > 0 ? ' · ' : ''}
-                <CardLink cardName={row.display_name} /> ×{row.count}
-              </span>
-            ))}
-          </p>
-        ) : null}
       </Section>
 
       <Section

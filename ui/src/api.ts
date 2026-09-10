@@ -644,8 +644,6 @@ export interface DeckInteractionSide {
   scry_cards: number | null;
   scry_top: number | null;
   scry_bottom: number | null;
-  /** Share of scried cards sent to the bottom (whole percent), all games. */
-  scry_bottom_pct: number | null;
 }
 
 /** Per-game interaction averages for both seats, mirroring the game page. */
@@ -653,8 +651,6 @@ export interface DeckInteractionProfile {
   games_tracked: number;
   player: DeckInteractionSide;
   opponent: DeckInteractionSide;
-  /** The player's most-bottomed cards with this deck (top 10). */
-  bottomed_most?: { display_name: string; count: number }[];
 }
 
 /** Match-level records by queue. Only splits with matches are present. */

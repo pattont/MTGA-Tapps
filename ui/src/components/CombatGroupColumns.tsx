@@ -20,6 +20,24 @@ export function withDrawnSuffix(played: ReactNode, drawn: ReactNode): ReactNode 
 }
 
 /**
+ * "38%/62%": the share of scried cards kept on top vs sent to the bottom.
+ * Works on per-game totals and on per-game averages alike (a ratio of
+ * averages over the same games is the ratio of the sums). Null until
+ * anything has been scried.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function formatTopVsBottom(
+  top: number | null | undefined,
+  bottom: number | null | undefined,
+): string | null {
+  if (top == null || bottom == null || top + bottom <= 0) {
+    return null;
+  }
+  const topPct = Math.round((100 * top) / (top + bottom));
+  return `${topPct}%/${100 - topPct}%`;
+}
+
+/**
  * Renders Combat & Resources groups in EXPLICIT columns so the game page and
  * deck page lay out identically. CSS multi-column masonry balances by content
  * height, which broke groups into different columns on each page; a fixed

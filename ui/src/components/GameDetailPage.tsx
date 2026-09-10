@@ -33,7 +33,12 @@ import { fetchManaCosts, playedManaStats, seedManaCosts, type CardManaInfo } fro
 import { DeckLink } from './DeckLink';
 import { ManaCost } from './ManaCost';
 import { Badge } from './Badge';
-import { bucketCombatGroups, CombatGroupColumns, withDrawnSuffix } from './CombatGroupColumns';
+import {
+  bucketCombatGroups,
+  CombatGroupColumns,
+  formatTopVsBottom,
+  withDrawnSuffix,
+} from './CombatGroupColumns';
 import { CardLink } from './CardLink';
 import { ColorPips } from './ColorPips';
 import { CommanderVersus } from './CommanderPanel';
@@ -496,6 +501,7 @@ export function GameDetailPage({
     const replaced = stats.lands_replaced;
     return {
       ...stats,
+      scry_top_vs_bottom: formatTopVsBottom(stats.scry_top, stats.scry_bottom),
       removal_played: withDrawn(stats.removal_played, stats.removal_drawn),
       wipes_played: withDrawn(stats.wipes_played, stats.wipes_drawn),
       bounces_played: withDrawn(stats.bounces_played, stats.bounces_drawn),
@@ -577,6 +583,7 @@ export function GameDetailPage({
         ['Cards scried', 'scry_cards'],
         ['Scried Top', 'scry_top'],
         ['Scried Bottom', 'scry_bottom'],
+        ['Top vs. Bottom', 'scry_top_vs_bottom'],
       ],
     },
     {

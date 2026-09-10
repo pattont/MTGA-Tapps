@@ -3402,6 +3402,6 @@ def test_scry_totals_reach_the_game_and_deck_pages(tmp_path):
     you = interaction["player"]
     # game-1 is the only game with the columns filled; game-2 is NULL (untracked).
     assert (you["scries"], you["scry_cards"], you["scry_top"], you["scry_bottom"]) == (2, 3, 1, 2)
-    assert you["scry_bottom_pct"] == 67  # 2 of 3 scried cards went under
-    assert interaction["opponent"]["scry_bottom_pct"] == 0
-    assert interaction["bottomed_most"] == [{"display_name": "Mountain", "count": 2}]
+    # The per-event rows (with the bottomed card names) are kept but not
+    # surfaced on the deck page for now.
+    assert "bottomed_most" not in interaction

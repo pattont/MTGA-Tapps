@@ -1747,12 +1747,6 @@ def _interaction_deck_profile(
             f"ROUND(100.0 * SUM({alias}.lands_replaced) / NULLIF(SUM({alias}.lands_lost), 0), 0)"
             f" AS {prefix}_land_replacement_pct"
         )
-        # Share of scried cards sent to the bottom: high = the deck is
-        # unhappy with its top, low = it keeps what it sees.
-        select_parts.append(
-            f"ROUND(100.0 * SUM({alias}.scry_bottom) / NULLIF(SUM({alias}.scry_cards), 0), 0)"
-            f" AS {prefix}_scry_bottom_pct"
-        )
     rows = _dict_rows(
         conn.execute(
             f"""
@@ -1776,13 +1770,11 @@ def _interaction_deck_profile(
         "counters_failed",
         "lands_unreplaced",
         "land_replacement_pct",
-        "scry_bottom_pct",
     ]
     return {
         "games_tracked": row["games_tracked"],
         "player": {key: row.get(f"p_{key}") for key in side_keys},
         "opponent": {key: row.get(f"o_{key}") for key in side_keys},
-        "bottomed_most": _deck_bottomed_most(conn, where, params),
     }
 
 
@@ -1815,39 +1807,6 @@ def _game_library_events(conn: sqlite3.Connection, game_id: str) -> List[Dict[st
                 parsed = None
             row[key] = parsed if isinstance(parsed, list) else None
     return rows
-
-
-def _deck_bottomed_most(
-    conn: sqlite3.Connection, where: str, params: List[Any], limit: int = 10
-) -> List[Dict[str, Any]]:
-    """The cards the player bottomed most often with this deck (from the
-    per-event scry rows, which carry names for the player's own scries)."""
-    counts: Dict[str, int] = {}
-    try:
-        rows = conn.execute(
-            f"""
-            SELECT le.bottom_names
-            FROM game_library_events le
-            JOIN participants p ON p.id = le.participant_id AND p.role = 'player'
-            JOIN games g ON g.id = le.game_id
-            WHERE le.bottom_names IS NOT NULL AND {where}
-            """,
-            params,
-        ).fetchall()
-    except sqlite3.OperationalError:
-        return []
-    for (raw,) in rows:
-        try:
-            names = json.loads(raw or "[]")
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(names, list):
-            continue
-        for name in names:
-            if isinstance(name, str) and name:
-                counts[name] = counts.get(name, 0) + 1
-    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    return [{"display_name": name, "count": count} for name, count in ranked[:limit]]
 
 
 def _deck_mode_splits(match_rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

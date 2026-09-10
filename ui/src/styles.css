@@ -662,23 +662,6 @@ a {
   font-weight: 500;
 }
 
-/* Deck page: the cards bottomed most often when scrying, one line under
-   Combat & Resources. */
-.bottomed-most {
-  margin: 0.75rem 0 0;
-  font-size: 0.88rem;
-  color: var(--muted);
-}
-
-.bottomed-most-label {
-  font-weight: 600;
-  color: var(--text);
-}
-
-.bottomed-most-item {
-  white-space: nowrap;
-}
-
 /* Totals row (<tfoot>) at the bottom of card tables. */
 .table-footer-row td {
   border-top: 2px solid var(--border);
