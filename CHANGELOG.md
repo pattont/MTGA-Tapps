@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Windows: upgrading left old files in the install folder.** The
+  installer only ever added and replaced files, so a program an earlier
+  version shipped and the new one does not — `MTGA Deck Downloader.exe`,
+  now folded into the tracker — stayed behind, and so did anything stale
+  in the bundled runtime folder. Setup now clears `_internal` and that
+  executable before installing. Tracked games and settings live outside
+  the install folder and are untouched. (Unpacking the zip over an older
+  extraction keeps old files the same way; unpack it into a fresh folder.)
+
+## 0.6.3
+
 ### In-game overlay
 
 A small always-on-top window beside Arena that shows the library the tracker

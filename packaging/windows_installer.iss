@@ -43,6 +43,16 @@ RestartApplications=no
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop icon"; Flags: unchecked
 
+[InstallDelete]
+; Upgrades: Inno only adds and replaces files, so anything an earlier version
+; shipped and this one no longer does would stay behind. The PyInstaller
+; runtime folder is rebuilt from scratch (stale modules and DLLs in it are
+; never wanted), and the Deck Finder's former companion executable goes —
+; it has been a mode of MTGA Tracker.exe since 0.6.3. Nothing here touches
+; user data, which lives in %LOCALAPPDATA%\MTGA Tracker.
+Type: filesandordirs; Name: "{app}\_internal"
+Type: files; Name: "{app}\MTGA Deck Downloader.exe"
+
 [Files]
 Source: "..\dist\MTGA Tracker\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
