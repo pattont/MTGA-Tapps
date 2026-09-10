@@ -1019,9 +1019,11 @@ img {
 
 /* ----------------------------------------------------- sideboard flyout */
 
+/* Anchored to the bottom of the window, level with the Sideboard row it
+   opens from; a long sideboard grows upward from there. */
 .sideboard {
   position: absolute;
-  top: 0;
+  bottom: 0;
   width: 184px;
   max-height: 100%;
   overflow-y: auto;
