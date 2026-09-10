@@ -58,7 +58,7 @@ export function DeckVisual({ deckName, visual, size = 'normal' }: DeckVisualProp
   const sizeClass = size === 'large' ? ' deck-visual-large' : '';
   return (
     <div className={`deck-visual ${className}${sizeClass}`} aria-label={`${deckName} deck visual`}>
-      <div className="deck-visual-frame" aria-hidden={loaded ? 'true' : undefined}>
+      <div className={loaded ? 'deck-visual-frame deck-visual-frame-covered' : 'deck-visual-frame'} aria-hidden={loaded ? 'true' : undefined}>
         <span className="deck-visual-type">{typeCategory}</span>
         <strong>{visualName}</strong>
       </div>

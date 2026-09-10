@@ -1679,6 +1679,13 @@ tbody tr:hover {
   min-height: 44px;
   border-radius: 6px;
   box-shadow: 0 2px 8px rgb(0 0 0 / 35%);
+  /* The frame's text never leaks past the tile (or the art over it). */
+  overflow: hidden;
+}
+
+/* Once the art has loaded the frame only keeps the tile's size. */
+.deck-visual-frame-covered {
+  visibility: hidden;
 }
 
 :root[data-theme="light"] .deck-visual {
