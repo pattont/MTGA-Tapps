@@ -43,6 +43,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The version IS the tag. setuptools-scm would otherwise work it out
+      # from `git describe`, and a tracked file the build touches turns a
+      # tag build into a "dirty" next-version guess — 0.6.3's Windows
+      # artifacts came out as 0.6.4.dev0+gaa5cc0808.d20260910 that way.
+      # (v0.6.3-rc.8 normalizes to 0.6.3rc8, as before.)
+      - name: Version from the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: echo "SETUPTOOLS_SCM_PRETEND_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
       - uses: actions/setup-node@v6
         with:
           node-version: 20
@@ -70,6 +80,13 @@ jobs:
 
       - name: Build installer
         run: ${{ matrix.build }}
+
+      # Anything listed here is a tracked file the build modified — the
+      # thing that would have dirtied the version above. Should be empty.
+      - name: Tracked files the build changed
+        if: always()
+        shell: bash
+        run: git status --porcelain --untracked-files=no
 
       - name: Upload artifact to draft release
         if: startsWith(github.ref, 'refs/tags/')
