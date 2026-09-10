@@ -284,51 +284,47 @@ process memory.
 
 ## In-game overlay
 
-A small always-on-top window docked to the edge of the screen beside Arena.
-At rest it is a slim **rail** — the turn, the chance that your next draw is
-a land, and how much of your deck is left (the bar turns yellow once half
-the deck is gone, red under 15 cards). The arrow (or a hover, or
-`Alt+Shift+T` / `⌥⇧T`) opens the **panel**: the full decklist with copies
-left and the chance of drawing each card next, land drops for the next one,
-two, and three draws, a Play/Draw pill, and sorting by odds, mana value, or
-name.
+A small always-on-top window docked beside Arena. Turn it on from
+**Settings → In-game overlay** or the menu-bar icon's **Start Overlay**.
 
-<p align="center">
-  <img src="docs/images/overlay-rail.png" alt="The overlay's rail: turn 1, 39% chance of a land next draw, 54 of 61 cards left" height="420">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/images/overlay-panel.png" alt="The overlay's panel: the decklist with copies left and next-draw odds, land-drop odds, and the hovered card shown beside it with its within-2 and within-3 odds" height="420">
-</p>
+### The rail
 
-Hover a row and the card itself appears beside the panel with its next-draw,
-within-2 and within-3 odds; move off and it's gone. Lands fold into one row
-that opens to Basic / Nonbasic (or every land, as a setting), the sideboard
-is a row that opens beside the panel, and in Brawl the cards you've already
-drawn collapse into a **Drawn** group so the list shrinks as the game goes.
-When a game ends the final library stays up, marked **FINAL**, until you
-leave Arena's results screen.
+<table>
+<tr>
+<td><img src="docs/images/overlay-rail.png" alt="The overlay's rail" height="300"></td>
+<td>
+What it shows at rest: the <b>turn</b>, the chance that your next <b>draw is a land</b>, and how much of your <b>deck</b> is left (the bar goes yellow once half the deck is gone, red under 15 cards).
+<br><br>
+The arrow opens the panel; the ⚙ opens the settings beside the rail.
+</td>
+</tr>
+</table>
 
-Turn it on from **Settings → In-game overlay** or the menu-bar icon's
-**Start Overlay**; off means nothing runs. The panel is on or off and pinned
-or not, and both are remembered game to game: pinned, it stays out;
-unpinned, the rail unfolds it when hovered and it folds back a few seconds
-after the cursor leaves. Its own ⚙ menu — beside the rail or the panel,
-never over the list — has Scale, the rail and panel opacity, a maximum panel
-height, dock left / right / float, click-through, row density, the hotkeys
-(`Alt+Shift+H` / `⌥⇧H` hides it) and a **Restore defaults** button. It
-exists only while Arena does: it appears when Arena is running, on the
-screen Arena is on, steps aside while another app is in front, and vanishes
-when Arena quits. It works in every game, including the practice and
-event modes the tracker doesn't save.
+### The panel
 
-It reads only this tracker's local `GET /api/overlay` — never Arena's memory
-or screen — so it knows exactly what the tracker knows: your library from
-the moment the opening hand is kept, minus what has left it. Card images on
-hover come from Scryfall. If the tracker joined a game late it says so
-instead of guessing. **Arena in exclusive fullscreen covers every overlay;
-use windowed or borderless/fullscreen windowed.** The overlay is a separate
-~5 MB native app (Tauri) shipped inside the tracker; building from source
-needs Rust (`scripts/build_overlay.sh`, `--fast` for an iteration build),
-and a build without it simply says so on the Settings page.
+<img src="docs/images/overlay-panel.png" alt="The overlay's panel with a hovered card" width="560">
+
+Your full decklist with copies left and the chance of drawing each card
+next, land-drop odds for the next one, two and three draws, and a Play/Draw
+pill. Sort by odds, mana value or name. Hover a row and the card appears
+beside the panel with its next-draw, within-2 and within-3 odds. Lands fold
+into one row, the sideboard is a row, and in Brawl the cards already drawn
+collapse into a **Drawn** group. When the game ends the final library stays
+up, marked **FINAL**, until you leave the results screen.
+
+Pin the panel to keep it out, or leave it unpinned and the rail unfolds it on
+hover and folds it back a few seconds after the cursor leaves. Scale,
+opacity, dock side, max height, hotkeys (`Alt+Shift+T` / `⌥⇧T` toggles,
+`Alt+Shift+H` / `⌥⇧H` hides) and a **Restore defaults** button live in its ⚙
+menu. It appears only while Arena is running, on Arena's screen, and works
+in every game — including the practice and event modes the tracker doesn't
+save.
+
+It reads only this tracker's local `GET /api/overlay` (card images come from
+Scryfall), never Arena's memory or screen. **Arena in exclusive fullscreen
+covers every overlay; use windowed or borderless.** It is a separate ~5 MB
+native app (Tauri) shipped inside the tracker; building from source needs
+Rust (`scripts/build_overlay.sh`).
 
 ## What isn't tracked
 
