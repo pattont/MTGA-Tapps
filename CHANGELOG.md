@@ -149,8 +149,9 @@ the menu bar's **Stop Overlay**.
   did not carry the deck-site modules the Deck Finder loads at runtime
   (only the terminal Deck Finder analysis did), so the dashboard was
   offered no sites and drew an empty page. The installers now include
-  them, and if no site can be loaded the page says so — with the reason
-  — instead of showing nothing.
+  them — the build refuses to package a tracker whose Deck Finder would
+  have no sites — and if no site can be loaded the page says so, with the
+  reason, instead of showing nothing.
 - **Windows: the paths on the Settings page could not be opened.** Log DB
   and the other paths hid the username as `~\AppData\...`, which Explorer
   does not understand. They now read `%USERPROFILE%\AppData\...`, which
@@ -159,6 +160,15 @@ the menu bar's **Stop Overlay**.
 
 ### Housekeeping
 
+- **One executable.** The Deck Finder terminal tool no longer ships as a
+  second program (`MTGA Deck Downloader`) beside the tracker — on Windows
+  that put two `.exe`s at the top of the install folder, and a PyInstaller
+  program cannot simply be moved into a subfolder the way the overlay's
+  self-contained binary was. It is now a mode of the tracker itself:
+  `MTGA Tracker --deck-finder` runs the same terminal UI, which is what
+  the dashboard's Deck Finder page launches in a terminal window. The
+  install folder is `MTGA Tracker.exe` plus `_internal`, and the download
+  is a little smaller for not carrying the second copy.
 - **Fewer "unknown log entry" diagnostics.** Arena's ordinary client
   chatter — its own requests (`==> GetFormats …`), the server's answers,
   scene changes, and the connection and startup notes — is now named for

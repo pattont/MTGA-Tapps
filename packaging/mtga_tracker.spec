@@ -89,6 +89,21 @@ def _windows_version_info(version: str, *, file_description: str, original_filen
 if not (ui_dist / "index.html").is_file():
     raise SystemExit("ui/dist is missing. Run `cd ui && npm run build` first.")
 
+# The Deck Finder loads its deck-site providers by name at runtime
+# (providers.registry -> importlib), which static analysis cannot see, so
+# every module of the package is named explicitly. collect_submodules runs
+# now, at spec time, when only an installed package is importable — put the
+# source tree on the path so the answer does not depend on `pip install -e .`
+# having run, and refuse to build a tracker whose Deck Finder would show no
+# sites at all.
+sys.path.insert(0, str(project_root / "src"))
+deck_finder_modules = collect_submodules("mtga_deck_downloader")
+if "mtga_deck_downloader.providers.moxfield" not in deck_finder_modules:
+    raise SystemExit(
+        "mtga_tracker.spec: could not enumerate mtga_deck_downloader's provider modules "
+        f"(found {deck_finder_modules}); the packaged Deck Finder would have no sites."
+    )
+
 # The in-game overlay is a separate native app staged by
 # scripts/build_overlay.{sh,ps1}. Optional: a build without Rust simply
 # ships without it (the Settings page says so), so this never fails.
@@ -121,15 +136,17 @@ analysis = Analysis(
     datas=[
         (str(ui_dist), "ui/dist"),
         (str(runtime_assets), "mtga_tracker/assets"),
+        (
+            str(project_root / "src" / "mtga_deck_downloader" / "default_config.json"),
+            "mtga_deck_downloader",
+        ),
         *overlay_datas,
     ],
-    # The dashboard's Deck Finder page runs inside THIS executable and loads
-    # the deck-downloader providers by name at runtime (deckfinder_api ->
-    # providers.registry -> importlib), which static analysis cannot see.
-    # Each exe has its own Python archive, so the terminal Deck Finder's
-    # analysis below bundling them does not help here: without this the
-    # packaged dashboard's Deck Finder shows no sites at all.
-    hiddenimports=["cloudscraper", "bs4"] + collect_submodules("mtga_deck_downloader"),
+    # The Deck Finder lives in this executable: the dashboard page and
+    # `MTGA Tracker --deck-finder` (the terminal UI) both need every
+    # deck-site module (see deck_finder_modules above) plus the scrapers'
+    # own runtime-loaded dependencies.
+    hiddenimports=["cloudscraper", "bs4"] + deck_finder_modules,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -162,62 +179,14 @@ exe = EXE(
     ),
 )
 
-# Companion console tool: the Deck Downloader terminal UI. Built from the
-# same dependency pool and collected into the same folder/.app so the menu
-# app can launch it in a terminal window.
-dd_analysis = Analysis(
-    [str(project_root / "packaging" / "deck_downloader_entrypoint.py")],
-    pathex=[str(project_root / "src")],
-    binaries=[],
-    datas=[
-        (
-            str(project_root / "src" / "mtga_deck_downloader" / "default_config.json"),
-            "mtga_deck_downloader",
-        ),
-    ],
-    # The provider/scraper modules are loaded dynamically (pkgutil) and are
-    # invisible to PyInstaller's static analysis — collect every submodule or
-    # the frozen Deck Finder starts with "No providers found".
-    hiddenimports=["cloudscraper", "bs4"] + collect_submodules("mtga_deck_downloader"),
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=[],
-    noarchive=False,
-    optimize=0,
-)
-dd_pyz = PYZ(dd_analysis.pure)
-
-dd_exe = EXE(
-    dd_pyz,
-    dd_analysis.scripts,
-    [],
-    exclude_binaries=True,
-    name="MTGA Deck Downloader",
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,  # packed executables trip AV heuristics; the size win is not worth it
-    console=True,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=str(app_icon) if (is_windows and app_icon) else None,
-    version=_windows_version_info(
-        app_version,
-        file_description="Tapps Tracker Deck Finder",
-        original_filename="MTGA Deck Downloader.exe",
-    ),
-)
-
+# One executable. The Deck Finder terminal tool used to be a second one
+# ("MTGA Deck Downloader") beside it, which on Windows meant two programs at
+# the top of the install folder; it is now a mode of this binary
+# (`--deck-finder`, see deck_downloader_launcher.run_deck_finder).
 collection = COLLECT(
     exe,
-    dd_exe,
     analysis.binaries,
-    dd_analysis.binaries,
     analysis.datas,
-    dd_analysis.datas,
     strip=False,
     upx=False,  # packed executables trip AV heuristics; the size win is not worth it
     upx_exclude=[],

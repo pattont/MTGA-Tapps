@@ -3,6 +3,7 @@
 import json
 import re
 import sqlite3
+import sys
 from datetime import datetime
 
 from mtga_tracker.analytics import AnalyticsStore
@@ -6455,6 +6456,74 @@ def test_windows_console_command_line_survives_spaced_paths():
         [r"C:\Python 3\python.exe", "-m", "mtga_deck_downloader"]
     )
     assert '"C:\\Python 3\\python.exe" -m mtga_deck_downloader"' in line
+
+
+def test_frozen_deck_downloader_is_the_tracker_binary_in_deck_finder_mode(monkeypatch):
+    """Packaged builds ship one executable: the launcher runs the tracker
+    binary itself with --deck-finder instead of looking for a second exe."""
+    from mtga_tracker import deck_downloader_launcher as launcher
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", r"C:\Program Files\MTGA Tracker\MTGA Tracker.exe")
+    assert launcher.deck_downloader_command() == [
+        r"C:\Program Files\MTGA Tracker\MTGA Tracker.exe",
+        "--deck-finder",
+    ]
+    line = launcher._windows_console_command_line(launcher.deck_downloader_command())
+    assert line.endswith('"C:\\Program Files\\MTGA Tracker\\MTGA Tracker.exe" --deck-finder"')
+
+
+def test_deck_finder_flag_runs_the_terminal_tool_instead_of_the_tracker(monkeypatch):
+    from mtga_tracker import app, deck_downloader_launcher as launcher
+
+    seen = {}
+
+    def fake_main(argv):
+        seen["argv"] = argv
+        return 7
+
+    monkeypatch.setattr("mtga_deck_downloader.__main__.main", fake_main)
+    attached = []
+    monkeypatch.setattr(launcher, "_attach_windows_console", lambda: attached.append(True))
+
+    assert app.main(["--deck-finder", "--diagnose"]) == 7
+    assert seen["argv"] == ["--diagnose"]
+    # The console dance is Windows-only; here it must not even be attempted.
+    assert attached == ([True] if sys.platform == "win32" else [])
+
+
+def test_attach_windows_console_falls_back_to_a_fresh_console():
+    """The launcher's cmd.exe console may already be gone by the time the
+    (slow-starting) frozen binary attaches; then a new one is allocated."""
+    from mtga_tracker.deck_downloader_launcher import _attach_windows_console
+
+    class Kernel32:
+        def __init__(self, attach_ok, alloc_ok):
+            self.calls = []
+            self.attach_ok, self.alloc_ok = attach_ok, alloc_ok
+
+        def AttachConsole(self, pid):
+            self.calls.append(("attach", pid))
+            return 1 if self.attach_ok else 0
+
+        def AllocConsole(self):
+            self.calls.append(("alloc",))
+            return 1 if self.alloc_ok else 0
+
+    wired = []
+    k = Kernel32(attach_ok=True, alloc_ok=True)
+    assert _attach_windows_console(k, open_streams=wired.append) is True
+    assert k.calls == [("attach", 0xFFFFFFFF)] and wired == [k]
+
+    k = Kernel32(attach_ok=False, alloc_ok=True)
+    wired.clear()
+    assert _attach_windows_console(k, open_streams=wired.append) is True
+    assert k.calls == [("attach", 0xFFFFFFFF), ("alloc",)] and wired == [k]
+
+    k = Kernel32(attach_ok=False, alloc_ok=False)
+    wired.clear()
+    assert _attach_windows_console(k, open_streams=wired.append) is False
+    assert wired == []
 
 
 def test_stale_game_over_packet_cannot_poison_next_game_identity():

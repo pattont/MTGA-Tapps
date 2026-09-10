@@ -12,6 +12,7 @@ from typing import Callable, Optional, TextIO
 
 from .analytics import AnalyticsStore
 from .dashboard import DEFAULT_DB_PATH, create_dashboard_server
+from .deck_downloader_launcher import DECK_FINDER_FLAG
 from .log_parser import MTGALogParser
 from .tracker import CardTracker
 
@@ -240,6 +241,15 @@ def _run_without_gui(args: argparse.Namespace) -> int:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if DECK_FINDER_FLAG in arguments:
+        # The packaged tracker doubles as the Deck Finder terminal tool: the
+        # dashboard's launcher runs this same binary with the flag inside a
+        # terminal window, so the install ships one executable.
+        from .deck_downloader_launcher import run_deck_finder
+
+        return run_deck_finder([arg for arg in arguments if arg != DECK_FINDER_FLAG])
+
     parser = argparse.ArgumentParser(description="Run the MTGA tracker and dashboard together.")
     parser.add_argument("--log-path", type=Path, help="Path to MTGA Player.log.")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH, help="SQLite DB path.")
