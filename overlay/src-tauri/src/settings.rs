@@ -120,7 +120,10 @@ impl Default for Settings {
             dock: Dock::Left,
             return_after_seconds: 4,
             panel_open: false,
-            panel_pinned: false,
+            // Pinned by default: an opened panel stays until it is unpinned.
+            // (Unpinned it folds back to the rail seconds after the cursor
+            // leaves, which reads as "it disappeared" the first time.)
+            panel_pinned: true,
             // Off by default: with it on, the panel can only be driven by the
             // hotkeys and the tray (every click reaches Arena instead).
             click_through_when_pinned: false,

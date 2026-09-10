@@ -102,7 +102,7 @@ export function defaultSettings(): Settings {
     dock: 'left',
     returnAfterSeconds: 4,
     panelOpen: false,
-    panelPinned: false,
+    panelPinned: true,
     clickThroughWhenPinned: false,
     lands: 'grouped',
     density: 'comfortable',

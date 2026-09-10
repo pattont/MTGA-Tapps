@@ -61,6 +61,11 @@ struct Runtime {
     /// before our set_position lands (macOS keeps the bottom edge put), and
     /// that intermediate Moved must not be mistaken for a drag and saved.
     placed_when: Option<std::time::Instant>,
+    /// A drag in progress: the last position the window was seen at and
+    /// when. Windows delivers Moved continuously while the mouse button is
+    /// down, so the snap to the edge waits until the stream has gone quiet
+    /// (the button was released) rather than fighting the drag.
+    drag: Option<((i32, i32), std::time::Instant)>,
     last_arena: ArenaStatus,
     /// The page's ⚙ flyout is open: an unpinned panel must not fold away.
     flyout_open: bool,
@@ -85,6 +90,7 @@ impl Default for Runtime {
             monitor: None,
             placed_at: None,
             placed_when: None,
+            drag: None,
             last_arena: ArenaStatus::default(),
             flyout_open: false,
             sideboard_open: false,
@@ -803,6 +809,7 @@ fn start_cursor_watch(app: AppHandle) {
             let mut last_point: Option<Option<CursorPoint>> = None;
             loop {
                 std::thread::sleep(CURSOR_POLL);
+                finish_drag(&app);
                 let Some(window) = app.get_webview_window(MAIN_WINDOW) else { continue };
                 let (layout, pinned, panel_on, visible, flyout, sideboard, dock, scale, return_after) = {
                     let state = app.state::<AppState>();
@@ -1009,6 +1016,31 @@ fn on_moved(app: &AppHandle, physical_x: i32, physical_y: i32) {
             }
         }
     }
+    // A drag: remember where it is now; finish_drag snaps and saves once
+    // the Moved events stop coming (see Runtime::drag).
+    state.runtime.lock().unwrap().drag = Some(((logical.x, logical.y), std::time::Instant::now()));
+}
+
+/// How long after the last Moved event a drag counts as finished.
+const DRAG_SETTLE: Duration = Duration::from_millis(150);
+
+/// Called from the cursor watch: once a drag has been quiet for
+/// DRAG_SETTLE, put the window back on its edge (docked: x is the edge, only
+/// y moves; float: kept on screen) and remember the position.
+fn finish_drag(app: &AppHandle) {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW) else { return };
+    let state = app.state::<AppState>();
+    let dropped = {
+        let mut runtime = state.runtime.lock().unwrap();
+        match runtime.drag {
+            Some((pos, when)) if when.elapsed() >= DRAG_SETTLE => {
+                runtime.drag = None;
+                Some(pos)
+            }
+            _ => None,
+        }
+    };
+    let Some((dx, dy)) = dropped else { return };
     let area = target_monitor(&window, &MonitorHint::take(&state));
     let (dock, size) = {
         let settings = state.settings.lock().unwrap();
@@ -1018,7 +1050,7 @@ fn on_moved(app: &AppHandle, physical_x: i32, physical_y: i32) {
             dock::size_for(runtime.layout, runtime.content_height, &area, settings.panel_max_height, settings.scale, runtime.flyout_open),
         )
     };
-    let (x, y) = dock::constrain_drag(dock, (logical.x, logical.y), size, &area);
+    let (x, y) = dock::constrain_drag(dock, (dx, dy), size, &area);
     {
         let mut settings = state.settings.lock().unwrap();
         match dock {
@@ -1029,15 +1061,13 @@ fn on_moved(app: &AppHandle, physical_x: i32, physical_y: i32) {
                 settings.positions.float_y = Some(y);
             }
         }
-    }
-    let snap = {
         let mut runtime = state.runtime.lock().unwrap();
         runtime.placed_at = Some((x, y));
         runtime.placed_when = Some(std::time::Instant::now());
-        (x, y) != (logical.x, logical.y)
-    };
-    if snap {
-        // Lock released first: this re-enters on_moved synchronously on Windows.
+    }
+    if (x, y) != (dx, dy) {
+        diag::log(format!("drag: dropped at ({dx}, {dy}), snapped to ({x}, {y})"));
+        // No lock held: the Moved this produces is our own placement (placed_at).
         let _ = window.set_position(LogicalPosition::new(x, y));
     }
     save_settings(app);

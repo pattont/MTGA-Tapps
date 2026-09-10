@@ -33,16 +33,17 @@ the menu bar's **Stop Overlay**.
   stays up through Arena's results screen, marked **FINAL**, and clears
   when you leave it.
 - **On, off, pinned.** The arrow (or the hotkey) turns the panel on; its
-  chevron turns it off; the pin holds it out. On and unpinned, the rail is
-  the folded panel: hovering the rail unfolds it, and it folds back once the
-  cursor has been off it for the return delay. Pinned, it stays out. Off,
-  the rail is just a rail. All three are remembered game to game and across
-  launches. Between games the panel folds away; a pinned one comes straight
+  chevron turns it off; the pin holds it out. It starts pinned: an opened
+  panel stays until you unpin it. Unpinned, the rail is the folded panel:
+  hovering the rail unfolds it, and it folds back once the cursor has been
+  off it for the return delay. Off, the rail is just a rail. All three are
+  remembered game to game and across launches. Between games the panel folds away; a pinned one comes straight
   back when the next game starts.
 - **Where it lives.** Only while Arena is running, on Arena's screen — over
   a fullscreen Arena too on macOS — and it steps aside while Arena isn't the
   front window. Flush with the screen edge, with a few pixels of plain
-  ground between the text and the edge. Windows: exclusive-fullscreen
+  ground between the text and the edge; drag it up or down the edge and it
+  snaps back flush the moment you let go. Windows: exclusive-fullscreen
   covers every overlay; use windowed or borderless.
 - **Look and settings** (the ⚙ menu, which opens beside the panel or the
   rail — never over the decklist): a charcoal tint with hairlines between
