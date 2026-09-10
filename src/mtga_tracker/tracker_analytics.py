@@ -104,6 +104,12 @@ class TrackerAnalyticsMixin:
     def _record_console_log(self, text: str, style: Optional[str] = None) -> None:
         """Best-effort persistent storage for terminal output."""
         if self._is_untracked_match():
+            # Nothing of an untracked match (Jump In, Midweek Magic, Momir,
+            # Welcome Deck Duels, practice vs Sparky) is saved as history.
+            # The live row is not history: it is what the overlay and the
+            # Live Scoreboard show right now, and a practice game has a
+            # library and odds like any other. Keep it current.
+            self._write_live_status_only()
             return
         try:
             now = self._now()
@@ -125,6 +131,13 @@ class TrackerAnalyticsMixin:
                 opponent_life=self.game_state.opponent_life,
                 live=self._live_status_snapshot(now),
             )
+        except (OSError, sqlite3.Error, TypeError, ValueError):
+            return
+
+    def _write_live_status_only(self) -> None:
+        """Replace the live row without recording a console line."""
+        try:
+            self._analytics_store().write_live_status(self._live_status_snapshot(self._now()))
         except (OSError, sqlite3.Error, TypeError, ValueError):
             return
 

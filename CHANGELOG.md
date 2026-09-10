@@ -59,6 +59,12 @@ it on from **Settings → In-game overlay** or the menu bar's **Start Overlay**.
   tracker. The menu bar shows an *Overlay: Running / Stopped* line under
   the tracker's, with Start/Stop Overlay and Overlay Settings in their own
   section; the overlay adds no menu-bar icon of its own.
+- **Works in every game, tracked or not.** Jump In, Midweek Magic,
+  Welcome Deck Duels and practice games against Sparky stay out of your
+  stats as before, but the overlay follows them like any other game — the
+  library and the odds are just as useful there. (The tracker's live row,
+  which the overlay and the Live Scoreboard read, is kept current during
+  those games; nothing from them is saved as history.)
 - **What it reads and what it costs.** A separate native app (Tauri v2, a
   Preact page, about 5 MB) shipped inside the tracker. It polls this
   tracker's local `GET /api/overlay` three times a second during a game and

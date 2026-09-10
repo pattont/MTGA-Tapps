@@ -338,3 +338,33 @@ def test_overlay_response_memo_follows_the_live_row(tmp_path):
     third, etag_third = live_api.overlay_response(db_path)
     assert etag_third != etag_first
     assert json.loads(third)["state"]["deck_name"] == "Rats"
+
+
+def test_untracked_match_still_feeds_the_overlay_through_the_live_row(tmp_path):
+    """A practice game against Sparky is not history, but the overlay and the
+    Live Scoreboard read the live row, and that row carries the overlay's
+    library state — so it keeps being written while nothing else is."""
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker._console_db_path = tmp_path / "analytics.sqlite3"
+    tracker.session_start_time = datetime(2026, 9, 10, 20, 0, 0)
+    tracker.game_state.game_start_time = datetime(2026, 9, 10, 20, 5, 0)
+    tracker.game_state.player_display_name = "Tapps"
+    tracker.game_state.opponent_display_name = "Sparky"
+    tracker.game_state.player_deck_name = "Starter Deck"
+    tracker.game_state.format_str = "AIBotMatch"
+    assert tracker._is_untracked_match()
+
+    tracker._print_event("[0:10] You: played [Plains]", "land")
+
+    conn = sqlite3.connect(tracker._console_db_path)
+    live = conn.execute("SELECT in_game, opponent_name, deck_name, overlay_json FROM live_status WHERE id = 1").fetchone()
+    assert live is not None
+    assert live[0] == 1 and live[1] == "Sparky" and live[2] == "Starter Deck"
+    assert live[3] and json.loads(live[3])["game_active"] is True
+    # ...and nothing became history.
+    assert conn.execute("SELECT COUNT(*) FROM console_logs").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM game_events").fetchone()[0] == 0
+    conn.close()

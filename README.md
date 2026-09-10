@@ -326,8 +326,10 @@ mixing them into constructed analytics would skew win rates and draw math:
   Color Challenges; Starter Deck Duels against human opponents ARE tracked
 - Games the tracker joined mid-way (no reliable opener/draw data)
 
-These games still display live in the tracker window, with a note that
-they won't be saved.
+These games still display live in the tracker window (with a note that
+they won't be saved), and the in-game overlay works in them like in any
+other game — a practice game has a library and draw odds too. Only the
+history stays out: nothing from them lands in your stats.
 
 ## Data & privacy
 

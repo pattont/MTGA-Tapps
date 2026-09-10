@@ -4096,7 +4096,14 @@ def test_momir_game_summary_is_not_persisted_or_counted(capsys, tmp_path):
 
     assert tracker.session_games_played == 0
     assert tracker.session_losses == 0
-    assert not tracker._console_db_path.exists()
+    # Nothing of the game is history — only the live row (what the overlay
+    # and the Live Scoreboard show right now) may have been written.
+    if tracker._console_db_path.exists():
+        conn = sqlite3.connect(tracker._console_db_path)
+        assert conn.execute("SELECT COUNT(*) FROM games").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM console_logs").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM game_events").fetchone()[0] == 0
+        conn.close()
 
 
 def test_match_started_block_prints_commanders_when_known(capsys):
