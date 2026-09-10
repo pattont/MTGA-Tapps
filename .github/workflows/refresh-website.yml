@@ -1,0 +1,47 @@
+name: Refresh website
+
+# tappstracker.com renders THIS repo's CHANGELOG.md into its /changelog page,
+# and it does so at build time — so the public changelog only changes when the
+# site rebuilds. This workflow pings the site's Cloudflare Pages deploy hook so
+# that happens automatically.
+#
+# One-time setup:
+#   1. Cloudflare dashboard -> Workers & Pages -> tappstracker-site ->
+#      Settings -> Builds & deployments -> Deploy hooks -> "Add deploy hook"
+#      (name it "changelog", branch: main). Copy the URL it gives you.
+#   2. This repo -> Settings -> Secrets and variables -> Actions -> New
+#      repository secret, named SITE_DEPLOY_HOOK, pasted URL as the value.
+#
+# Until that secret exists this job just logs a warning and passes, so nothing
+# ever fails because of it.
+
+on:
+  push:
+    branches: [main]
+    paths: ["CHANGELOG.md"]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    name: Rebuild tappstracker.com
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping the Cloudflare Pages deploy hook
+        env:
+          HOOK: ${{ secrets.SITE_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::warning::SITE_DEPLOY_HOOK is not set — skipping the site rebuild."
+            echo "See the comments at the top of this workflow for the two setup steps."
+            exit 0
+          fi
+          status=$(curl -sS -X POST -o body.txt -w '%{http_code}' "$HOOK")
+          echo "Cloudflare responded: $status"
+          cat body.txt || true
+          if [ "$status" != "200" ]; then
+            echo "::error::Deploy hook returned $status — the site was not rebuilt."
+            exit 1
+          fi
+          echo "Site rebuild queued. The changelog page updates when it finishes (~1 min)."

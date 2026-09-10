@@ -63,7 +63,7 @@
   retry is written to `data/logs/dashboard-errors.log` with the file,
   WAL and descriptor state that explains it.
 
-### In-game overlay (tracker-overlay branch, not in this release)
+### In-game overlay
 
 - The rail's card icon is a vector drawing now (`overlay/src/icons/card-mark.svg`,
   the app icon's card redrawn) instead of a 20-pixel crop of the raster
