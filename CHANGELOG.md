@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Fixed: a blank deck-art tile.** The signature-card tile only showed its
+  type-colored frame after both art requests had *reported* failure; a
+  Scryfall image request that stalls or answers 503 without the browser
+  ever raising an error left an empty box with no art and no frame. The
+  frame is now the tile's base layer and the art fades in over it once it
+  has actually loaded; a request that has neither loaded nor failed after
+  six seconds is treated as failed and the by-name fallback is tried.
+
 - **Scry is tracked.** Every scry is counted per seat — how many scries,
   how many cards they looked at, and how many went to the top vs the
   bottom — for both you and the opponent (Arena lists the card ids even
