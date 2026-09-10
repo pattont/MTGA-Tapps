@@ -121,17 +121,22 @@ def test_tray_click_uses_native_context_menu_on_macos(monkeypatch):
 
 
 def test_tray_click_manually_opens_menu_off_macos(monkeypatch):
-    fake_controller = type("FakeController", (), {"menu": _FakeMenu()})()
     position = object()
+    fake_controller = type(
+        "FakeController",
+        (),
+        {"menu": _FakeMenu(), "_tray_menu_position": lambda self: position},
+    )()
     monkeypatch.setattr(menu_app.sys, "platform", "linux")
-    monkeypatch.setattr(menu_app.QCursor, "pos", lambda: position)
 
-    menu_app.MenuBarController._tray_activated(
-        fake_controller,
+    for reason in (
         menu_app.QSystemTrayIcon.ActivationReason.Trigger,
-    )
+        menu_app.QSystemTrayIcon.ActivationReason.Context,
+    ):
+        menu_app.MenuBarController._tray_activated(fake_controller, reason)
 
-    assert fake_controller.menu.popup_positions == [position]
+    # Left and right click both open it, where _tray_menu_position says.
+    assert fake_controller.menu.popup_positions == [position, position]
 
 
 class _FakeTrayIcon:

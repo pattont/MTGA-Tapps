@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QLockFile, QObject, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QLockFile, QObject, QPoint, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
     QCloseEvent,
@@ -38,6 +38,7 @@ from PyQt6.QtWidgets import (
 from .app import CallbackTextStream, UnifiedLauncher
 from .overlay_launcher import get_manager as get_overlay_manager
 from .paths import DATA_DIR, raise_open_file_limit
+from .tray_menu import tray_menu_origin
 from .settings import AppSettings, load_app_settings
 
 
@@ -318,7 +319,12 @@ class MenuBarController(QObject):
         self.quit_action.triggered.connect(self.app.quit)
         self.menu.addAction(self.quit_action)
 
-        self.tray.setContextMenu(self.menu)
+        if sys.platform == "darwin":
+            # macOS places the registered menu itself, correctly.
+            self.tray.setContextMenu(self.menu)
+        # Elsewhere the menu is opened by _tray_activated for both clicks,
+        # positioned so it never runs under the taskbar (Qt's own placement
+        # opens downward from a cursor at the very bottom of the screen).
         self.tray.activated.connect(self._tray_activated)
         self.signals.log_text.connect(self.log_window.append_text)
         self.signals.status_changed.connect(self._update_status)
@@ -478,11 +484,31 @@ class MenuBarController(QObject):
     def _tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         # macOS opens the registered context menu automatically. Manually
         # popping it there creates a second, overlapping copy of the menu.
-        if (
-            sys.platform != "darwin"
-            and reason == QSystemTrayIcon.ActivationReason.Trigger
+        if sys.platform == "darwin":
+            return
+        if reason not in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.Context,
         ):
-            self.menu.popup(QCursor.pos())
+            return
+        self.menu.popup(self._tray_menu_position())
+
+    def _tray_menu_position(self) -> QPoint:
+        """Open the menu above the cursor when it would not fit below it —
+        the tray sits at the bottom of the screen on Windows, and a menu
+        opened downward from there loses Quit under the taskbar."""
+        cursor = QCursor.pos()
+        size = self.menu.sizeHint()
+        screen = QApplication.screenAt(cursor) or QApplication.primaryScreen()
+        if screen is None:
+            return cursor
+        area = screen.availableGeometry()
+        x, y = tray_menu_origin(
+            (cursor.x(), cursor.y()),
+            (size.width(), size.height()),
+            (area.left(), area.top(), area.right(), area.bottom()),
+        )
+        return QPoint(x, y)
 
     def shutdown(self) -> None:
         if self._shutting_down:

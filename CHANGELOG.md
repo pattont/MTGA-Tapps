@@ -133,6 +133,10 @@ the menu bar's **Stop Overlay**.
   open-file limit at startup, and a failure that survives the retry is
   written to `data/logs/dashboard-errors.log` with the file, WAL and
   descriptor state that explains it.
+- **Windows: the tray menu could hide Quit under the taskbar.** A
+  right-click on the tray icon opened the menu downward from a cursor at
+  the very bottom of the screen. The menu now opens upward (and leftward
+  at the right edge) whenever it would not fit.
 - **A blank deck-art tile.** The signature-card tile only showed its
   type-colored frame after both art requests had *reported* failure; a
   Scryfall image request that stalls or answers 503 without the browser
