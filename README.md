@@ -285,29 +285,6 @@ Then launch it, play a game, and open the dashboard from the menu-bar / tray
 icon. Prefer to build it or run it from source? See
 [Command-line tools](#command-line-tools) at the bottom.
 
-## The dashboard
-
-`mtga-tracker-app` serves it and opens it in your browser automatically.
-
-| Route | What you get |
-| --- | --- |
-| `#/` | Overview: metrics, best deck, trends, ranked progress, recent games, decks, Brawl, opponents |
-| `#/live` | Live Scoreboard: the current game, session record, today's games, play-by-play |
-| `#/deck/<name>` | Deck drill-down: cards, mulligans, versions, land stats, streaks, vs-colors, commanders |
-| `#/game/<id>` | Game detail: draw quality, life chart, hands, timeline, notes |
-| `#/card/<name>` | Card drill-down: by-deck performance, repeat draws, opener impact |
-| `#/games` | Every tracked game with deck picker, format pills, and period filter |
-| `#/opponents` | Everyone you've been paired against; `#/opponent/<name>` for one opponent |
-| `#/deckfinder` | Deck Finder: browse and export decklists from creators and sites |
-| `#/settings` | In-game overlay, Deck AI, Deck Finder creators, collection export, tracker status |
-| `#/audit` | Database health findings |
-
-JSON API: `GET /api/snapshot`, `/api/live`, `/api/overlay`, `/api/deck`,
-`/api/game`, `/api/card`, `/api/cards?q=`, `/api/games`, `/api/opponents`,
-`/api/opponent`, `/api/version` — the dashboard is read-only except
-`POST /api/game/annotation` (your per-game notes and tags) and the Settings
-page's own `POST /api/settings/*`.
-
 ## What isn't tracked
 
 Some game modes are intentionally excluded from your saved stats, because
@@ -350,6 +327,29 @@ Where things live:
 
 Don't run the source and installed trackers at the same time, and never copy a
 live database while a tracker owns it — use SQLite's backup API for migrations.
+
+## The dashboard
+
+`mtga-tracker-app` serves it and opens it in your browser automatically.
+
+| Route | What you get |
+| --- | --- |
+| `#/` | Overview: metrics, best deck, trends, ranked progress, recent games, decks, Brawl, opponents |
+| `#/live` | Live Scoreboard: the current game, session record, today's games, play-by-play |
+| `#/deck/<name>` | Deck drill-down: cards, mulligans, versions, land stats, streaks, vs-colors, commanders |
+| `#/game/<id>` | Game detail: draw quality, life chart, hands, timeline, notes |
+| `#/card/<name>` | Card drill-down: by-deck performance, repeat draws, opener impact |
+| `#/games` | Every tracked game with deck picker, format pills, and period filter |
+| `#/opponents` | Everyone you've been paired against; `#/opponent/<name>` for one opponent |
+| `#/deckfinder` | Deck Finder: browse and export decklists from creators and sites |
+| `#/settings` | In-game overlay, Deck AI, Deck Finder creators, collection export, tracker status |
+| `#/audit` | Database health findings |
+
+JSON API: `GET /api/snapshot`, `/api/live`, `/api/overlay`, `/api/deck`,
+`/api/game`, `/api/card`, `/api/cards?q=`, `/api/games`, `/api/opponents`,
+`/api/opponent`, `/api/version` — the dashboard is read-only except
+`POST /api/game/annotation` (your per-game notes and tags) and the Settings
+page's own `POST /api/settings/*`.
 
 ## Command-line tools
 
