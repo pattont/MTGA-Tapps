@@ -1,153 +1,104 @@
-# MTGA Log Format
+# MTGA log format and tracker parsing
 
-This document describes the MTGA Player.log format and how to parse it.
+This reference describes the current parser, not a stable contract from
+Arena. Real logs and focused regression fixtures take precedence over
+schematic examples. Gameplay tracking needs **Detailed Logs (Plugin Support)**
+enabled in Arena's Account options.
 
-## Log File Location
+## Files and entry boundaries
 
-### Windows
-```
-%APPDATA%\LocalLow\Wizards Of The Coast\MTGA\Player.log
-```
-Typically: `C:\Users\<username>\AppData\LocalLow\Wizards Of The Coast\MTGA\Player.log`
+- Windows: `%USERPROFILE%\AppData\LocalLow\Wizards Of The Coast\MTGA\Player.log`.
+  `%APPDATA%` normally ends in `Roaming`; `LocalLow` is its sibling.
+- macOS: `~/Library/Logs/Wizards Of The Coast/MTGA/Player.log`.
+- Both tracker launchers accept `--log-path` for an explicit file.
 
-### macOS
-```
-~/Library/Logs/Wizards Of The Coast/MTGA/Player.log
-```
+Arena emits plain startup text, timestamped headers, JSON objects, and JSON
+continued over several physical lines. A line is not necessarily an event.
+`log_entry.py` groups complete entries; `log_json.py` extracts their JSON;
+`event_router.py` classifies them and maintains parser-health counters.
+`log_parser.py` emits the ordered game-state/client messages.
 
-## Log Format
+Timestamps are locale-formatted. `log_timestamp.py` learns month/day order
+from unambiguous dates, with a system-locale fallback; stored timestamps are
+ISO. Never assume a fixed US date order. The tracker polls the file and
+retains an offset. The current reader resets on a smaller file; file
+replacement that has already grown beyond that offset is not independently
+detected by inode today.
 
-The MTGA log file is a text file with JSON-formatted events. Each line typically follows this pattern:
+## GRE state and actions
 
-```
-[timestamp] LogType: JSON_data
-```
+`greToClientEvent.greToClientMessages` carries GRE messages, including full
+and differential game state, queued state messages, and UI messages.
+Client-to-GRE actions are normalized by `client_actions.py`. Room and queue
+metadata supply match grouping, format, seats, submitted decks and names;
+GRE messages supply gameplay state and annotations.
 
-Example:
-```
-[UnityCrossThreadLogger]11/17/2025 1:23:45 PM: Match.GREMessageType_GameStateMessage
-```
+Important object fields:
 
-## Key Event Types
+| Field | Meaning |
+| --- | --- |
+| `instanceId` | In-game object identity; must be interpreted with snapshots and identity changes |
+| `grpId` | Arena card/group ID; normal name lookup uses Arena's local card database |
+| `ownerSeatId` / `controllerSeatId` | Ownership and current control, which can differ |
+| `zoneId` | Numeric reference to an entry in the state's `zones` array |
+| `objectSourceGrpId` | Source card group ID on some ability objects |
 
-### Game State Messages
-These contain information about the current state of the game, including:
-- Cards in zones (hand, battlefield, graveyard, etc.)
-- Player information
-- Turn/phase information
+Zone **types** include `ZoneType_Hand`, `ZoneType_Library`,
+`ZoneType_Battlefield`, `ZoneType_Graveyard`, `ZoneType_Exile`,
+`ZoneType_Stack`, and `ZoneType_Command`. These strings are not fixed numeric
+zone IDs. Resolve a zone through its current `zoneId`, type, and owner seat.
+A battlefield snapshot alone does not establish whether a card was cast,
+created as a token, returned, transformed or copied.
 
-### GRE Messages (Game Rules Engine)
-- `GREMessageType_GameStateMessage`: Full game state updates
-- `GREMessageType_QueuedGameStateMessage`: Queued state changes
-- `GREMessageType_UIMessage`: UI-related events
+The tracker combines annotations and object/zone snapshots to track draws,
+zone transfers, spells/abilities, combat, life, targets and turns. Focused
+`tracker_event_*`, `tracker_zone_transfers.py`, `tracker_stack.py` and
+`tracker_combat.py` helpers own those interpretations.
 
-### Card Events
-Look for these patterns:
-- `CardInstance`: Information about specific card instances
-- `grpId`: Card ID (can be mapped to card names via Scryfall API)
-- `zoneId`: Which zone the card is in
-- `ownerSeatId`: Which player owns the card
+## Seats, names and formats
 
-## Zone IDs
+Match-room `gameRoomInfo.gameRoomConfig.reservedPlayers` provides
+`userId`/`systemSeatId` and can provide displayed names. The tracker accepts
+`screenName`, `playerName`, `displayName` and their case variants through
+`tracker_opening_deck.py`. **Opponent names do not require memory access.**
+When metadata is absent, leave it unknown instead of inventing a name from
+another seat or game.
 
-Common zone IDs:
-- `ZoneType_Hand`: Player's hand
-- `ZoneType_Library`: Player's library (deck)
-- `ZoneType_Battlefield`: Battlefield (cards in play)
-- `ZoneType_Graveyard`: Graveyard
-- `ZoneType_Exile`: Exile zone
-- `ZoneType_Stack`: The stack
+Seats can change between games. A complete visible opening hand identifies
+the local seat, correcting stale metadata; never assume the local player
+is seat 1. Resolve opponent identity and the winner relative to that seat.
 
-## Parsing Strategy
+Queue information is normalized by `format_normalizer.py`. Re-resolve it
+for every game. Brawl's join event (`EventSetDeckV3`, for example
+`EventName: Brawl_Ladder`) is stronger queue evidence than the generic
+Historic Brawl room label. Deck format attributes describe a deck and must
+not override an authoritative queue.
 
-1. **Monitor the file**: Use file watching (watchdog library) to detect new lines
-2. **Extract JSON**: Most important data is in JSON format
-3. **Filter events**: Look for specific event types related to card plays
-4. **Map card IDs**: Use the grpId to look up card names (requires card database)
+## Scry and card metadata
 
-## Card Database
+Scry annotations list card IDs in `affectedIds`; they do not put the seat
+there. Resolve the ability controller from current/retained snapshots.
+Counts are available for both seats; record player card names only when
+visible. See [Scry tracking](SCRY_TRACKING.md) for details and persistence.
 
-To convert card IDs to names, you'll need a card database. Options:
-- **Scryfall API**: https://api.scryfall.com/
-- **MTGA card database**: Can be extracted from MTGA installation
-- **MTG JSON**: https://mtgjson.com/
+Arena's local `Raw_CardDatabase_*.mtga` resolves card names/types, colors,
+rules text and mana costs. `grpId` is not automatically interchangeable with
+a Scryfall identifier. See [Card database discovery](MTGA_INSTALL_DISCOVERY.md)
+for log-header paths, overrides and missing-card behavior.
 
-## Example Log Entries
+## Persistence and regression fixtures
 
-### Card Play Event
-```json
-{
-  "greToClientEvent": {
-    "greToClientMessages": [
-      {
-        "type": "GREMessageType_GameStateMessage",
-        "gameStateMessage": {
-          "zones": [
-            {
-              "zoneId": 2,
-              "type": "ZoneType_Battlefield",
-              "objectInstanceIds": [5, 12, 23]
-            }
-          ]
-        }
-      }
-    ]
-  }
-}
-```
+Completed tracked games produce structured tables for participants, turns,
+events, hands, draws, decklists and stats. Raw payloads are privacy-scrubbed
+by `log_sanitize.py`, compressed with `payload_codec.py`, and retained as a
+30-day diagnostic archive. Read them through `payload_dump`, not raw SQL
+text assumptions. Unhandled-annotation diagnostics belong in the text log.
+Collection memory export is a separate explicit action and does not feed
+normal gameplay parsing.
 
-### Card Instance
-```json
-{
-  "instanceId": 23,
-  "grpId": 74567,
-  "ownerSeatId": 1,
-  "controllerSeatId": 1,
-  "zoneId": 2
-}
-```
-
-## Identifying the Opponent
-
-**From the logs only**, you can get an **internal opponent identifier**, but not the human‑readable screen name.
-
-### What the logs contain
-
-The `matchGameRoomStateChangedEvent` (when a match/game room is set up) includes a `gameRoomInfo.gameRoomConfig.reservedPlayers` array. Each entry has:
-
-- **`userId`** — Internal account ID (numeric or UUID). This identifies the opponent in Wizards’ backend but is **not** the displayed Arena username (e.g. `Player#12345`).
-- **`systemSeatId`** — Seat index (1 or 2) used in game state (life, zones, `ownerSeatId`, etc.).
-- **`teamId`** — Team identifier.
-
-To know “which `userId` is the opponent,” you must first know which seat is yours (e.g. via hand visibility in game state) and then treat the other seat’s `userId` in `reservedPlayers` as the opponent’s internal ID.
-
-### What the logs do *not* contain
-
-The opponent’s **screen name** (the name shown in the Arena client) is **not** written to Player.log. Tools that show opponent names (e.g. MTG Arena Tool) get them by **reading game memory** (e.g. their `readMatchOpponentInfo` via the mtga-reader), which needs access to the MTGA process and is outside pure log parsing.
-
-### Summary
-
-| Data              | In Player.log? | Where it comes from          |
-|-------------------|-----------------|------------------------------|
-| Opponent `userId` | ✅ Yes          | `matchGameRoomStateChangedEvent` → `reservedPlayers` |
-| Opponent seat ID | ✅ Yes          | Same, or derived from game state |
-| Opponent screen name | ❌ No       | Game memory only (e.g. MTG Arena Tool) |
-
-So with **logs only**, you can identify the opponent by internal `userId` and by seat, but not by their displayed username.
-
-## Future Improvements
-
-1. **Complete JSON parsing**: Implement full parsing of all event types
-2. **Card database integration**: Map grpId to actual card names
-3. **Player tracking**: Properly track which player (you vs opponent) played what
-4. **Match detection**: Detect match start/end events
-5. **Deck recognition**: Identify decks being played
-6. **Statistics**: Track win rates, card frequencies, etc.
-7. **Opponent ID**: Parse `reservedPlayers` from `matchGameRoomStateChangedEvent` to store opponent `userId` per match (internal ID only; screen name would require memory reading).
-
-## Resources
-
-- [MTGA Log Parser by apzxi](https://github.com/apzxi/mtga_log_parser)
-- [17Lands Tracker](https://www.17lands.com/) - Reference implementation
-- [MTGA Pro Tracker](https://mtgarena.pro/mtga-pro-tracker/) - Another reference
-- [Scryfall API Documentation](https://scryfall.com/docs/api)
+Useful examples: `tests/test_log_entry.py`, `test_log_parser.py`,
+`test_log_replay.py`, `test_scry_tracking.py`, and
+`test_tracker_combat_winner.py`. Add minimal payload regressions for parser
+or state-machine bugs. In particular, preserve stack LIFO order, stale-seat
+correction, winner/concession handling, turn timing, and NULL-versus-zero
+historical stats; the fuller invariant list is in [AGENTS.md](../AGENTS.md).

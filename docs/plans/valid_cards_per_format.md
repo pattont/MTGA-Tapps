@@ -1,11 +1,35 @@
-# Format Legality — Plan (`valid_cards_per_format.md`)
+# Format Legality — Plan
+
+**Status (2026-09-10): not implemented; design review required.** There is
+no legality cache/filter in the current tracker. The bulk formats, sizes,
+card-specific legality example, and timings below are earlier research
+notes, not a fresh verification. Recheck them against the source before
+implementation. Collection export already works through local Arena metadata
+and batched Scryfall printing-ID resolution; it does not depend on this plan.
+
+Implementation gates:
+
+- Current legality must not silently rewrite historical Games Possible.
+  Either acquire dated legality evidence or clearly scope the new metric to
+  current rules. Observed-play overrides do not fix unobserved pre-ban games.
+- Use a numbered `AnalyticsStore` migration for schema changes, and focused
+  persistence helpers for new writes. Keep dashboard GETs read-only.
+- Treat missing Alchemy legality as unknown rather than inventing a format
+  rule from the `A-` prefix. Centralize queue mapping in `format_normalizer.py`.
+- Verify the actual bulk response/download format; use a streaming parser
+  compatible with it. Resolve printed-card metadata from the current
+  exporter/cache design before proposing a duplicate `arena_cards` index.
+- Decide refresh consent, cadence and failure behavior explicitly; no new
+  bulk-network dependency may block normal local card resolution.
+
+The original proposal below needs these decisions applied before coding.
 
 Teach the tracker which cards are legal in which Arena formats, and use it to
 tighten **"Opponent Could Have Played It"**: a card banned in Standard should
 not count your 500 Standard games as "possible" just because the opponent had
 the colors — only the 50 Timeless games where the card is actually legal.
 
-**Feasibility: yes.** Verified live against the motivating example — Scryfall's
+**Earlier feasibility example (time-sensitive):** checked against the motivating example — Scryfall's
 per-card `legalities` object covers Arena's formats, and Vivi Ornitier returns
 exactly the situation described:
 
@@ -16,7 +40,7 @@ exactly the situation described:
 
 ## Data source
 
-**Scryfall is the only viable source.** Arena's local `Raw_CardDatabase` has no
+**Proposed source: Scryfall.** Arena's local `Raw_CardDatabase` has no
 banlist or legality tables — it describes cards, not formats. Scryfall's
 `legalities` map includes every Arena format under stable keys (`standard`,
 `alchemy`, `historic`, `timeless`, `brawl` = Historic Brawl, `standardbrawl`,
@@ -109,7 +133,7 @@ every recorded queue. One small pure function maps family → Scryfall key:
 | `event` | probe the raw queue string for a format token — `QualifierPlayIn_Bo1_Timeless_…` contains `timeless`; no token → no filter |
 | `direct_challenge`, `midweek_magic`, `unknown`, everything else | **none — never filter** (fail open) |
 
-The `event` probe matters in practice: Travis's own Timeless games are
+The `event` probe matters in practice: example Timeless games were
 recorded as `QualifierPlayIn_Bo1_Timeless_20260822`, which classifies as
 family `event` — without the probe those games would just fail open (harmless
 but loose); with it they filter correctly as Timeless.
@@ -146,7 +170,7 @@ memoized — the loop stays O(games).
   card page header (Standard ✕ · Timeless ✓ · Brawl ✓ …). Listed as a
   stretch item, not required for the fix.
 
-## Known limitations (stated, accepted)
+## Known limitations (require resolution as noted above)
 
 - **Current legality, not historical.** Scryfall reports today's banlist; a
   game played before a ban is judged by post-ban rules. Partially offset by

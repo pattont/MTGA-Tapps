@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Documentation
+
+- Reconciled README, Quick Start, agent guidance and log/card/scry references
+  with the implementation. README lists current features and reference guides
+  only. Replaced completed release/overlay plans with current documentation,
+  retained unfinished work, and revised the Linux plan with discovery,
+  desktop, packaging and real-system validation gates.
+
 ### Fixes
 
 - **The Live Scoreboard's color pips never lit.** The tracker's play
@@ -290,8 +298,8 @@ itself; a warm dashboard is faster still.
 
 - README, Quick Start, and AGENTS refreshed; the in-game overlay plan
   rewritten for Tauri v2 with the rail/panel design mockup
-  (`docs/plans/OVERLAY_TRACKER_PLAN.md`). The overlay itself ships in a later
-  release.
+  (the completed design is now documented in [the overlay guide](overlay/README.md)).
+  The overlay itself shipped subsequently in 0.6.3.
 
 ## 0.6.1
 

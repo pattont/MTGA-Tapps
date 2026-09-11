@@ -9,6 +9,9 @@ Get Tapps Tracker running in a few minutes.
 
 - MTGA installed and run at least once (the tracker reads Arena's `Player.log`)
 - macOS or Windows
+- **Detailed Logs (Plugin Support)** enabled: Arena gear icon → Adjust
+  Options → Account → check Detailed Logs, then restart Arena before
+  starting a tracking session.
 
 ## Option 1 — Install the app (recommended)
 
@@ -36,58 +39,65 @@ scripts/build_macos_installer.sh
 
 The app lives in the menu bar: it starts tracking, serves the dashboard locally,
 and opens it in your browser. The tracker's status line at the top of the menu
-shows a green dot while it's running and red when it's stopped. Menu items, in
-order: **Live Scoreboard**, **Dashboard**, **Deck Finder**,
-**Settings** (Deck AI, creators, tracker status), **Open Data Folder**,
-**Start/Stop Tracking**, **Quit**. Installed builds keep their database under
+shows a green dot while it's running and red when it's stopped. The menu
+has **Live Scoreboard**, **Dashboard**, **Deck Finder**, **Open Data Folder**,
+**Start/Stop Overlay**, **Overlay Settings**, **Start/Stop Tracking**,
+**Tracker Settings**, and **Quit Tapps Tracker**. The overlay starts enabled
+when included in the build. Installed builds keep their database under
 `~/Library/Application Support/MTGA Tracker` (macOS) or
 `%LOCALAPPDATA%\MTGA Tracker` (Windows).
 
-Unsigned alpha builds: macOS Gatekeeper will balk the first time. On **macOS 15
-(Sequoia) and newer** the dialog only offers "Move to Trash" or "Done" — do this instead:
+The macOS build is ad-hoc signed and not notarized by default. If Gatekeeper
+blocks a downloaded release you trust, dismiss the dialog, open **System
+Settings → Privacy & Security**, and use **Open Anyway** for that app.
+See [Apple's instructions](https://support.apple.com/en-ie/102445).
 
-1. Click **Done** (NOT "Move to Trash").
-2. Open **System Settings → Privacy & Security**, scroll down to the Security section —
-   you'll see *"MTGA Tracker.app was blocked to protect your Mac"*.
-3. Click **Open Anyway** and confirm. This entry only appears for a while after an
-   open attempt, so do step 2 right after step 1.
-
-On older macOS, right-click the app → **Open** → **Open** still works. If the
-Open Anyway entry never appears, the Terminal fallback always works:
-
-```bash
-xattr -cr "/Applications/MTGA Tracker.app"
-```
-
-On Windows, use SmartScreen's **More info → Run anyway** on the setup.exe or zip.
-
-If Windows Defender quarantines `MTGA Tracker.exe` as **Trojan:Win32/Wacatac**
-(the `!ml` suffix means a machine-learning guess, not a real match), that is a
-false positive: the app is unsigned, freshly built, tails Arena's log, and — for
-the collection exporter — reads Arena's memory, which is exactly the shape
-Defender's heuristics are trained to distrust. Open **Windows Security →
-Protection history**, pick the entry, choose **Restore** and then **Allow on
-device**. Each release is also submitted to Microsoft as a false positive, which
-clears the verdict for that build within a day or two.
+Windows builds are unsigned. For a trusted release, SmartScreen's **More
+info → Run anyway** may be available. An antivirus quarantine is a separate
+issue: record the version, download source and exact detection from Windows
+Security's **Protection history** and report it to the maintainer. A label
+such as `Trojan:Win32/Wacatac` alone does not establish that the file is a
+false positive, and there is no guaranteed clearance time. See
+[Microsoft's Protection History guidance](https://support.microsoft.com/en-us/windows/security/windows-security/protection-history-in-the-windows-security-app).
 
 ## Option 2 — Run from source (development)
 
+Install Python and Node/npm first. From the repository root on macOS:
+
 ```bash
 python3 -m venv venv
-source venv/bin/activate            # Windows: venv\Scripts\activate
+source venv/bin/activate
 pip install -e '.[dev,gui]'
-
-mtga-tracker-app                    # menu-bar app + tracker + dashboard together
-mtga-tracker-app --no-gui           # same, one terminal, no menu bar
-mtga-tracker                        # console tracker only
+(cd ui && npm ci && npm run build)
+mtga-tracker-app
 ```
 
-Dashboard only (needs the frontend built once):
+In Windows PowerShell:
+
+```powershell
+py -m venv venv
+venv\Scripts\python -m pip install -e '.[dev,gui]'
+Push-Location ui
+npm ci
+npm run build
+Pop-Location
+venv\Scripts\python -m mtga_tracker.app
+```
+
+The source dashboard requires that frontend build for both the unified app
+and dashboard-only mode. For the native overlay, also install Rust and run
+`scripts/build_overlay.sh` (macOS) or `scripts\build_overlay.ps1` (Windows).
+Without its binary, the source tracker runs with the overlay unavailable.
+
+Once the environment is installed (use `venv\Scripts\python` on Windows):
 
 ```bash
-cd ui && npm install && npm run build && cd ..
-venv/bin/python -m mtga_tracker.dashboard      # http://127.0.0.1:8765
+venv/bin/python -m mtga_tracker.app --no-gui  # tracker + dashboard, no menu bar or automatic overlay launch
+venv/bin/python -m mtga_tracker.main          # console tracker only
+venv/bin/python -m mtga_tracker.dashboard     # dashboard only, port 8765
 ```
+
+These are alternative modes; run only one tracker against a database.
 
 ## What to expect
 
@@ -95,7 +105,7 @@ Start the tracker, then play Arena. Open the **Live Scoreboard** — both life
 totals with color pips, your record with this deck and against this opponent,
 the turn and game clock, your session record, today's games, and a play-by-play
 feed (casts, draws, lands, combat, stack resolution, life totals) that reads
-just like the per-game timeline. Each finished game is saved to the local
+just like the per-game timeline. Each eligible finished game is saved to the local
 SQLite database. The rest of the dashboard (auto-refreshing) has the overview,
 per-deck pages, per-game detail with timeline and draw-quality analysis,
 per-card pages, and the opponents you've faced. Everything is local; no
@@ -104,7 +114,8 @@ account, no cloud.
 Tips:
 
 - Start the tracker before queueing. If it joins mid-game, that game is shown live
-  but intentionally not saved.
+  but intentionally not saved. Practice and novelty/event modes listed in the
+  README are also excluded from saved statistics.
 - The tracker's terminal shows its version and database path at startup.
 - Stop the console tracker with Ctrl+C to get a session summary.
 
@@ -119,14 +130,14 @@ mtga-tracker --log-path /path/to/Player.log
 
 **Port 8765 already in use** —
 
-```bash
-python -m mtga_tracker.dashboard --port 8766
-# find a lost dashboard process on macOS:
-lsof -ti tcp:8765 | xargs kill
-```
+An existing tracker may already be serving the dashboard. Open it from the
+tray/menu, or use `--port 8766` for a separate dashboard. If an old instance
+needs to quit, use its menu when tracking can safely stop.
 
-**Nothing showing up** — the tracker only reads new log events from when it starts;
-play a card in Arena to test.
+**Nothing showing up** — check Detailed Logs first and look at the monitored
+log and card database paths in **Tracker Settings**. Start tracking before
+queueing, then play a game. For unresolved card names, see
+[card database discovery](docs/MTGA_INSTALL_DISCOVERY.md).
 
 More: `README.md` for the full feature tour, `docs/MTGA_LOG_FORMAT.md` for how
 Arena's log works, and the Discord for anything else.

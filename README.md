@@ -25,7 +25,7 @@
 
 A real-time tracker that tails Arena's `Player.log`, a SQLite analytics store,
 a full React dashboard, and an in-game overlay. No account, no cloud, no
-uploads: your games, your data, your disk.
+automatic game-history uploads: your games, your data, your disk.
 
 > 💬 **Join the community on [Discord](https://discord.gg/ExfW3HaZgb)** — for
 > discussion, bug reports, and feature requests.
@@ -36,7 +36,7 @@ uploads: your games, your data, your disk.
 
 **Live tracking.** One lightweight app — menu bar on macOS, system tray on
 Windows — runs everything: it follows your game in real time (casts, draws,
-lands, combat, life totals, stack resolution), writes every game to the local
+lands, combat, life totals, stack resolution), writes tracked games to the local
 analytics database, and serves the dashboard. The **Live Scoreboard** page
 sits right in the dashboard: both players' life, colors, and deck, your record
 with this deck and against this opponent (and, in Brawl, against their
@@ -64,7 +64,8 @@ your opponent mulliganed, which Arena reports for both seats — drawn cards
 with the turn they arrived, draw-quality analysis with statistically-grounded
 flood/screw detection (expected lands come from your actual decklist, not a
 generic ratio), a life-total chart, per-seat combat summaries, and the
-complete event timeline.
+complete event timeline. Scry totals for both seats show how many cards were
+kept on top or bottomed, with the choices recorded in the timeline.
 
 **Interaction analytics.** Every game records what both players did with their
 interaction: removal and board wipes played (and how many you drew), creatures
@@ -107,8 +108,8 @@ does), win-rate trends, How Games End with per-reason percentages — concedes,
 damage, decking, poison, timeouts — Constructed Ranked lifetime and per-season
 stats beside the rank chart, session habits and fatigue splits, format
 breakdowns, and a database health audit that can repair its own
-inconsistencies. Recorded timelines mean new tracker features retroactively
-backfill your old games.
+inconsistencies. Historical backfills recover stats where the recorded
+events contain enough evidence; unavailable values remain blank.
 
 ## In-game overlay
 
@@ -150,8 +151,9 @@ in every game — including the practice and event modes the tracker doesn't
 save.
 
 It reads only this tracker's local `GET /api/overlay` (card images come from
-Scryfall), never Arena's memory or screen. **Arena in exclusive fullscreen
-covers every overlay; use windowed or borderless.** It is a separate ~5 MB
+Scryfall), never Arena's memory or screen. The macOS shell supports Arena's
+fullscreen Space. On Windows, use windowed or borderless mode if exclusive
+fullscreen covers the overlay. It is a separate ~5 MB
 native app (Tauri) shipped inside the tracker.
 
 ## Screenshots
@@ -213,16 +215,16 @@ setup.
 
 ## Export your collection
 
-Arena never exposes your card collection, so the Settings page can read it
-straight out of the running game's memory and export it as `.json`, `.csv`,
+Arena's log does not provide the full collection, so the Settings page can
+read it straight out of the running game's memory and export it as `.json`, `.csv`,
 `.txt`, or an Archidekt-format `.csv` — ready to import into
 [Moxfield](https://moxfield.com), [Archidekt](https://archidekt.com), and
 similar sites. Open Arena's Decks tab once so the collection is loaded, pick a
 format, and the file downloads when the scan finishes (a copy also lands in
 the tracker's data folder). On macOS an administrator prompt appears, since
 reading another app's memory needs elevated access; the game itself is never
-modified. Everything runs locally — no card database is downloaded and nothing
-leaves your machine.
+modified. The memory scan and export files stay local; Archidekt printing-ID
+lookups use the Scryfall requests described below.
 
 The **Archidekt export** adds a Scryfall ID column, which removes all
 ambiguity about exactly which printing you own (Moxfield reads this format
@@ -241,11 +243,13 @@ process memory.
 
 ## AI deck identification (optional)
 
-With an API key, the tracker makes exactly one small request per completed
-game and names the opponent's deck — the Game Detail page shows it as the
-Opponent Deck Type, falling back to plain colors when there's no guess. The
+With an API key, the tracker starts one identification job per completed
+tracked game and names the opponent's deck — the Game Detail page shows it
+as the Opponent Deck Type, falling back to plain colors when there's no guess. The
 call runs in the background after the game ends (and only when at least three
-opponent cards were revealed), so tracking never waits on it.
+opponent cards were revealed), so tracking never waits on it. Normally this
+is one request; OpenAI reasoning models can retry once if their token budget
+produces an empty reply.
 
 What leaves your machine is only the names of the cards your opponent
 revealed in that game — never your deck, your account, or your log. Nothing
@@ -305,16 +309,24 @@ history stays out: nothing from them lands in your stats.
 
 ## Data & privacy
 
-Everything is local SQLite. Stored logs are scrubbed of tokens and personal
-paths before persistence. The only network traffic is your browser fetching
-Scryfall card art — plus, only when you open the bundled Deck Finder,
-its requests to the public decklist sites you browse there — and, only if
-you enable AI deck identification, exactly one small request per completed
-game to the AI provider you configured, carrying only the names of the cards
-your opponent revealed. Card
-*identification* uses Arena's own local card database
-(`Raw_CardDatabase_*.mtga`, discovered automatically under the Steam/Epic
-install, override with `MTGA_DATA_DIR`).
+Game history stays in local SQLite. Stored logs are scrubbed of tokens and
+personal paths before persistence. Gameplay tracking reads `Player.log`;
+the optional collection-export action separately reads Arena's process memory.
+
+Network requests are limited to the features that use them:
+
+- The dashboard and overlay fetch card art from Scryfall. The dashboard also
+  uses Scryfall's batch API for missing mana costs; Archidekt collection
+  exports use it for printing IDs and cache the results locally.
+- The dashboard checks GitHub Releases for updates, caching successful
+  checks for a day.
+- Deck Finder requests the public decklist sites you browse.
+- Enabled AI deck identification sends revealed opponent card names to your
+  chosen provider after a tracked game, with the retry exception described above.
+
+Normal card identification uses Arena's own local card database
+(`Raw_CardDatabase_*.mtga`, found through Arena's log header and Steam/Epic
+locations, or `MTGA_DATA_DIR`). Unresolved IDs display as `Card #<id>`.
 
 Where things live:
 
@@ -347,9 +359,13 @@ live database while a tracker owns it — use SQLite's backup API for migrations
 
 JSON API: `GET /api/snapshot`, `/api/live`, `/api/overlay`, `/api/deck`,
 `/api/game`, `/api/card`, `/api/cards?q=`, `/api/games`, `/api/opponents`,
-`/api/opponent`, `/api/version` — the dashboard is read-only except
-`POST /api/game/annotation` (your per-game notes and tags) and the Settings
-page's own `POST /api/settings/*`.
+`/api/opponent`, `/api/version` — analytics reads are GET requests. POST
+actions save game notes/tags
+(`/api/game/annotation`) and settings (`/api/settings/*`), run Deck Finder
+jobs (`/api/deckfinder/*`) or its terminal launcher
+(`/api/deck-downloader/launch`), and start collection exports
+(`/api/collection/export`). `/api/db/reset` clears the analytics database
+only with an explicit `{"confirm": "RESET"}` body and takes a backup first.
 
 ## Command-line tools
 
@@ -361,6 +377,7 @@ available from a terminal.
 ```bash
 python3 -m venv venv && source venv/bin/activate
 pip install -e '.[dev,gui]'
+(cd ui && npm ci && npm run build)
 mtga-tracker-app        # tracker + dashboard (with the Live Scoreboard), one command
 ```
 
@@ -375,7 +392,12 @@ mtga-tracker-app        # tracker + dashboard (with the Live Scoreboard), one co
 | `python -m mtga_tracker.draw_quality --card "Llanowar Elves"` | Draw-quality & flood/screw report |
 | `python -m mtga_tracker.payload_dump <game_id>` | Print a game's archived raw payloads as JSON |
 
-Port busy? `--port 8766`. Lost the terminal? `lsof -ti tcp:8765 | xargs kill`.
+For the source overlay, install Rust and run `scripts/build_overlay.sh` on
+macOS or `scripts\build_overlay.ps1` on Windows; see the
+[overlay guide](overlay/README.md).
+
+Port busy? Use `--port 8766`, or open the dashboard served by the running
+tracker. Quit an existing instance from its menu only when tracking can stop.
 
 Ready-made SQL reports live in [`data/_queries/`](data/_queries/README.md):
 
@@ -388,7 +410,7 @@ sqlite3 data/mtga_tracker.sqlite3 < data/_queries/WinRateByDeck.sql
 ```bash
 # macOS app / DMG
 scripts/build_macos_app.sh          # dist/MTGA Tracker.app
-scripts/build_macos_installer.sh    # dist/MTGA-Tracker.dmg
+scripts/build_macos_installer.sh    # dist/MTGA-Tracker-<version>.dmg
 ```
 
 ```powershell
@@ -409,7 +431,7 @@ venv/bin/python -m pytest tests -q --ignore=tests/test_menu_app.py \
   --deselect "tests/test_log_parser.py::test_find_log_path_error_handling"
 
 # Frontend: tests, types, lint, build (dashboard serves ui/dist — rebuild after UI changes)
-cd ui && npx vitest run && npx tsc -b && npm run lint && npm run build
+(cd ui && npm ci && npx vitest run && npx tsc -b && npm run lint && npm run build)
 
 # UI development with hot reload (API + Vite side by side)
 venv/bin/python -m mtga_tracker.dashboard
@@ -425,12 +447,11 @@ guidance lives.
 ## Documentation
 
 - [QUICKSTART.md](QUICKSTART.md) — install and first run
-- [docs/plans/RELEASE_PLAN.md](docs/plans/RELEASE_PLAN.md) — packaging, GitHub Releases, alpha checklist
-- [docs/plans/OVERLAY_TRACKER_PLAN.md](docs/plans/OVERLAY_TRACKER_PLAN.md) — the in-game overlay's design plan (Tauri v2), with the original mockups
-- [docs/MTGA_LOG_FORMAT.md](docs/MTGA_LOG_FORMAT.md) — how Arena's log actually works
-- [docs/plans/MTGA_INSTALL_DISCOVERY.md](docs/plans/MTGA_INSTALL_DISCOVERY.md) — plan for finding Arena's card DB in standalone/non-default installs
-- [docs/plans/SCRY_TRACKING.md](docs/plans/SCRY_TRACKING.md) — plan for scry/surveil stats on the game and deck pages and the Live Scoreboard (the overlay stays out of it)
-- [docs/plans/linux_implementation.md](docs/plans/linux_implementation.md) — plan for Linux support (Arena under Steam/Proton or Wine), phased so CI verifies it before a Linux desktop exists
+- [Release guide](docs/RELEASING.md) — builds, validation, and GitHub Releases
+- [Overlay guide](overlay/README.md) — behavior, development, and packaging
+- [Log-format reference](docs/MTGA_LOG_FORMAT.md) — Arena events and parser behavior
+- [Card database discovery](docs/MTGA_INSTALL_DISCOVERY.md) — resolution and troubleshooting
+- [Scry tracking](docs/SCRY_TRACKING.md) — events, stored stats, and dashboard behavior
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release
 
 ## License

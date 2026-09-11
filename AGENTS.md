@@ -7,7 +7,7 @@ This is the single source of truth for agent instructions — there is deliberat
 
 ## Project Overview
 
-This is a Python log-only tracker for Magic: The Gathering Arena. It tails MTGA `Player.log`, parses GRE game-state messages, prints a readable console log, and persists dashboard-friendly analytics to SQLite. A React/TypeScript dashboard (`ui/`) is built to static assets and served by the Python dashboard server — there is no separate web backend, no account, and no cloud.
+This is a Python log-only gameplay tracker for Magic: The Gathering Arena. It tails MTGA `Player.log`, parses GRE game-state messages, prints a readable console log, and persists dashboard-friendly analytics to SQLite. A React/TypeScript dashboard (`ui/`) is built to static assets and served by the Python dashboard server — there is no separate web backend, no account, and no cloud. The optional collection exporter separately reads Arena process memory on macOS/Windows.
 
 Repo layout:
 
@@ -23,8 +23,10 @@ Repo layout:
   non-test debug scripts and is not part of the suite.
 - `packaging/` + `scripts/`: PyInstaller specs, entry points, and OS build scripts.
 - `docs/`: log-format reference, research notes, and the removal ledger; `docs/plans/` holds
-  design and release plans together with their mockups (mockup images live there, not in
-  `docs/images/`, which is for README screenshots). `CHANGELOG.md` tracks releases.
+  unfinished implementation plans together with their mockups (mockup images live there, not in
+  `docs/images/`, which is for README screenshots). `docs/plans/INDEX.md` records plan status;
+  completed behavior belongs in reference docs, and the README links only to current
+  features and reference guides. `docs/RELEASING.md` covers releases. `CHANGELOG.md` tracks releases.
   The version comes from the git tag (setuptools-scm writes `_version.py`); there is no
   hand-edited version string anywhere, and a release is cut by pushing a `v*` tag. Never
   bump or invent a version in code.
@@ -95,7 +97,7 @@ Primary code paths:
 - `src/mtga_tracker/tracker_rendering.py`: console formatting, actor labels, mana/text cleanup, runtime strings.
 - `src/mtga_tracker/tracker_state_lookup.py`: object snapshots, identity/copy-state, card type, zone/seat lookup helpers.
 - `src/mtga_tracker/tracker_diagnostics.py`: unhandled annotation and parser diagnostics text logging.
-- `src/mtga_tracker/card_database.py`: MTGA/Scryfall card ID to card name/type resolution, plus
+- `src/mtga_tracker/card_database.py`: local Arena card ID to card name/type resolution, plus
   color-identity lookup from Arena's local card DB.
 - `src/mtga_tracker/analytics.py`: `AnalyticsStore` — schema, numbered migrations, and startup
   maintenance (card-color backfill, imported-deck-name canonicalization).
@@ -113,10 +115,18 @@ Primary code paths:
 - `src/mtga_tracker/settings.py`: shared `settings.json` — top level of the repo next to
   `config.py` for source runs, per-user data dir for frozen builds (legacy `data/settings.json`
   migrates automatically).
-- `src/mtga_tracker/settings_dialog.py`: PyQt Settings dialog (menu bar → Settings…) that writes
-  the "deck_ai" section of `settings.json`.
+- `src/mtga_tracker/settings_api.py`: dashboard settings for Deck AI, Deck Finder creators,
+  overlay control, platform capabilities, and resolved tracker paths. The menu
+  "Tracker Settings" action opens this dashboard page. `settings_dialog.py` retains
+  the PyQt Deck AI settings implementation.
+- `src/mtga_tracker/deckfinder_api.py`: background jobs for the integrated dashboard Deck Finder.
+- `src/mtga_tracker/collection_api.py` / `collection_export.py` / `inventory.py`: explicit
+  collection-export jobs, macOS/Windows process-memory readers, and local card metadata.
+- `src/mtga_tracker/overlay_state.py` / `overlay_launcher.py`: library-composition odds
+  and the separate overlay process manager; enabled by default when the binary is available.
 - `src/mtga_tracker/deck_downloader_launcher.py`: launches the bundled Deck Finder in a sized
-  terminal window (menu bar item and `POST /api/deck-downloader/launch` from the dashboard).
+  terminal window via `POST /api/deck-downloader/launch`; frozen builds invoke the same
+  tracker executable with `--deck-finder`. The menu item opens dashboard `#/deckfinder`.
 - `src/mtga_deck_downloader/`: the bundled Deck Finder (vendored copy of MTGA-DeckDownloader).
   Treat it as a companion tool: keep its internals as-is except where integration requires.
   Its creator config is `deckfinder_config.json` at the repo top level; its tests live in
@@ -152,11 +162,11 @@ venv/bin/python -m mtga_tracker.draw_quality --card "Llanowar Elves"
 venv/bin/python -m mtga_tracker.payload_dump "<game_id>"
 
 # Frontend
-cd ui && npm install
-cd ui && npx vitest run
-cd ui && npx tsc -b && npm run lint
-cd ui && npm run build
-cd ui && npm run dev        # Vite proxies /api to 127.0.0.1:8765 for hot-reload work
+(cd ui && npm ci)
+(cd ui && npx vitest run)
+(cd ui && npx tsc -b && npm run lint)
+(cd ui && npm run build)
+(cd ui && npm run dev)      # Vite proxies /api to 127.0.0.1:8765 for hot-reload work
 ```
 
 The full suite is fast; run it after tracker changes. It includes `tests/deck_downloader/`.
@@ -169,20 +179,21 @@ UI changes require vitest, tsc, lint, and a fresh `npm run build` (the dashboard
   → DMG; `scripts/build_windows_app.ps1` → Windows zip AND `MTGA-Tracker-<ver>-setup.exe`
   (Inno Setup via `packaging/windows_installer.iss`; skipped with a warning when ISCC is
   not installed — CI runs `choco install innosetup`). All go through
-  `packaging/mtga_tracker.spec` and the `packaging/*_entrypoint.py` shims, and embed the
-  `pyproject.toml` version in the artifact name. Never change the installer's `AppId`
+  `packaging/mtga_tracker.spec` and `packaging/entrypoint.py`, and embed the
+  tag-derived package version in the artifact name. Never change the installer's `AppId`
   GUID — it is what makes newer setups upgrade in place.
-- The macOS BUNDLE embeds BOTH executables ("MTGA Tracker" and "MTGA Deck Downloader")
-  in `MTGA Tracker.app/Contents/MacOS/` — the DMG intentionally shows one app and the
-  Deck Finder ships inside it. After a macOS build, verify both binaries are present
-  (`ls "dist/MTGA Tracker.app/Contents/MacOS/"`) and that the menu-bar Deck Finder
-  launch opens a Terminal with all providers listed.
+- The macOS BUNDLE and Windows folder each ship one tracker executable; Deck Finder's
+  terminal UI is its `--deck-finder` mode. After a build, verify the tracker executable,
+  integrated Deck Finder provider list, and terminal mode. Do not expect or add a second
+  `MTGA Deck Downloader` executable.
 - The build scripts prefer the repo venv and fall back to `$PYTHON`; they build `ui/dist`
   as part of the bundle, so UI changes must be built before packaging.
 - The in-game overlay is built by `scripts/build_overlay.sh` / `.ps1` (called from the app
   build scripts) into `overlay/build-out/` — a `Tapps Overlay.app` on macOS, a
-  `tapps-overlay.exe` on Windows — and `packaging/mtga_tracker.spec` ships it as data under
-  `overlay/`. No Rust toolchain → the overlay is skipped with a warning and the Settings
+  `tapps-overlay.exe` on Windows. The spec ships Windows overlay data under `overlay/`;
+  `build_macos_app.sh` copies the macOS app into `Contents/Helpers/` after PyInstaller.
+  Linux staging exists in the overlay script, but the spec does not yet bundle it.
+  No Rust toolchain → the overlay is skipped with a warning and the Settings
   page reports "not in this build"; CI sets `OVERLAY_REQUIRED=1` so releases always carry
   it. `overlay_launcher.overlay_binary_candidates()` lists every location the tracker looks
   in (env `MTGA_TRACKER_OVERLAY_BIN` overrides). `scripts/build_overlay.sh --fast` (`-Fast`)
@@ -190,8 +201,10 @@ UI changes require vitest, tsc, lint, and a fresh `npm run build` (the dashboard
   relink; never ship it. The overlay's frontend and Rust tests:
   `cd overlay && npm test && cargo test --manifest-path src-tauri/Cargo.toml`.
 - `.github/workflows/release.yml` builds both OS artifacts and attaches them to a **draft**
-  GitHub Release on a `v*` tag or manual dispatch. Publishing the draft is the human "go"
-  button; ordinary pushes never run it. See `docs/plans/RELEASE_PLAN.md`.
+  GitHub Release on a `v*` tag. Manual branch runs upload Actions artifacts; manual tag
+  runs use the draft-release path. Publishing the draft is the human "go" button; ordinary
+  pushes never run it. There is no separate Python/frontend test workflow in this checkout.
+  See `docs/RELEASING.md`.
 
 ## Local Paths
 
@@ -274,9 +287,15 @@ Preserve these behaviors unless the user explicitly changes requirements:
   and displays local vector W/U/B/R/G mana symbols rather than upscaled raster icons. Browser
   tab titles use `Tapps Tracker – <page>`. App bundle names, commands, and data folders still
   say `MTGA Tracker` on purpose (renaming them moves users' data).
+- Scry stats persist for both seats (`scries`, `scry_cards`, `scry_top`, `scry_bottom`)
+  and `game_library_events`; `affectedIds` contains card instance IDs, so resolve the
+  scrying seat from the ability controller or observed card owners. Opponent card names
+  stay hidden. Migration 29 backfills historical event counts only. Surveil columns remain
+  NULL until a handler exists. The overlay does not condition odds on scry top/bottom order.
 - Unhandled annotations go to the text diagnostics log, not SQLite.
-- AI deck identification makes at most ONE provider call per game, only after the game
-  completes, only for tracked matches, and always on a background thread. The result lands in
+- AI deck identification starts at most ONE identification job per game, only after the game
+  completes, only for tracked matches, and always on a background thread. Normally it makes
+  one request; the existing OpenAI token-starvation retry is the sole exception. The result lands in
   `participants.deck_archetype`; Game Detail shows it as the Opponent Deck Type with the plain
   color label as fallback. Keep calls cheap — no extra calls, no retries beyond the existing
   token-starvation retry.
@@ -354,6 +373,8 @@ Important tables:
 - `game_drawn_cards`: one row per visible player/opponent drawn card identity when Arena exposes it.
 - `game_deck_cards`: authoritative per-game submitted main-deck and sideboard quantities from Arena.
 - `game_card_summary`: cards played by each participant.
+- `game_library_events`: per-seat scry choices, destination counts, source card, and
+  visible player card-name lists; see `docs/SCRY_TRACKING.md`.
 - `game_participant_stats`: combat, damage/life, cards drawn/discarded/milled/exiled, stack
   stats, plus nullable interaction columns added over time — removal/wipes/bounce/counters
   played+drawn, creatures/non-creatures removed and bounced, spells_countered, lands
@@ -371,7 +392,9 @@ Important tables:
   with every console line plus a ~5s idle heartbeat; drives the Live Scoreboard. Stopping the
   tracker calls `mark_live_status_stopped` (rewinds `updated_at`, `in_game=0`) so the
   dashboard flips to off at once; `last_game_json` freezes the final in-game snapshot so the
-  previous game's scoreboard survives reloads until the next game starts. The old Qt log
+  previous game's scoreboard survives reloads until the next game starts. `overlay_json`
+  persists the library state served by `/api/overlay`; it stays current in untracked modes too.
+  The old Qt log
   window is a buried debug fallback (`MTGA_TRACKER_QT_LOG=1`).
 - `participant_commanders`: Brawl commander(s) per participant (both seats).
 - Indexes: besides the `(game_id, participant_id)` pairs, the per-card tables carry
@@ -384,14 +407,16 @@ Important tables:
 - `raw_game_payloads`: sanitized raw payload archive. `payload_json` is stored
   **zlib-compressed** (migration v11 converted legacy rows) — always read it through
   `payload_codec.decode_payload`, or use `python -m mtga_tracker.payload_dump <game_id>`;
-  raw SQL shows blobs. Lossless, so historical backfills stay possible.
+  raw SQL shows blobs. Payloads are lossless while retained, but startup maintenance
+  prunes this diagnostic archive after 30 days; never assume arbitrary old raw games exist.
 - `rank_snapshots`: constructed and limited rank changes by season, with optional ranked match/game linkage.
-- `game_annotations`: user notes and comma-joined tags per game, written by the dashboard's
-  `POST /api/game/annotation` endpoint — the only endpoint that writes analytics data. The
-  dashboard's other POSTs are `POST /api/db/reset` (destructive; requires a
-  `{"confirm": "RESET"}` body and takes a backup first) and
-  `POST /api/deck-downloader/launch` (spawns the Deck Finder locally). Everything else the
-  dashboard serves is read-only GET; keep it that way.
+- `game_annotations`: user notes and comma-joined tags per game, written by
+  `POST /api/game/annotation`. Analytics query endpoints remain read-only GETs.
+  `POST /api/db/reset` is destructive, requires `{"confirm": "RESET"}`, and backs up first.
+  Other existing POSTs are `/api/settings/*` (settings and overlay actions),
+  `/api/deckfinder/*` (fetch/variants/hydrate/surprise jobs),
+  `/api/deck-downloader/launch` (terminal launcher), and `/api/collection/export`
+  (explicit memory scan/export job). Do not describe the entire dashboard as read-only.
 - `schema_migrations`: numbered one-time migrations applied by `AnalyticsStore.apply_pending_migrations`
   (baseline is version 1; add new migrations there rather than ad-hoc ALTERs when possible).
 

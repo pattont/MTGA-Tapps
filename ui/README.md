@@ -1,13 +1,14 @@
-# MTGA Tracker Dashboard UI
+# Tapps Tracker Dashboard UI
 
 React/Vite frontend for the local MTGA tracker dashboard. The Python tracker and SQLite analytics code remain in `src/mtga_tracker`; this app only consumes the local dashboard API.
 
 ## Commands
 
 ```bash
-npm install
+npm ci
 npm run dev
 npm test
+npx tsc -b
 npm run lint
 npm run build
 ```
@@ -22,4 +23,12 @@ venv/bin/python -m mtga_tracker.dashboard
 
 `npm run build` writes static assets to `ui/dist`. When that directory exists, `mtga_tracker.dashboard` serves the built app and exposes `/api/snapshot` from the local SQLite database.
 
-Deck visuals are local-only. The API chooses representative card metadata from tracker tables and does not fetch remote card images.
+The API chooses representative card metadata from local tracker tables. The browser
+fetches card art from Scryfall and uses its batched API for missing mana costs,
+seeding its cache from the local `card_mana` payload first. Mana symbols are bundled
+for offline rendering. The browser also checks GitHub Releases for updates; see
+the root README's Data & privacy section for the full network behavior.
+
+Settings, annotations, Deck Finder jobs, collection export, and database reset
+have explicit POST actions; analytics reads use GET endpoints. Rebuild `ui/dist`
+after frontend changes because the Python server serves these generated assets.

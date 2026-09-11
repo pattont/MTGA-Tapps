@@ -1,5 +1,11 @@
 # Opponent Deck Research — implementation plan
 
+**Status (2026-09-10): not implemented.** The existing AI archetype label,
+local live guess, and Deck Finder scrapers are inputs, not this corpus/matcher
+feature. No `meta_decks.py`, `deck_matcher.py`, or proposed corpus tables
+exist in this checkout. Thresholds and timings below are design hypotheses
+requiring validation, not measured accuracy or performance.
+
 Identify *which* deck an opponent was actually playing by matching the cards
 they revealed against a locally cached corpus of real meta decklists — with a
 confidence score, links to the source lists, and an honest fallback when the
@@ -29,7 +35,9 @@ cards the candidate doesn't play. 8 cards seen ≠ 25 cards seen.
 ## What already exists (reuse, don't rebuild)
 
 - **Evidence**: `game_card_summary` records every identified opponent card
-  with played/drawn/discarded/milled/exiled counts (lower bounds on copies);
+  with played/drawn/discarded/milled/exiled event counts; these are **not**
+  necessarily distinct-copy counts (a bounced card can be replayed). Establish
+  identity-aware copy evidence before using quantities to reject a candidate;
   0.5.7 added per-copy played turns. Colors come from `cards.color_identity`,
   mana costs from `cards.mana_cost`.
 - **Corpus fetching**: `mtga_deck_downloader` ships working scrapers:
@@ -71,7 +79,11 @@ meta_deck_cards(deck_id, card_name, quantity, board)  -- board: main/side
 New module `src/mtga_tracker/deck_matcher.py`, pure functions, no I/O:
 
 **Evidence extraction** (per match, not per game): union of the opponent's
-identified cards across the match's games with max observed copies per card.
+identified cards across the match's games with max **distinct evidenced** copies
+per card, when object identity supports that count. Otherwise use presence
+only; played/drawn event totals must not stand in for distinct copies. Account
+for stolen, conjured, copied and token cards before attributing cards to the
+opponent's submitted deck.
 Weight game 1 fully; discount cards seen only in games 2–3 by ~0.5 (could be
 sideboard). Basic lands carry almost no signal on their own but their *count
 and colors* still gate candidates.
@@ -110,9 +122,11 @@ sources deduped by identical maindeck signature.
 ## Phase 3 — Dashboard + UI
 
 - `dashboard.py`: `_opponent_deck_match(conn, match_id)` runs the matcher
-  on demand (corpus is local, scoring ~thousands of lists is milliseconds;
-  cache the result in `opponent_deck_matches(match_id, computed_at, json)`
-  and invalidate when a newer snapshot lands). Ship in the game payload as
+  from a read-only path. Measure matching against a copy of a real DB before
+  committing to request-time work. Populate any persisted
+  `opponent_deck_matches(match_id, computed_at, json)` cache in a background
+  writer after a match/corpus update; GET requests must not write analytics.
+  Invalidate on evidence changes and corpus updates. Ship in the game payload as
   `opponent_deck_match` with: verdict (matched/archetype/fallback/insufficient),
   candidates [{name, url, source, fit_score, seen_fit, seen_total,
   contradictions[], meta_share}], and the evidence summary.

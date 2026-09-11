@@ -1,411 +1,364 @@
-# Linux Support Plan
+# Linux implementation plan
 
-Goal: Tapps Tracker (tracker + dashboard + menu-bar app + in-game overlay)
-on Linux, built and released by the same CI as macOS and Windows, without a
-local Linux VM to develop on. The plan is ordered so every phase ships
-something usable on its own and can be verified from CI or a container
-before anyone has a Linux desktop in front of them.
+Status: **not implemented**. Reviewed against this checkout on 2026-09-10.
+The parser and analytics are portable, but Linux auto-discovery, a usable
+tray-free desktop controller, the Arena overlay probe, and release packaging
+still need work. Explicit `--log-path` and `MTGA_DATA_DIR` can bypass discovery
+for source experiments; this is not a validated Linux distribution.
 
-## The premise that shapes everything
+The original plan was a useful outline, but was not ready to implement as
+written: it named nonexistent functions, used PySide6 instead of PyQt6,
+assumed Linux overlay packaging already existed, overstated XWayland and
+AppImage compatibility, and treated Xvfb as desktop validation. The contracts
+and gates below replace those assumptions. All new behavior described here
+is proposed; nothing in this document is a claim that Linux support ships.
 
-There is no native Linux build of MTG Arena. Linux players run the Windows
-client through **Steam / Proton** (Arena is on Steam, app id `2141910`) or a
-**Wine prefix** managed by Lutris, Bottles, or plain Wine. So "Linux support"
-means: the tracker runs natively, but everything it looks for — `Player.log`,
-the card database, the Arena window — lives inside a Windows-shaped tree
-under a Wine prefix, and Arena's own log lines describe those files with
-Windows paths (`C:/Program Files/…`).
+## 1. Scope and support contract
 
-Two consequences drive the design:
+Run the tracker natively on Linux, reading the Windows Arena client's logs
+and card database from Steam/Proton or a Wine prefix. Initial release target:
+**x86_64, glibc Linux**. ARM builds can exercise portable code but do not prove
+Arena/Proton compatibility. Native Wayland overlay integration, collection
+memory export, a Flatpak package of the tracker, and Steam Deck Gaming Mode
+are outside the first release.
 
-1. **Path discovery is prefix discovery.** Find the prefix, and the rest of
-   the layout is exactly Windows. Everything under `drive_c` uses real case
-   on a case-sensitive filesystem (`users`, `AppData`, `LocalLow`).
-2. **Windows paths in the log must be translated.** Arena's Unity header
-   says `Loading SqlLocalizationManager from file: C:/Program Files/…` —
-   that is `<prefix>/drive_c/Program Files/…` on disk. `Z:\` maps to `/`.
-
-Everything else (the parser, the database, the dashboard, the React UI) is
-already platform-neutral Python and runs on Linux today.
-
-## Where Arena's files are
-
-| Install | `Player.log` | Card DB (`Raw_CardDatabase_*.mtga`) |
+| Environment | Tracker/dashboard/controller | Overlay target |
 | --- | --- | --- |
-| Steam / Proton | `<steam>/steamapps/compatdata/2141910/pfx/drive_c/users/steamuser/AppData/LocalLow/Wizards Of The Coast/MTGA/Player.log` | `<steam>/steamapps/common/MTGA/MTGA_Data/Downloads/Raw/` (any library in `libraryfolders.vdf`) |
-| Lutris (default) | `~/Games/magic-the-gathering-arena/drive_c/users/<user>/AppData/LocalLow/Wizards Of The Coast/MTGA/Player.log` | `<prefix>/drive_c/Program Files/Wizards of the Coast/MTGA/MTGA_Data/Downloads/Raw/` |
-| Bottles | `~/.var/app/com.usebottles.bottles/data/bottles/bottles/<bottle>/drive_c/…` (Flatpak) or `~/.local/share/bottles/bottles/<bottle>/drive_c/…` | same shape under the bottle's `drive_c` |
-| Heroic | `~/Games/Heroic/Prefixes/<name>/pfx/drive_c/users/<user>/AppData/LocalLow/…` | `~/Games/Heroic/<name>/MTGA_Data/Downloads/Raw/` or under the prefix's `drive_c` |
-| Plain Wine | `$WINEPREFIX` or `~/.wine` → `drive_c/users/<user>/AppData/LocalLow/…` | `<prefix>/drive_c/Program Files/…` |
+| X11 desktop with compositor | Supported after validation | Follow Arena, dock, hide/show, shortcuts, click-through |
+| Wayland desktop with XWayland and Arena using X11 | Supported after validation | Experimental until tested on each compositor; no universal shortcut or stacking guarantee |
+| Wayland without a usable X display, or Arena using native Wayland | Supported after validation | Disabled with an explanation; dashboard remains available |
+| Headless session | `--no-gui` with explicit inputs | Not launched |
+| Steam Deck Desktop Mode | Tester target, not an initial support claim | Validate separately on the actual device |
 
-`<steam>` is `~/.steam/steam`, `~/.steam/root`, `~/.local/share/Steam`, or
-the Flatpak `~/.var/app/com.valvesoftware.Steam/.local/share/Steam`. The
-existing `_steam_mtga_raw_dirs()` already walks `libraryfolders.vdf`; it
-only needs Linux Steam roots fed to it.
+Primary acceptance targets are Ubuntu 22.04 and 24.04 x86_64 with Steam/
+Proton, plus one Lutris/Wine install. Debian 12 is a packaging compatibility
+check. Treat other distributions, launchers, and Steam Deck as unverified
+until their results are recorded. A tracking-only alpha can precede the
+complete release; label its missing overlay support explicitly.
 
-Three things field experience with Linux trackers says not to assume:
+## 2. Current implementation map
 
-- **The Steam app id is not fixed.** Arena added to Steam as a *non-Steam
-  game* (a common way to get Proton without the Steam build) lands in
-  `compatdata/<random id>/pfx`. Scan every `compatdata/*/pfx` for the
-  `Player.log` path rather than only `2141910`.
-- **Libraries live on other disks.** Beyond `libraryfolders.vdf`, look for
-  a `SteamLibrary/steamapps` (or a bare `steamapps`) directly under
-  `/mnt/*`, `/media/*`, and `/run/media/<user>/*` — people mount a games
-  drive and never register it with Steam's config.
-- **Names vary.** The Steam install folder is `MTGA` but has also shipped
-  as `Magic The Gathering Arena`; Lutris prefixes have been seen as
-  `~/Games/mtga`, `~/Games/magic-the-gathering-arena`, and
-  `~/Games/Magic-The-Gathering-Arena`; the Windows `Program Files (x86)`
-  variant appears too. Match by structure (`…/MTGA_Data/Downloads/Raw`
-  containing `Raw_CardDatabase_*.mtga`), never by one spelling.
+| Area | Actual entry point and current gap |
+| --- | --- |
+| Log discovery | `MTGALogParser._find_log_path()` in `log_parser.py` supports Windows/macOS only; move new path discovery into `paths.py` and delegate from this wrapper |
+| Card DB discovery | `paths.get_mtga_raw_card_db_folders()` supports overrides, Unity log headers, Steam libraries, and platform defaults; no Linux branch |
+| Header parsing | `_unity_data_dirs_from_log_head()` recognizes subsystem, localization, and older Mono lines; `mtga_raw_dir_from_player_log()` reads 64 KiB and tries `Player-prev.log` |
+| Database selection | `CardDatabase._find_mtga_card_database_paths()` sorts all discovered files by mtime; folder precedence alone cannot isolate multiple installs |
+| Rotation | `_read_new_entries()` resets only when size shrinks; replacement with a larger file can skip events |
+| Data/settings | Frozen tracker data already uses `XDG_DATA_HOME/mtga-tracker` or `~/.local/share/mtga-tracker`; source runs use repo data; `MTGA_TRACKER_DATA_DIR` overrides data location |
+| Desktop | `menu_app.py` uses **PyQt6**; assumes a tray, with the old Qt Live Log hidden as a debug fallback; Linux currently gets the monochrome icon |
+| Platform payload | `settings_api._platform_info()` returns `other` for Linux; collection export is already disabled there |
+| Deck Finder | Dashboard integration is portable; `_launch_linux_terminal()` exists but its `-e` invocation and frozen child environment need real terminal tests |
+| Overlay shell | `arena.rs` Linux stub returns `ArenaStatus::default()` (not running); Linux is not a functional follow/focus implementation |
+| Overlay staging | `build_overlay.sh` has a non-Darwin build into `build-out/tapps-overlay`; launcher knows that name |
+| Overlay packaging | The spec stages **Windows** overlay data only; macOS script copies a nested app into `Contents/Helpers`. Linux inclusion must be added |
+| Release | macOS/Windows builds only, one tracker executable with `--deck-finder`; no separate test workflow in this checkout |
 
-Arena's **Detailed Logs** setting must be on, exactly as on the other
-platforms.
+No analytics schema change is needed for basic Linux support. Keep existing
+app/data identifiers, one selected `--db` for both tracker and dashboard,
+and all tracked/untracked-game and hidden-information rules.
 
-## Inventory: what is platform-specific today
+## 3. Phase 0 — Prove the build baseline and test harness
 
-| Area | File | Today | Linux |
-| --- | --- | --- | --- |
-| Log discovery | `log_parser.py` `_find_log_path` | Windows/macOS only; raises "Unsupported operating system" | Prefix search (Phase 1) |
-| Card DB discovery | `paths.py` `mtga_card_database_dirs` | Darwin / Windows branches | Linux branch + Wine path translation (Phase 1) |
-| Log-derived install dir | `paths.py` `mtga_raw_dir_from_player_log` | Uses the Unity header path as-is | Translate `C:/…` → `<prefix>/drive_c/…` (Phase 1) |
-| Data dir | `paths.py` `_installed_app_data_dir` | Already XDG (`~/.local/share/mtga-tracker`) | Done |
-| Platform reported to the UI | `settings_api.py` | `"other"` | `"linux"` (Phase 2) |
-| Menu-bar app | `menu_app.py` | Qt tray; mac/win icon tweaks | Tray-optional mode (Phase 2) |
-| Deck Finder launcher | `deck_downloader_launcher.py` | Has `_launch_linux_terminal` | Done |
-| Collection export | `collection_export.py` | mac/win memory readers | Stays unsupported (reads a Wine process) — UI already hides it |
-| Overlay: Arena window probe | `overlay/src-tauri/src/arena.rs` | mac (CGWindowList), win (Win32); Linux stub returns "not running" | X11 probe + `/proc` fallback (Phase 3) |
-| Overlay: window level | `lib.rs` `raise_above_fullscreen` | mac NSPanel trick; no-op elsewhere | `_NET_WM_STATE_ABOVE` via Tauri is enough on X11 (Phase 3) |
-| Overlay: hotkeys | `settings.rs` `hotkeys_macos` / `hotkeys_windows` | Two platforms | Add `hotkeys_linux` (Phase 3) |
-| Overlay: launch | `overlay_launcher.py` | `_POSIX_EXECUTABLE = tapps-overlay` already | Add `GDK_BACKEND=x11` env (Phase 3) |
-| Build | `scripts/build_*` | mac `.app`, win installer | `build_linux_app.sh` → AppImage + tarball (Phase 4) |
-| CI | `.github/workflows/release.yml` | macos / windows matrix | Add ubuntu (Phase 5) |
+Before substantial GUI work, add a PR/manual Linux validation job, initially
+running tests and producing private workflow artifacts. Install the existing
+`.[dev,gui,build]` extras, dashboard/overlay npm lockfiles, and Rust lockfile.
+Record exact Python, PyQt6/Qt, Node, Rust, WebKitGTK and build-image versions.
+Use Python 3.12 as in release CI and a Node version satisfying both lockfiles.
 
-## Phase 1 — Find the log and the card DB (pure Python, fully testable)
+Start with an Ubuntu 22.04 build image. It is a candidate baseline, **not** a
+guarantee of compatibility: inspect GLIBC/GLIBCXX requirements of every ELF,
+including the installed Qt wheels, PyInstaller runtime, Rust binary, and
+WebKit dependencies. Newer wheels can raise the floor even when the build
+host is old. If necessary select compatible dependency versions through a
+reviewed constraint file or explicitly raise the advertised minimum OS.
+Tauri requires an oldest-supported build base that also has WebKitGTK 4.1;
+it lists Ubuntu 22.04 and Debian 12 as examples. [Tauri AppImage guidance](https://v2.tauri.app/distribute/appimage/).
 
-The whole phase is path logic with no desktop dependency, so it can be
-developed and tested entirely with `tmp_path` fixtures and the existing
-test suite, on any OS.
+Use the distro-specific packages in [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
+as the starting point: WebKitGTK 4.1 headers, build tools, OpenSSL, libxdo,
+AppIndicator, and librsvg. Add `patchelf`, Qt's XCB runtime dependencies,
+fonts, Xvfb, a lightweight EWMH window manager, a compositor, D-Bus session
+support, and X11 fixture tooling. Determine the final runtime list by ELF
+inspection and clean-image launches, not by copying the build apt list.
 
-**`paths.py`**
+Gate: Python tests, frontend checks, overlay Rust compilation/tests, and a
+minimal native overlay window succeed in CI. This does not yet prove Arena
+support. Keep temporary fixtures, settings, DBs, logs, and ports isolated
+from developer data. Never stop an active developer tracker for these tests.
 
-- `wine_prefix_candidates() -> List[Path]`: in order, `$MTGA_WINE_PREFIX`,
-  `$WINEPREFIX`, every `steamapps/compatdata/*/pfx` under every Steam
-  library (`2141910` first, then the rest — non-Steam shortcuts get a
-  random id), Lutris (`~/Games/*/`, and `~/.local/share/lutris` /
-  `~/.var/app/net.lutris.Lutris` for its `drive_c` prefixes), Bottles
-  (both install styles), Heroic (`~/Games/Heroic/Prefixes/*/pfx`),
-  `~/.wine`. Only existing directories with a `drive_c` are returned.
-- `_linux_steam_roots()`: the Steam locations above plus any
-  `SteamLibrary/steamapps` or bare `steamapps` found one level under
-  `/mnt`, `/media`, and `/run/media/<user>` (mirror of
-  `_windows_steam_roots`, which walks `libraryfolders.vdf`).
-- `raw_dir_from_prefix_log(log_path) -> Optional[Path]`: the primary
-  derivation on Linux, and simpler than translating anything. Walk up
-  from the log file to the `drive_c` directory (the prefix), then try the
-  known install spots under it (`Program Files/Wizards of the Coast/MTGA`,
-  the `(x86)` twin, `MTGA`, `Games/MTGA`), each ending in
-  `MTGA_Data/Downloads/Raw`. For a Steam path, cut at
-  `/steamapps/compatdata` and look in the sibling `steamapps/common/MTGA`
-  (and `Magic The Gathering Arena`) instead — Proton keeps the game
-  outside the prefix.
-- `wine_path_to_native(path_text, prefix) -> Optional[Path]`: the
-  secondary derivation, for a custom install the walk above misses. `C:`
-  → `<prefix>/drive_c`, other letters → `<prefix>/dosdevices/<letter>:`
-  (a symlink Wine keeps), `Z:` → `/`; backslashes to slashes. Used by
-  `mtga_raw_dir_from_player_log` when the Unity header's path looks like
-  a Windows path on a non-Windows host, with the prefix found by the same
-  walk.
-- `mtga_card_database_dirs`: a `Linux` branch — Steam libraries via
-  `_steam_mtga_raw_dirs(root)` for each Linux Steam root, then
-  `<prefix>/drive_c/Program Files/Wizards of the Coast/MTGA/MTGA_Data/Downloads/Raw`
-  and the `(x86)` variant for every prefix candidate.
+## 4. Phase 1 — Discover one coherent Arena installation
 
-**`log_parser.py`**
+### Inputs and precedence
 
-- `_find_log_path`: a `Linux` branch that checks `$MTGA_LOG_PATH` (new,
-  all platforms — the settings page's "Arena log" override can back it),
-  then for each prefix candidate, `drive_c/users/*/AppData/LocalLow/Wizards Of The Coast/MTGA/Player.log`
-  (glob the user name: `steamuser` under Proton, the login name under
-  Wine). Newest `Player.log` by mtime wins when several prefixes have
-  one — a player who moved from Lutris to Steam has two, and the one
-  Arena is writing right now is the one that matters.
-- Rotation by inode. `MTGALogParser._read_new_entries` detects a new log
-  by `size < last_position`. Arena under Wine/Proton, like Arena on macOS,
-  *recreates* `Player.log` on launch (the old one becomes
-  `Player-prev.log`); a fresh file that has already grown past the old
-  offset is missed until it shrinks. On POSIX, remember `st_ino` and treat
-  a change as rotation. That is a small, platform-neutral fix worth
-  landing first, because macOS benefits today.
-- The error message when nothing is found should say where it looked and
-  name the override, since on Linux "I installed it somewhere else" is the
-  common case.
+Put discovery and path translation in `paths.py`; callers consume its result.
+The proposed `MTGA_LOG_PATH` and `MTGA_WINE_PREFIX` variables do not exist yet.
+Define their behavior consistently for console, GUI, and frozen entry points:
 
-**Tests** (`tests/test_paths_linux.py`): build fake prefixes under
-`tmp_path` for each install style, monkeypatch `Path.home()` /
-`platform.system()`, and assert discovery order, the newest-log rule, the
-path translation (including `Z:` and a `D:` dosdevices symlink), and that
-Windows/macOS behaviour is untouched.
+1. Explicit CLI `--log-path` wins.
+2. Proposed `MTGA_LOG_PATH` wins over a saved Settings log override.
+3. Proposed saved log override wins over discovery.
+4. An explicit `MTGA_WINE_PREFIX`, then `WINEPREFIX`, restricts automatic
+   prefix discovery. Invalid explicit inputs produce an actionable error
+   rather than silently tracking a different installation.
+5. Without explicit selection, enumerate known roots and select the newest
+   readable `Player.log`; ties use deterministic discovery order. Retain the
+   selected installation for the session. Never switch logs during a match
+   because another prefix's mtime changed.
 
-**Ships as:** the tracker and dashboard fully working on Linux from source
-(`pip install -e '.[gui]'`, `mtga-tracker`), which is what a Linux alpha
-tester needs first.
+Keep the existing exclusive `MTGA_DATA_DIR` behavior. A proposed saved card
+folder override comes after it and before inferred folders. An explicit
+log and explicit prefix that conflict must produce an explanation before
+using a guessed translation. Store provenance (explicit/header/Steam/prefix),
+log path, prefix, and install roots together so the card database comes from
+that installation. Resolve newer set databases **within the selected install**;
+do not let an unrelated prefix win the global newest-file sort. Preserve
+Windows/macOS behavior with regression fixtures when changing selection.
 
-## Phase 2 — The desktop app (Qt) on Linux
+### Bounded candidates
 
-`menu_app.py` runs on Linux as-is with PySide6, with two things to handle:
+| Launcher | Candidate roots and relationship |
+| --- | --- |
+| Steam | `~/.steam/steam`, `~/.steam/root`, `~/.local/share/Steam`, Flatpak `~/.var/app/com.valvesoftware.Steam/.local/share/Steam`; deduplicate resolved symlinks and read `libraryfolders.vdf` |
+| Proton | Every registered library's `steamapps/compatdata/2141910/pfx` first, then bounded `compatdata/*/pfx` candidates for non-Steam shortcuts; game installs usually live outside the prefix in `steamapps/common` |
+| Lutris | Known prefixes directly under `~/Games`, plus configured roots discovered from launcher metadata when supported; do not treat its application-data directory as a guaranteed prefix |
+| Bottles | `~/.local/share/bottles/bottles/*` and `~/.var/app/com.usebottles.bottles/data/bottles/bottles/*` |
+| Heroic | `~/Games/Heroic/Prefixes/*/pfx` and configured prefix/install pairs; custom paths use overrides |
+| Wine | Explicit prefix, then `~/.wine` |
 
-- **No system tray on stock GNOME.** GNOME dropped tray icons; they need
-  the AppIndicator extension, and KDE / XFCE / Cinnamon have one. Check
-  `QSystemTrayIcon.isSystemTrayAvailable()` at startup: when false, start
-  with the Live Log window open and put the same menu on a window menu bar
-  (a `QMenuBar` with one "Tracker" menu holding the existing actions), so
-  every action stays reachable. Closing that window then means quit, and
-  the window says so once. When a tray exists, behave like Windows
-  (left-click opens the menu — already coded for `sys.platform != "darwin"`).
-- **Icon:** the coloured `app-icon.png` (the Windows choice) — the
-  monochrome template is macOS-only.
+A prefix must contain `drive_c`. Search `drive_c/users/*/AppData/LocalLow/`
+`Wizards Of The Coast/MTGA/Player.log`; do not hardcode `steamuser`. Use
+Steam's app manifest install directory where available, with structural
+`MTGA_Data/Downloads/Raw` validation for fallbacks. Known Windows install
+names under Program Files and Program Files (x86) are candidates, not facts.
+Do not scan arbitrary mounted disks or recursively traverse the user's home.
+Unregistered libraries use explicit inputs; any later removable-drive search
+needs an opt-in, bounded design. Ignore unreadable, missing, and malformed
+automatic candidates, deduplicate aliases, and prevent symlink loops.
 
-Smaller items: `settings_api.platform()` reports `"linux"` so the UI can
-word things; the Settings "Tracker" block shows the resolved prefix; the
-Deck Finder terminal launcher already handles Linux; collection export
-stays off (the UI already gates on `collection_export: false`).
+### Wine path translation
 
-Worth adding for every platform while the Linux branch is open: an
-**"Arena log" and "Card database folder" override** on the Settings page,
-with a live check mark (file exists, was written in the last N minutes,
-Detailed Logs on) next to the detected path. On Linux this is the
-difference between a support thread and no support thread, because every
-launcher lays the prefix out slightly differently, and the first-run
-experience should show what was found and where before the player has to
-ask. The environment variables (`MTGA_LOG_PATH`, `MTGA_DATA_DIR`) stay as
-the scriptable form of the same overrides.
+Apply translation to all three existing Unity header patterns. Resolve drive
+letters through `<prefix>/dosdevices/<letter>:` first; use `drive_c` for `C:`
+only when that mapping is absent. A `Z:` mapping is not guaranteed to be `/`:
+use the actual mapping or leave it unresolved. Handle mixed separators,
+spaces, Unicode, symlinks, and deleted targets. Reject drive-relative paths
+such as `C:foo`, unresolved UNC/device paths, and ambiguous case matches.
+For case-insensitive Wine paths on Linux, prefer exact components and then a
+unique case-insensitive match; never lowercase the native path wholesale.
 
-**Tests:** the tray-less branch with `QT_QPA_PLATFORM=offscreen` in
-`tests/test_menu_app.py`, which already runs Qt offscreen.
+Flatpak launcher paths may refer to a sandbox namespace, not the host root.
+Map only recognized launcher layouts and verified host paths; an inaccessible
+or ambiguous mapping needs a manual override. Do not invoke `winepath` in an
+arbitrary prefix, create prefixes, or request root. The tracker is a host
+process in this release; a Flatpak **tracker** would need a separate permission
+design. [Flatpak filesystem isolation](https://docs.flatpak.org/en/latest/sandbox-permissions.html).
 
-## Phase 3 — The overlay on Linux (Tauri / WebKitGTK)
+### Rotation and discovery tests
 
-Tauri builds on Linux against WebKitGTK; the page needs no changes. The
-shell needs four things.
+On POSIX, compare `(st_dev, st_ino)` using `fstat()` on the opened file, as
+well as the existing shrink check. Reset offsets and the buffered entry on
+replacement, even if its size is equal or larger. Tolerate missing-file
+windows during rename/recreate. Preserve startup-tail behavior and avoid
+replaying a completed game when only discovery is retried.
 
-**Display server: X11 only, on purpose.** Wayland has no global window
-positions, no "always on top" for ordinary clients, and no global hotkeys —
-the three things an overlay is made of. So the overlay runs as an X11
-client (native X11, or XWayland on a Wayland session, which every desktop
-provides). `overlay_launcher.py` sets `GDK_BACKEND=x11` in the child's
-environment on Linux; nothing else changes. Arena under Proton is itself
-an X11 (XWayland) window, so the two see the same coordinate space.
+Add minimal `tmp_path` tests for every launcher, custom libraries, different
+Wine usernames, conflicting/stale overrides, multiple installations, missing
+card DB then later appearance, ambiguous case, broken drive links, all header
+patterns, and `Player-prev.log`. Test append, truncation, equal/larger
+replacement, deletion/recreation, and partial multiline JSON at rotation.
+Use a synthetic read-only Arena card DB; assert no files are written into it
+or into prefixes. Run existing Windows/macOS discovery regressions too.
 
-Two more environment flags belong beside it, learned the hard way by
-WebKitGTK apps in general: `WEBKIT_DISABLE_COMPOSITING_MODE=1` and
-`WEBKIT_DISABLE_DMABUF_RENDERER=1`. Without them WebKitGTK's accelerated
-path renders a black or blank window on a share of NVIDIA and
-Wayland/XWayland setups. The overlay draws a few hundred DOM nodes; it
-loses nothing by rendering in software. Set them in the launcher's
-environment; the Qt tracker app needs neither (it has no web view).
+Gate: source `--no-gui` tracks a synthetic complete match into a temporary DB,
+with card names from the selected prefix and no duplicate game after rotation.
 
-**Arena window probe** (`arena.rs`, the `not(macos|windows)` module):
+## 5. Phase 2 — Desktop control and setup
 
-- Enumerate top-level windows over X11 (`x11rb`, pure Rust, no C deps):
-  read `_NET_CLIENT_LIST` on the root window, then each window's
-  `WM_CLASS` and `_NET_WM_NAME`. Wine sets `WM_CLASS` to the exe name, so
-  match `mtga.exe` / `MTGA.exe` (case-insensitive) with `MTGA` in the
-  title as a fallback. Bounds come from `GetGeometry` + `TranslateCoordinates`
-  to root; `_NET_ACTIVE_WINDOW` gives frontmost; `_NET_WM_STATE_FULLSCREEN`
-  gives the fullscreen flag; `overlay_frontmost` is the active window
-  being our own.
-- Fallback when there is no X connection (a pure-Wayland compositor
-  without XWayland, or the probe failing): scan `/proc/*/comm` and
-  `cmdline` for `MTGA.exe` → `running = true`, `frontmost = true`, bounds
-  `None`. The overlay then behaves as if "hide when Arena isn't in front"
-  were off, which is the current Linux stub's behaviour, so nothing
-  regresses.
-- Poll cadence and the rest of `start_arena_poll` are shared.
+Use existing **PyQt6**, not a second Qt binding. Detect tray availability.
+When absent, show a small persistent controller window exposing Live
+Scoreboard, Dashboard, Deck Finder, Open Data Folder, overlay controls,
+Start/Stop Tracking, Settings, and Quit. Reuse the same QActions as the tray;
+keep the scoreboard in the browser. Closing the sole controller must have
+explicit quit semantics and orderly tracker/DB cleanup, never hide the only
+way to control a running process. Handle a tray becoming available later
+without duplicating controllers. Use the colored icon on Linux.
 
-**Window behaviour.** Transparency needs a compositor (every mainstream
-desktop has one; bare window managers get an opaque black background —
-document it). `set_always_on_top` maps to `_NET_WM_STATE_ABOVE`, which is
-honoured over a *windowed* or *borderless* Arena on every major WM. A
-*fullscreen* Arena is a different story: most WMs keep a focused
-fullscreen window above "above" windows. That is the same limitation
-Windows has with exclusive fullscreen, and gets the same advice in the
-Settings card: run Arena windowed or borderless. `raise_above_fullscreen`
-stays a no-op on Linux; do not try to fight the WM with override-redirect
-windows — they lose input and break click-through.
-`set_ignore_cursor_events` (click-through) works on X11 through the input
-shape extension, which Tauri already uses.
+Report `platform.system: linux` through `_platform_info()` and keep collection
+export hidden/unsupported. Expose the chosen log, prefix, card DB, and why
+they were selected in Settings, with redacted display paths. Distinguish
+missing, unreadable, and stale logs from confirmed absence of Detailed Logs:
+an idle log alone cannot prove logging is disabled.
 
-**Hotkeys.** `settings.rs`: add `hotkeys_linux` (defaults identical to
-Windows: `Alt+Shift+T` / `Alt+Shift+H`), returned by `Settings::hotkeys()`
-on Linux; the Flyout's platform switch shows the Windows labels. The
-global-shortcut plugin registers X11 grabs, which work for an X11 client
-under XWayland too.
+Coordinate log/card-folder override settings with
+[remaining install-discovery work](MTGA_INSTALL_DISCOVERY.md). The browser
+cannot freely choose an arbitrary native path: define a validated text input
+with native picker integration only where available. Show validation errors
+and a **takes effect at the next tracker start** notice. Do not restart an
+active tracker when saving. Route persistence through the existing settings
+API; analytics GET routes stay read-only. With no log, retain the controller
+and an actionable status rather than exiting to an invisible failure.
 
-**Multi-monitor.** `dock::monitor_holding` and Tauri's monitor list are
-platform-neutral; X11 reports one big virtual screen, which is what Tauri's
-`available_monitors()` splits back up via RandR. No changes expected;
-verify in the smoke test with Xvfb's single screen.
+Exercise browser opening, clipboard export, folder opening, and the terminal
+Deck Finder in the frozen build. `gnome-terminal`, `konsole`, `xterm`, and
+`x-terminal-emulator` do not have interchangeable argument contracts; test
+argument vectors and paths with spaces. Dashboard Deck Finder remains usable
+if there is no terminal emulator.
 
-**Build.** `scripts/build_overlay.sh` already takes the non-Darwin path
-(`tauri build --no-bundle` → `build-out/tapps-overlay`). Build deps on
-Debian/Ubuntu: `libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf`
-(the appindicator one only because Tauri's default features look for it;
-the overlay has no tray). Runtime deps: `libwebkit2gtk-4.1-0 libgtk-3-0`.
+Gate: offscreen Qt unit tests cover action wiring and tray absence. Actual
+GNOME without a tray extension and KDE with a tray validate reachability,
+close/quit behavior, second launch, browser opening, and user data isolation.
+Offscreen tests do not establish window-manager behavior.
 
-## Phase 4 — Packaging
+## 6. Phase 3 — Overlay capabilities and graceful failure
 
-- `scripts/build_linux_app.sh`: builds `ui/dist`, runs `build_overlay.sh`,
-  then PyInstaller in **onedir** mode from the same `packaging/mtga_tracker.spec`
-  (the spec already ships `overlay/` as data; the POSIX executable name is
-  in `overlay_launcher._POSIX_EXECUTABLE`). Output:
-  `dist/tapps-tracker-<version>-linux-x86_64.tar.gz` (untar and run
-  `tapps-tracker`), plus an **AppImage** built with `appimagetool` from the
-  same tree with a `.desktop` file and the app icon. AppImage is the
-  format that runs on every distro without a package manager and is what
-  Linux Steam players expect; a `.deb` can come later if asked for.
-- Build on **ubuntu-22.04** so the binary's glibc floor (2.35) covers
-  every distro still receiving updates.
-- The `.desktop` file: `Name=Tapps Tracker`,
-  `Exec=env GDK_BACKEND=x11 tapps-tracker`, `Icon=tapps-tracker`,
-  `Categories=Game;Utility;`, `StartupNotify=false`,
-  `Keywords=mtg;magic;arena;tracker;`.
-- Ship an `install.sh` inside the tarball (and as a one-liner from the
-  repo): copies the tree to `~/.local/share/tapps-tracker`, links
-  `~/.local/bin/tapps-tracker`, installs the icon into
-  `~/.local/share/icons/hicolor/512x512/apps`, writes the `.desktop` entry
-  into `~/.local/share/applications`, and runs
-  `update-desktop-database` when present. No root, no package manager,
-  and the app shows up in GNOME / KDE / Pop launchers immediately. The
-  AppImage is the double-click path for people who want one file; the
-  tarball plus installer is what the terminal-first Linux crowd expects,
-  and it is also what an AUR `-bin` recipe would wrap later if Arch users
-  ask.
-- Publish `SHA256SUMS` next to the artifacts; Linux users check them.
-- Runtime dependency line for the README:
-  `libwebkit2gtk-4.1-0 libgtk-3-0 libxcb-cursor0` (Debian/Ubuntu),
-  `webkit2gtk-4.1 xcb-util-cursor` (Arch), `webkit2gtk4.1 xcb-util-cursor`
-  (Fedora).
-- PyInstaller on Linux bundles Qt's XCB platform plugin; the AppImage must
-  carry `libxcb-cursor0`'s dependency chain (the Qt 6.5+ requirement that
-  bites first-time Linux packagers). Add `libxcb-cursor0` to the CI apt
-  list and check the plugin loads in the smoke test.
-- Version/DB/settings paths: already XDG under `~/.local/share/mtga-tracker`.
+Start with X11. Check that an X display is usable before spawning the overlay;
+`DISPLAY` being set is insufficient. Set `GDK_BACKEND=x11` for the overlay
+child only, consistently for its first and subsequent control launches.
+Without a usable X display, do not launch-loop or invent a process-only
+fallback that cannot render a window. Keep the tracker and dashboard running
+and expose an unavailable reason in Settings.
 
-## Phase 5 — CI
+Wayland does have a GlobalShortcuts portal; it is incorrect to say global
+shortcuts do not exist there. The current `global-hotkey` backend documents
+Linux **X11 only**, and an XWayland grab is not a promise of shortcuts while
+any native Wayland app has focus. Portal integration is separate work.
+[global-hotkey support](https://docs.rs/global-hotkey/latest/global_hotkey/),
+[GlobalShortcuts portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html).
 
-`release.yml` matrix gains:
+### Probe, input and geometry
 
-```yaml
-- os: ubuntu-22.04
-  build: scripts/build_linux_app.sh
-  artifact: |
-    dist/*.AppImage
-    dist/*.tar.gz
-```
+- Add a Linux-only `x11rb` dependency/module. Read `_NET_CLIENT_LIST`,
+  `WM_CLASS`, window title, active window, mapped/minimized state, geometry
+  and root coordinates. Handle windows disappearing between requests.
+  Prefer an Arena class/process match; title alone is weak evidence and
+  must not attach to a browser showing an Arena page.
+- Correlate `_NET_WM_PID` where usable. A bounded same-user `/proc` scan can
+  distinguish running from absent if the X connection works but no Arena
+  window is mapped; handle permission errors, exit races and launcher/helper
+  processes. A found process is **not** proof of focus or geometry. Do not
+  synthesize `frontmost=true` from process existence. Expose unknown status
+  and allow explicit manual floating mode if following is unavailable.
+- Specify coordinate conversions: X11 root physical pixels to the units
+  expected by `dock.rs`/Tauri. Test negative monitor origins, work areas,
+  fractional scale, monitor removal, primary-display changes, and a panel
+  changing width. Xvfb's single screen does not validate mixed DPI.
+- Probe once per second with bounded work and connection recovery. Existing
+  game activity comes from `/api/overlay`, never from the process probe.
+  Preserve waiting/final/mid-game states, API port forwarding and ETags.
+- Add `hotkeys_linux` with backward-compatible serde defaults; keep existing
+  macOS/Windows preferences intact. Surface registration conflicts. Menu/
+  controller actions must remain reachable if shortcuts fail, especially
+  when click-through is enabled. Pin and click-through remain separate.
+- Validate no focus stealing, hovering, dragging, input pass-through,
+  transparency and hide/show on the actual desktop. Fullscreen stacking and
+  XWayland visibility depend on the compositor; record results and recommend
+  windowed mode where necessary. Do not promise all borderless modes work.
 
-with an apt step for
-`libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf libxcb-cursor0 build-essential curl wget file`,
-Rust via the same `dtolnay/rust-toolchain` step, and `OVERLAY_REQUIRED=1`
-like the others. The release notes step lists the AppImage and tarball
-beside the `.dmg` and the installer.
+Do not unconditionally disable WebKit acceleration. First reproduce blank/
+black windows with the shipped WebKitGTK version, then test a narrowly scoped
+renderer workaround as an opt-in child environment setting. Measure its
+impact on transparent rendering, card previews, CPU and memory. Never disable
+WebKit's sandbox as a workaround.
 
-One check the smoke job must make: that the overlay binary has the page
-*embedded*. A Tauri binary built without the `custom-protocol` feature
-looks fine, links fine, and then opens a window that says
-"Could not connect to localhost" because it is trying to reach the Vite
-dev server. `scripts/build_overlay.sh` goes through the Tauri CLI, which
-sets the feature, but a CI step that runs the binary under Xvfb and greps
-its log for `page loaded` turns that class of mistake into a red build
-instead of a bug report.
+Gate: fake Arena windows under **Xvfb + EWMH WM + compositor + D-Bus** exercise
+focus, minimized/closed windows, geometry, hotkey conflicts and reconnects.
+A real x86 Linux Arena/Proton session is required before advertising overlay
+support. Include an extended session and record resource growth and missed
+input; compare idle/playing/hidden states rather than inventing an RSS claim.
 
-While touching the workflow: the macOS Tauri build is arm64-only on
-`macos-latest`. `--target universal-apple-darwin` (with both Apple
-targets installed) makes the overlay run on Intel Macs too; whether that
-matters depends on whether the PyInstaller app itself is ever built
-universal, which today it is not — note it as a follow-up rather than
-folding it in here.
+## 7. Phase 4 — Frozen package and installation
 
-## Testing without a Linux VM
+Build a **onedir tarball first**, then an AppImage from the same verified tree.
+Proposed names: `tapps-tracker-<version>-linux-x86_64.tar.gz` and
+`tapps-tracker-<version>-linux-x86_64.AppImage`. Preserve the internal
+`MTGA Tracker` executable and add a quoted `tapps-tracker` launcher if desired;
+Deck Finder stays its `--deck-finder` mode. Add Linux overlay data explicitly
+to the PyInstaller spec and verify the launcher locates the extracted binary.
+CI must fail if `OVERLAY_REQUIRED=1` and the binary is absent or not executable.
 
-This is the part that makes the plan workable now rather than after buying
-hardware. Three layers, cheapest first; between them they cover everything
-except "the overlay floats over a real Arena on a real desktop".
+An AppImage container does not automatically collect Qt, WebKitGTK, GTK,
+GStreamer/helper processes, schemas or their dependency chains. Define an
+AppDir bundling strategy, pinned tools, license notices and an explicit
+host-library allowlist. Inspect `ldd`/ELF dependencies and load Qt's platform
+plugins and WebKit subprocesses on clean supported systems. Include the Qt
+XCB plugin's actual dependencies, including xcb-cursor where required; also
+validate the chosen Qt Wayland plugin if the controller uses native Wayland.
+Do not claim an AppImage runs on every distribution.
 
-1. **CI is the VM.** A `linux-smoke` job (on pull requests, not only tags)
-   that, on ubuntu-22.04: installs the package, runs the full pytest
-   suite; runs the tracker headless against a synthetic prefix
-   (`tests/fixtures/wine-prefix/…` with a `Player.log` replayed from an
-   existing fixture) and asserts the startup banner names the log and the
-   card DB and that games land in the DB; builds the overlay and runs it
-   under `xvfb-run` with `--log`, asserting the log reaches
-   `page loaded`, `geometry: layout=Rail`, and the probe's fallback line —
-   the same smoke run used during development of the overlay on macOS.
-   Then builds the AppImage and launches it under Xvfb long enough to see
-   the dashboard answer `/api/version`. Every one of these already has a
-   working equivalent in the repo or in the development sessions; this
-   job only strings them together.
-2. **A container on the Mac.** `docker run --rm -it -v "$PWD":/w ubuntu:22.04`
-   gives the Phase 1/2/4 loop locally in seconds: path discovery, the Qt
-   app offscreen, PyInstaller, the AppImage. Xvfb inside the container
-   covers the overlay's shell (window creation, geometry, hotkey
-   registration, the X11 probe against a fake `MTGA.exe`-classed window
-   created with `xdotool`). This is where the X11 probe gets developed:
-   `xvfb-run` + a tiny X client that sets `WM_CLASS=mtga.exe` is a
-   complete stand-in for Wine's window as far as the probe can tell.
-3. **A real desktop, eventually.** UTM (free) on Apple Silicon runs an
-   Ubuntu ARM VM well enough for the desktop pieces (tray or no tray,
-   Wayland vs X11 sessions, AppImage double-click) but *cannot* run Arena:
-   Arena is x86 Windows, and Wine-on-ARM emulation is not a test of
-   anything. The first real end-to-end run — overlay over Arena under
-   Proton — needs an x86 Linux box with Steam. The practical route is an
-   alpha tester from the Linux Arena community with the AppImage and the
-   overlay's `overlay.log`; the diagnostics the overlay already writes
-   (geometry, probe results, show/hide decisions) were designed for
-   exactly this kind of remote debugging.
+PyInstaller modifies `LD_LIBRARY_PATH`; audit every child launch. Restore the
+host environment for system browsers/folder openers/terminals, and construct
+an explicit environment for the independently built GTK overlay so bundled
+Qt libraries cannot accidentally replace its runtime. Include Qt plugin-path
+variables in that audit and test the **frozen** build, not just source runs.
+[PyInstaller subprocess environment guidance](https://pyinstaller.org/en/stable/common-issues-and-pitfalls.html).
 
-## Known limits to state up front (README "Linux" section)
+Use a no-root installer into a dedicated application directory such as
+`~/.local/share/tapps-tracker`, with a launcher under `~/.local/bin`, icon,
+and `.desktop` entry. Keep data separate in `mtga-tracker`'s existing XDG
+location. Quote `Exec` paths correctly, honor relevant XDG locations, and
+set GTK environment flags in the overlay child, not globally in `.desktop`.
+Keep the executable permission in archives and show how to enable it for a
+downloaded AppImage. Test FUSE mounting and an extraction fallback;
+AppImages can need FUSE support and containers often require extraction.
+[AppImage FUSE guidance](https://docs.appimage.org/user-guide/troubleshooting/fuse.html).
 
-- Arena runs through Steam/Proton or Wine; the tracker finds the usual
-  prefixes and `MTGA_LOG_PATH` / `MTGA_WINE_PREFIX` cover the rest.
-- The overlay is X11 (XWayland on Wayland desktops); needs a compositor
-  for transparency; sits above a windowed or borderless Arena, not a
-  fullscreen one.
-- No system tray on stock GNOME without the AppIndicator extension — the
-  app runs from its Live Log window instead.
-- Collection export is not available (it reads Arena's memory).
-- The AppImage is unsigned, like the other platforms' builds.
-- Steam Deck: works in Desktop Mode (it is an X11/XWayland desktop with
-  Steam's compatdata layout); Gaming Mode has no place to put an overlay
-  window, so the overlay is a Desktop Mode feature there.
+Define upgrade/uninstall behavior: replace application files only, preserve
+DB/settings/exports, remove only owned launchers and icons on uninstall, and
+refuse to replace an active running installation without a user-directed
+shutdown. Never install over the user data directory. Test paths containing
+spaces, read-only AppImage contents, custom `XDG_DATA_HOME`, and two installed
+versions against the existing instance lock. Publish SHA256 checksums.
 
-## Order of work
+Gate: a fresh user can install, start, track, quit, upgrade, and uninstall
+both artifact forms without root or data loss. Missing runtime libraries
+produce a diagnostic obtainable outside a terminal-launched session.
 
-| Step | Scope | Verified by | Effort |
-| --- | --- | --- | --- |
-| 0 | Inode-based log rotation (POSIX) | pytest | ¼ session |
-| 1 | Phase 1 paths + `MTGA_LOG_PATH` + Settings path overrides | pytest, any OS | 1–1½ sessions |
-| 2 | Phase 5's `linux-smoke` job (tests + headless tracker) | CI | ½ session |
-| 3 | Phase 2 Qt tray-less mode + platform `"linux"` | pytest offscreen, container | ½–1 session |
-| 4 | Phase 4 tarball + AppImage + `.desktop`; CI artifact | CI, container | 1 session |
-| 5 | Phase 3 overlay: `GDK_BACKEND`, `hotkeys_linux`, `/proc` fallback probe | Xvfb smoke in CI | ½ session |
-| 6 | Phase 3 X11 probe with `x11rb` | Xvfb + `xdotool` fake window in container/CI | 1–2 sessions |
-| 7 | README / QUICKSTART Linux section, Settings wording | review | ½ session |
-| 8 | Alpha tester run over real Arena/Proton; fix what the logs show | tester | open-ended |
+## 8. Phase 5 — Release integration and evidence
 
-Steps 1–5 give a Linux release that tracks games, shows the dashboard and
-the menu, and shows the overlay over a windowed Arena, all checked in CI.
-Step 6 is what makes "hide when Arena isn't in front" and "follow Arena's
-monitor" work on Linux; it is separable and can ship in a later release.
+Add Linux to `release.yml` only after the preceding gates pass. Use the same
+full tag history, version-from-tag override and `OVERLAY_REQUIRED=1` as the
+other platforms. Tag runs attach artifacts/checksums to a **draft** release;
+manual branch runs upload workflow artifacts. Keep publishing a human step.
+Run macOS and Windows regressions after shared launcher/path/spec changes.
 
-## Acceptance
+Required automated checks:
 
-- Fresh Ubuntu 22.04 + Steam + Arena (Proton): download the AppImage, run
-  it, play a game — the game appears in the dashboard with names resolved
-  from the card DB, without any configuration.
-- Same on a Lutris install.
-- Overlay opens over a borderless Arena, docks, hotkeys work, hides when
-  Arena quits.
-- All existing tests pass on Linux in CI; the Linux smoke job is green;
-  the release workflow attaches the AppImage and tarball.
+- Existing full Python suite with the documented headless ignore/deselect;
+  separate `QT_QPA_PLATFORM=offscreen` menu tests with any needed fixtures.
+- Dashboard: `npm ci`, `npx vitest run`, `npx tsc -b`, lint and build.
+- Overlay: `npm ci`, tests, build, Rust tests, and screenshot fixtures.
+- Prefix replay: sanitized complete-match input, temporary DB, expected
+  outcome/seats/deck/card names, and no duplicate history after rotation.
+- Frozen tarball and extracted AppImage: `/api/version` and actual dashboard
+  assets, custom port, writable data paths, bundled Deck Finder providers,
+  overlay API connection and local embedded page with **no Vite server**.
+- Overlay smoke: enable diagnostics with `--log <temp-file>`, verify a
+  loaded UI and expected fixture content/geometry, then close cleanly.
+  A `page loaded` log marker alone is insufficient evidence of a working UI.
+
+Required desktop evidence records distro/release, session/compositor,
+launcher/Proton version, GPU/driver, display scaling and artifact hash. Cover
+Steam and Lutris, GNOME without tray and KDE with tray, X11 and XWayland,
+windowed/borderless/fullscreen, Arena alt-tab/minimize/quit/relaunch, and
+mixed-DPI monitors. Flatpak Steam/Bottles require an actual host-path test
+before claiming their automatic discovery works. Real desktop results remain
+pending until a tester or an x86 Linux host supplies them; CI cannot substitute.
+
+## 9. Delivery order and completion
+
+| Milestone | Deliverable | Exit evidence |
+| --- | --- | --- |
+| A | Build baseline and PR validation harness | Tested dependency floor; native shell smoke |
+| B | Paths, overrides and rotation | Cross-platform unit tests plus coherent-prefix replay |
+| C | Tray-free PyQt6 controller and setup | Offscreen tests plus GNOME/KDE control smoke |
+| D | X11 overlay and capability fallback | WM-backed CI fixtures plus real Arena/Proton session |
+| E | Tarball, AppImage, installer lifecycle | Clean-system launches, upgrade/uninstall and version checks |
+| F | Draft release and user documentation | Required platform matrix reviewed; maintainer publishes |
+
+Do not estimate the remaining work solely in coding sessions: dependency
+compatibility, compositor behavior and access to a real Arena test host are
+release gates with uncertain duration. Pure path/state work can start from
+this plan now. Baseline proof precedes packaging commitments; desktop evidence
+precedes support claims. Update README/QUICKSTART with Linux instructions only
+when the corresponding capability is delivered and verified.
