@@ -193,11 +193,8 @@ export function BackupCard() {
           </div>
         ) : null}
         <p className="settings-hint">
-          A chip fills in the path; <strong>Save</strong> remembers it. Nothing is created on disk until
-          the first backup is written there. Pick a folder your Google Drive, iCloud Drive, Dropbox or
-          OneDrive client syncs and the backup appears on your other computers by itself — nothing here
-          talks to any cloud service. A backup is one compressed <code>.tappsbackup</code> file: every
-          game, your settings, Deck Finder creators and overlay preferences.
+          Choose a folder that Google Drive, iCloud, Dropbox or OneDrive syncs and your backups will show
+          up on your other computers automatically. The folder is created with your first backup.
         </p>
       </div>
 
