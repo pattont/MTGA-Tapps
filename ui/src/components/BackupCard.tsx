@@ -182,10 +182,10 @@ export function BackupCard() {
               <button
                 key={pick.path}
                 type="button"
-                className={pick.path === status.folder ? 'backup-pick backup-pick-active' : 'backup-pick'}
+                className={pick.path === folder.trim() ? 'backup-pick backup-pick-active' : 'backup-pick'}
                 title={pick.path}
                 disabled={folderBusy}
-                onClick={() => applyFolder(pick.path)}
+                onClick={() => setFolder(pick.path)}
               >
                 {pick.name}
               </button>
@@ -193,10 +193,11 @@ export function BackupCard() {
           </div>
         ) : null}
         <p className="settings-hint">
-          Pick a folder your Google Drive, iCloud Drive, Dropbox or OneDrive client syncs and the backup
-          appears on your other computers by itself — nothing here talks to any cloud service. A backup
-          is one <code>.tappsbackup</code> file: every game, your settings, Deck Finder creators and
-          overlay preferences.
+          A chip fills in the path; <strong>Save</strong> remembers it. Nothing is created on disk until
+          the first backup is written there. Pick a folder your Google Drive, iCloud Drive, Dropbox or
+          OneDrive client syncs and the backup appears on your other computers by itself — nothing here
+          talks to any cloud service. A backup is one compressed <code>.tappsbackup</code> file: every
+          game, your settings, Deck Finder creators and overlay preferences.
         </p>
       </div>
 

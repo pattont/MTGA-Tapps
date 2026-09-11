@@ -316,8 +316,14 @@ def test_detect_sync_folders_per_platform(tmp_path):
     (mac / "Library" / "CloudStorage" / "OneDrive-Personal").mkdir(parents=True)
     (mac / "Library" / "Mobile Documents" / "com~apple~CloudDocs").mkdir(parents=True)
     (mac / "Dropbox").mkdir()
+    # macOS OneDrive also drops a ~/OneDrive symlink to the CloudStorage
+    # folder: it must not show up as a second OneDrive.
+    (mac / "OneDrive").symlink_to(mac / "Library" / "CloudStorage" / "OneDrive-Personal", target_is_directory=True)
     found = backup.detect_sync_folders(home=mac, env={}, system="Darwin")
     assert [f["name"] for f in found] == ["Google Drive", "OneDrive", "iCloud Drive", "Dropbox"]
+    assert not any(f["path"].startswith(str(mac / "OneDrive")) for f in found)
+    # Nothing was created by looking.
+    assert not any(Path(f["path"]).exists() for f in found)
     assert found[0]["path"] == str(mac / "Library" / "CloudStorage" / "GoogleDrive-travis@gmail.com" / "My Drive" / "Tapps Tracker")
 
     win = tmp_path / "win"
@@ -336,11 +342,19 @@ def test_backup_status_and_folder_setting(tmp_path):
     db = _db(tmp_path / "tracker.sqlite3", ["g1", "g2"])
     settings = tmp_path / "settings.json"
     settings.write_text("{}")
+    (tmp_path / "cloud").mkdir()
     assert backup.set_backup_folder(str(tmp_path / "cloud" / "Tapps Tracker"), settings_path=settings) == str(tmp_path / "cloud" / "Tapps Tracker")
-    assert (tmp_path / "cloud" / "Tapps Tracker").is_dir()
+    # Choosing a folder creates nothing; the first backup into it does.
+    assert not (tmp_path / "cloud" / "Tapps Tracker").exists()
+    with pytest.raises(backup.BackupError) as excinfo:
+        backup.set_backup_folder(str(tmp_path / "nowhere" / "Tapps Tracker"), settings_path=settings)
+    assert excinfo.value.code == "bad-folder"
     status = backup.backup_status(db, settings_path=settings)
     assert status["folder"] == str(tmp_path / "cloud" / "Tapps Tracker")
     assert status["local"]["games"] == 2 and status["backups"] == [] and status["tracker_active"] is False
+    made = backup.export_backup(db, tmp_path / "cloud" / "Tapps Tracker", settings_path=settings, overlay_path=tmp_path / "none", deckfinder_path=tmp_path / "none")
+    assert (tmp_path / "cloud" / "Tapps Tracker").is_dir() and Path(made["path"]).is_file()
+    assert backup.backup_status(db, settings_path=settings)["backups"][0]["path"] == made["path"]
     assert len(status["install_id"]) == 12 and status["install_id"] == backup.install_id(settings)
     assert backup.set_backup_folder("", settings_path=settings) is None
     assert backup.backup_settings(settings)["folder"] is None

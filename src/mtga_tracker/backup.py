@@ -197,16 +197,20 @@ def detect_sync_folders(
     seen: set = set()
     for name, path in candidates:
         try:
-            resolved = path.expanduser()
-            if not resolved.is_dir():
+            expanded = path.expanduser()
+            if not expanded.is_dir():
                 continue
+            # OneDrive (and others) leave a symlink in the home folder that
+            # points at the real CloudStorage location: one folder, one pick.
+            key = os.path.realpath(expanded)
         except OSError:
             continue
-        key = str(resolved)
         if key in seen:
             continue
         seen.add(key)
-        found.append({"name": name, "path": str(resolved / BACKUP_SUBFOLDER)})
+        # Nothing is created here: the "Tapps Tracker" subfolder appears when
+        # the first backup is written into it.
+        found.append({"name": name, "path": str(expanded / BACKUP_SUBFOLDER)})
     return found
 
 
@@ -790,13 +794,16 @@ def backup_status(db_path: Path, *, settings_path: Optional[Path] = None) -> Dic
 
 
 def set_backup_folder(folder: Optional[str], *, settings_path: Optional[Path] = None) -> Optional[str]:
+    """Remember the backup folder. Nothing is created on disk here — the
+    folder is made by the first export into it — but a path whose parent
+    does not exist is refused, since that export would fail anyway."""
     value = (folder or "").strip()
     if value:
         resolved = Path(value).expanduser()
-        try:
-            resolved.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            raise BackupError(f"Cannot use {resolved}: {exc}", "bad-folder")
+        if not resolved.is_dir():
+            parent = resolved.parent
+            if not parent.is_dir():
+                raise BackupError(f"{parent} does not exist", "bad-folder")
         value = str(resolved)
     update_settings_section("backup", {"folder": value or None}, settings_path)
     return value or None

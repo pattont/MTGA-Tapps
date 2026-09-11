@@ -89,6 +89,13 @@ describe('BackupCard', () => {
     expect(screen.getByLabelText('Backup folder')).toHaveValue('/Users/travis/My Drive/Tapps Tracker');
     expect(screen.getByRole('button', { name: 'Google Drive' })).toHaveClass('backup-pick-active');
     expect(screen.getByRole('button', { name: 'iCloud Drive' })).toBeInTheDocument();
+    // A chip only fills the field: nothing is sent until Save.
+    const calls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length;
+    await userEvent.setup().click(screen.getByRole('button', { name: 'iCloud Drive' }));
+    expect(screen.getByLabelText('Backup folder')).toHaveValue('/Users/travis/iCloud/Tapps Tracker');
+    expect(screen.getByRole('button', { name: 'iCloud Drive' })).toHaveClass('backup-pick-active');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    expect((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
     expect(screen.getByRole('button', { name: 'Back up now' })).toBeEnabled();
     // The readable backup gets a Restore button; the junk file says why it has none.
     expect(screen.getAllByRole('button', { name: 'Restore…' })).toHaveLength(2); // row + "from a file elsewhere"

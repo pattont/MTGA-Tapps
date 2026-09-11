@@ -10,8 +10,10 @@
   the Deck Finder creators and the overlay's preferences — into one
   `.tappsbackup` file, and restores one. Choose a **backup folder**; the
   card offers the Google Drive, iCloud Drive, Dropbox and OneDrive folders
-  it finds on the machine, so a backup made at home is on the laptop's
-  Drive folder by itself, with nothing here talking to any cloud service.
+  it finds on the machine (a chip fills in the path; Save remembers it;
+  nothing is created on disk until the first backup is written), so a
+  backup made at home is on the laptop's Drive folder by itself, with
+  nothing here talking to any cloud service.
   The card lists the backups in the folder (date, computer, games, newest
   game, size) with a **Restore…** on each and a path field for a file
   elsewhere. A restore shows what it would do first — *adds 7 games*, or
