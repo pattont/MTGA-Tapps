@@ -262,7 +262,7 @@ describe('BackupCard', () => {
 
     await user.click(screen.getByRole('button', { name: 'Delete TappsTracker-Laptop-20260910-211400.tappsbackup' }));
     const dialog = await screen.findByRole('dialog');
-    expect(dialog).toHaveTextContent('Delete this backup file?');
+    expect(dialog).toHaveTextContent("Delete Laptop's backup from");
     expect(dialog).toHaveTextContent('TappsTracker-Laptop-20260910-211400.tappsbackup');
     expect(dialog).toHaveTextContent('on Laptop · 981 games · 29.6 MB');
     expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/backup/delete')).toBe(false);

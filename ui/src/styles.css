@@ -5463,6 +5463,35 @@ a.sidebar-deck-finder {
   cursor: default;
 }
 
+/* The action word, centred above the dialog's heading, in the dialog's colour. */
+.backup-dialog-verb {
+  margin: -4px 0 -6px !important;
+  color: var(--text) !important;
+  font-size: 1.7rem !important;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.backup-modal-restore .backup-dialog-verb {
+  color: var(--on-play) !important;
+}
+
+.backup-modal-merge .backup-dialog-verb {
+  color: var(--draw) !important;
+}
+
+.danger-modal .backup-dialog-verb {
+  color: var(--danger) !important;
+}
+
+.backup-modal-restore h3,
+.backup-modal-merge h3,
+.danger-modal h3.backup-dialog-heading {
+  color: var(--text);
+}
+
 .backup-modal-button {
   min-height: 40px;
   padding: 0 18px;
@@ -5474,18 +5503,12 @@ a.sidebar-deck-finder {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--on-play) 35%, transparent), var(--shadow);
 }
 
-.backup-modal-restore h3 {
-  color: var(--on-play);
-}
 
 .backup-modal-merge {
   border-color: var(--draw);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--draw) 35%, transparent), var(--shadow);
 }
 
-.backup-modal-merge h3 {
-  color: var(--draw);
-}
 
 .backup-modal-restore input {
   padding: 9px 12px;

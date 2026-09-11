@@ -475,9 +475,12 @@ export function BackupCard() {
               }
             }}
           >
+            <p className="backup-dialog-verb" aria-hidden="true">
+              {action === 'restore' ? 'Restore' : 'Merge'}
+            </p>
             <h3 id="backup-dialog-title">
-              {action === 'restore' ? 'Restore' : 'Merge'} {preview.manifest.machine}'s backup from{' '}
-              {formatDateTime(preview.manifest.exported_at)}
+              <span className="visually-hidden">{action === 'restore' ? 'Restore ' : 'Merge '}</span>
+              {preview.manifest.machine}'s backup from {formatDateTime(preview.manifest.exported_at)}
               {preview.same_install ? ' (this computer)' : ''}?
             </h3>
             <p className="backup-dialog-file">{preview.path.split(/[\\/]/).pop()}</p>
@@ -573,7 +576,15 @@ export function BackupCard() {
               }
             }}
           >
-            <h3 id="backup-delete-title">Delete this backup file?</h3>
+            <p className="backup-dialog-verb" aria-hidden="true">
+              Delete
+            </p>
+            <h3 id="backup-delete-title">
+              <span className="visually-hidden">Delete </span>
+              {pendingDelete.exported_at && pendingDelete.machine
+                ? `${pendingDelete.machine}'s backup from ${formatDateTime(pendingDelete.exported_at)}${pendingDelete.install_id === status.install_id ? ' (this computer)' : ''}?`
+                : 'this backup file?'}
+            </h3>
             <p className="backup-dialog-file">{pendingDelete.name}</p>
             <p>
               {pendingDelete.exported_at ? `Made ${formatDateTime(pendingDelete.exported_at)}` : 'Unreadable file'}
