@@ -319,26 +319,6 @@ export function BackupCard() {
                     <td className="numeric">{formatSize(file.size)}</td>
                     <td>
                       <div className="backup-row-actions">
-                        {file.error ? null : (
-                          <>
-                            <button
-                              type="button"
-                              className="deck-neutral-button backup-row-button"
-                              disabled={previewBusy || restoring}
-                              onClick={() => begin('restore', file.path)}
-                            >
-                              Restore
-                            </button>
-                            <button
-                              type="button"
-                              className="deck-neutral-button backup-row-button"
-                              disabled={previewBusy || restoring}
-                              onClick={() => begin('merge', file.path)}
-                            >
-                              Merge
-                            </button>
-                          </>
-                        )}
                         <button
                           type="button"
                           className="deck-neutral-button backup-row-button"
@@ -351,6 +331,26 @@ export function BackupCard() {
                           </svg>
                           Open location
                         </button>
+                        {file.error ? null : (
+                          <>
+                            <button
+                              type="button"
+                              className="backup-restore-button backup-row-button"
+                              disabled={previewBusy || restoring}
+                              onClick={() => begin('restore', file.path)}
+                            >
+                              Restore
+                            </button>
+                            <button
+                              type="button"
+                              className="backup-merge-button backup-row-button"
+                              disabled={previewBusy || restoring}
+                              onClick={() => begin('merge', file.path)}
+                            >
+                              Merge
+                            </button>
+                          </>
+                        )}
                         <button
                           type="button"
                           className="backup-delete-button"
@@ -381,7 +381,7 @@ export function BackupCard() {
       ) : null}
 
       <div className="settings-field">
-        <span>Restore from a file elsewhere</span>
+        <span>Merge / restore from a file elsewhere</span>
         <div className="settings-key-row">
           <input
             type="text"
@@ -392,7 +392,7 @@ export function BackupCard() {
           />
           <button
             type="button"
-            className="deck-neutral-button"
+            className="backup-restore-button"
             disabled={previewBusy || restoring || filePath.trim() === ''}
             onClick={() => begin('restore', filePath.trim())}
           >
@@ -400,7 +400,7 @@ export function BackupCard() {
           </button>
           <button
             type="button"
-            className="deck-neutral-button"
+            className="backup-merge-button"
             disabled={previewBusy || restoring || filePath.trim() === ''}
             onClick={() => begin('merge', filePath.trim())}
           >
@@ -467,7 +467,7 @@ export function BackupCard() {
           <div
             aria-labelledby="backup-dialog-title"
             aria-modal="true"
-            className={preview.requires_confirm && action === 'restore' ? 'modal danger-modal' : 'modal'}
+            className={action === 'restore' ? 'modal backup-modal-restore' : 'modal backup-modal-merge'}
             role="dialog"
             onKeyDown={(event) => {
               if (event.key === 'Escape' && !restoring) {
@@ -530,7 +530,7 @@ export function BackupCard() {
               </button>
               {action === 'restore' ? (
                 <button
-                  className={preview.requires_confirm ? 'danger-zone-button' : 'deck-export-button'}
+                  className="backup-restore-button backup-modal-button"
                   disabled={restoring || described.blocked || !confirmOk}
                   type="button"
                   onClick={() => void runRestore()}
@@ -539,7 +539,7 @@ export function BackupCard() {
                 </button>
               ) : (
                 <button
-                  className="deck-export-button"
+                  className="backup-merge-button backup-modal-button"
                   disabled={restoring || described.blocked || preview.adds === 0}
                   type="button"
                   onClick={() => void runMerge()}

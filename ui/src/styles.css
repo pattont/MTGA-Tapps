@@ -5413,6 +5413,94 @@ a.sidebar-deck-finder {
   color: var(--muted);
 }
 
+/* Restore is gold (the tracker's accent), Merge is blue: the buttons, and
+   the confirmation each opens, share the colour. */
+.backup-restore-button,
+.backup-merge-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-height: 36px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--panel-strong);
+  color: var(--accent-strong);
+  font-size: 0.8rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.backup-restore-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+}
+
+.backup-merge-button {
+  border-color: var(--draw);
+  color: var(--draw);
+}
+
+.backup-merge-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--draw) 14%, var(--panel));
+}
+
+.backup-restore-button:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+.backup-merge-button:focus-visible {
+  outline: 2px solid var(--draw);
+  outline-offset: 2px;
+}
+
+.backup-restore-button:disabled,
+.backup-merge-button:disabled {
+  border-color: var(--border);
+  color: var(--subtle);
+  cursor: default;
+}
+
+.backup-modal-button {
+  min-height: 40px;
+  padding: 0 18px;
+  font-size: 0.92rem;
+}
+
+.backup-modal-restore {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent), var(--shadow);
+}
+
+.backup-modal-restore h3 {
+  color: var(--accent-strong);
+}
+
+.backup-modal-merge {
+  border-color: var(--draw);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--draw) 35%, transparent), var(--shadow);
+}
+
+.backup-modal-merge h3 {
+  color: var(--draw);
+}
+
+.backup-modal-restore input {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+}
+
+.backup-modal-restore input:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 1px;
+}
+
 .backup-row-actions {
   display: flex;
   flex-wrap: wrap;
