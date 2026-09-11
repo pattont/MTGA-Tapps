@@ -512,8 +512,60 @@ def test_reveal_uses_the_platform_file_manager(tmp_path):
     backup.reveal_backup(made["path"], run=launched.append, system="Linux")
     assert launched == [
         ["open", "-R", made["path"]],
-        ["explorer", f"/select,{made['path']}"],
+        ["explorer", "/select,", made["path"]],
         ["xdg-open", str(Path(made["path"]).parent)],
     ]
     with pytest.raises(backup.BackupError):
         backup.reveal_backup(tmp_path / "missing.tappsbackup", run=launched.append, system="Darwin")
+
+
+def test_file_swap_waits_out_a_busy_file_and_refuses_a_stuck_wal(tmp_path, monkeypatch):
+    """Windows cannot rename or unlink a file another handle has open. The
+    swap retries for a while (a dashboard request finishing), then gives up
+    with a clear message; and a WAL that cannot be removed stops the restore
+    before the main file is touched."""
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise PermissionError(32, "The process cannot access the file because it is being used by another process")
+
+    slept = []
+    backup._retry_busy(flaky, "Replacing the database", sleep=slept.append)
+    assert calls["n"] == 3 and slept == [0.05, 0.1]
+
+    monkeypatch.setattr(backup, "FILE_BUSY_RETRY_SECONDS", 0.0)
+    with pytest.raises(backup.BackupError) as excinfo:
+        backup._retry_busy(lambda: (_ for _ in ()).throw(PermissionError(32, "in use")), "Replacing the database", sleep=lambda _s: None)
+    assert excinfo.value.code == "file-busy" and "still in use" in str(excinfo.value)
+
+    # A WAL beside the database that cannot be removed: required=True raises.
+    db = tmp_path / "tracker.sqlite3"
+    db.write_bytes(b"")
+    wal = tmp_path / "tracker.sqlite3-wal"
+    wal.write_bytes(b"stale")
+    real_unlink = Path.unlink
+
+    def stuck(self, *args, **kwargs):
+        if self.name.endswith("-wal"):
+            raise PermissionError(32, "in use")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", stuck)
+    with pytest.raises(backup.BackupError):
+        backup._remove_sidecars(db, required=True)
+    backup._remove_sidecars(db)  # best-effort: swallowed
+    assert wal.exists()
+
+
+def test_folder_comparison_is_case_insensitive_like_the_desktop_filesystems(tmp_path):
+    folder = tmp_path / "Cloud" / "Tapps Tracker"
+    folder.mkdir(parents=True)
+    assert backup._same_folder(folder, folder)
+    # On case-insensitive filesystems the same folder spelled differently is
+    # the same folder; on Linux the test only proves nothing is mangled.
+    import os as _os
+
+    if _os.path.normcase("A") != "A":
+        assert backup._same_folder(folder, tmp_path / "cloud" / "tapps tracker")

@@ -27,6 +27,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+import time
 import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -181,6 +182,7 @@ def detect_sync_folders(
                 candidates.append(("Google Drive", drive))
                 break
         candidates.append(("Google Drive", home / "My Drive"))
+        candidates.append(("Google Drive", home / "Google Drive" / "My Drive"))
         for key in ("OneDriveConsumer", "OneDrive", "OneDriveCommercial"):
             value = env.get(key)
             if value:
@@ -202,7 +204,7 @@ def detect_sync_folders(
                 continue
             # OneDrive (and others) leave a symlink in the home folder that
             # points at the real CloudStorage location: one folder, one pick.
-            key = os.path.realpath(expanded)
+            key = os.path.normcase(os.path.realpath(expanded))
         except OSError:
             continue
         if key in seen:
@@ -225,6 +227,18 @@ def _iso(value: datetime) -> str:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _readonly_uri(db_path: Path) -> str:
+    """A read-only SQLite URI for a path — percent-encoded via as_uri(), so
+    spaces ("MTGA Tracker") and Windows drive letters are safe."""
+    return Path(db_path).resolve().as_uri() + "?mode=ro"
+
+
+def _same_folder(a: Path, b: Path) -> bool:
+    """Path equality the way the OS sees it: symlinks followed, and
+    case-insensitive where the filesystem is (Windows, macOS by default)."""
+    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
 
 
 def database_summary(conn: sqlite3.Connection) -> Dict[str, Any]:
@@ -260,7 +274,7 @@ def snapshot_database(db_path: Path, dest_path: Path) -> Dict[str, Any]:
         raise BackupError(f"No database at {db_path}", "no-database")
     if dest_path.exists():
         dest_path.unlink()
-    source = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30.0)
+    source = sqlite3.connect(_readonly_uri(db_path), uri=True, timeout=30.0)
     try:
         source.execute("PRAGMA busy_timeout = 30000")
         dest = sqlite3.connect(dest_path)
@@ -485,7 +499,7 @@ def local_summary(db_path: Path) -> Dict[str, Any]:
     db_path = Path(db_path)
     if not db_path.is_file():
         return {"schema_version": 0, "games": 0, "game_ids": [], "newest_game_at": None, "oldest_game_at": None, "sessions": 0}
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10.0)
+    conn = sqlite3.connect(_readonly_uri(db_path), uri=True, timeout=10.0)
     try:
         return database_summary(conn)
     finally:
@@ -566,7 +580,7 @@ def tracker_active(db_path: Path, *, now: Optional[datetime] = None) -> bool:
     if not db_path.is_file():
         return False
     try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0)
+        conn = sqlite3.connect(_readonly_uri(db_path), uri=True, timeout=5.0)
     except sqlite3.Error:
         return False
     try:
@@ -600,14 +614,42 @@ def _prune_safety_backups(folder: Path, keep: int = 2) -> None:
             pass
 
 
-def _remove_sidecars(db_path: Path) -> None:
+#: How long a file operation keeps retrying while Windows reports the file
+#: in use (a dashboard request still finishing on the old database).
+FILE_BUSY_RETRY_SECONDS = 8.0
+
+
+def _retry_busy(operation: Callable[[], None], what: str, *, sleep: Callable[[float], None] = time.sleep) -> None:
+    """Run `operation`, retrying on PermissionError for a few seconds. On
+    Windows a file that any process still has open cannot be renamed or
+    unlinked; the dashboard's per-request connections close within
+    milliseconds, so waiting is the right answer — up to a point."""
+    deadline = time.monotonic() + FILE_BUSY_RETRY_SECONDS
+    delay = 0.05
+    while True:
+        try:
+            operation()
+            return
+        except PermissionError as exc:
+            if time.monotonic() >= deadline:
+                raise BackupError(f"{what}: the file is still in use ({exc}). Close anything reading the database and try again.", "file-busy")
+            sleep(delay)
+            delay = min(delay * 2, 0.5)
+
+
+def _remove_sidecars(db_path: Path, *, required: bool = False) -> None:
+    """Remove the -wal/-shm/-journal files beside a database. `required`
+    makes a leftover fatal: a stale WAL beside a swapped-in database would
+    be replayed onto it, so a restore refuses to proceed without this."""
     for suffix in ("-wal", "-shm", "-journal"):
         sidecar = db_path.with_name(db_path.name + suffix)
+        if not sidecar.exists():
+            continue
         try:
-            if sidecar.exists():
-                sidecar.unlink()
-        except OSError:
-            pass
+            _retry_busy(sidecar.unlink, f"Removing {sidecar.name}")
+        except (BackupError, OSError):
+            if required:
+                raise
 
 
 def _merge_settings(local: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
@@ -713,8 +755,11 @@ def restore_backup(
         report("Swapping the database in")
         if before_swap is not None:
             before_swap()
-        _remove_sidecars(db_path)
-        os.replace(staged, db_path)
+        # The old database's WAL must be gone before the new file lands (a
+        # stale WAL would be replayed onto it), and the rename itself waits
+        # out any request still holding the old file on Windows.
+        _remove_sidecars(db_path, required=True)
+        _retry_busy(lambda: os.replace(staged, db_path), "Replacing the database")
 
         report("Restoring settings")
         if SETTINGS_NAME in files:
@@ -1000,12 +1045,11 @@ def delete_backup(path: Path, db_path: Path, *, settings_path: Optional[Path] = 
     target = Path(path).expanduser()
     if target.suffix != BACKUP_SUFFIX:
         raise BackupError(f"{target.name} is not a backup file", "not-a-backup")
-    allowed = {os.path.realpath(folder) for folder in _managed_folders(db_path, settings_path)}
-    if os.path.realpath(target.parent) not in allowed:
+    if not any(_same_folder(target.parent, folder) for folder in _managed_folders(db_path, settings_path)):
         raise BackupError("Only files in the backup folder can be deleted from here", "outside-folder")
     if not target.is_file():
         raise BackupError(f"{target.name} is already gone", "unreadable")
-    target.unlink()
+    _retry_busy(target.unlink, f"Deleting {target.name}")
     return {"ok": True, "deleted": str(target)}
 
 
@@ -1020,7 +1064,9 @@ def reveal_backup(path: Path, *, run: Optional[Callable[[List[str]], None]] = No
     if system == "Darwin":
         command = ["open", "-R", str(target)]
     elif system == "Windows":
-        command = ["explorer", f"/select,{target}"]
+        # Two arguments: Explorer parses `/select,` on its own and the path,
+        # quoted by the runtime, may contain spaces ("Tapps Tracker").
+        command = ["explorer", "/select,", str(target)]
     else:
         command = ["xdg-open", str(target.parent)]
     launch = run or (lambda argv: subprocess.Popen(argv))
