@@ -1,6 +1,6 @@
 # Backup, restore, and carrying your history between computers
 
-Status: plan (nothing implemented). Owner: Travis. Written 2026-09-11.
+Status: Phase 1 shipped 2026-09-11 (`src/mtga_tracker/backup.py`, `backup_api.py`, the Settings card); phases 2–3 open. Owner: Travis.
 
 ## The problem
 
@@ -58,7 +58,7 @@ One zip, extension `.tappsbackup`, named
 
 | Entry | What | Notes |
 | --- | --- | --- |
-| `manifest.json` | format version, app version, schema version (`schema_migrations` max), machine name, an install id, export time (UTC), game count, newest game's start time, the ids of the last 20 games, what is included | Enough to describe a backup in the UI without opening the database, and to detect "this file is older than what you have". |
+| `manifest.json` | format version, app version, schema version (`schema_migrations` max), machine name, an install id, export time (UTC), game count, newest game's start time, every game id (about 40 KB for a thousand games — what the preview's adds/drops count comes from), what is included | Enough to describe a backup in the UI without opening the database, and to detect "this file is older than what you have". |
 | `tracker.sqlite3` | a consistent snapshot of the analytics database | Taken with SQLite's online backup API (`Connection.backup`) or `VACUUM INTO` — never a file copy, which the docs already forbid for a live WAL database. `raw_game_payloads` is dropped from the snapshot (a 30-day diagnostics buffer, nothing reads it back) and `live_status` is emptied. Roughly 115 MB → ~30 MB zipped for a thousand games; `console_logs` is the biggest table and stays, the Live Feed's history reads it. |
 | `settings.json` | the app settings | Contains the Deck AI API key. The export dialog has *Include API keys* (default on — the point is a full restore — with the file marked private in the UI text). |
 | `deckfinder_config.json` | Deck Finder creators | |
@@ -79,7 +79,7 @@ recognised as such ("this is your own backup from Tuesday").
 
 *Settings → Backup* (a card above Deck AI):
 
-- **Backup folder** — a text field with a *Choose…* and a row of quick picks
+- **Backup folder** — a text field and a row of quick picks
   for the synced folders found on this machine. Detection is a list of
   well-known paths, checked for existence:
   - Google Drive: `~/Library/CloudStorage/GoogleDrive-*/My Drive` (macOS),

@@ -119,6 +119,16 @@ Tips:
 - The tracker's terminal shows its version and database path at startup.
 - Stop the console tracker with Ctrl+C to get a session summary.
 
+**Taking your history to another computer.** On the dashboard's
+**Settings → Backup & restore**, pick a backup folder that your Google
+Drive, iCloud Drive, Dropbox or OneDrive client syncs (the card offers the
+ones it finds) and click **Back up now**. On the other computer, install the
+tracker, point its backup folder at the same synced folder, and **Restore…**
+the newest backup — it shows what will change before it does anything and
+keeps a copy of what was there. When you come home, back up on the laptop and
+restore on the desktop the same way. A backup is one `.tappsbackup` file, so
+a USB stick works too.
+
 ## Troubleshooting
 
 **"Log file not found"** — make sure Arena has been run at least once, or point at the

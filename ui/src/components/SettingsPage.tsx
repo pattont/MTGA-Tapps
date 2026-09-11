@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { BackupCard } from './BackupCard';
 import {
   collectionDownloadUrl,
   fetchCollectionExportJob,
@@ -335,6 +336,14 @@ export function SettingsPage() {
         ) : (
           <OverlayForm initial={overlay} platform={platform} />
         )}
+      </Section>
+
+      <Section
+        id="settings-backup"
+        title="Backup & restore"
+        description="Everything the tracker knows — games, settings, Deck Finder creators, overlay preferences — in one file. Back up into a folder a sync client mirrors and restore it on another computer; restore the newer one back when you come home."
+      >
+        <BackupCard />
       </Section>
 
       <Section

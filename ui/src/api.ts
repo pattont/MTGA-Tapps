@@ -1712,6 +1712,112 @@ export async function fetchTrackerSettings(signal?: AbortSignal): Promise<Tracke
   return deckFinderJson(response);
 }
 
+// --- Backups ----------------------------------------------------------------
+
+export interface BackupManifest {
+  format: number;
+  app_version: string;
+  schema_version: number;
+  machine: string;
+  install_id: string;
+  exported_at: string;
+  games: number;
+  sessions: number;
+  newest_game_at: string | null;
+  oldest_game_at: string | null;
+  includes: string[];
+  include_keys: boolean;
+  tag: string | null;
+}
+
+export interface BackupFile extends Partial<BackupManifest> {
+  path: string;
+  name: string;
+  size?: number;
+  /** Set when the file could not be read as a backup. */
+  error?: string;
+}
+
+export interface BackupSummary {
+  schema_version: number;
+  games: number;
+  newest_game_at: string | null;
+  oldest_game_at: string | null;
+  sessions: number;
+}
+
+export interface BackupStatus {
+  folder: string | null;
+  detected_folders: { name: string; path: string }[];
+  default_folder: string;
+  machine: string;
+  install_id: string;
+  last_backup: { at: string; path: string; games: number; machine?: string } | null;
+  last_restore: { at: string; path: string; games: number; undo: string | null } | null;
+  backups: BackupFile[];
+  local: BackupSummary;
+  tracker_active: boolean;
+}
+
+export type BackupVerdict = 'fresh' | 'same' | 'newer' | 'older' | 'diverged' | 'newer-schema';
+
+export interface BackupPreview {
+  path: string;
+  manifest: BackupManifest;
+  local: BackupSummary;
+  adds: number;
+  drops: number;
+  same_install: boolean;
+  schema_ok: boolean;
+  supported_schema_version: number;
+  verdict: BackupVerdict;
+  requires_confirm: boolean;
+}
+
+export interface BackupRestoreResult {
+  ok: boolean;
+  restored_from: string;
+  manifest: BackupManifest;
+  games: number;
+  newest_game_at: string | null;
+  undo: string | null;
+  tracker_restarted: boolean;
+}
+
+export async function fetchBackupStatus(signal?: AbortSignal): Promise<BackupStatus> {
+  const response = await fetch('/api/backup', { signal });
+  return deckFinderJson(response);
+}
+
+async function postBackup<T>(path: string, payload: Record<string, unknown>): Promise<T> {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return deckFinderJson<T>(response);
+}
+
+export async function saveBackupFolder(folder: string): Promise<string | null> {
+  const body = await postBackup<{ folder: string | null }>('/api/settings/backup', { folder });
+  return body.folder;
+}
+
+export async function exportBackup(options: {
+  folder?: string;
+  include_keys: boolean;
+}): Promise<{ backup: BackupManifest & { path: string; size: number }; status: BackupStatus }> {
+  return postBackup('/api/backup/export', options);
+}
+
+export async function inspectBackup(path: string): Promise<BackupPreview> {
+  return postBackup('/api/backup/inspect', { path });
+}
+
+export async function restoreBackup(path: string, confirm?: string): Promise<{ restore: BackupRestoreResult; status: BackupStatus }> {
+  return postBackup('/api/backup/restore', confirm ? { path, confirm } : { path });
+}
+
 // --- Collection export -----------------------------------------------------
 
 export type CollectionExportFormat = 'json' | 'csv' | 'txt' | 'archidekt';

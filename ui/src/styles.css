@@ -5269,3 +5269,146 @@ a.sidebar-deck-finder {
   display: flex;
   text-decoration: none;
 }
+
+/* Backup & restore card on the Settings page. */
+.backup-card {
+  display: grid;
+  gap: 14px;
+  max-width: 760px;
+  margin: 12px 16px 16px;
+}
+
+.backup-summary {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.backup-summary strong {
+  color: var(--text);
+}
+
+.backup-summary-warn {
+  color: var(--accent-strong, #f0c66c);
+  font-weight: 600;
+}
+
+.backup-picks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.backup-picks-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.backup-pick {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.backup-pick:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--text) 30%, var(--border));
+}
+
+.backup-pick-active {
+  border-color: var(--accent);
+  color: var(--accent-strong, #f0c66c);
+}
+
+.backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.backup-note {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.backup-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.backup-table th,
+.backup-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.backup-table th {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.backup-table .numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.backup-row-note {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.backup-row-error td {
+  color: var(--muted);
+}
+
+.backup-restore-button {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 0.76rem;
+}
+
+.backup-preview {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.backup-done {
+  border-color: var(--success, #7bd88f);
+  background: color-mix(in srgb, var(--success, #7bd88f) 8%, var(--surface));
+}
+
+.backup-preview-title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.backup-preview-text {
+  margin: 0;
+}
+
+.backup-preview .settings-hint {
+  margin: 0;
+}
+
+.backup-confirm {
+  max-width: 320px;
+}

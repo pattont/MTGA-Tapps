@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### New
+
+- **Backup & restore.** *Settings → Backup & restore* writes everything the
+  tracker knows — a consistent snapshot of the database (via SQLite's
+  backup API; the raw-payload diagnostics buffer is left out), `settings.json`,
+  the Deck Finder creators and the overlay's preferences — into one
+  `.tappsbackup` file, and restores one. Choose a **backup folder**; the
+  card offers the Google Drive, iCloud Drive, Dropbox and OneDrive folders
+  it finds on the machine, so a backup made at home is on the laptop's
+  Drive folder by itself, with nothing here talking to any cloud service.
+  The card lists the backups in the folder (date, computer, games, newest
+  game, size) with a **Restore…** on each and a path field for a file
+  elsewhere. A restore shows what it would do first — *adds 7 games*, or
+  *would drop 12 games recorded here that the backup lacks* (that one needs
+  `REPLACE` typed) — then pauses the tracker, saves a copy of the current
+  state (an **Undo** button puts it back), swaps in the snapshot brought up
+  to this build's schema, restores the settings while keeping this
+  computer's own port, window size and backup folder, and restarts the
+  tracker. A backup from a newer tracker is refused with the reason.
+  **Include API keys** (on by default) controls whether the Deck AI key
+  travels in the file. Also `python -m mtga_tracker.backup export|inspect|
+  restore|list|folders`. Restore replaces; merging games recorded on two
+  computers is the next step
+  ([plan](docs/plans/BACKUP_AND_SYNC.md)).
+
 ### Documentation
 
 - Reconciled README, Quick Start, agent guidance and log/card/scry references

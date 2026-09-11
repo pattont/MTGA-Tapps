@@ -340,6 +340,15 @@ Where things live:
 Don't run the source and installed trackers at the same time, and never copy a
 live database while a tracker owns it — use SQLite's backup API for migrations.
 
+**Backups.** *Settings → Backup & restore* writes one `.tappsbackup` file —
+every game, `settings.json`, the Deck Finder creators and the overlay's
+preferences — and restores one, with a preview of what a restore adds or
+drops and a saved copy of the previous state to undo it. Point the backup
+folder at a folder your Google Drive, iCloud Drive, Dropbox or OneDrive
+client syncs (the card offers the ones it finds) and the file is on your
+other computer by itself; nothing in the tracker talks to a cloud service.
+The backup carries your Deck AI key unless you untick *Include API keys*.
+
 ## The dashboard
 
 `mtga-tracker-app` serves it and opens it in your browser automatically.
@@ -388,6 +397,7 @@ mtga-tracker-app        # tracker + dashboard (with the Live Scoreboard), one co
 | `mtga-tracker` | Console tracker only |
 | `python -m mtga_tracker.dashboard` | Dashboard only (`http://127.0.0.1:8765`; build `ui/` first: `cd ui && npm install && npm run build`) |
 | `python -m mtga_deck_downloader` | The Deck Finder as a terminal UI (installed builds: `MTGA Tracker --deck-finder`) |
+| `python -m mtga_tracker.backup export [folder] \| inspect <file> \| restore <file> \| list \| folders` | Back up to / restore from a `.tappsbackup` (what Settings → Backup & restore does) |
 | `python -m mtga_tracker.db_audit [--repair]` | Database consistency audit / safe self-repair |
 | `python -m mtga_tracker.draw_quality --card "Llanowar Elves"` | Draw-quality & flood/screw report |
 | `python -m mtga_tracker.payload_dump <game_id>` | Print a game's archived raw payloads as JSON |

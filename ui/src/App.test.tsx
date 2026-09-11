@@ -1025,6 +1025,23 @@ describe('App', () => {
       if (String(url).startsWith('/api/settings')) {
         return new Response(JSON.stringify(settings), { status: 200 });
       }
+      if (String(url) === '/api/backup') {
+        return new Response(
+          JSON.stringify({
+            folder: null,
+            detected_folders: [],
+            default_folder: '/tmp/data/backups',
+            machine: 'Mac',
+            install_id: 'abc',
+            last_backup: null,
+            last_restore: null,
+            backups: [],
+            local: { schema_version: 29, games: 12, newest_game_at: null, oldest_game_at: null, sessions: 3 },
+            tracker_active: false,
+          }),
+          { status: 200 },
+        );
+      }
       return new Response(JSON.stringify(snapshot), { status: 200 });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -1037,6 +1054,11 @@ describe('App', () => {
     });
 
     expect(await screen.findByRole('heading', { name: 'Deck AI' })).toBeInTheDocument();
+    // Backup & restore sits above Deck AI and asks for a folder before it can back up.
+    const headings = screen.getAllByRole('heading').map((node) => node.textContent);
+    expect(headings.indexOf('Backup & restore')).toBeLessThan(headings.indexOf('Deck AI'));
+    expect(await screen.findByText('never backed up')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Back up now' })).toBeDisabled();
     expect(screen.getByRole('heading', { name: 'Deck Finder Creators' })).toBeInTheDocument();
     expect(await screen.findByLabelText(/Enable AI deck identification/)).toBeChecked();
     expect(screen.getByDisplayValue('Ashlizzlle | Ash')).toBeInTheDocument();

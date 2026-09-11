@@ -5765,6 +5765,39 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
+        if parsed.path.startswith("/api/backup/") or parsed.path == "/api/settings/backup":
+            # Backups: export / inspect / restore, and the backup folder.
+            from . import backup_api, live_api
+
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                payload = {}
+
+            def _release_database() -> None:
+                # A restore swaps the database file: drop every kept-open
+                # read connection and memo so nothing holds the old file.
+                live_api.reset_poll_connections()
+                clear_response_cache()
+
+            handled = backup_api.handle_post(
+                parsed.path,
+                payload if isinstance(payload, dict) else {},
+                self.db_path,
+                tracker_control=getattr(self, "tracker_control", None),
+                before_swap=_release_database,
+            )
+            if handled is not None:
+                status, body = handled
+                _send_bytes(
+                    self,
+                    status,
+                    json.dumps(body).encode("utf-8"),
+                    "application/json; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
         if parsed.path.startswith("/api/settings"):
             # Web Settings page (Deck AI + Deck Finder creators).
             from . import settings_api
@@ -6007,6 +6040,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 status, body = handled
                 payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
                 _send_bytes(self, status, payload, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+                return
+        if request_path == "/api/backup":
+            from . import backup_api
+
+            handled = backup_api.handle_get(request_path, self.db_path)
+            if handled is not None:
+                status, body = handled
+                _send_bytes(
+                    self,
+                    status,
+                    json.dumps(body).encode("utf-8"),
+                    "application/json; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
                 return
         if request_path == "/api/settings":
             from . import settings_api
@@ -6474,8 +6521,16 @@ def create_dashboard_server(
     *,
     db_path: Path = DEFAULT_DB_PATH,
     static_dir: Path | None = None,
+    tracker_control: Any = None,
 ) -> ThreadingHTTPServer:
-    """Create a configured dashboard server without mutating global handler state."""
+    """Create a configured dashboard server without mutating global handler state.
+
+    `tracker_control` is the UnifiedLauncher when the tracker runs in this
+    process (stop_tracker / start_tracker / tracker_is_running): a backup
+    restore uses it to pause tracking around the database swap. A
+    standalone dashboard has none and refuses to restore over a running
+    tracker instead.
+    """
     resolved_static_dir = static_dir if static_dir is not None else DEFAULT_STATIC_DIR
     handler_class = type(
         "ConfiguredDashboardHandler",
@@ -6483,6 +6538,7 @@ def create_dashboard_server(
         {
             "db_path": Path(db_path).expanduser(),
             "static_dir": resolved_static_dir if resolved_static_dir.exists() else None,
+            "tracker_control": tracker_control,
         },
     )
     return ThreadingHTTPServer((host, port), handler_class)

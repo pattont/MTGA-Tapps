@@ -102,11 +102,14 @@ class UnifiedLauncher:
                 self.host,
                 self.requested_port,
                 db_path=self.db_path,
+                tracker_control=self,
             )
         except OSError:
             if self.requested_port == 0:
                 raise
-            server = create_dashboard_server(self.host, 0, db_path=self.db_path)
+            server = create_dashboard_server(
+                self.host, 0, db_path=self.db_path, tracker_control=self
+            )
 
         self.dashboard_server = server
         self.dashboard_thread = threading.Thread(
