@@ -10,13 +10,12 @@
   the Deck Finder creators and the overlay's preferences — into one
   `.tappsbackup` file, and restores one. Choose a **backup folder**; the
   card offers the Google Drive, iCloud Drive, Dropbox and OneDrive folders
-  it finds on the machine (a chip fills in the path; Save remembers it;
+  it finds on the machine (a chip fills in the path; Set remembers it;
   nothing is created on disk until the first backup is written), so a
   backup made at home is on the laptop's Drive folder by itself, with
   nothing here talking to any cloud service.
   The card lists the backups in the folder (date, computer, games, newest
-  game, size) with a **Restore…** on each and a path field for a file
-  elsewhere. A restore shows what it would do first — *adds 7 games*, or
+  game, size) and a path field for a file elsewhere. A restore shows what it would do first — *adds 7 games*, or
   *would drop 12 games recorded here that the backup lacks* (that one needs
   `REPLACE` typed) — then pauses the tracker, saves a copy of the current
   state (an **Undo** button puts it back), swaps in the snapshot brought up
@@ -24,9 +23,20 @@
   computer's own port, window size and backup folder, and restarts the
   tracker. A backup from a newer tracker is refused with the reason.
   **Include API keys** (on by default) controls whether the Deck AI key
-  travels in the file. Also `python -m mtga_tracker.backup export|inspect|
-  restore|list|folders`. Restore replaces; merging games recorded on two
-  computers is the next step
+  travels in the file.
+- **Merge.** Played on two computers? **Merge** adds a backup's games to the
+  ones already here — nothing is removed, settings are untouched — so one
+  more backup afterwards has everything in one file. Games, sessions and
+  matches never collide across machines (their ids come from the tracker
+  session that recorded them), so a merge is a plain union; the card
+  dictionary's ids are translated by card name on the way in, and merging
+  the same backup twice adds nothing.
+- Each backup file in the folder has **Restore**, **Merge**, **Open
+  location** (Finder / Explorer) and a red **×** to delete it. Restore,
+  merge and delete each open a confirmation naming the file and what will
+  happen; only files inside the backup folder can be deleted from the
+  card. Also `python -m mtga_tracker.backup
+  export|inspect|restore|merge|delete|list|folders`
   ([plan](docs/plans/BACKUP_AND_SYNC.md)).
 
 ### Documentation

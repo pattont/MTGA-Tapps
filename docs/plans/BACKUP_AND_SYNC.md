@@ -1,6 +1,6 @@
 # Backup, restore, and carrying your history between computers
 
-Status: Phase 1 shipped 2026-09-11 (`src/mtga_tracker/backup.py`, `backup_api.py`, the Settings card); phases 2–3 open. Owner: Travis.
+Status: Phases 1 and 2 shipped 2026-09-11 (`src/mtga_tracker/backup.py`, `backup_api.py`, the Settings card: export, restore, merge, delete, open location); automatic backups and phase 3 open. Owner: Travis.
 
 ## The problem
 

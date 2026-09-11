@@ -391,3 +391,129 @@ def test_backup_api_routes_and_error_codes(tmp_path, monkeypatch):
     status, body = backup_api.handle_post("/api/backup/inspect", {"path": str(settings)}, db)
     assert (status, body["code"]) == (400, "not-a-backup")
     assert backup_api.handle_post("/api/backup/other", {}, db) is None
+
+    # Merge, reveal and delete through the same surface.
+    status, body = backup_api.handle_post("/api/backup/merge", {"path": made}, other, tracker_control=FakeTracker())
+    assert status == 200 and body["merge"]["games_added"] == 0 and body["status"]["last_merge"]["games_added"] == 0
+    launched = []
+    monkeypatch.setattr(backup, "reveal_backup", lambda path, **kw: launched.append(str(path)) or {"ok": True})
+    status, body = backup_api.handle_post("/api/backup/reveal", {"path": made}, db)
+    assert status == 200 and launched == [made]
+    status, body = backup_api.handle_post("/api/backup/delete", {"path": str(settings)}, db)
+    assert (status, body["code"]) == (400, "not-a-backup")
+    status, body = backup_api.handle_post("/api/backup/delete", {"path": made}, db)
+    assert status == 200 and body["status"]["backups"] == [] and not Path(made).exists()
+
+
+def _rich_db(path: Path, session: str, game_ids, cards) -> Path:
+    """Games with a card summary, events, a console log and a commander, so
+    a merge has to carry rows keyed by game, session and participant and
+    translate card ids."""
+    store = AnalyticsStore(path)
+    conn = store.connect()
+    conn.execute("INSERT INTO tracker_sessions (id, started_at) VALUES (?, ?)", (session, "2026-09-01T09:00:00"))
+    card_ids = {}
+    for name in cards:
+        cur = conn.execute("INSERT INTO cards (name, first_seen_at, color_identity) VALUES (?, '2026-09-01T09:00:00', 'R')", (name,))
+        card_ids[name] = cur.lastrowid
+    for index, game_id in enumerate(game_ids):
+        started = (datetime(2026, 9, 1, 10, 0, 0) + timedelta(hours=index)).isoformat()
+        conn.execute("INSERT INTO matches (id, session_id) VALUES (?, ?)", (f"{game_id}-m", session))
+        conn.execute("INSERT INTO games (id, session_id, match_id, started_at) VALUES (?, ?, ?, ?)", (game_id, session, f"{game_id}-m", started))
+        conn.execute("INSERT INTO participants (id, game_id, role, deck_name) VALUES (?, ?, 'player', 'Dragons')", (f"{game_id}-p", game_id))
+        for name in cards:
+            conn.execute(
+                "INSERT INTO game_card_summary (game_id, participant_id, card_id, display_name, played_count) VALUES (?, ?, ?, ?, 1)",
+                (game_id, f"{game_id}-p", card_ids[name], name),
+            )
+        conn.execute(
+            "INSERT INTO game_events (session_id, game_id, event_time, text, source_card_id) VALUES (?, ?, ?, ?, ?)",
+            (session, game_id, started, f"cast {cards[0]}", card_ids[cards[0]]),
+        )
+        conn.execute("INSERT INTO participant_commanders (participant_id, card_id, card_name) VALUES (?, ?, ?)", (f"{game_id}-p", card_ids[cards[0]], cards[0]))
+    conn.execute("INSERT INTO console_logs (session_id, created_at, text) VALUES (?, '2026-09-01T09:01:00', 'hello')", (session,))
+    conn.commit()
+    store.close()
+    return path
+
+
+def test_merge_unions_games_translates_card_ids_and_is_idempotent(tmp_path):
+    desktop = _rich_db(tmp_path / "desktop.sqlite3", "S-desktop", ["d1", "d2"], ["Smaug the Magnificent", "Mountain"])
+    laptop = _rich_db(tmp_path / "laptop.sqlite3", "S-laptop", ["l1", "l2", "l3"], ["Mountain", "Edge Rover"])
+    settings = _settings(tmp_path / "settings.json")
+    laptop_backup = backup.export_backup(laptop, tmp_path / "cloud", settings_path=settings, machine="Laptop", overlay_path=tmp_path / "none", deckfinder_path=tmp_path / "none")
+
+    tracker = FakeTracker(running=True)
+    result = backup.merge_backup(laptop_backup["path"], desktop, tracker_control=tracker, settings_path=settings, overlay_path=tmp_path / "none", deckfinder_path=tmp_path / "none")
+
+    assert result["games_added"] == 3 and result["games"] == 5 and result["tracker_restarted"] is True
+    assert tracker.calls == ["stop", "start"] and Path(result["undo"]).is_file()
+    conn = sqlite3.connect(desktop)
+    assert sorted(_games(desktop)) == ["d1", "d2", "l1", "l2", "l3"]
+    # Cards: one row per name, and the laptop's rows point at the desktop's ids.
+    names = [r[0] for r in conn.execute("SELECT name FROM cards ORDER BY name")]
+    assert names == ["Edge Rover", "Mountain", "Smaug the Magnificent"]
+    mountain = conn.execute("SELECT id FROM cards WHERE name = 'Mountain'").fetchone()[0]
+    rows = conn.execute(
+        "SELECT s.card_id FROM game_card_summary s WHERE s.game_id = 'l1' AND s.display_name = 'Mountain'"
+    ).fetchall()
+    assert rows == [(mountain,)]
+    assert conn.execute(
+        "SELECT c.name FROM game_events e JOIN cards c ON c.id = e.source_card_id WHERE e.game_id = 'l2'"
+    ).fetchone() == ("Mountain",)
+    assert conn.execute("SELECT COUNT(*) FROM participant_commanders").fetchone()[0] == 5
+    assert conn.execute("SELECT COUNT(*) FROM console_logs").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM tracker_sessions").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM game_events").fetchone()[0] == 5
+    # Nothing that was already here moved.
+    assert conn.execute("SELECT played_count FROM game_card_summary WHERE game_id = 'd1' AND display_name = 'Smaug the Magnificent'").fetchone() == (1,)
+    conn.close()
+
+    assert backup.backup_settings(settings)["last_merge"]["games_added"] == 3
+
+    # Merging the same backup again changes nothing.
+    again = backup.merge_backup(laptop_backup["path"], desktop, tracker_control=FakeTracker(running=False), settings_path=settings, overlay_path=tmp_path / "none", deckfinder_path=tmp_path / "none")
+    assert again["games_added"] == 0 and again["games"] == 5
+    conn = sqlite3.connect(desktop)
+    assert conn.execute("SELECT COUNT(*) FROM game_card_summary").fetchone()[0] == 10
+    assert conn.execute("SELECT COUNT(*) FROM console_logs").fetchone()[0] == 2
+    conn.close()
+    assert backup.backup_settings(settings)["last_merge"]["games_added"] == 0
+
+
+def test_delete_only_touches_backup_files_in_managed_folders(tmp_path):
+    db = _db(tmp_path / "tracker.sqlite3", ["g1"])
+    settings = _settings(tmp_path / "settings.json", backup={"install_id": "x", "folder": str(tmp_path / "cloud")})
+    made = backup.export_backup(db, tmp_path / "cloud", settings_path=settings, overlay_path=tmp_path / "none", deckfinder_path=tmp_path / "none")
+    elsewhere = tmp_path / "elsewhere" / "TappsTracker-x.tappsbackup"
+    elsewhere.parent.mkdir()
+    elsewhere.write_bytes(b"x")
+
+    with pytest.raises(backup.BackupError) as excinfo:
+        backup.delete_backup(elsewhere, db, settings_path=settings)
+    assert excinfo.value.code == "outside-folder" and elsewhere.exists()
+    with pytest.raises(backup.BackupError) as excinfo:
+        backup.delete_backup(tmp_path / "cloud" / "notes.txt", db, settings_path=settings)
+    assert excinfo.value.code == "not-a-backup"
+    assert backup.delete_backup(made["path"], db, settings_path=settings)["ok"] is True
+    assert not Path(made["path"]).exists()
+    with pytest.raises(backup.BackupError) as excinfo:
+        backup.delete_backup(made["path"], db, settings_path=settings)
+    assert excinfo.value.code == "unreadable"
+
+
+def test_reveal_uses_the_platform_file_manager(tmp_path):
+    db = _db(tmp_path / "tracker.sqlite3", ["g1"])
+    settings = _settings(tmp_path / "settings.json")
+    made = backup.export_backup(db, tmp_path / "cloud", settings_path=settings, overlay_path=tmp_path / "none", deckfinder_path=tmp_path / "none")
+    launched = []
+    backup.reveal_backup(made["path"], run=launched.append, system="Darwin")
+    backup.reveal_backup(made["path"], run=launched.append, system="Windows")
+    backup.reveal_backup(made["path"], run=launched.append, system="Linux")
+    assert launched == [
+        ["open", "-R", made["path"]],
+        ["explorer", f"/select,{made['path']}"],
+        ["xdg-open", str(Path(made["path"]).parent)],
+    ]
+    with pytest.raises(backup.BackupError):
+        backup.reveal_backup(tmp_path / "missing.tappsbackup", run=launched.append, system="Darwin")

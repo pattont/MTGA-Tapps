@@ -771,6 +771,266 @@ def restore_backup(
     return result
 
 
+# --- merge -----------------------------------------------------------------------
+
+#: Tables the merge never touches: this computer's live row and diagnostics,
+#: and SQLite's own bookkeeping.
+MERGE_SKIP_TABLES = {"live_status", "raw_game_payloads", "schema_migrations", "sqlite_sequence", "cards"}
+
+
+def _columns(conn: sqlite3.Connection, schema: str, table: str) -> List[Tuple[str, bool]]:
+    """(name, is_integer_autoincrement_pk) per column."""
+    rows = conn.execute(f"PRAGMA {schema}.table_info({table})").fetchall()
+    return [(str(r[1]), bool(r[5]) and str(r[2]).upper() == "INTEGER") for r in rows]
+
+
+def merge_snapshot_into(conn: sqlite3.Connection, snapshot_path: Path) -> Dict[str, int]:
+    """Add to the database behind `conn` every game, session and match the
+    snapshot has that it does not, with everything that hangs off them.
+
+    Game, session and match ids are minted per tracker session on the
+    machine that recorded them, so two computers never collide and "merge"
+    is a plain union. The one shared dictionary is `cards`, whose integer
+    ids differ per machine: cards are matched by name and every `*card_id`
+    column is translated on the way in. Runs in one transaction; a second
+    merge of the same snapshot adds nothing.
+    """
+    conn.execute("ATTACH DATABASE ? AS src", (str(snapshot_path),))
+    try:
+        conn.execute("BEGIN")
+        # Cards: bring over names this database has never seen (an arena id
+        # already taken by another name is left off rather than colliding),
+        # then map the snapshot's card ids to this database's.
+        conn.execute(
+            """
+            INSERT INTO main.cards (arena_id, name, type_line, primary_type, power, toughness, first_seen_at, color_identity, mana_cost, mana_value)
+            SELECT CASE WHEN EXISTS (SELECT 1 FROM main.cards c WHERE c.arena_id = s.arena_id) THEN NULL ELSE s.arena_id END,
+                   s.name, s.type_line, s.primary_type, s.power, s.toughness, s.first_seen_at, s.color_identity, s.mana_cost, s.mana_value
+            FROM src.cards s
+            WHERE NOT EXISTS (SELECT 1 FROM main.cards m WHERE m.name = s.name)
+            """
+        )
+        conn.execute("DROP TABLE IF EXISTS temp.card_map")
+        conn.execute(
+            "CREATE TEMP TABLE card_map AS SELECT s.id AS src_id, m.id AS local_id FROM src.cards s JOIN main.cards m ON m.name = s.name"
+        )
+        conn.execute("DROP TABLE IF EXISTS temp.new_sessions")
+        conn.execute("CREATE TEMP TABLE new_sessions AS SELECT id FROM src.tracker_sessions WHERE id NOT IN (SELECT id FROM main.tracker_sessions)")
+        conn.execute("DROP TABLE IF EXISTS temp.new_games")
+        conn.execute("CREATE TEMP TABLE new_games AS SELECT id FROM src.games WHERE id NOT IN (SELECT id FROM main.games)")
+        conn.execute("DROP TABLE IF EXISTS temp.new_matches")
+        conn.execute("CREATE TEMP TABLE new_matches AS SELECT id FROM src.matches WHERE id NOT IN (SELECT id FROM main.matches)")
+        conn.execute("DROP TABLE IF EXISTS temp.new_participants")
+        conn.execute("CREATE TEMP TABLE new_participants AS SELECT id FROM src.participants WHERE game_id IN (SELECT id FROM temp.new_games) AND id NOT IN (SELECT id FROM main.participants)")
+
+        counts: Dict[str, int] = {}
+
+        def copy(table: str, where: str) -> None:
+            local = _columns(conn, "main", table)
+            remote = {name for name, _ in _columns(conn, "src", table)}
+            names = [name for name, auto in local if name in remote and not auto]
+            if not names:
+                return
+            selects = []
+            for name in names:
+                if name.endswith("card_id"):
+                    selects.append(f"(SELECT local_id FROM temp.card_map WHERE src_id = s.{name})")
+                else:
+                    selects.append(f"s.{name}")
+            sql = (
+                f"INSERT OR IGNORE INTO main.{table} ({', '.join(names)}) "
+                f"SELECT {', '.join(selects)} FROM src.{table} s WHERE {where}"
+            )
+            counts[table] = conn.execute(sql).rowcount
+
+        copy("tracker_sessions", "s.id IN (SELECT id FROM temp.new_sessions)")
+        copy("matches", "s.id IN (SELECT id FROM temp.new_matches)")
+        copy("games", "s.id IN (SELECT id FROM temp.new_games)")
+        copy("participants", "s.id IN (SELECT id FROM temp.new_participants)")
+        copy("participant_commanders", "s.participant_id IN (SELECT id FROM temp.new_participants)")
+        tables = [
+            str(r[0])
+            for r in conn.execute("SELECT name FROM src.sqlite_master WHERE type = 'table'")
+            if str(r[0]) not in MERGE_SKIP_TABLES
+            and str(r[0]) not in {"tracker_sessions", "matches", "games", "participants", "participant_commanders"}
+            and conn.execute("SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = ?", (r[0],)).fetchone()
+        ]
+        for table in tables:
+            names = {name for name, _ in _columns(conn, "src", table)}
+            if "game_id" in names and "session_id" in names:
+                where = "(s.game_id IN (SELECT id FROM temp.new_games)) OR (s.game_id IS NULL AND s.session_id IN (SELECT id FROM temp.new_sessions))"
+            elif "game_id" in names:
+                where = "s.game_id IN (SELECT id FROM temp.new_games)"
+            elif "session_id" in names:
+                where = "s.session_id IN (SELECT id FROM temp.new_sessions)"
+            else:
+                continue
+            copy(table, where)
+        conn.execute("COMMIT")
+        for temp in ("card_map", "new_sessions", "new_games", "new_matches", "new_participants"):
+            conn.execute(f"DROP TABLE IF EXISTS temp.{temp}")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.execute("DETACH DATABASE src")
+    return counts
+
+
+def merge_backup(
+    path: Path,
+    db_path: Path,
+    *,
+    tracker_control: Any = None,
+    settings_path: Optional[Path] = None,
+    deckfinder_path: Optional[Path] = None,
+    overlay_path: Optional[Path] = None,
+    safety_dir: Optional[Path] = None,
+    before_swap: Optional[Callable[[], None]] = None,
+    progress: Optional[Callable[[str], None]] = None,
+) -> Dict[str, Any]:
+    """Add the backup's games to this computer's database, keeping every
+    game already here. Settings are not touched. A safety copy is written
+    first, like a restore."""
+    path = Path(path).expanduser()
+    db_path = Path(db_path)
+    settings_path = Path(settings_path) if settings_path is not None else _settings_path()
+    report = progress or (lambda _msg: None)
+
+    preview = inspect_backup(path, db_path, settings_path=settings_path)
+    if not preview["schema_ok"]:
+        raise BackupError(
+            "This backup was made by a newer tracker (database schema "
+            f"{preview['manifest'].get('schema_version')} vs {preview['supported_schema_version']} here); "
+            "update the tracker first",
+            "newer-schema",
+        )
+
+    was_running = False
+    if tracker_control is not None:
+        was_running = bool(getattr(tracker_control, "tracker_is_running", False))
+        report("Stopping the tracker")
+        tracker_control.stop_tracker()
+        if getattr(tracker_control, "tracker_is_running", False):
+            raise BackupError("The tracker did not stop in time; try again in a moment", "tracker-running")
+    elif tracker_active(db_path):
+        raise BackupError("The tracker is running and writing to this database; stop it first", "tracker-running")
+
+    counts: Dict[str, int] = {}
+    undo_path: Optional[str] = None
+    try:
+        safety_folder = Path(safety_dir) if safety_dir is not None else db_path.parent / SAFETY_DIR_NAME
+        if db_path.is_file():
+            report("Saving a copy of the current state")
+            safety = export_backup(
+                db_path, safety_folder, settings_path=settings_path, deckfinder_path=deckfinder_path,
+                overlay_path=overlay_path, tag=SAFETY_TAG, record=False,
+            )
+            undo_path = safety["path"]
+            _prune_safety_backups(safety_folder)
+
+        report("Unpacking the backup")
+        with tempfile.TemporaryDirectory(prefix="tapps-merge-") as tmp:
+            staged = Path(tmp) / DATABASE_NAME
+            with zipfile.ZipFile(path) as archive, archive.open(DATABASE_NAME) as src, open(staged, "wb") as dst:
+                shutil.copyfileobj(src, dst, 1024 * 1024)
+            from .analytics import AnalyticsStore
+
+            report("Bringing both databases up to date")
+            for target in (staged, db_path):
+                store = AnalyticsStore(target)
+                try:
+                    store.connect()
+                finally:
+                    store.close()
+            _remove_sidecars(staged)
+
+            report("Merging")
+            if before_swap is not None:
+                before_swap()
+            conn = sqlite3.connect(db_path, timeout=30.0, isolation_level=None)
+            try:
+                conn.execute("PRAGMA busy_timeout = 30000")
+                counts = merge_snapshot_into(conn, staged)
+            finally:
+                conn.close()
+    finally:
+        if tracker_control is not None and was_running:
+            report("Starting the tracker")
+            tracker_control.start_tracker(background=True)
+
+    merged = local_summary(db_path)
+    result = {
+        "ok": True,
+        "merged_from": str(path),
+        "manifest": preview["manifest"],
+        "games_added": counts.get("games", 0),
+        "games": merged["games"],
+        "newest_game_at": merged["newest_game_at"],
+        "undo": undo_path,
+        "tracker_restarted": bool(tracker_control is not None and was_running),
+        "counts": counts,
+    }
+    try:
+        update_settings_section(
+            "backup",
+            {"last_merge": {"at": _iso(_now()), "path": str(path), "games_added": counts.get("games", 0), "undo": undo_path}},
+            settings_path,
+        )
+    except OSError:
+        pass
+    report("Done")
+    return result
+
+
+# --- deleting and revealing backup files -----------------------------------------------
+
+
+def _managed_folders(db_path: Path, settings_path: Optional[Path]) -> List[Path]:
+    folders: List[Path] = [Path(db_path).parent / SAFETY_DIR_NAME]
+    configured = backup_settings(settings_path).get("folder")
+    if isinstance(configured, str) and configured.strip():
+        folders.append(Path(configured).expanduser())
+    return folders
+
+
+def delete_backup(path: Path, db_path: Path, *, settings_path: Optional[Path] = None) -> Dict[str, Any]:
+    """Delete one backup file — only a `.tappsbackup` inside the configured
+    backup folder or the safety folder; nothing else is ever unlinked."""
+    target = Path(path).expanduser()
+    if target.suffix != BACKUP_SUFFIX:
+        raise BackupError(f"{target.name} is not a backup file", "not-a-backup")
+    allowed = {os.path.realpath(folder) for folder in _managed_folders(db_path, settings_path)}
+    if os.path.realpath(target.parent) not in allowed:
+        raise BackupError("Only files in the backup folder can be deleted from here", "outside-folder")
+    if not target.is_file():
+        raise BackupError(f"{target.name} is already gone", "unreadable")
+    target.unlink()
+    return {"ok": True, "deleted": str(target)}
+
+
+def reveal_backup(path: Path, *, run: Optional[Callable[[List[str]], None]] = None, system: Optional[str] = None) -> Dict[str, Any]:
+    """Show the file in Finder / Explorer / the desktop's file manager."""
+    import subprocess
+
+    target = Path(path).expanduser()
+    if target.suffix != BACKUP_SUFFIX or not target.is_file():
+        raise BackupError(f"{target.name} is not a backup file here", "unreadable")
+    system = system or platform.system()
+    if system == "Darwin":
+        command = ["open", "-R", str(target)]
+    elif system == "Windows":
+        command = ["explorer", f"/select,{target}"]
+    else:
+        command = ["xdg-open", str(target.parent)]
+    launch = run or (lambda argv: subprocess.Popen(argv))
+    try:
+        launch(command)
+    except OSError as exc:
+        raise BackupError(f"Could not open the file's location: {exc}", "reveal-failed")
+    return {"ok": True, "command": command}
+
+
 # --- what the Settings card shows -------------------------------------------------
 
 
@@ -787,6 +1047,7 @@ def backup_status(db_path: Path, *, settings_path: Optional[Path] = None) -> Dic
         "install_id": install_id(settings_path),
         "last_backup": section.get("last_backup"),
         "last_restore": section.get("last_restore"),
+        "last_merge": section.get("last_merge"),
         "backups": list_backups(folder),
         "local": {k: v for k, v in local.items() if k != "game_ids"},
         "tracker_active": tracker_active(db_path),
@@ -826,6 +1087,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_restore = sub.add_parser("restore", help="Replace this computer's database and settings with a backup's.")
     p_restore.add_argument("path", type=Path)
     p_restore.add_argument("--confirm", default=None, help='Pass REPLACE to drop games recorded here that the backup lacks.')
+    p_merge = sub.add_parser("merge", help="Add a backup's games to this computer's database, keeping everything here.")
+    p_merge.add_argument("path", type=Path)
+    p_delete = sub.add_parser("delete", help="Delete a backup file from the backup folder.")
+    p_delete.add_argument("path", type=Path)
     sub.add_parser("list", help="List the backups in the configured folder.")
     sub.add_parser("folders", help="Show the synced folders found on this computer.")
     args = parser.parse_args(argv)
@@ -842,6 +1107,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         elif args.command == "restore":
             result = restore_backup(args.path, args.db, confirm=args.confirm, progress=print)
             print(f"Restored {result['games']} games. Undo: {result['undo']}")
+        elif args.command == "merge":
+            result = merge_backup(args.path, args.db, progress=print)
+            print(f"Added {result['games_added']} games; {result['games']} now. Undo: {result['undo']}")
+        elif args.command == "delete":
+            print(delete_backup(args.path, args.db)["deleted"])
         elif args.command == "list":
             for row in list_backups(backup_settings().get("folder")):
                 print(f"{row.get('exported_at', '?')}  {row.get('machine', '?'):<16} {row.get('games', '?'):>5} games  {row['name']}")

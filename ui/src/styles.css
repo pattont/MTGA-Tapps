@@ -5413,10 +5413,59 @@ a.sidebar-deck-finder {
   color: var(--muted);
 }
 
-.backup-restore-button {
+.backup-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.backup-row-button {
   min-height: 30px;
   padding: 0 10px;
   font-size: 0.76rem;
+}
+
+.backup-row-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* The red X: a square the height of its neighbours. */
+.backup-delete-button {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--danger) 14%, var(--surface));
+  color: var(--danger);
+  cursor: pointer;
+}
+
+.backup-delete-button:hover:not(:disabled) {
+  background: var(--danger);
+  color: #fff;
+}
+
+.backup-delete-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.backup-dialog-file {
+  margin: -6px 0 0 !important;
+  color: var(--text) !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem !important;
+  word-break: break-all;
+}
+
+.modal .backup-error {
+  font-size: 0.85rem;
 }
 
 .backup-preview {

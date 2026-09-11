@@ -1754,6 +1754,7 @@ export interface BackupStatus {
   install_id: string;
   last_backup: { at: string; path: string; games: number; machine?: string } | null;
   last_restore: { at: string; path: string; games: number; undo: string | null } | null;
+  last_merge?: { at: string; path: string; games_added: number; undo: string | null } | null;
   backups: BackupFile[];
   local: BackupSummary;
   tracker_active: boolean;
@@ -1816,6 +1817,29 @@ export async function inspectBackup(path: string): Promise<BackupPreview> {
 
 export async function restoreBackup(path: string, confirm?: string): Promise<{ restore: BackupRestoreResult; status: BackupStatus }> {
   return postBackup('/api/backup/restore', confirm ? { path, confirm } : { path });
+}
+
+export interface BackupMergeResult {
+  ok: boolean;
+  merged_from: string;
+  manifest: BackupManifest;
+  games_added: number;
+  games: number;
+  newest_game_at: string | null;
+  undo: string | null;
+  tracker_restarted: boolean;
+}
+
+export async function mergeBackup(path: string): Promise<{ merge: BackupMergeResult; status: BackupStatus }> {
+  return postBackup('/api/backup/merge', { path });
+}
+
+export async function deleteBackup(path: string): Promise<{ delete: { ok: boolean; deleted: string }; status: BackupStatus }> {
+  return postBackup('/api/backup/delete', { path });
+}
+
+export async function revealBackup(path: string): Promise<{ ok: boolean }> {
+  return postBackup('/api/backup/reveal', { path });
 }
 
 // --- Collection export -----------------------------------------------------

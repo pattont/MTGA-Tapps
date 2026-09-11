@@ -6,6 +6,9 @@
 - POST /api/backup/export          {folder?, include_keys?} -> the manifest
 - POST /api/backup/inspect         {path} -> the restore preview
 - POST /api/backup/restore         {path, confirm?} -> the result
+- POST /api/backup/merge           {path} -> the result (games added)
+- POST /api/backup/delete          {path} -> ok (backup-folder files only)
+- POST /api/backup/reveal          {path} -> ok (Finder / Explorer)
 - POST /api/settings/backup        {folder} -> the folder as stored
 
 A restore stops the tracker through the launcher the dashboard was given
@@ -42,6 +45,8 @@ def _error(exc: backup.BackupError) -> Response:
         "bad-folder": 400,
         "no-database": 404,
         "unreadable": 404,
+        "outside-folder": 403,
+        "reveal-failed": 500,
     }.get(exc.code, 400)
     return status, {"error": str(exc), "code": exc.code}
 
@@ -83,6 +88,25 @@ def handle_post(
                 before_swap=before_swap,
             )
             return 200, {"restore": result, "status": backup.backup_status(db_path)}
+        if path == "/api/backup/merge":
+            target = payload.get("path")
+            if not target:
+                return 400, {"error": "No backup file given", "code": "no-path"}
+            result = backup.merge_backup(
+                Path(str(target)), db_path, tracker_control=tracker_control, before_swap=before_swap
+            )
+            return 200, {"merge": result, "status": backup.backup_status(db_path)}
+        if path == "/api/backup/delete":
+            target = payload.get("path")
+            if not target:
+                return 400, {"error": "No backup file given", "code": "no-path"}
+            result = backup.delete_backup(Path(str(target)), db_path)
+            return 200, {"delete": result, "status": backup.backup_status(db_path)}
+        if path == "/api/backup/reveal":
+            target = payload.get("path")
+            if not target:
+                return 400, {"error": "No backup file given", "code": "no-path"}
+            return 200, backup.reveal_backup(Path(str(target)))
     except backup.BackupError as exc:
         return _error(exc)
     except Exception as exc:  # pragma: no cover - defensive surface

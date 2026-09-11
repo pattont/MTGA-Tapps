@@ -97,12 +97,16 @@ describe('BackupCard', () => {
     expect(screen.getByRole('button', { name: 'Set' })).toBeEnabled();
     expect((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
     expect(screen.getByRole('button', { name: 'Back up now' })).toBeEnabled();
-    // The readable backup gets a Restore button; the junk file says why it has none.
-    expect(screen.getAllByRole('button', { name: 'Restore…' })).toHaveLength(2); // row + "from a file elsewhere"
+    // The readable backup gets Restore / Merge / Open location / Delete; the
+    // junk file says why it only gets Open location and Delete.
+    expect(screen.getAllByRole('button', { name: 'Restore' })).toHaveLength(2); // row + "from a file elsewhere"
+    expect(screen.getAllByRole('button', { name: 'Merge' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: /Open the location of/ })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: /^Delete / })).toHaveLength(2);
     expect(screen.getByText('junk.tappsbackup is not a Tapps Tracker backup')).toBeInTheDocument();
     expect(screen.getByText('Laptop')).toBeInTheDocument();
     expect(screen.getByText('29.6 MB')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Backup Location Files' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Backup Files' })).toBeInTheDocument();
     expect(screen.getByText('Detected Backup Locations:')).toBeInTheDocument();
   });
 
@@ -152,18 +156,20 @@ describe('BackupCard', () => {
     const user = userEvent.setup();
     render(<BackupCard />);
 
-    const [rowRestore] = await screen.findAllByRole('button', { name: 'Restore…' });
+    const [rowRestore] = await screen.findAllByRole('button', { name: 'Restore' });
     await user.click(rowRestore);
 
-    const region = await screen.findByRole('region', { name: 'Restore preview' });
-    expect(region).toHaveTextContent("Restore Laptop's backup");
-    expect(region).toHaveTextContent('Adds 7 games from the backup and drops 2 games recorded here');
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent("Restore Laptop's backup");
+    expect(dialog).toHaveTextContent('TappsTracker-Laptop-20260910-211400.tappsbackup');
+    expect(dialog).toHaveTextContent('Adds 7 games from the backup and drops 2 games recorded here');
     const go = screen.getByRole('button', { name: 'Restore this backup' });
     expect(go).toBeDisabled();
-    await user.type(screen.getByLabelText('Type REPLACE to confirm'), 'replace');
+    const confirm = screen.getByPlaceholderText('REPLACE');
+    await user.type(confirm, 'replace');
     expect(go).toBeDisabled();
-    await user.clear(screen.getByLabelText('Type REPLACE to confirm'));
-    await user.type(screen.getByLabelText('Type REPLACE to confirm'), 'REPLACE');
+    await user.clear(confirm);
+    await user.type(confirm, 'REPLACE');
     expect(go).toBeEnabled();
     await user.click(go);
 
@@ -189,9 +195,79 @@ describe('BackupCard', () => {
     const user = userEvent.setup();
     render(<BackupCard />);
 
-    const [rowRestore] = await screen.findAllByRole('button', { name: 'Restore…' });
+    const [rowRestore] = await screen.findAllByRole('button', { name: 'Restore' });
     await user.click(rowRestore);
     await user.click(await screen.findByRole('button', { name: 'Restore this backup' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('The tracker is running and writing to this database; stop it first');
+    // The dialog stays open with the reason; Cancel closes it.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('merges after a confirmation and suggests backing up again', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/backup/inspect') {
+        return json(preview({ verdict: 'diverged', adds: 7, drops: 2, requires_confirm: true }));
+      }
+      if (url === '/api/backup/merge') {
+        expect(JSON.parse(String(init?.body))).toEqual({ path: preview().path });
+        return json({
+          merge: { ok: true, merged_from: '/x', manifest, games_added: 7, games: 981, newest_game_at: null, undo: '/data/backups/undo.tappsbackup', tracker_restarted: true },
+          status: status({ local: { schema_version: 29, games: 981, newest_game_at: null, oldest_game_at: null, sessions: 40 } }),
+        });
+      }
+      return json(status());
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    render(<BackupCard />);
+
+    const [rowMerge] = await screen.findAllByRole('button', { name: 'Merge' });
+    await user.click(rowMerge);
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent("Merge Laptop's backup");
+    // A merge never drops anything, so no REPLACE even though a restore would need it.
+    expect(dialog).toHaveTextContent('Adds 7 games from the backup to the 974 games already here. Nothing here is removed');
+    expect(screen.queryByPlaceholderText('REPLACE')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Merge 7 games' }));
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent("Merged 7 games from Laptop's backup"));
+    expect(screen.getByRole('status')).toHaveTextContent('981 games here now');
+    expect(screen.getByText('Back up now to have everything in one file.')).toBeInTheDocument();
+    expect(screen.getByText('981 games')).toBeInTheDocument();
+  });
+
+  it('deletes a backup file only after the confirmation names it', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/backup/delete') {
+        expect(JSON.parse(String(init?.body))).toEqual({ path: preview().path });
+        return json({ delete: { ok: true, deleted: preview().path }, status: status({ backups: [] }) });
+      }
+      if (url === '/api/backup/reveal') {
+        return json({ ok: true });
+      }
+      return json(status());
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    render(<BackupCard />);
+
+    const [openLocation] = await screen.findAllByRole('button', { name: /Open the location of/ });
+    await user.click(openLocation);
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/backup/reveal')).toBe(true));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); // no confirmation for opening a folder
+
+    await user.click(screen.getByRole('button', { name: 'Delete TappsTracker-Laptop-20260910-211400.tappsbackup' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('Delete this backup file?');
+    expect(dialog).toHaveTextContent('TappsTracker-Laptop-20260910-211400.tappsbackup');
+    expect(dialog).toHaveTextContent('on Laptop · 981 games · 29.6 MB');
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/backup/delete')).toBe(false);
+    await user.click(screen.getByRole('button', { name: 'Delete file' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getByText('No backups in this folder yet.')).toBeInTheDocument();
   });
 });
