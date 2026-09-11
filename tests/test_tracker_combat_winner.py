@@ -7620,6 +7620,35 @@ def test_live_colors_basic_lands_and_on_demand_lookup():
     assert "Mystery" not in tracker._live_color_lookup_cache
 
 
+def test_live_colors_see_through_the_display_name_suffix():
+    """The play events the tracker keeps carry the display name the timeline
+    prints — "Mountain (Land)", "Smaug the Magnificent (Creature 6/6)" — and
+    that is what the scoreboard's colors are computed from. Looked up
+    verbatim nothing ever matched, so both players' pips stayed blank for
+    the whole game."""
+    tracker = make_tracker()
+    tracker._live_color_index_cache = {"Smaug the Magnificent": "R", "Restless Fortress": "C"}
+    tracker._live_color_index_complete = True
+    tracker.card_db.color_identity_for_name = lambda name: {"Edge Rover": "G"}.get(name)
+
+    assert tracker._live_colors_for([CardEvent("Mountain (Land)", "player", card_type_category="Land")]) == "R"
+    assert (
+        tracker._live_colors_for(
+            [
+                CardEvent("Plains (Land)", "opp", card_type_category="Land"),
+                CardEvent("Smaug the Magnificent (Creature 6/6)", "opp", card_type_category="Creature"),
+                CardEvent("Edge Rover (Creature 2/2)", "opp", card_type_category="Creature"),
+            ]
+        )
+        == "WRG"
+    )
+    # The on-demand Arena lookup is asked for the bare name too.
+    assert tracker._live_color_lookup_cache == {"Edge Rover": "G"}
+    assert tracker._live_colors_for([CardEvent("Restless Fortress (Land)", "opp", card_type_category="Land")]) == ""
+    # Commander seeds go through the same cleaning.
+    assert tracker._live_colors_with_commanders([], ["Smaug the Magnificent (Legendary Creature 6/6)"]) == "R"
+
+
 def test_live_colors_seed_from_commander_identity():
     """Brawl: the pips show the commander's full identity immediately, then
     union in colors from cards actually played."""

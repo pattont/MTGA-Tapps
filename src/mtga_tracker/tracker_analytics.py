@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from .analytics import AnalyticsStore, SessionSnapshot
 from .analytics_persistence import (
+    analytics_card_base_name,
     persist_card_summary,
     persist_commanders,
     persist_drawn_cards,
@@ -329,7 +330,11 @@ class TrackerAnalyticsMixin:
         index = self._live_color_index()
         letters: set = set()
         for event in cards or []:
-            name = str(getattr(event, "card_name", "") or "")
+            # Play events carry the display name — "Mountain (Land)",
+            # "Smaug the Magnificent (Creature 6/6)" — and no card database
+            # knows that string; the bare card name is what everything here
+            # is keyed by.
+            name = analytics_card_base_name(getattr(event, "card_name", "") or "")
             identity = (
                 BASIC_LAND_COLORS.get(name)
                 or index.get(name)
@@ -387,7 +392,7 @@ class TrackerAnalyticsMixin:
         letters: set = set(self._live_colors_for(cards))
         index = self._live_color_index()
         for name in commanders or []:
-            clean = str(name or "")
+            clean = analytics_card_base_name(name or "")
             identity = index.get(clean) or index.get(clean.split(" // ")[0].strip())
             if identity:
                 letters.update(ch for ch in str(identity) if ch in "WUBRGC")

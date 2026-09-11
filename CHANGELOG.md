@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- **The Live Scoreboard's color pips never lit.** The tracker's play
+  events carry the display name the timeline prints — `Mountain (Land)`,
+  `Smaug the Magnificent (Creature 6/6)` — and the scoreboard's colors were
+  looked up under that whole string, which no card database matches, so
+  both players' pips stayed blank for the entire game (while the archetype
+  guess, which matches cards differently, still worked). Colors are now
+  looked up by the bare card name; a basic land lights the pips on turn
+  one again.
+
 ## 0.6.3
 
 ### In-game overlay
