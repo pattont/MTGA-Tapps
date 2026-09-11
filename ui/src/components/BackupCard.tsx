@@ -173,12 +173,12 @@ export function BackupCard() {
             disabled={folderBusy || folder.trim() === (status.folder ?? '')}
             onClick={() => applyFolder(folder.trim())}
           >
-            {folderBusy ? 'Saving…' : 'Save'}
+            {folderBusy ? 'Setting…' : 'Set'}
           </button>
         </div>
         {status.detected_folders.length > 0 ? (
-          <div className="backup-picks" aria-label="Synced folders on this computer">
-            <span className="backup-picks-label">Synced here:</span>
+          <div className="backup-picks" aria-label="Detected backup locations">
+            <span className="backup-picks-label">Detected Backup Locations:</span>
             {status.detected_folders.map((pick) => (
               <button
                 key={pick.path}
@@ -225,6 +225,9 @@ export function BackupCard() {
       {!status.folder ? <p className="settings-hint">Choose a folder above to enable backups.</p> : null}
 
       {backups.length > 0 ? (
+        <div className="backup-files">
+          <h3 className="backup-files-title">Backup Location Files</h3>
+          <p className="backup-files-path">{status.folder}</p>
         <div className="table-wrap">
           <table className="backup-table">
             <thead>
@@ -267,6 +270,7 @@ export function BackupCard() {
               ))}
             </tbody>
           </table>
+        </div>
         </div>
       ) : status.folder ? (
         <p className="settings-hint">No backups in this folder yet.</p>

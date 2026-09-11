@@ -5357,6 +5357,25 @@ a.sidebar-deck-finder {
   font-weight: 600;
 }
 
+.backup-files {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.backup-files-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.backup-files-path {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  word-break: break-all;
+}
+
 .backup-table {
   width: 100%;
   border-collapse: collapse;
