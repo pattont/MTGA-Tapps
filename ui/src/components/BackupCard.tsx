@@ -30,7 +30,7 @@ export function BackupCard() {
   const [folderBusy, setFolderBusy] = useState(false);
   const [includeKeys, setIncludeKeys] = useState(true);
   const [exporting, setExporting] = useState(false);
-  const [exportNote, setExportNote] = useState<string | null>(null);
+  const [exportNote, setExportNote] = useState<{ text: string; done: boolean } | null>(null);
   const [filePath, setFilePath] = useState('');
   const [preview, setPreview] = useState<BackupPreview | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
@@ -76,14 +76,15 @@ export function BackupCard() {
 
   async function runExport() {
     setExporting(true);
-    setExportNote('Taking a snapshot of the database…');
+    setExportNote({ text: 'Taking a snapshot of the database…', done: false });
     setError(null);
     try {
       const result = await exportBackup({ include_keys: includeKeys });
       setStatus(result.status);
-      setExportNote(
-        `Saved ${result.backup.path.split(/[\\/]/).pop()} — ${plural(result.backup.games, 'game')}, ${formatSize(result.backup.size)}.`,
-      );
+      setExportNote({
+        text: `Saved ${result.backup.path.split(/[\\/]/).pop()} — ${plural(result.backup.games, 'game')}, ${formatSize(result.backup.size)}.`,
+        done: true,
+      });
     } catch (exc) {
       setExportNote(null);
       setError(message(exc, 'Backup failed'));
@@ -216,8 +217,8 @@ export function BackupCard() {
           Include API keys
         </label>
         {exportNote ? (
-          <span className="backup-note" role="status">
-            {exportNote}
+          <span className={exportNote.done ? 'backup-note backup-note-done' : 'backup-note'} role="status">
+            {exportNote.text}
           </span>
         ) : null}
       </div>
@@ -354,7 +355,7 @@ export function BackupCard() {
       ) : null}
 
       {error ? (
-        <p className="overlay-card-error" role="alert">
+        <p className="backup-error" role="alert">
           {error}
         </p>
       ) : null}

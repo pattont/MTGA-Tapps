@@ -5274,8 +5274,14 @@ a.sidebar-deck-finder {
 .backup-card {
   display: grid;
   gap: 14px;
-  max-width: 760px;
+  max-width: 960px;
   margin: 12px 16px 16px;
+}
+
+/* The backups table sits flush with the fields above it, not inset like
+   the paginated tables' wrapper. */
+.backup-card .table-wrap {
+  padding: 0;
 }
 
 .backup-summary {
@@ -5337,6 +5343,18 @@ a.sidebar-deck-finder {
 .backup-note {
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+.backup-note-done {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.backup-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.9rem;
+  font-weight: 600;
 }
 
 .backup-table {
