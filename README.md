@@ -103,6 +103,12 @@ recognized from Arena's match format, never from deck size.
 AetherHub, TCGplayer, magic.gg, MTGO, Untapped) right inside the dashboard and
 copy any list to your clipboard in Arena import format.
 
+**Backup & restore.** Everything the tracker knows — games, settings, Deck
+Finder creators, overlay preferences — in one `.tappsbackup` file, written
+into any folder you choose. Point it at a folder your cloud client syncs and
+your history follows you to another computer; **Merge** brings two
+computers' games together.
+
 **The long game.** Match-level records (a Bo3 counts once, like the ladder
 does), win-rate trends, How Games End with per-reason percentages — concedes,
 damage, decking, poison, timeouts — Constructed Ranked lifetime and per-season
@@ -241,6 +247,36 @@ The memory-extraction technique is adapted from
 — full credit to them for working out how to find the collection in Arena's
 process memory.
 
+## Backup & restore
+
+Everything the tracker knows in one file: a snapshot of the game database,
+`settings.json`, your Deck Finder creators and the overlay's preferences,
+zipped into a `.tappsbackup` (about 15 MB for a thousand games). The card is
+on the dashboard's **Settings** page.
+
+![Backup & restore on the Settings page](docs/images/backup-restore.png)
+
+Pick a **backup folder** — the card offers the Google Drive, iCloud Drive,
+Dropbox and OneDrive folders it finds on the machine, and nothing is created
+on disk until your first backup lands there — then **Back up now**. Choose a
+folder your sync client mirrors and the file turns up on your other computer
+by itself; nothing in the tracker talks to a cloud service, so a USB stick or
+an email works just as well.
+
+**Backup Files** lists what is in the folder with four actions on each:
+
+| Action | What it does |
+| --- | --- |
+| **Open location** | Shows the file in Finder or Explorer. |
+| **Restore** | Makes this computer match the backup. It tells you first what would change — *adds 7 games this computer does not have*, or *would drop 12 games recorded here*, which needs `REPLACE` typed — pauses the tracker, saves a copy of the current state (**Undo** puts it back), and brings an older snapshot up to this build's schema on the way in. Your dashboard port, window size and backup folder stay this computer's own. |
+| **Merge** | Adds the backup's games to the ones already here and removes nothing — for history recorded on two computers. Back up once more afterwards and one file holds everything. |
+| **×** | Deletes that backup file (never the database), after a confirmation naming it. |
+
+**Travelling:** back up at home into the synced folder, restore on the laptop,
+play the week, back up there, then **Merge** (or restore) at home — see
+[QUICKSTART.md](QUICKSTART.md#what-to-expect) for the five-line version. The
+backup carries your Deck AI key unless you untick *Include API keys*.
+
 ## AI deck identification (optional)
 
 With an API key, the tracker starts one identification job per completed
@@ -340,16 +376,10 @@ Where things live:
 Don't run the source and installed trackers at the same time, and never copy a
 live database while a tracker owns it — use SQLite's backup API for migrations.
 
-**Backups.** *Settings → Backup & restore* writes one `.tappsbackup` file —
-every game, `settings.json`, the Deck Finder creators and the overlay's
-preferences — and restores one, with a preview of what a restore adds or
-drops and a saved copy of the previous state to undo it. **Merge** adds a
-backup's games to the ones already here instead, for history recorded on
-two computers. Point the backup
-folder at a folder your Google Drive, iCloud Drive, Dropbox or OneDrive
-client syncs (the card offers the ones it finds) and the file is on your
-other computer by itself; nothing in the tracker talks to a cloud service.
-The backup carries your Deck AI key unless you untick *Include API keys*.
+**Backups** are local files too: a backup goes where you point it and is
+copied onward only by whatever sync client owns that folder — see
+[Backup & restore](#backup--restore). It carries your Deck AI key unless you
+untick *Include API keys*.
 
 ## The dashboard
 
@@ -464,6 +494,7 @@ guidance lives.
 - [Log-format reference](docs/MTGA_LOG_FORMAT.md) — Arena events and parser behavior
 - [Card database discovery](docs/MTGA_INSTALL_DISCOVERY.md) — resolution and troubleshooting
 - [Scry tracking](docs/SCRY_TRACKING.md) — events, stored stats, and dashboard behavior
+- [Active plans](docs/plans/INDEX.md) — what is still being worked on, and what is left of each plan
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release
 
 ## License

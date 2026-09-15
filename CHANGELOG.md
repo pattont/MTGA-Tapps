@@ -1,62 +1,76 @@
 # Changelog
 
-## Unreleased
+## 0.6.4
 
-### New
+### Backup & restore
 
-- **Backup & restore.** *Settings → Backup & restore* writes everything the
-  tracker knows — a consistent snapshot of the database (via SQLite's
-  backup API; the raw-payload diagnostics buffer is left out), `settings.json`,
-  the Deck Finder creators and the overlay's preferences — into one
-  `.tappsbackup` file, and restores one. Choose a **backup folder**; the
-  card offers the Google Drive, iCloud Drive, Dropbox and OneDrive folders
-  it finds on the machine (a chip fills in the path; Set remembers it;
-  nothing is created on disk until the first backup is written), so a
-  backup made at home is on the laptop's Drive folder by itself, with
-  nothing here talking to any cloud service.
-  The card lists the backups in the folder (date, computer, games, newest
-  game, size) and a path field for a file elsewhere. A restore shows what it would do first — *adds 7 games*, or
-  *would drop 12 games recorded here that the backup lacks* (that one needs
-  `REPLACE` typed) — then pauses the tracker, saves a copy of the current
-  state (an **Undo** button puts it back), swaps in the snapshot brought up
-  to this build's schema, restores the settings while keeping this
-  computer's own port, window size and backup folder, and restarts the
-  tracker. A backup from a newer tracker is refused with the reason.
-  **Include API keys** (on by default) controls whether the Deck AI key
-  travels in the file.
-- **Merge.** Played on two computers? **Merge** adds a backup's games to the
-  ones already here — nothing is removed, settings are untouched — so one
-  more backup afterwards has everything in one file. Games, sessions and
-  matches never collide across machines (their ids come from the tracker
-  session that recorded them), so a merge is a plain union; the card
-  dictionary's ids are translated by card name on the way in, and merging
-  the same backup twice adds nothing.
-- Each backup file in the folder has **Restore**, **Merge**, **Open
-  location** (Finder / Explorer) and a red **×** to delete it. Restore,
-  merge and delete each open a confirmation naming the file and what will
-  happen; only files inside the backup folder can be deleted from the
-  card. Also `python -m mtga_tracker.backup
-  export|inspect|restore|merge|delete|list|folders`
-  ([plan](docs/plans/BACKUP_AND_SYNC.md)).
+Everything the tracker knows in one file. **Settings → Backup & restore**
+writes a `.tappsbackup` and restores, merges or deletes one — made for the
+week away from home: back up on the desktop, restore on the laptop, play,
+then bring the week's games back.
 
-### Documentation
+- **What a backup holds.** A consistent snapshot of the game database
+  (taken with SQLite's own backup API, with the raw-payload diagnostics
+  buffer left out, then compressed — about 15 MB for a thousand games),
+  `settings.json`, your Deck Finder creators and the overlay's
+  preferences. **Include API keys** (on by default) decides whether the
+  Deck AI key travels in the file.
+- **The backup folder.** Any folder works, and the card offers the Google
+  Drive, iCloud Drive, Dropbox and OneDrive folders it finds on this
+  machine as chips — a chip fills the path in, **Set** remembers it, and
+  nothing is created on disk until the first backup lands there. Choose
+  one a sync client mirrors and the file turns up on your other computer
+  by itself; nothing in the tracker talks to any cloud service.
+- **Restore** says what it would do before it does anything — *adds 7
+  games this computer does not have*, or *would drop 12 games recorded
+  here that the backup lacks*, which needs `REPLACE` typed — then pauses
+  the tracker, saves a copy of the current state (an **Undo** button puts
+  it straight back), brings the snapshot up to this build's schema, swaps
+  it in, and restores your settings while keeping this computer's own
+  dashboard port, window size and backup folder. A backup written by a
+  newer tracker is refused, with the reason.
+- **Merge** is for history recorded on two computers: it adds a backup's
+  games to the ones already here and removes nothing, so one more backup
+  afterwards holds everything. Games, sessions and matches can never
+  collide between machines — their ids come from the tracker session that
+  recorded them — so a merge is a plain union; cards are matched by name,
+  and merging the same backup twice adds nothing.
+- **Backup Files** lists what is in the folder (date, computer, games,
+  newest game, size) with **Open location**, **Restore**, **Merge** and a
+  red **×** on each. Restore, merge and delete all ask first, naming the
+  file and what will happen; only files inside your backup folder can be
+  deleted from the card. The field below does the same for a file anywhere
+  else on disk.
+- Windows: the database swap waits out a file the system still has open
+  instead of failing, and never lands a restored database beside the old
+  one's write-ahead log.
+- From a terminal: `python -m mtga_tracker.backup
+  export|inspect|restore|merge|delete|list|folders`.
 
-- Reconciled README, Quick Start, agent guidance and log/card/scry references
-  with the implementation. README lists current features and reference guides
-  only. Replaced completed release/overlay plans with current documentation,
-  retained unfinished work, and revised the Linux plan with discovery,
-  desktop, packaging and real-system validation gates.
+Automatic backups after each session, and Google Drive over its own API for
+machines with no sync client, are the next steps
+([plan](docs/plans/BACKUP_AND_SYNC.md)).
 
 ### Fixes
 
-- **The Live Scoreboard's color pips never lit.** The tracker's play
-  events carry the display name the timeline prints — `Mountain (Land)`,
-  `Smaug the Magnificent (Creature 6/6)` — and the scoreboard's colors were
-  looked up under that whole string, which no card database matches, so
-  both players' pips stayed blank for the entire game (while the archetype
-  guess, which matches cards differently, still worked). Colors are now
-  looked up by the bare card name; a basic land lights the pips on turn
-  one again.
+- **The Live Scoreboard's color pips never lit.** The tracker's play events
+  carry the display name the timeline prints — `Mountain (Land)`,
+  `Smaug the Magnificent (Creature 6/6)` — and the scoreboard looked that
+  whole string up for its colors, which no card database matches, so both
+  players' pips stayed blank for the entire game (the archetype guess,
+  which matches cards differently, still worked). Colors are now looked up
+  by the bare card name, and a basic land lights the pips on turn one
+  again.
+
+### Docs
+
+- README, Quick Start, agent guidance and the log, card-database and scry
+  references reconciled with the implementation: the README lists current
+  features and reference guides only. The completed release and overlay
+  plans are replaced by [the release guide](docs/RELEASING.md) and
+  [the overlay guide](overlay/README.md), unfinished plans keep only their
+  remaining work behind [an index](docs/plans/INDEX.md), and the Linux plan
+  gained discovery, desktop, packaging and real-system validation gates.
 
 ## 0.6.3
 
