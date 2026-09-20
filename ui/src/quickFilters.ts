@@ -12,7 +12,7 @@ export interface FormatFamily extends QuickFilter {
 /* Special events (qualifiers, Midweek Magic, opens) are their own family so
    a "Qualifier Play In Bo1 Timeless" doesn't pollute the Timeless ladder. */
 const isEvent = (label: string): boolean =>
-  /qualifier|play.?in|midweek|festival|metagame|arena open|arena championship/.test(label);
+  /\bevent\b|qualifier|play.?in|midweek|festival|metagame|arena open|arena championship/.test(label);
 
 const isLimited = (label: string): boolean => /draft|sealed|cube|pick.?two|pick.?2/.test(label);
 

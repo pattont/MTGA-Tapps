@@ -109,6 +109,14 @@ into any folder you choose. Point it at a folder your cloud client syncs and
 your history follows you to another computer; **Merge** brings two
 computers' games together.
 
+**Startup controls.** In **Settings → Startup**, Windows and macOS launches can
+start Tapps Tracker automatically when you sign in. **Open dashboard
+on launch** is independent, so the tracker can start quietly in the system
+tray or menu bar and begin tracking before you queue. Both settings apply on
+the next launch; `--no-browser` remains a one-run command-line override.
+Starting Tapps Tracker again while it is already running exits cleanly instead
+of creating a second tracker or database writer.
+
 **The long game.** Match-level records (a Bo3 counts once, like the ladder
 does), win-rate trends, How Games End with per-reason percentages — concedes,
 damage, decking, poison, timeouts — Constructed Ranked lifetime and per-season
@@ -373,8 +381,9 @@ Where things live:
 - Installed builds — `~/Library/Application Support/MTGA Tracker` (macOS),
   `%LOCALAPPDATA%\MTGA Tracker` (Windows), fully independent of the repo
 
-Don't run the source and installed trackers at the same time, and never copy a
-live database while a tracker owns it — use SQLite's backup API for migrations.
+The unified launcher prevents source and installed trackers from running at the
+same time for one OS user. Never copy a live database while a tracker owns it —
+use SQLite's backup API for migrations.
 
 **Backups** are local files too: a backup goes where you point it and is
 copied onward only by whatever sync client owns that folder — see
@@ -383,7 +392,9 @@ untick *Include API keys*.
 
 ## The dashboard
 
-`mtga-tracker-app` serves it and opens it in your browser automatically.
+`mtga-tracker-app` serves it and opens it in your browser automatically unless
+**Settings → Startup → Open dashboard on launch** is off or `--no-browser` is
+passed for that run.
 
 | Route | What you get |
 | --- | --- |
@@ -395,7 +406,7 @@ untick *Include API keys*.
 | `#/games` | Every tracked game with deck picker, format pills, and period filter |
 | `#/opponents` | Everyone you've been paired against; `#/opponent/<name>` for one opponent |
 | `#/deckfinder` | Deck Finder: browse and export decklists from creators and sites |
-| `#/settings` | In-game overlay, Deck AI, Deck Finder creators, collection export, tracker status |
+| `#/settings` | Startup, in-game overlay, backup/restore, Deck AI, Deck Finder creators, collection export, tracker status |
 | `#/audit` | Database health findings |
 
 JSON API: `GET /api/snapshot`, `/api/live`, `/api/overlay`, `/api/deck`,
@@ -426,6 +437,7 @@ mtga-tracker-app        # tracker + dashboard (with the Live Scoreboard), one co
 | --- | --- |
 | `mtga-tracker-app` | Menu-bar / tray app: tracker + dashboard + overlay |
 | `mtga-tracker-app --no-gui` | Tracker + dashboard in one terminal, no menu bar |
+| `mtga-tracker-app --no-browser` | Start normally without opening the dashboard browser tab this time |
 | `mtga-tracker` | Console tracker only |
 | `python -m mtga_tracker.dashboard` | Dashboard only (`http://127.0.0.1:8765`; build `ui/` first: `cd ui && npm install && npm run build`) |
 | `python -m mtga_deck_downloader` | The Deck Finder as a terminal UI (installed builds: `MTGA Tracker --deck-finder`) |
@@ -452,8 +464,14 @@ sqlite3 data/mtga_tracker.sqlite3 < data/_queries/WinRateByDeck.sql
 ```bash
 # macOS app / DMG
 scripts/build_macos_app.sh          # dist/MTGA Tracker.app
+scripts/build_macos_app.sh --fast   # local iteration with native app identity
 scripts/build_macos_installer.sh    # dist/MTGA-Tracker-<version>.dmg
 ```
+
+Direct `python -m mtga_tracker.app` launches are owned by the Python
+interpreter, so macOS menu-bar managers may label their icon **Python**. The
+app bundle identifies the same process as **Tapps Tracker**; use the fast build
+above when checking menu-bar behavior from current source.
 
 ```powershell
 # Windows exe / zip / setup.exe
@@ -494,7 +512,6 @@ guidance lives.
 - [Log-format reference](docs/MTGA_LOG_FORMAT.md) — Arena events and parser behavior
 - [Card database discovery](docs/MTGA_INSTALL_DISCOVERY.md) — resolution and troubleshooting
 - [Scry tracking](docs/SCRY_TRACKING.md) — events, stored stats, and dashboard behavior
-- [Active plans](docs/plans/INDEX.md) — what is still being worked on, and what is left of each plan
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release
 
 ## License

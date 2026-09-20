@@ -5,7 +5,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from http.client import HTTPConnection
 
+import pytest
+
+from mtga_tracker import app
 from mtga_tracker.app import CallbackTextStream, UnifiedLauncher
+from mtga_tracker.settings import AppSettings
 
 
 class _FakeTracker:
@@ -19,6 +23,20 @@ class _FakeTracker:
 
     def request_stop(self):
         self.stopped.set()
+
+
+@pytest.fixture
+def available_instance_guard(monkeypatch):
+    """Keep app.main tests independent of a real running Tapps process."""
+
+    class AvailableGuard:
+        def acquire(self):
+            return True
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(app, "SingleInstanceGuard", AvailableGuard)
 
 
 def test_callback_text_stream_forwards_writes():
@@ -112,3 +130,100 @@ def test_unified_launcher_can_force_colors_for_gui_stream(monkeypatch):
     assert tracker.use_colors is True
     assert tracker._console_db_path == Path("/tmp/selected-tracker.sqlite3")
     assert tracker.analytics.path == Path("/tmp/selected-tracker.sqlite3")
+
+
+def test_saved_browser_preference_disables_automatic_open(
+    monkeypatch, available_instance_guard
+):
+    captured = []
+    monkeypatch.setattr(
+        "mtga_tracker.settings.load_app_settings",
+        lambda create=False: AppSettings(open_dashboard_on_launch=False),
+    )
+    monkeypatch.setattr(app, "_run_without_gui", lambda args: captured.append(args) or 0)
+
+    assert app.main(["--no-gui", "--port", "9001"]) == 0
+
+    assert captured[0].no_browser is True
+
+
+def test_saved_browser_preference_allows_automatic_open(
+    monkeypatch, available_instance_guard
+):
+    captured = []
+    monkeypatch.setattr(
+        "mtga_tracker.settings.load_app_settings",
+        lambda create=False: AppSettings(open_dashboard_on_launch=True),
+    )
+    monkeypatch.setattr(app, "_run_without_gui", lambda args: captured.append(args) or 0)
+
+    assert app.main(["--no-gui", "--port", "9001"]) == 0
+
+    assert captured[0].no_browser is False
+
+
+def test_no_browser_cli_flag_overrides_saved_preference(
+    monkeypatch, available_instance_guard
+):
+    captured = []
+    monkeypatch.setattr(
+        "mtga_tracker.settings.load_app_settings",
+        lambda create=False: AppSettings(open_dashboard_on_launch=True),
+    )
+    monkeypatch.setattr(app, "_run_without_gui", lambda args: captured.append(args) or 0)
+
+    assert app.main(["--no-gui", "--no-browser", "--port", "9001"]) == 0
+
+    assert captured[0].no_browser is True
+
+
+def test_second_headless_instance_exits_before_starting_tracker(monkeypatch, capsys):
+    class HeldGuard:
+        def acquire(self):
+            return False
+
+        def release(self):
+            raise AssertionError("an unacquired guard must not be released")
+
+    monkeypatch.setattr(app, "SingleInstanceGuard", HeldGuard)
+    monkeypatch.setattr(
+        app,
+        "_run_without_gui",
+        lambda _args: pytest.fail("a second instance must not start"),
+    )
+
+    assert app.main(["--no-gui", "--port", "9001"]) == 0
+    assert "already running" in capsys.readouterr().err
+
+
+def test_single_instance_guard_is_released_after_launcher_exits(monkeypatch):
+    released = []
+
+    class AvailableGuard:
+        def acquire(self):
+            return True
+
+        def release(self):
+            released.append(True)
+
+    monkeypatch.setattr(app, "SingleInstanceGuard", AvailableGuard)
+    monkeypatch.setattr(app, "_run_without_gui", lambda _args: 7)
+
+    assert app.main(["--no-gui", "--port", "9001"]) == 7
+    assert released == [True]
+
+
+def test_duplicate_login_launch_exits_quietly(monkeypatch, capsys):
+    class HeldGuard:
+        def acquire(self):
+            return False
+
+        def release(self):
+            raise AssertionError("an unacquired guard must not be released")
+
+    monkeypatch.setattr(app, "SingleInstanceGuard", HeldGuard)
+
+    assert app.main(["--no-gui", "--login-start", "--port", "9001"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""

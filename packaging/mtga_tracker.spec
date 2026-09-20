@@ -200,10 +200,16 @@ if is_macos:
         icon=str(app_icon),
         bundle_identifier="com.travispatton.mtgatracker",
         info_plist={
-            "CFBundleName": "MTGA Tracker",
-            "CFBundleDisplayName": "MTGA Tracker",
+            # Keep the bundle/executable filename and identifier stable so
+            # upgrades retain the existing app and data locations. These
+            # display keys are the identity macOS and menu-bar managers show.
+            "CFBundleName": "Tapps Tracker",
+            "CFBundleDisplayName": "Tapps Tracker",
             "CFBundleShortVersionString": app_version,
-            "LSUIElement": False,
+            # This is a menu-bar utility. Suppress the otherwise redundant
+            # Dock and app-switcher entry while retaining normal windows.
+            "LSUIElement": True,
+            "NSPrincipalClass": "NSApplication",
             "NSHighResolutionCapable": True,
         },
     )

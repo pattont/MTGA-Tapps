@@ -1,13 +1,8 @@
 import { useState } from 'react';
 import type { CommanderRef } from '../api';
+import { commanderArtUrl } from '../commanderArt';
 import { CardLink } from './CardLink';
 import { ColorPips } from './ColorPips';
-
-/** Scryfall art crop for a commander; front face only for MDFC/partner names. */
-export function commanderArtUrl(name: string): string {
-  const front = name.split(' // ')[0];
-  return `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(front)}&format=image&version=art_crop`;
-}
 
 /** One side's commander callout: art filling the box, name with the usual
     card hover link, and the commander's color identity under the name. */

@@ -22,6 +22,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OVERLAY_DIR="$ROOT_DIR/overlay"
 OUT_DIR="$OVERLAY_DIR/build-out"
 
+# Noninteractive shells do not load nvm from ~/.zshrc. Resolve it explicitly
+# before the first npm command so direct and parent-script builds behave alike.
+# shellcheck source=node_env.sh
+source "$ROOT_DIR/scripts/node_env.sh"
+ensure_node_tools
+
 # (the ${arr[@]+...} form keeps macOS's bash 3.2 happy with an empty array under set -u)
 PROFILE=release
 CARGO_ARGS=()

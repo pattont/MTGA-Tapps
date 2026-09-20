@@ -71,6 +71,9 @@ begin
     reflexive uninstall (e.g. uninstalling just to reinstall fresh). }
   if CurUninstallStep = usUninstall then
   begin
+    { Start with Windows is app-managed and belongs to this installation. }
+    RegDeleteValue(HKCU,
+      'Software\Microsoft\Windows\CurrentVersion\Run', 'Tapps Tracker');
     if MsgBox('Also delete your tracked game history and settings?'#13#10#13#10 +
               'Choose No to keep them for a future reinstall.',
               mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then

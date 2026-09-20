@@ -4717,6 +4717,164 @@ def test_parse_match_metadata_event_set_deck_v3_premier_draft_sets_event_format(
     assert tracker._friendly_format_label() == "Premier Draft - MSH"
 
 
+def test_powered_cube_event_outranks_draft_attribute_and_command_zone():
+    tracker = make_tracker()
+    request = {
+        "EventName": "CubeDraft_Powered_20260908",
+        "Summary": {
+            "DeckId": "powered-cube-deck",
+            "Name": "Draft Deck",
+            "Attributes": [{"name": "Format", "value": "Draft"}],
+        },
+        "Deck": {
+            "MainDeck": [{"cardId": 105071, "quantity": 40}],
+            "CommandZone": [],
+        },
+    }
+    line = "[UnityCrossThreadLogger]==> EventSetDeckV3 " + json.dumps(
+        {"id": "abc", "request": json.dumps(request)}
+    )
+
+    tracker._parse_match_metadata(line)
+    tracker._format_from_backfill = True
+    tracker._set_active_deck_from_candidate(
+        {
+            "deck_id": "later-edited-deck",
+            "deck_name": "Later Edited Deck",
+            "trusted_active": True,
+            "format_attr": "Draft",
+        }
+    )
+    tracker._update_format_from_game_state(
+        {"zones": [{"type": "ZoneType_Command", "objectInstanceIds": [801]}]}
+    )
+
+    assert tracker.game_state.format_str == "CubeDraft_Powered_20260908"
+    assert tracker.game_state.match_type == "best_of_1"
+    assert tracker._friendly_format_label() == "Powered Cube"
+
+
+def test_unknown_event_set_deck_id_outranks_hints_and_is_humanized():
+    tracker = make_tracker()
+    request = {
+        "EventName": "FutureChaos_Event_20270101",
+        "Summary": {
+            "DeckId": "future-event-deck",
+            "Name": "Event Deck",
+            "Attributes": [{"name": "Format", "value": "Draft"}],
+        },
+        "Deck": {
+            "MainDeck": [{"cardId": 105071, "quantity": 40}],
+            "CommandZone": [],
+        },
+    }
+    line = "[UnityCrossThreadLogger]==> EventSetDeckV3 " + json.dumps(
+        {"id": "abc", "request": json.dumps(request)}
+    )
+
+    tracker._parse_match_metadata(line)
+    tracker._update_format_from_game_state(
+        {"zones": [{"type": "ZoneType_Command", "objectInstanceIds": [801]}]}
+    )
+
+    assert tracker.game_state.format_str == "FutureChaos_Event_20270101"
+    assert tracker.game_state.authoritative_event_id == "FutureChaos_Event_20270101"
+    assert tracker._friendly_format_label() == "Future Chaos Event"
+    assert not tracker._is_brawl_format()
+
+
+def test_unknown_match_room_event_id_is_authoritative_without_reserved_players():
+    tracker = make_tracker()
+    tracker._parse_match_metadata(
+        json.dumps(
+            {
+                "matchGameRoomStateChangedEvent": {
+                    "gameRoomInfo": {
+                        "gameRoomConfig": {
+                            "matchId": "future-match",
+                            "eventId": "NewShowcase_20270214",
+                            "eventType": "GenericEvent",
+                            "reservedPlayers": [],
+                        }
+                    }
+                }
+            }
+        )
+    )
+
+    assert tracker.game_state.format_str == "NewShowcase_20270214"
+    assert tracker.game_state.authoritative_event_id == "NewShowcase_20270214"
+    assert tracker._friendly_format_label() == "New Showcase"
+
+
+def test_unknown_deck_upsert_event_remains_a_hint():
+    tracker = make_tracker()
+    request = {
+        "EventName": "FutureChaos_Event_20270101",
+        "Summary": {
+            "DeckId": "edited-deck",
+            "Name": "Edited Deck",
+            "Attributes": [{"name": "Format", "value": "Standard"}],
+        },
+        "Deck": {"MainDeck": [{"cardId": 105071, "quantity": 60}]},
+    }
+    line = "[UnityCrossThreadLogger]==> DeckUpsertDeckV3 " + json.dumps(
+        {"id": "abc", "request": json.dumps(request)}
+    )
+
+    tracker._parse_match_metadata(line)
+
+    assert tracker.game_state.format_str == "Standard"
+    assert tracker.game_state.authoritative_event_id is None
+
+
+def test_incoming_unknown_event_set_v3_response_remains_a_hint():
+    tracker = make_tracker()
+    payload = {
+        "InternalEventName": "FutureChaos_Event_20270101",
+        "CourseDeckSummary": {
+            "DeckId": "listed-deck",
+            "Name": "Listed Deck",
+            "Attributes": [{"name": "Format", "value": "Standard"}],
+        },
+        "CourseDeck": {"MainDeck": [{"cardId": 105071, "quantity": 60}]},
+    }
+
+    tracker._parse_match_metadata(
+        "[UnityCrossThreadLogger]<== EventSetDeckV3 " + json.dumps(payload)
+    )
+
+    assert tracker.game_state.format_str == "Standard"
+    assert tracker.game_state.authoritative_event_id is None
+
+
+def test_match_persists_only_the_authoritative_event_as_queue_metadata():
+    tracker = make_tracker()
+    tracker.game_state.format_str = "FutureChaos_Event_20270101"
+    tracker.game_state.authoritative_event_id = "FutureChaos_Event_20270101"
+    tracker.game_state.player_deck_event_name = "StaleEditedDeckEvent_20261201"
+    conn = sqlite3.connect(":memory:")
+    AnalyticsStore.ensure_schema(conn)
+
+    tracker._upsert_match_analytics(
+        conn,
+        "future-match",
+        "2027-01-01T12:00:00",
+        "2027-01-01T12:05:00",
+        None,
+    )
+
+    row = conn.execute(
+        "select format, queue, event_name from matches where id = 'future-match'"
+    ).fetchone()
+    conn.close()
+    assert row == (
+        "FutureChaos_Event_20270101",
+        "FutureChaos_Event_20270101",
+        "FutureChaos_Event_20270101",
+    )
+
+
 def test_midweek_brawl_event_set_deck_v3_keeps_midweek_brawl_format():
     tracker = make_tracker()
     request = {

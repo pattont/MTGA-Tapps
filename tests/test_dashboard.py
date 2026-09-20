@@ -2917,6 +2917,44 @@ def test_deck_colors_come_from_newest_decklist_casting_costs(tmp_path):
     assert detail["deck_colors"] == "WR"
 
 
+def test_game_lists_use_each_games_submitted_deck_colors(tmp_path):
+    """A revised draft deck must not repaint earlier games in history."""
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            "insert into cards (name, first_seen_at, mana_cost, color_identity) "
+            "values (?, '2026-06-01T00:00:00', '', ?)",
+            [("Mountain", "R"), ("Island", "U")],
+        )
+        card_ids = {
+            name: card_id
+            for card_id, name in conn.execute(
+                "select id, name from cards where name in ('Mountain', 'Island')"
+            )
+        }
+        conn.execute("delete from game_deck_cards")
+        conn.executemany(
+            """
+            insert into game_deck_cards (
+                game_id, participant_id, card_id, arena_id, display_name,
+                type_category, deck_zone, quantity
+            ) values (?, ?, ?, ?, ?, 'Land', 'deck', 24)
+            """,
+            [
+                ("game-1", "player-1", card_ids["Mountain"], 90001, "Mountain"),
+                ("game-2", "player-2", card_ids["Island"], 90002, "Island"),
+            ],
+        )
+
+    recent = {row["game_id"]: row for row in dashboard_snapshot(db_path)["recent"]}
+    assert recent["game-1"]["deck_colors"] == "R"
+    assert recent["game-2"]["deck_colors"] == "U"
+
+    history = {row["game_id"]: row for row in all_games(db_path)["games"]}
+    assert history["game-1"]["deck_colors"] == "R"
+    assert history["game-2"]["deck_colors"] == "U"
+
+
 def test_card_detail_opponent_playable_counts_color_covered_games(tmp_path):
     """'Could have played it' = games whose revealed opponent colors cover the cost."""
     db_path = _sample_dashboard_db(tmp_path)

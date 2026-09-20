@@ -45,7 +45,9 @@ Primary code paths:
 
 - `src/mtga_tracker/main.py`: console-tracker CLI entry point.
 - `src/mtga_tracker/app.py`: unified launcher that wires one `AnalyticsStore`/`--db` into both
-  the tracker thread and the dashboard server, with or without the GUI (`--no-gui`).
+  the tracker thread and the dashboard server, with or without the GUI (`--no-gui`). It holds
+  the process-wide `single_instance.py` guard before starting any of them: a named mutex on
+  Windows and a per-user advisory lock on macOS/Linux. Deck Finder mode bypasses this guard.
 - `src/mtga_tracker/menu_app.py`: PyQt6 menu-bar/tray controller. Its "Live Scoreboard"
   item opens the dashboard's `#/live`; the old Qt log window is a debug fallback. GUI-only;
   guarded by the `gui` extra and skipped in headless test runs.
@@ -75,7 +77,7 @@ Primary code paths:
 - `src/mtga_tracker/tracker_combat.py`: attack/block/combat damage handling.
 - `src/mtga_tracker/tracker_opening_deck.py`: opening hand, mulligan, format, commander, deck metadata.
 - `src/mtga_tracker/tracker_analytics.py`: SQLite persistence helpers.
-- `src/mtga_tracker/format_normalizer.py`: single source of truth for raw queue/format labels and best-of inference.
+- `src/mtga_tracker/format_normalizer.py`: single source of truth for raw queue/format labels and best-of inference. Unknown identifiers with an `Event` token or a terminal YYYYMMDD date are generic events: preserve and humanize them instead of guessing a constructed or Brawl format.
 - `src/mtga_tracker/removal_classifier.py`: text-based card-role classification (removal /
   board wipe / bounce / counter) from Arena rules text, cached per grpId. Roles feed the
   played/drawn interaction stats; behavioral stats (things actually destroyed, countered,
@@ -114,9 +116,13 @@ Primary code paths:
   `reasoning_effort: low` and a retry on token-starved empty replies.
 - `src/mtga_tracker/settings.py`: shared `settings.json` — top level of the repo next to
   `config.py` for source runs, per-user data dir for frozen builds (legacy `data/settings.json`
-  migrates automatically).
+  migrates automatically). Startup preferences are stored in its `startup` section.
+- `src/mtga_tracker/startup.py`: per-user Windows Run / macOS LaunchAgent registration. Frozen
+  builds register the app/executable; source runs register the active Python environment.
+  `--login-start` marks OS launches so an already-running app exits quietly; it does not override
+  the saved browser preference.
 - `src/mtga_tracker/settings_api.py`: dashboard settings for Deck AI, Deck Finder creators,
-  overlay control, platform capabilities, and resolved tracker paths. The menu
+  startup behavior, overlay control, platform capabilities, and resolved tracker paths. The menu
   "Tracker Settings" action opens this dashboard page. `settings_dialog.py` retains
   the PyQt Deck AI settings implementation.
 - `src/mtga_tracker/deckfinder_api.py`: background jobs for the integrated dashboard Deck Finder.
@@ -124,6 +130,12 @@ Primary code paths:
   collection-export jobs, macOS/Windows process-memory readers, and local card metadata.
 - `src/mtga_tracker/overlay_state.py` / `overlay_launcher.py`: library-composition odds
   and the separate overlay process manager; enabled by default when the binary is available.
+  The manager recognizes an already-running Tauri singleton by its exact executable path;
+  a successful second-instance handoff must not be treated as the overlay quitting or change
+  `overlay.enabled` to false. Exit code 23 is reserved for an explicit **Quit overlay** action.
+  On macOS, `overlay/src-tauri/src/arena.rs` parses `lsappinfo` one property line at a time;
+  macOS 27 returns extra properties even with `-only`, so never parse everything after the first
+  equals sign or Arena will be treated as never frontmost and the overlay will hide itself.
 - `src/mtga_tracker/deck_downloader_launcher.py`: launches the bundled Deck Finder in a sized
   terminal window via `POST /api/deck-downloader/launch`; frozen builds invoke the same
   tracker executable with `--deck-finder`. The menu item opens dashboard `#/deckfinder`.
@@ -182,6 +194,13 @@ UI changes require vitest, tsc, lint, and a fresh `npm run build` (the dashboard
   `packaging/mtga_tracker.spec` and `packaging/entrypoint.py`, and embed the
   tag-derived package version in the artifact name. Never change the installer's `AppId`
   GUID — it is what makes newer setups upgrade in place.
+- The macOS bundle filename and executable remain `MTGA Tracker` for upgrade
+  compatibility, while `CFBundleName`/`CFBundleDisplayName` are `Tapps Tracker`,
+  the stable bundle identifier is `com.travispatton.mtgatracker`, and
+  `LSUIElement=true` declares the app as a menu-bar utility. A terminal source
+  run still belongs to the Python interpreter; use `build_macos_app.sh --fast`
+  when testing current source with its native app identity. The fast build is
+  for local iteration only and must not be used for a release.
 - The macOS BUNDLE and Windows folder each ship one tracker executable; Deck Finder's
   terminal UI is its `--deck-finder` mode. After a build, verify the tracker executable,
   integrated Deck Finder provider list, and terminal mode. Do not expect or add a second
@@ -198,7 +217,9 @@ UI changes require vitest, tsc, lint, and a fresh `npm run build` (the dashboard
   it. `overlay_launcher.overlay_binary_candidates()` lists every location the tracker looks
   in (env `MTGA_TRACKER_OVERLAY_BIN` overrides). `scripts/build_overlay.sh --fast` (`-Fast`)
   uses the incremental `fast` cargo profile for iteration — seconds instead of a fat-LTO
-  relink; never ship it. The overlay's frontend and Rust tests:
+  relink; never ship it. The macOS shell build scripts source `scripts/node_env.sh`, which
+  loads the user's nvm default when Node is absent from a noninteractive shell's `PATH`.
+  The overlay's frontend and Rust tests:
   `cd overlay && npm test && cargo test --manifest-path src-tauri/Cargo.toml`.
 - `.github/workflows/release.yml` builds both OS artifacts and attaches them to a **draft**
   GitHub Release on a `v*` tag. Manual branch runs upload Actions artifacts; manual tag
@@ -237,10 +258,16 @@ Preserve these behaviors unless the user explicitly changes requirements:
 
 - Never stop or restart the active tracker or desktop app without explicit user approval. The
   user may be in a live game even when the latest persisted log line appears idle.
+- The unified launcher is single-instance across source and installed launches for the same OS
+  user. Acquire its OS-owned guard before starting the dashboard, tracker, or tray; keep the
+  legacy Qt lock as a cross-version backstop, and never apply the guard to Deck Finder mode.
 - On macOS, rely on the tray icon's registered native context menu; manually popping that same
   menu from the activation callback creates a duplicate overlapping menu.
 - Perform database inspection read-only first. Use SQLite's online backup API before a live
   repair, and keep the tracker running unless the user explicitly authorizes downtime.
+- Restore migrations temporarily enable SQLite WAL mode on the staged snapshot. Before replacing
+  the live database, checkpoint the staged WAL and return it to `journal_mode=DELETE`; deleting
+  sidecars while leaving a WAL-mode header makes the first read-only summary fail with zero games.
 - Console output should be readable and consistent: no emoji/icons in turn log lines or summaries.
 - Turn headers are the section boundary; individual log lines should use elapsed match time, not repeated turn labels.
 - Stack output should distinguish spells/abilities put on the stack from `[resolved]`, `[countered]`, or inferred no-resolution states.
@@ -251,7 +278,9 @@ Preserve these behaviors unless the user explicitly changes requirements:
   total lands, at least four consecutive land draws, or at least six lands within eight draws.
 - The homepage Recent Games table uses that same Flood calculation, shows total turns, and
   combines Lands Seen with a whole-number percentage rounded upward; it does not show
-  player/opponent average-turn columns.
+  player/opponent average-turn columns. Its deck colors, and those in All Games and opponent
+  history, come from that game's submitted `game_deck_cards` snapshot; deck-level pages use
+  the newest submitted revision for the named deck.
 - The Formats table defaults to case-insensitive Format A–Z order. Midweek Magic and Momir are
   excluded in both backend responses and the UI as a safeguard against stale dashboard processes.
 - Best Deck = most total wins among decks with a winning record (>=50% WR, min 8 decided
@@ -305,6 +334,9 @@ Preserve these behaviors unless the user explicitly changes requirements:
   queue identifier always outranks deck metadata: a deck's Format ATTRIBUTE
   ("HistoricBrawl"/"HistoricBrawlRanked") describes the deck, not the queue, and must never
   relabel a match whose format already normalizes to a Brawl queue.
+- Cube event IDs such as `CubeDraft_Powered_20260908` are authoritative queue metadata,
+  normalize to **Powered Cube**, and count as explicit non-Brawl formats even when Arena exposes
+  a populated command zone. They outrank the deck's generic `Draft` format attribute.
 - The Overview's Brawl section (record strip, Best Commander / Toughest Opponent Commander
   art boxes, Your/Faced Commanders tables paged at 8) is always rendered with an empty state
   and has its own nav entry. Brawl is recognized from the match format, never from deck size.
@@ -333,6 +365,10 @@ Arena logs are not a simple chronological event stream. Be careful with inferred
 - Seat IDs can change between games. Never assume the local player is seat 1.
 - Re-resolve the format for every game from the latest active match-room metadata. Never carry
   a scene/event hint across games or map missing format metadata to a guessed queue.
+- Unknown event identifiers from match-room `eventId`, EventLanding context, or the outgoing
+  `EventSetDeckV3` request are authoritative: preserve the raw id, derive a readable fallback label,
+  and never let deck attributes, `DeckUpsert`, or command-zone inference replace it. Persist
+  `matches.queue`/`event_name` only from that authoritative event signal.
 - Winner detection must validate against the local player seat. Concession/disconnect messages are especially easy to invert.
 - Costs can appear before/after the ability text in raw log order. For activated abilities, paid costs such as discard/tap should be associated with the activation.
 - MTGA uses last-in-first-out stack resolution. A card can be cast/activated, then another spell/ability can be added above it and resolve first.

@@ -1012,9 +1012,23 @@ describe('App', () => {
         tcgplayer: [],
       },
       platform: { system: 'macos', collection_export: true },
+      startup: {
+        start_at_login: false,
+        open_dashboard_on_launch: true,
+        available: true,
+        registered: false,
+        error: null,
+      },
       overlay: { enabled: false, available: true, running: false, binary: '/tmp/tapps-overlay', log: '/tmp/data/overlay.log', error: null },
     };
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url) === '/api/settings/startup') {
+        const change = JSON.parse(String(init?.body));
+        Object.assign(settings.startup, change, {
+          registered: change.start_at_login ?? settings.startup.registered,
+        });
+        return new Response(JSON.stringify({ startup: settings.startup }), { status: 200 });
+      }
       if (String(url) === '/api/settings/overlay') {
         const enabled = Boolean(JSON.parse(String(init?.body)).enabled);
         return new Response(
@@ -1072,6 +1086,33 @@ describe('App', () => {
       screen.getByRole('heading', { name: 'Export MTGA Collection' }),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Export to .csv' })).toBeInTheDocument();
+    // Startup sits immediately above the overlay and saves both switches independently.
+    expect(screen.getByRole('heading', { name: 'Startup' })).toBeInTheDocument();
+    expect(headings.indexOf('Startup')).toBeLessThan(headings.indexOf('In-game overlay'));
+    expect(screen.getByLabelText('Start with macOS')).not.toBeChecked();
+    expect(screen.getByLabelText('Open dashboard on launch')).toBeChecked();
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Start with macOS'));
+    });
+    expect(screen.getByLabelText('Start with macOS')).toBeChecked();
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Open dashboard on launch'));
+    });
+    expect(screen.getByLabelText('Open dashboard on launch')).not.toBeChecked();
+    expect(screen.getByText(/Saved\. The change applies/)).toHaveClass(
+      'backup-note-done',
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/settings/startup',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ start_at_login: true }) }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/settings/startup',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ open_dashboard_on_launch: false }),
+      }),
+    );
     // The in-game overlay toggle drives /api/settings/overlay and reflects the answer.
     expect(screen.getByRole('heading', { name: 'In-game overlay' })).toBeInTheDocument();
     expect(screen.getByText('Overlay is off')).toBeInTheDocument();

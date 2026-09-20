@@ -717,7 +717,10 @@ fn hide_overlay(app: AppHandle) {
 #[tauri::command]
 fn quit_overlay(app: AppHandle) {
     diag::log("quit requested by the page");
-    app.exit(0);
+    // The Python supervisor distinguishes an explicit player choice from a
+    // successful second-instance handoff (0) and from a crash. Keep this in
+    // sync with overlay_launcher.USER_QUIT_EXIT_CODE.
+    app.exit(23);
 }
 
 /// What the page has flown out (the ⚙ flyout, the sideboard). The flyout

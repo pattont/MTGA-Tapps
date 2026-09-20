@@ -43,6 +43,35 @@ def _fake_binary(tmp_path: Path) -> Path:
     return binary
 
 
+def test_windows_process_discovery_reads_tasklist_csv(tmp_path, monkeypatch):
+    binary = tmp_path / "tapps-overlay.exe"
+    calls = []
+
+    class Result:
+        stdout = (
+            '"tapps-overlay.exe","4321","Console","1","18,240 K"\n'
+            '"tapps-overlay.exe","7654","Console","1","18,112 K"\n'
+            'INFO: No tasks are running which match the specified criteria.\n'
+        )
+
+    def run(args, **kwargs):
+        calls.append((args, kwargs))
+        return Result()
+
+    monkeypatch.setattr(overlay_launcher.sys, "platform", "win32")
+    monkeypatch.setattr(overlay_launcher.subprocess, "run", run)
+
+    assert overlay_launcher._overlay_process_ids(binary) == [4321, 7654]
+    assert calls[0][0] == [
+        "tasklist",
+        "/FI",
+        "IMAGENAME eq tapps-overlay.exe",
+        "/FO",
+        "CSV",
+        "/NH",
+    ]
+
+
 def test_enabled_flag_round_trips_without_touching_other_sections(tmp_path):
     path = tmp_path / "settings.json"
     path.write_text(json.dumps({"dashboard": {"port": 9000}}), encoding="utf-8")
@@ -127,7 +156,7 @@ def test_manager_reports_a_missing_binary(tmp_path, monkeypatch):
     assert "not included" in status["error"]
 
 
-def test_send_launches_a_second_instance_with_the_flag(tmp_path):
+def test_send_launches_a_second_instance_with_the_flag(tmp_path, monkeypatch):
     binary = _fake_binary(tmp_path)
     launched = []
 
@@ -145,8 +174,16 @@ def test_send_launches_a_second_instance_with_the_flag(tmp_path):
     with pytest.raises(ValueError):
         manager.send("dance")
 
+    idle_manager = OverlayManager(
+        binary=binary,
+        settings_path=tmp_path / "idle-settings.json",
+        popen=popen,
+        log_dir=tmp_path,
+        process_finder=lambda _binary: [],
+    )
+    monkeypatch.setattr(overlay_launcher, "_manager", idle_manager)
     code, body = settings_api.handle_post("/api/settings/overlay", {"request": "open-settings"})
-    assert code == 400  # the global manager (no binary here) is not running
+    assert code == 400
 
 
 def test_refresh_turns_the_setting_off_when_the_overlay_quits_itself(tmp_path):
@@ -163,12 +200,93 @@ def test_refresh_turns_the_setting_off_when_the_overlay_quits_itself(tmp_path):
     manager.add_listener(seen.append)
     manager.set_enabled(True)
     assert seen[-1]["running"] is True
-    processes[0].returncode = 0  # the player picked "Quit overlay" in its tray
+    processes[0].returncode = overlay_launcher.USER_QUIT_EXIT_CODE
+    # The player picked "Quit overlay" in its flyout.
     status = manager.refresh()
     assert status["running"] is False
     assert status["enabled"] is False
-    assert "exited with code 0" in status["error"]
+    assert f"exited with code {overlay_launcher.USER_QUIT_EXIT_CODE}" in status["error"]
     assert seen[-1]["running"] is False
+
+
+def test_refresh_adopts_an_existing_singleton_after_handoff(tmp_path):
+    binary = _fake_binary(tmp_path)
+    processes = []
+    external_pids = []
+
+    def popen(args, **kwargs):
+        process = FakeProcess(args, **kwargs)
+        processes.append(process)
+        return process
+
+    manager = OverlayManager(
+        binary=binary,
+        settings_path=tmp_path / "settings.json",
+        popen=popen,
+        log_dir=tmp_path,
+        process_finder=lambda _binary: list(external_pids),
+    )
+    manager.set_enabled(True)
+    processes[0].returncode = 0
+    external_pids.append(4321)
+
+    status = manager.refresh()
+
+    assert status["running"] is True
+    assert status["enabled"] is True
+    assert status["error"] is None
+
+
+def test_crash_does_not_disable_future_overlay_launches(tmp_path):
+    binary = _fake_binary(tmp_path)
+    processes = []
+
+    def popen(args, **kwargs):
+        process = FakeProcess(args, **kwargs)
+        processes.append(process)
+        return process
+
+    manager = OverlayManager(
+        binary=binary,
+        settings_path=tmp_path / "settings.json",
+        popen=popen,
+        log_dir=tmp_path,
+        process_finder=lambda _binary: [],
+    )
+    manager.set_enabled(True)
+    processes[0].returncode = 1
+
+    status = manager.refresh()
+
+    assert status["running"] is False
+    assert status["enabled"] is True
+    assert "exited with code 1" in status["error"]
+
+
+def test_manager_recognizes_and_stops_external_overlay(tmp_path):
+    binary = _fake_binary(tmp_path)
+    external_pids = [4321]
+    killed = []
+
+    def kill(pid):
+        killed.append(pid)
+        external_pids.remove(pid)
+
+    manager = OverlayManager(
+        binary=binary,
+        settings_path=tmp_path / "settings.json",
+        popen=lambda *args, **kwargs: pytest.fail("existing overlay should be reused"),
+        log_dir=tmp_path,
+        process_finder=lambda _binary: list(external_pids),
+        process_killer=kill,
+    )
+
+    assert manager.set_enabled(True)["running"] is True
+    status = manager.set_enabled(False)
+
+    assert killed == [4321]
+    assert status["running"] is False
+    assert status["enabled"] is False
 
 
 def test_settings_api_exposes_and_toggles_the_overlay(tmp_path, monkeypatch):

@@ -55,7 +55,8 @@ import {
 } from './CombatGroupColumns';
 import { ColorPips } from './ColorPips';
 import { CardLink } from './CardLink';
-import { CommanderBanner, commanderArtUrl } from './CommanderPanel';
+import { commanderArtUrl } from '../commanderArt';
+import { CommanderBanner } from './CommanderPanel';
 import { makeCommanderColumns } from '../commanderColumns';
 import { DeckVisual } from './DeckVisual';
 import { FilterBar } from './FilterBar';

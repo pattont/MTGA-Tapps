@@ -5,6 +5,7 @@ const STANDARD_R1 = 'standard best-of-1 (ranked)';
 const STANDARD_U3 = 'standard best-of-3 (unranked)';
 const HISTORIC_BRAWL = 'historic brawl';
 const TIMELESS_QUALIFIER = 'qualifier play in bo1 timeless';
+const CONSTRUCTED_EVENT = 'constructed event';
 const TRAD_SEALED = 'traditional sealed - msh';
 
 describe('format quick filters', () => {
@@ -17,6 +18,8 @@ describe('format quick filters', () => {
     // Events don't pollute the ladder family they mention.
     expect(quickFilterPredicate('timeless')(TIMELESS_QUALIFIER)).toBe(false);
     expect(quickFilterPredicate('events')(TIMELESS_QUALIFIER)).toBe(true);
+    expect(quickFilterPredicate('events')(CONSTRUCTED_EVENT)).toBe(true);
+    expect(quickFilterPredicate('standard')(CONSTRUCTED_EVENT)).toBe(false);
   });
 
   it('refinements narrow within the family', () => {

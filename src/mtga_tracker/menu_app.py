@@ -530,6 +530,8 @@ def run_menu_app(args: Any) -> int:
     app = QApplication.instance() or QApplication([])
     instance_lock = _acquire_instance_lock()
     if instance_lock is None:
+        if getattr(args, "login_start", False):
+            return 0
         # Windowed builds have no console — tell the user visibly. This is
         # the path hit when relaunching before the old process finishes
         # shutting down.
@@ -553,3 +555,11 @@ def run_menu_app(args: Any) -> int:
     controller = MenuBarController(app, args)
     controller.start()
     return app.exec()
+
+
+def show_instance_message(message: str, *, title: str = "Tapps Tracker") -> None:
+    """Show a startup message in windowed builds that have no console."""
+    QApplication.setApplicationName(_APP_NAME)
+    QApplication.setApplicationDisplayName(_APP_NAME)
+    app = QApplication.instance() or QApplication([])
+    QMessageBox.information(None, title, message)

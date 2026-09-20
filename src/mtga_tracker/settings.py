@@ -8,10 +8,12 @@ checkout, so they keep it in the per-user data directory instead.
 from __future__ import annotations
 
 import json
+import os
 import sys
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from .paths import DATA_DIR, PROJECT_ROOT
 
@@ -51,6 +53,8 @@ MIN_LIVE_LOG_WIDTH = 820
 MIN_LIVE_LOG_HEIGHT = 560
 MAX_LIVE_LOG_WIDTH = 4096
 MAX_LIVE_LOG_HEIGHT = 2160
+DEFAULT_START_AT_LOGIN = False
+DEFAULT_OPEN_DASHBOARD_ON_LAUNCH = True
 
 
 @dataclass(frozen=True)
@@ -60,6 +64,8 @@ class AppSettings:
     live_log_width: int = DEFAULT_LIVE_LOG_WIDTH
     live_log_height: int = DEFAULT_LIVE_LOG_HEIGHT
     dashboard_port: int = DEFAULT_DASHBOARD_PORT
+    start_at_login: bool = DEFAULT_START_AT_LOGIN
+    open_dashboard_on_launch: bool = DEFAULT_OPEN_DASHBOARD_ON_LAUNCH
 
 
 def _default_document() -> Dict[str, Any]:
@@ -71,6 +77,10 @@ def _default_document() -> Dict[str, Any]:
         "dashboard": {
             "port": DEFAULT_DASHBOARD_PORT,
         },
+        "startup": {
+            "start_at_login": DEFAULT_START_AT_LOGIN,
+            "open_dashboard_on_launch": DEFAULT_OPEN_DASHBOARD_ON_LAUNCH,
+        },
     }
 
 
@@ -80,9 +90,35 @@ def _bounded_dimension(value: Any, *, default: int, minimum: int, maximum: int) 
     return max(minimum, min(maximum, value))
 
 
-def load_app_settings(path: Path = SETTINGS_PATH, *, create: bool = True) -> AppSettings:
+def _boolean(value: Any, *, default: bool) -> bool:
+    return value if isinstance(value, bool) else default
+
+
+def _read_document(path: Path) -> Dict[str, Any]:
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    return document if isinstance(document, dict) else {}
+
+
+def _write_document(path: Path, document: Dict[str, Any]) -> None:
+    """Atomically replace settings without dropping unrelated sections."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def load_app_settings(path: Optional[Path] = None, *, create: bool = True) -> AppSettings:
     """Load validated settings, creating a default JSON file when missing."""
-    path = Path(path).expanduser()
+    path = Path(path or SETTINGS_PATH).expanduser()
     if not path.exists():
         if create:
             try:
@@ -92,11 +128,8 @@ def load_app_settings(path: Path = SETTINGS_PATH, *, create: bool = True) -> App
                 pass
         return AppSettings()
 
-    try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return AppSettings()
-    if not isinstance(document, dict):
+    document = _read_document(path)
+    if not document:
         return AppSettings()
     window = document.get("live_log_window")
     if not isinstance(window, dict):
@@ -104,6 +137,9 @@ def load_app_settings(path: Path = SETTINGS_PATH, *, create: bool = True) -> App
     dashboard = document.get("dashboard")
     if not isinstance(dashboard, dict):
         dashboard = {}
+    startup = document.get("startup")
+    if not isinstance(startup, dict):
+        startup = {}
     return AppSettings(
         live_log_width=_bounded_dimension(
             window.get("width"),
@@ -123,4 +159,28 @@ def load_app_settings(path: Path = SETTINGS_PATH, *, create: bool = True) -> App
             minimum=MIN_DASHBOARD_PORT,
             maximum=MAX_DASHBOARD_PORT,
         ),
+        start_at_login=_boolean(startup.get("start_at_login"), default=DEFAULT_START_AT_LOGIN),
+        open_dashboard_on_launch=_boolean(
+            startup.get("open_dashboard_on_launch"),
+            default=DEFAULT_OPEN_DASHBOARD_ON_LAUNCH,
+        ),
     )
+
+
+def save_startup_settings(
+    *,
+    start_at_login: bool,
+    open_dashboard_on_launch: bool,
+    path: Optional[Path] = None,
+) -> AppSettings:
+    """Persist startup preferences while preserving unrelated settings."""
+    if not isinstance(start_at_login, bool) or not isinstance(open_dashboard_on_launch, bool):
+        raise TypeError("Startup settings must be booleans.")
+    path = Path(path or SETTINGS_PATH).expanduser()
+    document = _read_document(path) if path.exists() else _default_document()
+    document["startup"] = {
+        "start_at_login": start_at_login,
+        "open_dashboard_on_launch": open_dashboard_on_launch,
+    }
+    _write_document(path, document)
+    return load_app_settings(path, create=False)

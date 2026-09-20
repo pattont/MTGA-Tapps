@@ -240,6 +240,10 @@ class GameState:
         self.match_type = "best_of_1"
         self.game_number = 1
         self.format_str = "Unknown"
+        #: Raw Arena event id from a live match-room, EventLanding, or
+        #: EventSetDeckV3 signal. Unlike deck attributes, this owns the format
+        #: even when the event is new to this tracker version.
+        self.authoritative_event_id: Optional[str] = None
         #: Arena's own match UUID from GRE gameInfo — the authoritative way to
         #: group Bo3 games into one match (heuristics are only a fallback).
         self.arena_match_id: Optional[str] = None

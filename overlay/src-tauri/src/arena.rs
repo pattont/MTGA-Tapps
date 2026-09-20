@@ -34,9 +34,27 @@ pub fn probe() -> ArenaStatus {
     platform::probe()
 }
 
+/// Read one assignment from `lsappinfo info` output.
+///
+/// macOS 27 appends additional lines such as `bundle path=...` even when
+/// `-only bundleid` or `-only pid` is requested. Parsing the entire output
+/// after the first `=` folds those lines into the value and makes a real
+/// `com.wizards.mtga` foreground identifier fail its exact comparison.
+fn lsappinfo_property(text: &str, property: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let (label, value) = line.split_once('=')?;
+        if label.trim().trim_matches('"') != property {
+            return None;
+        }
+        let value = value.trim().trim_matches('"');
+        (!value.is_empty()).then(|| value.to_string())
+    })
+}
+
 #[cfg(target_os = "macos")]
 mod platform {
     use super::ArenaStatus;
+    use objc2_app_kit::NSWorkspace;
     use std::ffi::{c_char, c_void, CString};
     use std::process::Command;
 
@@ -46,23 +64,12 @@ mod platform {
     /// permission (unlike System Events or CGWindowList names), and answers
     /// in a few milliseconds — the right trade for a once-a-second poll.
     fn frontmost_bundle_id() -> Option<String> {
-        let front = Command::new("/usr/bin/lsappinfo").arg("front").output().ok()?;
-        let asn = String::from_utf8_lossy(&front.stdout).trim().to_string();
-        if asn.is_empty() {
-            return None;
-        }
-        let info = Command::new("/usr/bin/lsappinfo")
-            .args(["info", "-only", "bundleid", &asn])
-            .output()
-            .ok()?;
-        let text = String::from_utf8_lossy(&info.stdout);
-        // "CFBundleIdentifier"="com.wizards.mtga"
-        let value = text.split('=').nth(1)?.trim().trim_matches('"').to_string();
-        if value.is_empty() {
-            None
-        } else {
-            Some(value)
-        }
+        // `lsappinfo front` returns `[ NULL ]` intermittently on macOS 27,
+        // including for an active Arena window. NSWorkspace is the native,
+        // permission-free source for the foreground application.
+        let workspace = NSWorkspace::sharedWorkspace();
+        let application = workspace.frontmostApplication()?;
+        application.bundleIdentifier().map(|id| id.to_string())
     }
 
     /// Arena's process id, when it is running: by process name first, then
@@ -81,7 +88,7 @@ mod platform {
             .ok()?;
         // "pid"=39523
         let text = String::from_utf8_lossy(&out.stdout);
-        text.split('=').nth(1)?.trim().trim_matches('"').parse().ok()
+        super::lsappinfo_property(&text, "pid")?.parse().ok()
     }
 
     // --- CGWindowList: the bounds of Arena's window without any permission
@@ -219,6 +226,53 @@ mod platform {
             bounds: pid.and_then(window_bounds),
             overlay_frontmost: front.as_deref() == Some(super::OVERLAY_BUNDLE_ID),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lsappinfo_property;
+
+    #[test]
+    fn parses_legacy_single_line_output() {
+        assert_eq!(
+            lsappinfo_property(
+                "\"CFBundleIdentifier\"=\"com.wizards.mtga\"\n",
+                "CFBundleIdentifier"
+            ),
+            Some("com.wizards.mtga".into())
+        );
+        assert_eq!(
+            lsappinfo_property("\"pid\"=39523\n", "pid"),
+            Some("39523".into())
+        );
+    }
+
+    #[test]
+    fn ignores_macos_27_trailing_properties() {
+        let output = concat!(
+            "\"CFBundleIdentifier\"=\"com.wizards.mtga\"\n",
+            "    bundle path=\"/Applications/MTGA.app\"\n",
+            "    executable path=\"/Applications/MTGA.app/Contents/MacOS/MTGA\"\n",
+        );
+        assert_eq!(
+            lsappinfo_property(output, "CFBundleIdentifier"),
+            Some("com.wizards.mtga".into())
+        );
+    }
+
+    #[test]
+    fn selects_the_requested_property() {
+        let output = concat!(
+            "\"pid\"=86067\n",
+            "    bundle path=\"/Applications/MTGA.app\"\n",
+        );
+        assert_eq!(lsappinfo_property(output, "pid"), Some("86067".into()));
+        assert_eq!(
+            lsappinfo_property(output, "bundle path"),
+            Some("/Applications/MTGA.app".into())
+        );
+        assert_eq!(lsappinfo_property(output, "missing"), None);
     }
 }
 

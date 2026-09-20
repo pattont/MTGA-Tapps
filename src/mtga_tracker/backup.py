@@ -652,6 +652,35 @@ def _remove_sidecars(db_path: Path, *, required: bool = False) -> None:
                 raise
 
 
+def _finalize_staged_database(db_path: Path) -> None:
+    """Checkpoint a migrated snapshot and leave it as one portable file.
+
+    ``AnalyticsStore.connect`` enables WAL mode while it applies migrations.
+    Removing that WAL without changing the database header back makes the
+    first read-only open fail before another writer recreates the sidecars.
+    """
+    try:
+        conn = sqlite3.connect(db_path, timeout=30.0)
+        try:
+            conn.execute("PRAGMA busy_timeout = 30000")
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            row = conn.execute("PRAGMA journal_mode = DELETE").fetchone()
+            if not row or str(row[0]).lower() != "delete":
+                raise BackupError(
+                    "Could not finalize the restored database journal",
+                    "database-finalize",
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        raise BackupError(
+            f"Could not finalize the restored database: {exc}",
+            "database-finalize",
+        ) from exc
+    _remove_sidecars(db_path, required=True)
+
+
 def _merge_settings(local: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
     """The backup's settings, with this computer's own sections kept."""
     merged = json.loads(json.dumps(incoming)) if incoming else {}
@@ -750,7 +779,7 @@ def restore_backup(
             store.connect()
         finally:
             store.close()
-        _remove_sidecars(staged)
+        _finalize_staged_database(staged)
 
         report("Swapping the database in")
         if before_swap is not None:

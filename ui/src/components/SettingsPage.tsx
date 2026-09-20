@@ -6,6 +6,7 @@ import {
   fetchTrackerSettings,
   saveDeckAiSettings,
   saveDeckFinderCreators,
+  saveStartupSettings,
   startCollectionExport,
   setOverlayEnabled,
   type CollectionExportFormat,
@@ -15,6 +16,7 @@ import {
   type DeckFinderCreator,
   type DeckFinderCreatorSettings,
   type PlatformSettings,
+  type StartupSettings,
   type TrackerInfoSettings,
 } from '../api';
 import { Section } from './Section';
@@ -280,6 +282,7 @@ export function SettingsPage() {
   const [deckAi, setDeckAi] = useState<DeckAiSettings | null>(null);
   const [creators, setCreators] = useState<DeckFinderCreatorSettings | null>(null);
   const [platform, setPlatform] = useState<PlatformSettings | null>(null);
+  const [startup, setStartup] = useState<StartupSettings | null>(null);
   const [overlay, setOverlay] = useState<OverlaySettings | null>(null);
 
   useEffect(() => {
@@ -291,6 +294,7 @@ export function SettingsPage() {
           setDeckAi(settings.deck_ai);
           setCreators(settings.deck_finder);
           setPlatform(settings.platform);
+          setStartup(settings.startup);
           setOverlay(settings.overlay ?? null);
         }
       })
@@ -319,6 +323,22 @@ export function SettingsPage() {
           </p>
         ) : (
           <TrackerInfo info={trackerInfo} />
+        )}
+      </Section>
+
+      <Section
+        id="settings-startup"
+        title="Startup"
+        description="Choose whether Tapps Tracker starts when you sign in and whether a launch opens the dashboard in your browser."
+      >
+        {error ? (
+          <p className="empty-state deckfinder-state">{error}</p>
+        ) : startup === null ? (
+          <p className="state-panel deckfinder-state" role="status" aria-busy="true">
+            Loading...
+          </p>
+        ) : (
+          <StartupForm initial={startup} platform={platform} />
         )}
       </Section>
 
@@ -400,6 +420,99 @@ export function SettingsPage() {
         </div>
       </Section>
     </>
+  );
+}
+
+function StartupForm({
+  initial,
+  platform,
+}: {
+  initial: StartupSettings;
+  platform: PlatformSettings | null;
+}) {
+  const [startup, setStartup] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const loginLabel =
+    platform?.system === 'macos'
+      ? 'Start with macOS'
+      : platform?.system === 'windows'
+        ? 'Start with Windows'
+        : 'Start at login';
+
+  async function update(
+    change: Partial<Pick<StartupSettings, 'start_at_login' | 'open_dashboard_on_launch'>>,
+  ) {
+    setBusy(true);
+    setMessage(null);
+    setError(null);
+    try {
+      setStartup(await saveStartupSettings(change));
+      setMessage('Saved. The change applies the next time Tapps Tracker launches.');
+    } catch (exc: unknown) {
+      setError(exc instanceof Error ? exc.message : 'The startup setting could not be saved');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="settings-form startup-settings">
+      <label className="settings-check">
+        <input
+          checked={startup.start_at_login}
+          disabled={busy || !startup.available}
+          type="checkbox"
+          onChange={(event) => void update({ start_at_login: event.target.checked })}
+        />
+        {loginLabel}
+      </label>
+      <p className="settings-hint">
+        Start Tapps Tracker in the {platform?.system === 'macos' ? 'menu bar' : 'system tray'} when
+        you sign in, so tracking is ready before you queue.
+      </p>
+
+      <label className="settings-check">
+        <input
+          checked={startup.open_dashboard_on_launch}
+          disabled={busy}
+          type="checkbox"
+          onChange={(event) => void update({ open_dashboard_on_launch: event.target.checked })}
+        />
+        Open dashboard on launch
+      </label>
+      <p className="settings-hint">
+        When off, tracking still starts and the dashboard remains available from the Tapps Tracker
+        menu.
+      </p>
+
+      {!startup.available ? (
+        <p className="settings-hint" role="status">
+          Start at login is available on Windows and macOS.
+        </p>
+      ) : startup.start_at_login && !startup.registered ? (
+        <p className="collection-export-status collection-export-warning" role="status">
+          Start at login is saved, but its operating-system registration is missing.
+        </p>
+      ) : null}
+      {startup.error ? (
+        <p className="collection-export-status collection-export-warning" role="status">
+          {startup.error}
+        </p>
+      ) : null}
+      {message ? (
+        <p className="backup-note backup-note-done startup-save-status" role="status">
+          {message}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="collection-export-status collection-export-fail" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
   );
 }
 

@@ -98,6 +98,24 @@ def friendly_limited_label(raw_format: str) -> str:
     return raw
 
 
+def friendly_cube_label(raw_format: str) -> str:
+    """Convert CubeDraft event identifiers into familiar Cube names."""
+    raw = raw_format.strip()
+    traditional = bool(re.match(r"^(?:Trad|Traditional)CubeDraft", raw, re.IGNORECASE))
+    text = re.sub(r"^(?:Trad|Traditional)?CubeDraft[_-]?", "", raw, flags=re.IGNORECASE)
+    text = re.sub(r"[_-]?\d{8}$", "", text)
+    text = re.sub(r"[_-]+", " ", text).strip()
+    text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        label = "Cube Draft"
+    elif text.lower().endswith("cube"):
+        label = text
+    else:
+        label = f"{text} Cube"
+    return f"Traditional {label}" if traditional else label
+
+
 def _standard_label(best_of: int, *, ranked: bool) -> str:
     tier = "Ranked" if ranked else "Unranked"
     return f"Standard Best-of-{best_of} ({tier})"
@@ -105,10 +123,22 @@ def _standard_label(best_of: int, *, ranked: bool) -> str:
 
 def _prettify_event(raw: str) -> str:
     """Humanize an event identifier: strip date suffixes, split words."""
-    text = re.sub(r"[_-]?\d{8}$", "", raw.strip())
+    text = re.sub(r"[_-]?(?:\d{8}|\d{4})$", "", raw.strip())
     text = re.sub(r"[_-]+", " ", text)
     text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", text)
     return re.sub(r"\s+", " ", text).strip() or raw
+
+
+def _looks_like_event_identifier(raw: str) -> bool:
+    """Recognize future Arena event ids without maintaining a name list.
+
+    Arena's rotating events either include an explicit ``Event`` token or a
+    terminal YYYYMMDD date. Stable queues such as Ladder and Play do neither.
+    Known modes are normalized before this fallback, so dated draft, Cube,
+    Midweek Magic, and similar identifiers retain their specific families.
+    """
+    words = re.findall(r"[a-z]+|\d+", _prettify_event(raw).casefold())
+    return "event" in words or bool(re.search(r"(?:^|[_-])\d{8}$", raw.strip()))
 
 
 def normalize_match_format(
@@ -170,6 +200,14 @@ def _normalize_match_format_inner(
             family="sealed",
             best_of=1,
         )
+    if normalized.startswith(("cubedraft", "tradcubedraft", "traditionalcubedraft")):
+        traditional = normalized.startswith(("tradcubedraft", "traditionalcubedraft"))
+        return NormalizedFormat(
+            raw=raw,
+            label=friendly_cube_label(raw),
+            family="cube",
+            best_of=3 if traditional else 1,
+        )
     # Arena's Brawl queues (verified against a real log):
     #   Play_Brawl_Historic → the unranked 100-card play queue → "Historic Brawl"
     #   Brawl_Ladder        → the ranked Brawl queue          → "Brawl (Ranked)"
@@ -199,9 +237,10 @@ def _normalize_match_format_inner(
         return NormalizedFormat(
             raw=raw, label="Color Challenge", family="color_challenge", best_of=1
         )
-    # Scheduled events keep their (prettified) own name: Arena Opens,
-    # Qualifiers, Metagame Challenges, Festivals, championship qualifiers.
-    if any(
+    # Scheduled and future events keep their own humanized name. The structural
+    # fallback handles new rotating event ids without requiring a release for
+    # every Arena calendar change.
+    if _looks_like_event_identifier(raw) or any(
         token in normalized
         for token in ("arenaopen", "qualifier", "metagamechallenge", "festival", "arenachampionship")
     ):

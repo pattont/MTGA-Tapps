@@ -33,6 +33,8 @@ menu bar or the sidebar button); there is nothing separate to install.
 ```bash
 scripts/build_macos_app.sh          # builds dist/MTGA Tracker.app
 open "dist/MTGA Tracker.app"
+# faster iteration after dependencies are installed (not for releases):
+scripts/build_macos_app.sh --fast
 # or a drag-to-Applications DMG:
 scripts/build_macos_installer.sh
 ```
@@ -46,6 +48,11 @@ has **Live Scoreboard**, **Dashboard**, **Deck Finder**, **Open Data Folder**,
 when included in the build. Installed builds keep their database under
 `~/Library/Application Support/MTGA Tracker` (macOS) or
 `%LOCALAPPDATA%\MTGA Tracker` (Windows).
+
+Open **Tracker Settings → Startup** to enable **Start with macOS** or **Start
+with Windows**. **Open dashboard on launch** is a separate switch: turn it off
+to start tracking quietly in the menu bar or system tray. Both changes apply
+on the next launch.
 
 The macOS build is ad-hoc signed and not notarized by default. If Gatekeeper
 blocks a downloaded release you trust, dismiss the dialog, open **System
@@ -88,11 +95,16 @@ The source dashboard requires that frontend build for both the unified app
 and dashboard-only mode. For the native overlay, also install Rust and run
 `scripts/build_overlay.sh` (macOS) or `scripts\build_overlay.ps1` (Windows).
 Without its binary, the source tracker runs with the overlay unavailable.
+On macOS, a terminal launch is owned by the Python interpreter, so menu-bar
+managers may label its icon **Python**. Use `scripts/build_macos_app.sh --fast`
+and open `dist/MTGA Tracker.app` when testing the native **Tapps Tracker** app
+identity.
 
 Once the environment is installed (use `venv\Scripts\python` on Windows):
 
 ```bash
 venv/bin/python -m mtga_tracker.app --no-gui  # tracker + dashboard, no menu bar or automatic overlay launch
+venv/bin/python -m mtga_tracker.app --no-browser  # one launch without opening a browser tab
 venv/bin/python -m mtga_tracker.main          # console tracker only
 venv/bin/python -m mtga_tracker.dashboard     # dashboard only, port 8765
 ```

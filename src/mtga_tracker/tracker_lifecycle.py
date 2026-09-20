@@ -530,6 +530,7 @@ class TrackerLifecycleMixin:
         continuation = {
             "game_number": next_game_number,
             "format_str": self.game_state.format_str,
+            "authoritative_event_id": self.game_state.authoritative_event_id,
             "opponent_display_name": self.game_state.opponent_display_name,
             "arena_match_id": self.game_state.arena_match_id,
             "player_deck_event_name": self.game_state.player_deck_event_name,
@@ -644,6 +645,10 @@ class TrackerLifecycleMixin:
                 self.game_state.format_str in (None, "", "Unknown")
             ):
                 self.game_state.format_str = carried_format
+            if not self.game_state.authoritative_event_id:
+                self.game_state.authoritative_event_id = continuation.get(
+                    "authoritative_event_id"
+                )
             if self.game_state.arena_match_id is None:
                 self.game_state.arena_match_id = continuation.get("arena_match_id")
             if not self.game_state.opponent_display_name:

@@ -1699,11 +1699,20 @@ export interface OverlaySettings {
   error: string | null;
 }
 
+export interface StartupSettings {
+  start_at_login: boolean;
+  open_dashboard_on_launch: boolean;
+  available: boolean;
+  registered: boolean;
+  error: string | null;
+}
+
 export interface TrackerSettings {
   tracker: TrackerInfoSettings;
   deck_ai: DeckAiSettings;
   deck_finder: DeckFinderCreatorSettings;
   platform: PlatformSettings;
+  startup: StartupSettings;
   overlay: OverlaySettings;
 }
 
@@ -1916,6 +1925,18 @@ export async function setOverlayEnabled(enabled: boolean): Promise<OverlaySettin
   });
   const body = await deckFinderJson<{ overlay: OverlaySettings }>(response);
   return body.overlay;
+}
+
+export async function saveStartupSettings(
+  payload: Partial<Pick<StartupSettings, 'start_at_login' | 'open_dashboard_on_launch'>>,
+): Promise<StartupSettings> {
+  const response = await fetch('/api/settings/startup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body = await deckFinderJson<{ startup: StartupSettings }>(response);
+  return body.startup;
 }
 
 export async function saveDeckFinderCreators(payload: {

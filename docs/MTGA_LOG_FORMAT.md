@@ -69,10 +69,13 @@ the local seat, correcting stale metadata; never assume the local player
 is seat 1. Resolve opponent identity and the winner relative to that seat.
 
 Queue information is normalized by `format_normalizer.py`. Re-resolve it
-for every game. Brawl's join event (`EventSetDeckV3`, for example
-`EventName: Brawl_Ladder`) is stronger queue evidence than the generic
-Historic Brawl room label. Deck format attributes describe a deck and must
-not override an authoritative queue.
+for every game. Match-room `eventId`, EventLanding context, and
+the outgoing `EventSetDeckV3` event name is authoritative even when the identifier is
+new to this tracker version; keep the raw identifier and humanize it for
+display. Incoming `EventSetDeckV2`, `DeckUpsert` event names, and deck format
+attributes can describe an edited deck and remain hints. They must not override an authoritative queue.
+Brawl's join event (`EventName: Brawl_Ladder`) therefore remains stronger
+than the generic Historic Brawl deck attribute.
 
 ## Scry and card metadata
 

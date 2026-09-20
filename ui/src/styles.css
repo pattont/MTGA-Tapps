@@ -4137,6 +4137,17 @@ tr.deck-change-row-out .card-link {
   font-size: 0.82rem;
 }
 
+.startup-settings .settings-hint {
+  margin-top: -10px;
+  padding-left: 24px;
+}
+
+.startup-save-status {
+  margin: -10px 0 0;
+  padding-left: 24px;
+  line-height: 1.5;
+}
+
 /* In-game overlay card on the Settings page: one status row (dot, title,
    one sentence, the action) over a row of hotkey chips. The dot and title
    take the sidebar's Live Scoreboard colours: green on, muted off. */

@@ -1,11 +1,12 @@
-"""Dashboard settings endpoints: Deck AI + Deck Finder creators.
+"""Dashboard settings endpoints.
 
 The dashboard only serves localhost, so the same values the desktop
 Settings dialog edits (settings.json's "deck_ai" section and
 deckfinder_config.json) are readable/writable from the web Settings page.
 
 Endpoints (all under /api/settings):
-- GET  /api/settings           -> {tracker, deck_ai, deck_finder, platform, overlay}
+- GET  /api/settings           -> tracker, startup, Deck AI/Finder, platform, overlay
+- POST /api/settings/startup   -> save login and automatic-browser preferences
 - POST /api/settings/deck-ai   -> save AI provider/keys/models
 - POST /api/settings/deck-finder -> save the creator lists
 - POST /api/settings/overlay   -> {enabled} start/stop the in-game overlay, or
@@ -164,6 +165,50 @@ def _overlay_status() -> Dict[str, Any]:
     return get_manager().refresh()
 
 
+def _startup_payload() -> Dict[str, Any]:
+    from .settings import load_app_settings
+    from .startup import registration_status
+
+    settings = load_app_settings(create=False)
+    return {
+        "start_at_login": settings.start_at_login,
+        "open_dashboard_on_launch": settings.open_dashboard_on_launch,
+        **registration_status().to_dict(),
+    }
+
+
+def _save_startup(payload: Dict[str, Any]) -> Dict[str, Any]:
+    from .settings import load_app_settings, save_startup_settings
+    from .startup import set_start_at_login
+
+    keys = ("start_at_login", "open_dashboard_on_launch")
+    if not any(key in payload for key in keys):
+        raise ValueError("A startup setting is required.")
+    for key in keys:
+        if key in payload and not isinstance(payload[key], bool):
+            raise ValueError(f"'{key}' must be a boolean")
+
+    current = load_app_settings(create=False)
+    start_at_login = payload.get("start_at_login", current.start_at_login)
+    open_dashboard = payload.get("open_dashboard_on_launch", current.open_dashboard_on_launch)
+    registration_changed = "start_at_login" in payload
+    if registration_changed:
+        set_start_at_login(start_at_login)
+    try:
+        save_startup_settings(
+            start_at_login=start_at_login,
+            open_dashboard_on_launch=open_dashboard,
+        )
+    except Exception:
+        if registration_changed:
+            try:
+                set_start_at_login(current.start_at_login)
+            except Exception:
+                pass
+        raise
+    return _startup_payload()
+
+
 def _set_overlay_enabled(payload: Dict[str, Any]) -> Dict[str, Any]:
     from .overlay_launcher import get_manager
 
@@ -198,6 +243,7 @@ def handle_get(path: str, db_path: Optional[Path] = None) -> Optional[Tuple[int,
             # warning shows only on darwin, and export is offered only where
             # a memory reader exists.
             "platform": _platform_info(),
+            "startup": _startup_payload(),
             "overlay": _overlay_status(),
         }
     except Exception as exc:  # pragma: no cover - defensive surface
@@ -212,6 +258,8 @@ def handle_post(path: str, payload: Dict[str, Any]) -> Optional[Tuple[int, Dict[
             from .deckfinder_api import write_creator_config
 
             return 200, {"deck_finder": write_creator_config(payload)}
+        if path == "/api/settings/startup":
+            return 200, {"startup": _save_startup(payload)}
         if path == "/api/settings/overlay":
             return 200, {"overlay": _set_overlay_enabled(payload)}
     except (ValueError, TypeError) as exc:

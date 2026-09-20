@@ -26,7 +26,7 @@ import { Badge } from './components/Badge';
 import { CardDetailPage } from './components/CardDetailPage';
 import { ColorPips } from './components/ColorPips';
 import { makeCommanderColumns } from './commanderColumns';
-import { commanderArtUrl } from './components/CommanderPanel';
+import { commanderArtUrl } from './commanderArt';
 import { makeOpponentColorColumns } from './opponentColorColumns';
 import { DeckDetailPage } from './components/DeckDetailPage';
 import { DeckLink } from './components/DeckLink';
@@ -925,7 +925,7 @@ export default function App() {
     } else if (sectionId && !sectionId.startsWith('/')) {
       document.getElementById(sectionId)?.scrollIntoView?.({ block: 'start' });
     }
-  }, [auditRoute, cardRoute, deckFinderRoute, deckRoute, gameRoute, gamesRoute, liveRoute, loadState.status, opponentRoute, routeHash, settingsRoute]);
+  }, [auditRoute, cardRoute, deckFinderRoute, deckRoute, gameRoute, gamesRoute, liveRoute, loadState.status, opponentRoute, opponentsRoute, routeHash, settingsRoute]);
 
   useEffect(() => {
     document.title = deckRoute

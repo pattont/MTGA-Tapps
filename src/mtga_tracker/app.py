@@ -14,6 +14,7 @@ from .analytics import AnalyticsStore
 from .dashboard import DEFAULT_DB_PATH, create_dashboard_server
 from .deck_downloader_launcher import DECK_FINDER_FLAG
 from .log_parser import MTGALogParser
+from .single_instance import SingleInstanceGuard
 from .tracker import CardTracker
 
 
@@ -265,24 +266,59 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument("--no-gui", action="store_true", help="Run in one terminal without the menu bar.")
     parser.add_argument("--no-browser", action="store_true", help="Do not open the dashboard automatically.")
+    parser.add_argument("--login-start", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    from .settings import load_app_settings
+
+    app_settings = load_app_settings(create=False)
     if args.port is None:
-        from .settings import load_app_settings
+        args.port = app_settings.dashboard_port
+    # Keep --no-browser as a one-run override of the saved preference.
+    args.no_browser = args.no_browser or not app_settings.open_dashboard_on_launch
 
-        args.port = load_app_settings(create=False).dashboard_port
+    instance_guard = SingleInstanceGuard()
+    try:
+        guard_acquired = instance_guard.acquire()
+    except OSError as exc:
+        message = f"Tapps Tracker could not establish its single-instance lock: {exc}"
+        if args.no_gui:
+            print(message, file=sys.stderr)
+        else:
+            from .menu_app import show_instance_message
 
-    if args.no_gui:
-        return _run_without_gui(args)
+            show_instance_message(message, title="Tapps Tracker startup error")
+        return 1
+
+    if not guard_acquired:
+        if args.login_start:
+            return 0
+        message = (
+            "Tapps Tracker is already running. Look for its icon in the "
+            "menu bar (macOS) or system tray (Windows)."
+        )
+        if args.no_gui:
+            print(message, file=sys.stderr)
+        else:
+            from .menu_app import show_instance_message
+
+            show_instance_message(message)
+        return 0
 
     try:
-        from .menu_app import run_menu_app
-    except ImportError as exc:
-        parser.error(
-            "The menu-bar launcher requires the GUI dependencies. "
-            "Install them with: pip install -e '.[gui]'"
-        )
-        raise exc
-    return run_menu_app(args)
+        if args.no_gui:
+            return _run_without_gui(args)
+
+        try:
+            from .menu_app import run_menu_app
+        except ImportError as exc:
+            parser.error(
+                "The menu-bar launcher requires the GUI dependencies. "
+                "Install them with: pip install -e '.[gui]'"
+            )
+            raise exc
+        return run_menu_app(args)
+    finally:
+        instance_guard.release()
 
 
 if __name__ == "__main__":

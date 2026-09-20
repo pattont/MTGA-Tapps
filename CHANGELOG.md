@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.6.5
+
+### Startup reliability
+
+- Added independent **Start with Windows/macOS** and **Open dashboard on
+  launch** switches above **In-game overlay** in Settings. Installed apps can
+  register per-user login startup while remaining in the system tray or menu
+  bar, and automatic browser opening can be disabled without stopping
+  tracking. The existing `--no-browser` flag remains a one-run override.
+- Windows uses the current user's Run entry and removes it during uninstall;
+  macOS uses an app-owned user LaunchAgent. Source checkouts register their
+  current virtual environment so the same controls remain available in development.
+
+### Fixes
+
+- Future Arena events no longer require a tracker update to avoid being
+  mislabeled. Unknown event IDs from the active match room, EventLanding, or
+  the outgoing `EventSetDeckV3` request are preserved as authoritative and humanized for display;
+  deck edits, generic deck attributes, and command-zone inference cannot
+  replace them. Generic identifiers such as `Constructed_Event_2026` and new
+  date-suffixed event names also appear under the dashboard's **Events** filter,
+  and a migration repairs existing rows that were stored as Standard or Brawl.
+- Fixed Restore successfully replacing the database but reporting zero games
+  immediately afterward. Migrated snapshots are now checkpointed and returned
+  to single-file journal mode before the swap, so the first read-only summary
+  can open them without waiting for SQLite to recreate WAL sidecars.
+- Fixed Powered Cube matches being stored as generic Draft or even Brawl when
+  Arena supplied `CubeDraft_Powered_*` as both the queue and event name. Cube
+  event IDs now outrank deck attributes and command-zone inference, display as
+  **Powered Cube**, and a migration repairs affected stored matches.
+- Fixed Recent Games, All Games, and opponent history repainting older draft
+  games with the colors of the newest revision sharing that deck name. Game
+  rows now derive colors from their own submitted `game_deck_cards` snapshot.
+- Prevented duplicate tracker processes on Windows and macOS. The unified
+  launcher now acquires an OS-owned single-instance guard before starting the
+  tracker, dashboard, or tray; a second manual launch reports that Tapps
+  Tracker is already running, while a duplicate login launch exits quietly.
+  Crashes release the guard automatically, and Deck Finder remains independently
+  launchable from the running app.
+- Fixed macOS overlay and app builds failing with `npm: command not found`
+  when Node is installed through nvm but the build runs from a noninteractive
+  shell. The shell build scripts now load the configured nvm default and
+  validate the required Node 18+ toolchain before building.
+- Fixed the macOS 27 overlay disappearing as soon as it starts. The newer
+  `lsappinfo` output can include extra properties or return no frontmost app;
+  the overlay now reads the foreground application from macOS's native
+  `NSWorkspace` API instead of deciding Arena is never in front and hiding.
+- Fixed the Settings page changing the overlay to **off** shortly after a
+  tracker restart when an existing overlay singleton handled the new launch.
+  The tracker now recognizes that existing process, and only an explicit
+  **Quit overlay** action disables future automatic launches.
+- Fixed the overlay settings getting an unnecessary vertical scrollbar when
+  opened beside the minimal rail. The flyout now receives the full window
+  height after the rail's display scaling is removed.
+- macOS app bundles now identify themselves to the system and menu-bar
+  managers as **Tapps Tracker** and declare their menu-bar-only activation
+  policy. The bundle filename, executable name and identifier remain stable
+  for upgrades. A new `scripts/build_macos_app.sh --fast` path makes it easier
+  to test current source with that native identity; direct terminal launches
+  remain Python processes.
+
 ## 0.6.4
 
 ### Backup & restore

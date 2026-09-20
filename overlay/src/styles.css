@@ -1091,6 +1091,15 @@ img {
   scrollbar-width: thin;
 }
 
+/* The rail is drawn at 120%, then its gutter is counter-scaled so the
+   settings remain the same visual size as they are beside the panel. The
+   gutter's layout box is therefore only 1 / 1.2 of the window height. Give
+   the flyout that height back; otherwise a fully fitting settings sheet is
+   constrained to five-sixths of the window and gets a needless scrollbar. */
+.is-rail .fly {
+  max-height: calc(120% - 16px);
+}
+
 .gutter.side-left .fly {
   right: 6px;
 }

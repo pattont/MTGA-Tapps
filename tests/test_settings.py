@@ -1,6 +1,6 @@
 import json
 
-from mtga_tracker.settings import AppSettings, load_app_settings
+from mtga_tracker.settings import AppSettings, load_app_settings, save_startup_settings
 
 
 def test_load_app_settings_creates_default_file(tmp_path):
@@ -12,6 +12,10 @@ def test_load_app_settings_creates_default_file(tmp_path):
     assert json.loads(settings_path.read_text(encoding="utf-8")) == {
         "live_log_window": {"width": 1400, "height": 1020},
         "dashboard": {"port": 8765},
+        "startup": {
+            "start_at_login": False,
+            "open_dashboard_on_launch": True,
+        },
     }
 
 
@@ -79,3 +83,49 @@ def test_settings_path_is_project_top_level_for_source_checkouts():
     from mtga_tracker.settings import SETTINGS_PATH
 
     assert SETTINGS_PATH == PROJECT_ROOT / "settings.json"
+
+
+def test_load_app_settings_reads_startup_preferences(tmp_path):
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps({"startup": {"start_at_login": True, "open_dashboard_on_launch": False}}),
+        encoding="utf-8",
+    )
+
+    settings = load_app_settings(settings_path)
+
+    assert settings.start_at_login is True
+    assert settings.open_dashboard_on_launch is False
+
+
+def test_load_app_settings_rejects_non_boolean_startup_values(tmp_path):
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps({"startup": {"start_at_login": 1, "open_dashboard_on_launch": "no"}}),
+        encoding="utf-8",
+    )
+
+    settings = load_app_settings(settings_path)
+
+    assert settings.start_at_login is False
+    assert settings.open_dashboard_on_launch is True
+
+
+def test_save_startup_settings_preserves_other_sections(tmp_path):
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps({"dashboard": {"port": 9001}, "custom": {"keep": True}}),
+        encoding="utf-8",
+    )
+
+    saved = save_startup_settings(
+        start_at_login=True,
+        open_dashboard_on_launch=False,
+        path=settings_path,
+    )
+
+    document = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert document["custom"] == {"keep": True}
+    assert saved.dashboard_port == 9001
+    assert saved.start_at_login is True
+    assert saved.open_dashboard_on_launch is False

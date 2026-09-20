@@ -2231,6 +2231,59 @@ def _deck_color_map(conn: sqlite3.Connection) -> Dict[str, str]:
     return result
 
 
+def _participant_deck_color_map(
+    conn: sqlite3.Connection, participant_ids: Iterable[Any]
+) -> Dict[str, str]:
+    """WUBRG colors from each game's submitted player deck snapshot.
+
+    A deck name can represent several revisions, especially during a draft.
+    Game-list rows therefore cannot use ``_deck_color_map``, which intentionally
+    describes the newest revision of each named deck for deck-level pages.
+    """
+    participant_ids = list(dict.fromkeys(str(value) for value in participant_ids if value))
+    if (
+        not participant_ids
+        or not _table_exists(conn, "cards")
+        or not _table_exists(conn, "game_deck_cards")
+    ):
+        return {}
+    has_mana = "mana_cost" in {
+        row[1] for row in conn.execute("PRAGMA table_info(cards)")
+    }
+    cost_column = 'c."mana_cost"' if has_mana else "NULL"
+    rows_by_participant: Dict[str, List[Any]] = {}
+    # Stay below SQLite's variable limit when All Games contains a long history.
+    for offset in range(0, len(participant_ids), 400):
+        chunk = participant_ids[offset : offset + 400]
+        placeholders = ",".join("?" for _ in chunk)
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT
+                  dc.participant_id,
+                  dc.type_category,
+                  {cost_column},
+                  c.color_identity,
+                  dc.quantity
+                FROM game_deck_cards dc
+                LEFT JOIN cards c ON c.id = dc.card_id
+                WHERE dc.deck_zone = 'deck'
+                  AND dc.participant_id IN ({placeholders})
+                """,
+                chunk,
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        for participant_id, type_category, mana_cost, identity, copies in rows:
+            rows_by_participant.setdefault(str(participant_id), []).append(
+                (type_category, mana_cost, identity, copies)
+            )
+    return {
+        participant_id: _score_deck_colors(rows)
+        for participant_id, rows in rows_by_participant.items()
+    }
+
+
 def _empty_deck_visual(deck_name: str) -> Dict[str, Any]:
     return {
         "card_id": None,
@@ -2879,6 +2932,9 @@ def dashboard_snapshot(
         recent_quality = _draw_quality_batch(
             conn, [(row.get("player_participant_id"), row.get("deck_size")) for row in recent_rows]
         )
+        recent_deck_colors = _participant_deck_color_map(
+            conn, (row.get("player_participant_id") for row in recent_rows)
+        )
         for row in recent_rows:
             participant_id = row.pop("player_participant_id", None)
             row.pop("deck_size", None)
@@ -2887,7 +2943,9 @@ def dashboard_snapshot(
             row["is_flood"] = quality["is_flood"]
             row["screw_reasons"] = quality["screw_reasons"]
             row["is_screw"] = quality["is_screw"]
-            row["deck_colors"] = deck_color_map.get(str(row.get("deck_name") or ""), "")
+            row["deck_colors"] = recent_deck_colors.get(str(participant_id)) or deck_color_map.get(
+                str(row.get("deck_name") or ""), ""
+            )
 
     summary_dict = {
         "games": int(summary[0] or 0),
@@ -4411,6 +4469,7 @@ def opponent_detail(
                   ) AS match_losses,
                   m.format AS raw_format,
                   m.best_of,
+                  p.id AS player_participant_id,
                   COALESCE(p.deck_name, '(unknown)') AS deck_name,
                   CASE p.went_first
                     WHEN 1 THEN 'On the play'
@@ -4430,8 +4489,14 @@ def opponent_detail(
             )
         )
         deck_color_map = _deck_color_map(conn)
+        game_deck_colors = _participant_deck_color_map(
+            conn, (row.get("player_participant_id") for row in game_rows)
+        )
     for row in game_rows:
-        row["deck_colors"] = deck_color_map.get(str(row.get("deck_name") or ""), "")
+        participant_id = row.pop("player_participant_id", None)
+        row["deck_colors"] = game_deck_colors.get(str(participant_id)) or deck_color_map.get(
+            str(row.get("deck_name") or ""), ""
+        )
         row["format_label"] = format_label(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )
@@ -5067,10 +5132,15 @@ def all_games(
             [(row["player_participant_id"], row.get("deck_size")) for row in rows],
         )
         deck_color_map = _deck_color_map(conn)
+        game_deck_colors = _participant_deck_color_map(
+            conn, (row.get("player_participant_id") for row in rows)
+        )
 
     for row in rows:
-        row["deck_colors"] = deck_color_map.get(str(row.get("deck_name") or ""), "")
         participant_id = row.pop("player_participant_id", None)
+        row["deck_colors"] = game_deck_colors.get(str(participant_id)) or deck_color_map.get(
+            str(row.get("deck_name") or ""), ""
+        )
         row.pop("deck_size", None)
         quality = qualities.get(participant_id) or draw_quality_metrics([], [], 0, 60)
         row["is_flood"] = quality["is_flood"]

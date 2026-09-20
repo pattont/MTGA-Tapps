@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -35,6 +36,11 @@ BINARY_ENV = "MTGA_TRACKER_OVERLAY_BIN"
 #: "it didn't show up" has somewhere to look.
 OVERLAY_LOG = DATA_DIR / "overlay.log"
 OVERLAY_STDERR_LOG = DATA_DIR / "overlay-stderr.log"
+
+# The overlay uses this distinct exit code only when the player selects
+# "Quit overlay" inside its own UI. A successful second-instance handoff
+# exits with 0 and must not be mistaken for the overlay being turned off.
+USER_QUIT_EXIT_CODE = 23
 
 _MAC_APP_NAME = "Tapps Overlay.app"
 _MAC_EXECUTABLE = Path(_MAC_APP_NAME) / "Contents" / "MacOS" / "tapps-overlay"
@@ -147,6 +153,65 @@ def save_overlay_enabled(enabled: bool, path: Optional[Path] = None) -> None:
 
 
 Listener = Callable[[Dict[str, Any]], None]
+ProcessFinder = Callable[[Path], List[int]]
+ProcessKiller = Callable[[int], None]
+
+
+def _overlay_process_ids(binary: Path) -> List[int]:
+    """Return other processes running this exact overlay executable.
+
+    Tauri's single-instance handoff makes the newly launched child exit while
+    the original overlay keeps running. Tracking only the child therefore
+    reports a false stop after a tracker restart. Keep this dependency-free:
+    macOS/Linux have pgrep+ps, and Windows has tasklist.
+    """
+    try:
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {binary.name}", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+            pids: List[int] = []
+            for line in result.stdout.splitlines():
+                columns = [part.strip().strip('"') for part in line.split(",")]
+                if len(columns) >= 2 and columns[0].lower() == binary.name.lower():
+                    try:
+                        pids.append(int(columns[1]))
+                    except ValueError:
+                        continue
+            return pids
+
+        result = subprocess.run(
+            ["/usr/bin/pgrep", "-x", binary.name],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        candidates = [int(line) for line in result.stdout.splitlines() if line.strip().isdigit()]
+        expected = (str(binary), str(binary.resolve()))
+        found: List[int] = []
+        for pid in candidates:
+            details = subprocess.run(
+                ["/bin/ps", "-p", str(pid), "-o", "command="],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+            command = details.stdout.strip()
+            if any(command.startswith(path) for path in expected):
+                found.append(pid)
+        return found
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+
+def _terminate_process(pid: int) -> None:
+    os.kill(pid, signal.SIGTERM)
 
 
 class OverlayManager:
@@ -164,17 +229,22 @@ class OverlayManager:
         settings_path: Optional[Path] = None,
         popen: Callable[..., Any] = subprocess.Popen,
         log_dir: Optional[Path] = None,
+        process_finder: ProcessFinder = _overlay_process_ids,
+        process_killer: ProcessKiller = _terminate_process,
     ):
         self._binary_override = binary
         self._settings_path = settings_path
         self._popen = popen
         self._log_dir = log_dir
+        self._process_finder = process_finder
+        self._process_killer = process_killer
         self._stderr_file: Optional[Any] = None
         self._lock = threading.RLock()
         self._process: Optional[Any] = None
         self._api_url: Optional[str] = None
         self._listeners: List[Listener] = []
         self._last_error: Optional[str] = None
+        self._last_exit_code: Optional[int] = None
 
     # -- discovery ---------------------------------------------------------
 
@@ -196,7 +266,7 @@ class OverlayManager:
     def running(self) -> bool:
         with self._lock:
             self._reap()
-            return self._process is not None
+            return self._process is not None or bool(self._external_process_ids())
 
     @property
     def log_path(self) -> Path:
@@ -266,6 +336,12 @@ class OverlayManager:
             if binary is None:
                 self._last_error = "The overlay is not included in this build."
                 return False
+            if self._external_process_ids(binary):
+                # A previous tracker process may have left the single Tauri
+                # instance running. It is still the live overlay; do not
+                # spawn a short-lived handoff child and later call it a stop.
+                self._last_error = None
+                return True
             self._ensure_executable(binary)
             args = [str(binary), "--log", str(self.log_path)]
             if self._api_url:
@@ -291,6 +367,7 @@ class OverlayManager:
                 self._process = None
                 return False
             self._last_error = None
+            self._last_exit_code = None
             return True
 
     #: Flags the running overlay understands from a second launch (its
@@ -327,21 +404,31 @@ class OverlayManager:
         with self._lock:
             process = self._process
             self._process = None
+            external_pids = self._external_process_ids()
+            owned_pid = getattr(process, "pid", None)
         if process is None:
-            return
-        try:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=timeout)
-                except Exception:
-                    process.kill()
+            owned_pid = None
+        else:
+            try:
+                if process.poll() is None:
+                    process.terminate()
                     try:
-                        process.wait(timeout=1.0)
+                        process.wait(timeout=timeout)
                     except Exception:
-                        pass
-        except OSError:
-            pass
+                        process.kill()
+                        try:
+                            process.wait(timeout=1.0)
+                        except Exception:
+                            pass
+            except OSError:
+                pass
+        for pid in external_pids:
+            if pid == owned_pid:
+                continue
+            try:
+                self._process_killer(pid)
+            except OSError:
+                pass
         self._close_stderr()
 
     def _close_stderr(self) -> None:
@@ -354,14 +441,18 @@ class OverlayManager:
                 pass
 
     def refresh(self) -> Dict[str, Any]:
-        """Poll the child; if the player quit it from its own tray, remember
-        that as "off" so it does not come back on the next launch."""
+        """Poll the child and preserve the difference between a handoff,
+        a crash, and the player's explicit Quit overlay command."""
         with self._lock:
             was_running = self._process is not None
             self._reap()
             exited = was_running and self._process is None
-            if exited and self.enabled:
+            externally_running = exited and bool(self._external_process_ids())
+            user_quit = exited and self._last_exit_code == USER_QUIT_EXIT_CODE
+            if user_quit and self.enabled:
                 save_overlay_enabled(False, self._settings_path)
+            if externally_running:
+                self._last_error = None
         if exited:
             self._notify()
         return self.status()
@@ -369,9 +460,21 @@ class OverlayManager:
     def _reap(self) -> None:
         process = self._process
         if process is not None and process.poll() is not None:
-            self._last_error = f"The overlay exited with code {process.returncode}; see {self.log_path}."
+            self._last_exit_code = process.returncode
+            self._last_error = (
+                f"The overlay exited with code {process.returncode}; see {self.log_path}."
+            )
             self._process = None
             self._close_stderr()
+
+    def _external_process_ids(self, binary: Optional[Path] = None) -> List[int]:
+        binary = binary or self.binary
+        if binary is None:
+            return []
+        try:
+            return self._process_finder(binary)
+        except OSError:
+            return []
 
     @staticmethod
     def _ensure_executable(binary: Path) -> None:

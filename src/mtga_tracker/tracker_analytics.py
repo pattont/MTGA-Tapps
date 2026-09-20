@@ -1477,6 +1477,7 @@ class TrackerAnalyticsMixin:
             self.game_state.format_str,
             default_best_of=3 if self.game_state.match_type == "best_of_3" else 1,
         )
+        queue_event_name = self.game_state.authoritative_event_id
         conn.execute(
             """
             INSERT INTO matches (
@@ -1513,8 +1514,8 @@ class TrackerAnalyticsMixin:
                 ended_at,
                 self.game_state.match_type,
                 self.game_state.format_str,
-                self.game_state.player_deck_event_name,
-                self.game_state.player_deck_event_name,
+                queue_event_name,
+                queue_event_name,
                 normalized_format.best_of,
                 int(self.game_state.game_number or 1),
                 winner_participant_id,

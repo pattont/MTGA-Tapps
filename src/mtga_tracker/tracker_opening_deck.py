@@ -53,12 +53,16 @@ class TrackerOpeningDeckMixin:
         """Convert MWM event identifiers into readable Midweek Magic labels."""
         return friendly_midweek_label(raw_format)
 
-    def _set_match_format(self, fmt: str) -> bool:
+    def _set_match_format(self, fmt: str, *, authoritative: bool = False) -> bool:
         """Apply trusted live match format metadata and infer match length."""
         if not isinstance(fmt, str) or not fmt:
             return False
         updated = self.game_state.format_str != fmt
         self.game_state.format_str = fmt
+        if authoritative:
+            if self.game_state.authoritative_event_id != fmt:
+                updated = True
+            self.game_state.authoritative_event_id = fmt
         normalized = normalize_match_format(fmt)
         if normalized.best_of == 3:
             if self.game_state.match_type != "best_of_3":
@@ -186,6 +190,9 @@ class TrackerOpeningDeckMixin:
                 "sealed",
                 "tradsealed",
                 "traditionalsealed",
+                "cubedraft",
+                "tradcubedraft",
+                "traditionalcubedraft",
             )
         ):
             return True
@@ -209,6 +216,9 @@ class TrackerOpeningDeckMixin:
 
     def _has_explicit_non_brawl_format(self) -> bool:
         """Return True when trusted event/deck metadata identifies a non-Brawl queue."""
+        authoritative = self.game_state.authoritative_event_id
+        if isinstance(authoritative, str) and authoritative.strip():
+            return not self._is_brawl_format(authoritative)
         candidates = [self.game_state.format_str, self.game_state.player_deck_event_name]
         if self._active_deck_candidate_key:
             active = self._deck_candidates.get(self._active_deck_candidate_key, {})
@@ -221,6 +231,8 @@ class TrackerOpeningDeckMixin:
             if "brawl" in text:
                 return False
             if text.startswith("mwm") or text.startswith("midweekmagic"):
+                return True
+            if text.startswith(("cubedraft", "tradcubedraft", "traditionalcubedraft")):
                 return True
             if text in {
                 "standard",
@@ -878,9 +890,15 @@ class TrackerOpeningDeckMixin:
             candidate.get("trusted_active")
             and candidate.get("trusted_queue_format")
             and isinstance(event_name, str)
-            and self._is_trusted_queue_event_name(event_name)
+            and (
+                candidate.get("authoritative_queue_format")
+                or self._is_trusted_queue_event_name(event_name)
+            )
         ):
-            self._set_match_format(event_name)
+            self._set_match_format(
+                event_name,
+                authoritative=bool(candidate.get("authoritative_queue_format")),
+            )
             self._format_from_backfill = bool(getattr(self, "_parsing_backfilled_metadata", False))
             used_trusted_queue_format = True
         main_total = candidate.get("main_deck_total")
@@ -907,8 +925,12 @@ class TrackerOpeningDeckMixin:
             existing_is_brawl_queue = normalize_match_format(
                 str(self.game_state.format_str or "")
             ).is_brawl
-            if not used_trusted_queue_format and not implies_best_of_three and not existing_is_brawl_queue and (
-                self.game_state.format_str == "Unknown" or self._format_from_backfill
+            if (
+                not self.game_state.authoritative_event_id
+                and not used_trusted_queue_format
+                and not implies_best_of_three
+                and not existing_is_brawl_queue
+                and (self.game_state.format_str == "Unknown" or self._format_from_backfill)
             ):
                 self.game_state.format_str = format_attr
                 self._format_from_backfill = bool(
@@ -1090,6 +1112,7 @@ class TrackerOpeningDeckMixin:
         if not data:
             return
         line_lower = line.lower()
+        outgoing_event_set_v3 = "eventsetdeckv3" in line_lower and "==>" in line
         format_updated = False
         scene_context = data.get("context")
         scene_target = data.get("toSceneName")
@@ -1109,11 +1132,11 @@ class TrackerOpeningDeckMixin:
         if (
             trust_match_room_format
             and isinstance(scene_context, str)
+            and scene_context.strip()
             and scene_target == "EventLanding"
-            and self._is_trusted_queue_event_name(scene_context)
         ):
             self._pending_event_format = scene_context
-            if self._set_match_format(scene_context):
+            if self._set_match_format(scene_context, authoritative=True):
                 format_updated = True
             self._format_from_backfill = from_backfill
         # Your screen name from authenticateResponse (seen when connecting). Try multiple keys.
@@ -1160,10 +1183,8 @@ class TrackerOpeningDeckMixin:
                                 self.game_state.opponent_display_name = r["name"]
             # Format
             fmt = (
-                config.get("eventType")
-                or config.get("variant")
-                or config.get("gameMode")
-                or config.get("format")
+                config.get("eventId")
+                or config.get("EventId")
             )
             if not fmt and isinstance(reserved, list):
                 unique_event_ids = {event_id for event_id in reserved_event_ids if event_id}
@@ -1171,15 +1192,22 @@ class TrackerOpeningDeckMixin:
                     fmt = local_reserved_event_id
                 elif len(unique_event_ids) == 1:
                     fmt = next(iter(unique_event_ids))
+            if not fmt:
+                fmt = (
+                    config.get("eventType")
+                    or config.get("variant")
+                    or config.get("gameMode")
+                    or config.get("format")
+                )
             if trust_match_room_format and isinstance(fmt, str) and fmt:
                 if not from_backfill:
                     self._pending_event_format = fmt
-                if self._set_match_format(fmt):
+                if self._set_match_format(fmt, authoritative=True):
                     format_updated = True
                 self._format_from_backfill = from_backfill
             elif trust_match_room_format and isinstance(fmt, (int, float)):
                 fmt_value = str(fmt)
-                if self._set_match_format(fmt_value):
+                if self._set_match_format(fmt_value, authoritative=True):
                     format_updated = True
                 self._format_from_backfill = from_backfill
 
@@ -1204,12 +1232,11 @@ class TrackerOpeningDeckMixin:
                 )
             ):
                 candidate_key = self._course_candidate_key(data)
-                if candidate_key and (
-                    "eventsetdeckv3" in line_lower or "deckupsertdeckv3" in line_lower
-                ):
+                if candidate_key and outgoing_event_set_v3:
                     candidate = self._deck_candidates.get(candidate_key)
                     if isinstance(candidate, dict):
                         candidate["trusted_queue_format"] = True
+                        candidate["authoritative_queue_format"] = True
                 self._lock_active_deck_candidate(candidate_key)
         deck_event_course = self._course_from_deck_event_payload(data)
         if deck_event_course is not None:
@@ -1225,12 +1252,11 @@ class TrackerOpeningDeckMixin:
                 )
             ):
                 candidate_key = self._course_candidate_key(deck_event_course)
-                if candidate_key and (
-                    "eventsetdeckv3" in line_lower or "deckupsertdeckv3" in line_lower
-                ):
+                if candidate_key and outgoing_event_set_v3:
                     candidate = self._deck_candidates.get(candidate_key)
                     if isinstance(candidate, dict):
                         candidate["trusted_queue_format"] = True
+                        candidate["authoritative_queue_format"] = True
                 self._lock_active_deck_candidate(candidate_key)
         if deck_updated or format_updated:
             self._resolve_player_deck_from_candidates()

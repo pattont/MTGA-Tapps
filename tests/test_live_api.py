@@ -375,10 +375,13 @@ def test_handle_get_routes_and_parses_since(tmp_path):
     assert [event["text"] for event in body["events"]] == ["You: Casts [Llanowar Elves]"]
 
 
-def test_settings_tracker_info_reads_live_status_paths(tmp_path):
+def test_settings_tracker_info_reads_live_status_paths(monkeypatch, tmp_path):
     from pathlib import Path
 
-    from mtga_tracker import settings_api
+    from mtga_tracker import settings, settings_api, startup
+
+    monkeypatch.setattr(settings, "SETTINGS_PATH", tmp_path / "settings.json")
+    monkeypatch.setattr(startup, "_launch_target", lambda: None)
 
     store = _store(tmp_path)
     home = str(Path.home())
@@ -405,6 +408,53 @@ def test_settings_tracker_info_reads_live_status_paths(tmp_path):
     # Platform block drives the collection-export section + macOS warning.
     assert body["platform"]["system"] in {"macos", "windows", "other"}
     assert isinstance(body["platform"]["collection_export"], bool)
+    assert body["startup"] == {
+        "start_at_login": False,
+        "open_dashboard_on_launch": True,
+        "available": False,
+        "registered": False,
+        "error": None,
+    }
+
+
+def test_startup_settings_endpoint_validates_and_saves_independently(monkeypatch, tmp_path):
+    from mtga_tracker import settings, settings_api, startup
+
+    monkeypatch.setattr(settings, "SETTINGS_PATH", tmp_path / "settings.json")
+    registrations = []
+    monkeypatch.setattr(
+        startup,
+        "set_start_at_login",
+        lambda enabled: registrations.append(enabled)
+        or startup.StartupRegistrationStatus(True, enabled),
+    )
+    monkeypatch.setattr(
+        startup,
+        "registration_status",
+        lambda: startup.StartupRegistrationStatus(
+            True, registrations[-1] if registrations else False
+        ),
+    )
+
+    status, body = settings_api.handle_post(
+        "/api/settings/startup", {"open_dashboard_on_launch": False}
+    )
+    assert status == 200 and registrations == []
+    assert body["startup"]["start_at_login"] is False
+    assert body["startup"]["open_dashboard_on_launch"] is False
+
+    status, body = settings_api.handle_post(
+        "/api/settings/startup", {"start_at_login": True}
+    )
+    assert status == 200 and registrations == [True]
+    assert body["startup"]["start_at_login"] is True
+    assert body["startup"]["open_dashboard_on_launch"] is False
+
+    status, body = settings_api.handle_post(
+        "/api/settings/startup", {"start_at_login": "yes"}
+    )
+    assert status == 400
+    assert "must be a boolean" in body["error"]
 
 
 def test_settings_paths_use_the_windows_home_placeholder(monkeypatch, tmp_path):

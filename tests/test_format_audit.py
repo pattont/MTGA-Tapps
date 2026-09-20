@@ -46,8 +46,18 @@ def test_format_normalizer_labels_other_modes_and_events():
     assert normalize_match_format("Festival_TimelessBonanza_20260820").family == "event"
     assert normalize_match_format("QualifierWeekend_20260809").best_of == 3
     assert normalize_match_format("ArenaOpen_Day2_Traditional_Standard_20260815").best_of == 3
+    constructed_event = normalize_match_format("Constructed_Event_2026")
+    assert constructed_event.label == "Constructed Event"
+    assert constructed_event.family == "event"
+    future_event = normalize_match_format("NewShowcase_20270214")
+    assert future_event.label == "New Showcase"
+    assert future_event.family == "event"
+    powered_cube = normalize_match_format("CubeDraft_Powered_20260908")
+    assert powered_cube.label == "Powered Cube"
+    assert powered_cube.family == "cube"
+    assert powered_cube.best_of == 1
     # Unknown future modes: prettified label, Bo3 markers still honored.
-    future = normalize_match_format("SomeFutureMode_Traditional_20270101")
+    future = normalize_match_format("SomeFutureMode_Traditional")
     assert future.label == "Some Future Mode Traditional"
     assert future.best_of == 3
     assert future.family == "unknown"
@@ -132,6 +142,100 @@ def test_repair_database_updates_safe_format_mismatch_only(tmp_path):
         ("match-ok", "MWM_SlowStart_20260602"),
         ("match-safe", "Play"),
     ]
+
+
+def test_cube_queue_repairs_misclassified_stored_format(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            "insert into tracker_sessions (id, started_at) "
+            "values ('session-1', '2026-09-18T00:00:00')"
+        )
+        conn.execute(
+            """
+            insert into matches (id, session_id, format, queue, event_name)
+            values (
+                'cube-match', 'session-1', 'Brawl (Ranked)',
+                'CubeDraft_Powered_20260908', 'CubeDraft_Powered_20260908'
+            )
+            """
+        )
+
+    result = repair_database(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        stored = conn.execute(
+            "select format from matches where id = 'cube-match'"
+        ).fetchone()[0]
+    assert result.repaired_count == 1
+    assert stored == "CubeDraft_Powered_20260908"
+
+
+def test_cube_format_migration_repairs_existing_match(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            "insert into tracker_sessions (id, started_at) "
+            "values ('session-1', '2026-09-18T00:00:00')"
+        )
+        conn.execute(
+            """
+            insert into matches (id, session_id, format, queue, event_name)
+            values (
+                'cube-match', 'session-1', 'Draft',
+                'CubeDraft_Powered_20260908', 'CubeDraft_Powered_20260908'
+            )
+            """
+        )
+        conn.execute("delete from schema_migrations where version = 30")
+
+        AnalyticsStore.apply_pending_migrations(conn)
+
+        stored = conn.execute(
+            "select format from matches where id = 'cube-match'"
+        ).fetchone()[0]
+        assert stored == "CubeDraft_Powered_20260908"
+        assert conn.execute(
+            "select count(*) from schema_migrations where version = 30"
+        ).fetchone()[0] == 1
+
+
+def test_event_format_migration_repairs_existing_matches(tmp_path):
+    db_path = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.execute(
+            "insert into tracker_sessions (id, started_at) "
+            "values ('session-1', '2026-09-19T00:00:00')"
+        )
+        conn.executemany(
+            """
+            insert into matches (id, session_id, format, queue, event_name)
+            values (?, 'session-1', ?, 'Constructed_Event_2026', 'Constructed_Event_2026')
+            """,
+            [
+                ("brawl-match", "Brawl"),
+                ("standard-match", "Standard"),
+                ("already-correct", "Constructed_Event_2026"),
+            ],
+        )
+        conn.execute("delete from schema_migrations where version = 31")
+
+        AnalyticsStore.apply_pending_migrations(conn)
+
+        rows = conn.execute(
+            "select id, format from matches order by id"
+        ).fetchall()
+        assert rows == [
+            ("already-correct", "Constructed_Event_2026"),
+            ("brawl-match", "Constructed_Event_2026"),
+            ("standard-match", "Constructed_Event_2026"),
+        ]
+        assert conn.execute(
+            "select count(*) from schema_migrations where version = 31"
+        ).fetchone()[0] == 1
 
 
 def test_audit_repairs_missing_exact_turn_timings_from_console_history(tmp_path):

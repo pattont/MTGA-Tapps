@@ -11,6 +11,14 @@ if [[ ! -f "$SOURCE" ]]; then
   exit 1
 fi
 
+# The checked-in .icns is the canonical packaging asset. Avoid asking
+# iconutil to recreate identical output on every build; newer macOS releases
+# can reject otherwise valid legacy iconsets even when every PNG is present.
+if [[ -f "$OUTPUT" && ! "$SOURCE" -nt "$OUTPUT" ]]; then
+  echo "Up to date: $OUTPUT"
+  exit 0
+fi
+
 rm -rf "$ICONSET"
 mkdir -p "$ICONSET"
 sips -z 16 16 "$SOURCE" --out "$ICONSET/icon_16x16.png" >/dev/null

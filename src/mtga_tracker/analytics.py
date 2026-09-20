@@ -717,6 +717,8 @@ class AnalyticsStore:
             (27, AnalyticsStore._migrate_v27_clear_self_named_opponents),
             (28, AnalyticsStore._migrate_v28_purge_archived_client_chatter),
             (29, AnalyticsStore._migrate_v29_scry_stats),
+            (30, AnalyticsStore._migrate_v30_repair_cube_formats),
+            (31, AnalyticsStore._migrate_v31_repair_event_formats),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -1332,6 +1334,56 @@ class AnalyticsStore:
         from .events_backfill import backfill_game_stats_from_events
 
         backfill_game_stats_from_events(conn)
+
+    @staticmethod
+    def _migrate_v30_repair_cube_formats(conn: sqlite3.Connection) -> None:
+        """Restore Cube formats when matching queue/event metadata is authoritative."""
+        from .format_normalizer import normalize_match_format, trusted_queue_raw
+
+        repaired = 0
+        match_rows = conn.execute(
+            "SELECT id, format, queue, event_name FROM matches"
+        ).fetchall()
+        for match_id, format_value, queue, event_name in match_rows:
+            trusted = trusted_queue_raw(format_value, queue, event_name)
+            if (
+                not trusted
+                or trusted == format_value
+                or normalize_match_format(trusted).family != "cube"
+            ):
+                continue
+            conn.execute(
+                "UPDATE matches SET format = ? WHERE id = ?",
+                (trusted, match_id),
+            )
+            repaired += 1
+        if repaired:
+            print(f"Repaired {repaired} Cube match format(s) from queue metadata.")
+
+    @staticmethod
+    def _migrate_v31_repair_event_formats(conn: sqlite3.Connection) -> None:
+        """Restore event formats when matching queue/event metadata is authoritative."""
+        from .format_normalizer import normalize_match_format, trusted_queue_raw
+
+        repaired = 0
+        match_rows = conn.execute(
+            "SELECT id, format, queue, event_name FROM matches"
+        ).fetchall()
+        for match_id, format_value, queue, event_name in match_rows:
+            trusted = trusted_queue_raw(format_value, queue, event_name)
+            if (
+                not trusted
+                or trusted == format_value
+                or normalize_match_format(trusted).family != "event"
+            ):
+                continue
+            conn.execute(
+                "UPDATE matches SET format = ? WHERE id = ?",
+                (trusted, match_id),
+            )
+            repaired += 1
+        if repaired:
+            print(f"Repaired {repaired} event match format(s) from queue metadata.")
 
     @staticmethod
     def _migrate_v15_purge_welcome_deck_duels(conn: sqlite3.Connection) -> None:
