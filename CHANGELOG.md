@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- Brawl games now show the opponent commander's full color identity in Recent
+  Games, All Games, Game Detail, and the opponent-color summary. Immediate
+  concessions and short games no longer depend on which cards were played,
+  when the commander's identity is available in the local card database.
+
 ## 0.6.5.1
 
 ### Fixes

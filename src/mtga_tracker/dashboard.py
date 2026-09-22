@@ -458,11 +458,32 @@ def _draw_quality_batch(
     return result
 
 
-def _opponent_color_letters(conn: sqlite3.Connection, game_id: str, participant_id: str) -> str:
-    """Color letters seen across the opponent's revealed cards in one game —
-    "C" when every known card was colorless (an Eldrazi deck is colorless,
-    not colors-unknown)."""
+def _display_opponent_colors(
+    raw_format: Optional[str], revealed_letters: Optional[str], commander_letters: Optional[str]
+) -> str:
+    """Brawl's known commander identity is more complete than revealed cards."""
+    if normalize_match_format(raw_format).is_brawl and commander_letters:
+        return normalize_colors(commander_letters)
+    return normalize_colors(revealed_letters)
+
+
+def _opponent_color_letters(
+    conn: sqlite3.Connection, game_id: str, participant_id: str, raw_format: Optional[str] = None
+) -> str:
+    """Opponent colors for one game, using Brawl commander identity when known."""
     try:
+        commander_letters = None
+        if normalize_match_format(raw_format).is_brawl:
+            commander_letters = conn.execute(
+                """
+                SELECT GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL
+                                         THEN c.color_identity || 'C' END, '')
+                FROM participant_commanders pc
+                JOIN cards c ON c.name = pc.card_name
+                WHERE pc.participant_id = ?
+                """,
+                (participant_id,),
+            ).fetchone()[0]
         rows = conn.execute(
             """
             SELECT c.color_identity
@@ -475,7 +496,8 @@ def _opponent_color_letters(conn: sqlite3.Connection, game_id: str, participant_
         ).fetchall()
     except sqlite3.OperationalError:
         return ""
-    return normalize_colors("".join(str(row[0]) + "C" for row in rows))
+    revealed_letters = "".join(str(row[0]) + "C" for row in rows)
+    return _display_opponent_colors(raw_format, revealed_letters, commander_letters)
 
 
 def _dominant_player_name(conn: sqlite3.Connection) -> Optional[str]:
@@ -999,21 +1021,36 @@ def _matchup_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> Li
 def _opponent_color_rows(
     conn: sqlite3.Connection, where: str, params: List[Any]
 ) -> List[Dict[str, Any]]:
-    """Win/loss record grouped by the opponent's revealed color combination."""
+    """Win/loss record grouped by the opponent's known color combination."""
     try:
         rows = conn.execute(
             f"""
+            WITH revealed AS (
+              SELECT s.game_id, s.participant_id,
+                     GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL
+                                       THEN c.color_identity || 'C' END, '') AS letters
+              FROM game_card_summary s
+              JOIN cards c ON c.id = s.card_id
+              GROUP BY s.game_id, s.participant_id
+            ), commander_identity AS (
+              SELECT pc.participant_id,
+                     GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL
+                                       THEN c.color_identity || 'C' END, '') AS letters
+              FROM participant_commanders pc
+              JOIN cards c ON c.name = pc.card_name
+              GROUP BY pc.participant_id
+            )
             SELECT
               g.id,
               g.outcome,
-              (
-                SELECT GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
-                FROM game_card_summary s
-                JOIN cards c ON c.id = s.card_id
-                WHERE s.game_id = g.id AND s.participant_id = po.id
-              ) AS letters
+              m.format,
+              revealed.letters,
+              commander_identity.letters
             FROM games g
+            JOIN matches m ON m.id = g.match_id
             JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
+            LEFT JOIN revealed ON revealed.game_id = g.id AND revealed.participant_id = po.id
+            LEFT JOIN commander_identity ON commander_identity.participant_id = po.id
             WHERE {where}
             """,
             params,
@@ -1021,12 +1058,11 @@ def _opponent_color_rows(
     except sqlite3.OperationalError:
         return []
     buckets: Dict[str, Dict[str, Any]] = {}
-    for _game_id, outcome, letters in rows:
-        colors = normalize_colors(str(letters or ""))
+    for _game_id, outcome, raw_format, letters, commander_letters in rows:
+        colors = _display_opponent_colors(raw_format, letters, commander_letters)
         label = color_combo_label(colors)
         if not label:
-            # No opponent cards captured (quick concede or a legacy
-            # half-tracked game) — nothing actionable to bucket.
+            # No known commander identity or revealed cards to bucket.
             continue
         entry = buckets.setdefault(
             label, {"color_label": label, "colors": colors, "games": 0, "wins": 0, "losses": 0}
@@ -2963,7 +2999,11 @@ def dashboard_snapshot(
         row["format_label"] = format_label(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )
-        row["opp_colors"] = normalize_colors(str(row.pop("opp_color_letters", "") or ""))
+        row["opp_colors"] = _display_opponent_colors(
+            row.get("raw_format"),
+            row.pop("opp_color_letters", ""),
+            row.get("opponent_commander_colors"),
+        )
         if "player_commander_colors" in row:
             row["player_commander_colors"] = normalize_colors(
                 str(row.get("player_commander_colors") or "")
@@ -3471,7 +3511,11 @@ def deck_detail(
         row["format_label"] = format_label(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )
-        row["opp_colors"] = normalize_colors(str(row.pop("opp_color_letters", "") or ""))
+        row["opp_colors"] = _display_opponent_colors(
+            row.get("raw_format"),
+            row.pop("opp_color_letters", ""),
+            row.get("opponent_commander_colors"),
+        )
         if "player_commander_colors" in row:
             row["player_commander_colors"] = normalize_colors(
                 str(row.get("player_commander_colors") or "")
@@ -4240,7 +4284,9 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
             )
         )
         library_events = _game_library_events(conn, game_id)
-        opponent_colors = _opponent_color_letters(conn, game_id, opponent_participant_id)
+        opponent_colors = _opponent_color_letters(
+            conn, game_id, opponent_participant_id, game.get("raw_format")
+        )
         # Multi-account machines: flag which account played this game (shown
         # in the UI only when more than one account exists in the database).
         distinct_accounts = conn.execute(
@@ -5111,6 +5157,7 @@ def all_games(
         # Opponent colors for every game in one grouped pass (a correlated
         # subquery per row costs ~15x more over the full history).
         opp_letters: Dict[str, str] = {}
+        opp_commander_letters: Dict[str, str] = {}
         try:
             for game_id, letters in conn.execute(
                 """
@@ -5123,10 +5170,22 @@ def all_games(
                 """
             ):
                 opp_letters[str(game_id)] = str(letters or "")
+            for game_id, letters in conn.execute(
+                """
+                SELECT po.game_id,
+                       GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
+                FROM participant_commanders pc
+                JOIN participants po ON po.id = pc.participant_id AND po.role = 'opponent'
+                JOIN cards c ON c.name = pc.card_name
+                GROUP BY po.game_id
+                """
+            ):
+                opp_commander_letters[str(game_id)] = str(letters or "")
         except sqlite3.OperationalError:
             opp_letters = {}
         for row in rows:
             row["opp_color_letters"] = opp_letters.get(str(row.get("game_id")), "")
+            row["opp_commander_letters"] = opp_commander_letters.get(str(row.get("game_id")), "")
         qualities = _draw_quality_batch(
             conn,
             [(row["player_participant_id"], row.get("deck_size")) for row in rows],
@@ -5151,7 +5210,11 @@ def all_games(
         row["format_label"] = format_label(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )
-        row["opp_colors"] = normalize_colors(str(row.pop("opp_color_letters", "") or ""))
+        row["opp_colors"] = _display_opponent_colors(
+            row.get("raw_format"),
+            row.pop("opp_color_letters", ""),
+            row.pop("opp_commander_letters", ""),
+        )
         if "player_commander_colors" in row:
             row["player_commander_colors"] = normalize_colors(
                 str(row.get("player_commander_colors") or "")

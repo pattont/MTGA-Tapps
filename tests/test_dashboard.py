@@ -1335,6 +1335,59 @@ def test_game_detail_reports_opponent_color_combo(tmp_path):
     assert colors["Izzet"]["games"] == 1
 
 
+def test_brawl_opponent_colors_use_commander_even_without_revealed_cards(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE matches SET format = 'Brawl_Ladder' WHERE id = 'match-1'")
+        conn.execute("UPDATE games SET total_turns = 0 WHERE id = 'game-1'")
+        conn.executemany(
+            "INSERT INTO cards (name, color_identity, first_seen_at) "
+            "VALUES (?, ?, '2026-06-04T00:00:00')",
+            [("Brawl Commander", "WBR"), ("Mountain", "R")],
+        )
+        commander_id = conn.execute(
+            "SELECT id FROM cards WHERE name = 'Brawl Commander'"
+        ).fetchone()[0]
+        mountain_id = conn.execute(
+            "SELECT id FROM cards WHERE name = 'Mountain'"
+        ).fetchone()[0]
+        conn.executemany(
+            "INSERT INTO participant_commanders (participant_id, card_id, card_name) "
+            "VALUES (?, ?, 'Brawl Commander')",
+            [("opponent-1", commander_id), ("opponent-2", commander_id)],
+        )
+        conn.execute(
+            "INSERT INTO game_card_summary "
+            "(game_id, participant_id, card_id, display_name, type_category, played_count) "
+            "VALUES ('game-2', 'opponent-2', ?, 'Mountain', 'Land', 1)",
+            (mountain_id,),
+        )
+
+    snapshot = {row["game_id"]: row for row in dashboard_snapshot(db_path)["recent"]}
+    deck_rows = {row["game_id"]: row for row in deck_detail(db_path, "Boros Mouse")["recent"]}
+    history = {row["game_id"]: row for row in all_games(db_path)["games"]}
+    for rows in (snapshot, deck_rows, history):
+        assert rows["game-1"]["opp_colors"] == "WBR"
+        assert rows["game-2"]["opp_colors"] == "WBR"
+
+    assert game_detail(db_path, "game-1")["opponent"]["colors"] == "WBR"
+    color_rows = {row["colors"]: row for row in dashboard_snapshot(db_path)["opponent_colors"]}
+    assert color_rows["WBR"]["games"] == 2
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM participant_commanders WHERE participant_id = 'opponent-2'")
+    # Older games without a recorded commander still use revealed cards.
+    missing_commander = {row["game_id"]: row for row in all_games(db_path)["games"]}
+    assert missing_commander["game-2"]["opp_colors"] == "R"
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE matches SET format = 'Play' WHERE id = 'match-1'")
+    # Commander metadata must not change the colors of a non-Brawl game.
+    ordinary = {row["game_id"]: row for row in all_games(db_path)["games"]}
+    assert ordinary["game-1"]["opp_colors"] == ""
+    assert ordinary["game-2"]["opp_colors"] == "R"
+
+
 def test_game_detail_groups_mulligan_hands_in_order(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
     with sqlite3.connect(db_path) as conn:

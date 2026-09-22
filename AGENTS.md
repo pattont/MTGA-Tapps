@@ -292,9 +292,11 @@ Preserve these behaviors unless the user explicitly changes requirements:
 - Games where the tracker attached mid-game (turn > 1 at first sight) are shown live but never
   persisted (`mid_game_attach` gates `_is_untracked_match`). Midweek Magic and bot matches are
   likewise never persisted.
-- Opponent deck colors come from `cards.color_identity` (backfilled from Arena's local card DB
-  at startup and after each game) aggregated over `game_card_summary`; combo names come from
-  `colors.py`. Color tables drop the bucket for games with no revealed opponent cards.
+- Opponent colors come from `cards.color_identity` (backfilled from Arena's local card DB
+  at startup and after each game). In Brawl, use the recorded opponent commander identity
+  from `participant_commanders` when known, including partner commanders; otherwise use
+  revealed cards from `game_card_summary`. Other formats use revealed cards. Combo names
+  come from `colors.py`; color summaries omit games with neither source available.
 - Arena "Imported Deck" placeholder names are canonicalized at startup to the real deck name
   when another game shares the exact maindeck (`canonicalize_imported_deck_names`).
 - Card Drill-Down persistently uses the same Scryfall full-card image loader as card hover
