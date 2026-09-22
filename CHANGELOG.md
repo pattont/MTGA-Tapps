@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- Fixed a console window flashing above other applications every few seconds
+  on Windows when Tapps adopted an already-running overlay process. The
+  periodic `tasklist` status check now runs without creating a window.
+
 ## 0.6.5
 
 ### Startup reliability

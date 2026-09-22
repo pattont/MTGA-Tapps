@@ -248,6 +248,9 @@ Common runtime files:
 
 Windows is a first-class target: use `pathlib`, quote paths for `cmd`, and prefer pasteable
 `%USERPROFILE%`/`%LOCALAPPDATA%` forms over POSIX-only examples in user-facing output.
+Background Windows subprocesses launched by the frozen GUI must use
+`CREATE_NO_WINDOW`; periodic console tools such as `tasklist` otherwise flash a window above
+the user's applications on every poll.
 
 The unified launcher must pass its selected `--db` path to both `CardTracker` and the dashboard.
 Never allow those components to silently use separate default databases.

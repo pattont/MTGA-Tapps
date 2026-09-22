@@ -173,6 +173,7 @@ def _overlay_process_ids(binary: Path) -> List[int]:
                 text=True,
                 timeout=2,
                 check=False,
+                **_detached_kwargs(),
             )
             pids: List[int] = []
             for line in result.stdout.splitlines():
@@ -489,7 +490,7 @@ class OverlayManager:
 
 
 def _detached_kwargs() -> Dict[str, Any]:
-    """Keep the overlay out of the tracker's console/job on Windows."""
+    """Keep background child processes out of the tracker's console on Windows."""
     if sys.platform == "win32":
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         return {"creationflags": flags}

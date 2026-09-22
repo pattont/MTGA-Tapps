@@ -46,6 +46,7 @@ def _fake_binary(tmp_path: Path) -> Path:
 def test_windows_process_discovery_reads_tasklist_csv(tmp_path, monkeypatch):
     binary = tmp_path / "tapps-overlay.exe"
     calls = []
+    no_window = 0x08000000
 
     class Result:
         stdout = (
@@ -59,6 +60,12 @@ def test_windows_process_discovery_reads_tasklist_csv(tmp_path, monkeypatch):
         return Result()
 
     monkeypatch.setattr(overlay_launcher.sys, "platform", "win32")
+    monkeypatch.setattr(
+        overlay_launcher.subprocess,
+        "CREATE_NO_WINDOW",
+        no_window,
+        raising=False,
+    )
     monkeypatch.setattr(overlay_launcher.subprocess, "run", run)
 
     assert overlay_launcher._overlay_process_ids(binary) == [4321, 7654]
@@ -70,6 +77,7 @@ def test_windows_process_discovery_reads_tasklist_csv(tmp_path, monkeypatch):
         "CSV",
         "/NH",
     ]
+    assert calls[0][1]["creationflags"] == no_window
 
 
 def test_enabled_flag_round_trips_without_touching_other_sections(tmp_path):
