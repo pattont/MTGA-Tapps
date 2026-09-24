@@ -1352,7 +1352,7 @@ function Dashboard({
       <Section
         id="rank-progress"
         title="Constructed Ranked"
-        description="Constructed ranked queues only, match-level (a Bo3 counts once). Ranked Standard BO1 and BO3 share the ladder rank charted below."
+        description="Constructed ranked queues, including Competitive Brawl. Matches count once (including Bo3), and season stats use your locally recorded matches."
       >
         {snapshot.ranked_summary && snapshot.ranked_summary.matches > 0 ? (
           <>

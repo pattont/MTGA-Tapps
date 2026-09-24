@@ -358,6 +358,9 @@ Preserve these behaviors unless the user explicitly changes requirements:
   The player's own count still comes from the mulligan-prompt tracking.
 - Opponents: `top_opponents`, `opponents_list`, and the opponent page count a Bo3 match once
   (grouped by `match_id`, `SUM(mw > ml)`); the UI rolls Bo3 games into one expandable row.
+- Constructed Ranked lifetime and season match stats include `Brawl_Ladder` (Competitive
+  Brawl), because its rank changes are constructed rank snapshots. Unranked Brawl queues
+  remain excluded; a Bo3 match still counts once.
 - Format quick filters are two-tier (`ui/src/quickFilters.ts`: `FORMAT_FAMILIES` with
   refinements; legacy ids normalized by `normalizeQuickFilterId`). Recent Games and All Games
   share `FormatQuickFilters`; All Games has no format dropdown or deck search box.

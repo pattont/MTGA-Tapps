@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- Competitive Brawl ranked matches now count toward the Constructed Ranked
+  lifetime and season match stats, including wins, losses, win rate, and streaks.
+  Their constructed rank changes already appeared in the chart; the stats now
+  use the same ranked queue.
+
 ## 0.6.5.2
 
 ### Fixes

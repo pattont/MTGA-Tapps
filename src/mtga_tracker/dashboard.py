@@ -1413,9 +1413,9 @@ def _summarize_match_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _is_constructed_ranked_format(raw_format: Any) -> bool:
-    """True for ladder queues that move the constructed rank (Brawl excluded)."""
+    """True for ladder queues that move the constructed rank, including ranked Brawl."""
     normalized = normalize_match_format(str(raw_format or ""))
-    return "(Ranked)" in normalized.label and not normalized.is_brawl
+    return "(Ranked)" in normalized.label
 
 
 def _constructed_season_window(

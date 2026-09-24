@@ -2166,7 +2166,7 @@ def test_dashboard_snapshot_counts_bo3_matches_once_and_splits_ranked(tmp_path):
             ("game-b1", "match-bo3", "2026-06-05T00:01:00", "win"),
             ("game-b2", "match-bo3", "2026-06-05T00:10:00", "loss"),
             ("game-b3", "match-bo3", "2026-06-05T00:20:00", "win"),
-            # Ranked Brawl: counts in the combined row, not the constructed ranked row.
+            # Ranked Brawl moves the same constructed rank as other ladder queues.
             ("game-br", "match-brawl", "2026-06-05T01:00:00", "win"),
         ]
         for game_id, match_id, started, outcome in games:
@@ -2199,14 +2199,14 @@ def test_dashboard_snapshot_counts_bo3_matches_once_and_splits_ranked(tmp_path):
     assert match_summary["longest_win"] == 2
     assert match_summary["longest_loss"] == 1
 
-    # Constructed ranked only: just the Bo3 ladder match; Brawl (Ranked) excluded.
+    # Constructed ranked counts the Bo3 match once and Competitive Brawl once.
     ranked = snapshot["ranked_summary"]
     assert ranked == {
-        "matches": 1,
-        "wins": 1,
+        "matches": 2,
+        "wins": 2,
         "losses": 0,
         "win_rate": 100.0,
-        "longest_win": 1,
+        "longest_win": 2,
         "longest_loss": 0,
     }
 
@@ -2265,6 +2265,61 @@ def test_dashboard_snapshot_splits_ranked_stats_by_season(tmp_path):
     season5 = dashboard_snapshot(db_path, season=92)["ranked_season_summary"]
     assert season5["season_ordinal"] == 92
     assert (season5["wins"], season5["losses"]) == (1, 0)
+
+
+def test_ranked_brawl_matches_count_in_constructed_season_stats(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        for index, (fmt, outcome) in enumerate(
+            [
+                ("Brawl_Ladder", "win"),
+                ("Play_Brawl_Historic", "loss"),
+                ("Brawl_Ladder", "win"),
+                ("Brawl_Ladder", "loss"),
+            ],
+            start=1,
+        ):
+            match_id = f"brawl-match-{index}"
+            game_id = f"brawl-game-{index}"
+            started = f"2026-09-22T16:{index:02d}:00"
+            conn.execute(
+                "INSERT INTO matches (id, session_id, format, queue, event_name, best_of) "
+                "VALUES (?, 'session-1', ?, ?, ?, 1)",
+                (match_id, fmt, fmt, fmt),
+            )
+            conn.execute(
+                "INSERT INTO games (id, session_id, match_id, game_number, started_at, outcome) "
+                "VALUES (?, 'session-1', ?, 1, ?, ?)",
+                (game_id, match_id, started, outcome),
+            )
+            conn.execute(
+                "INSERT INTO participants (id, game_id, role, deck_name) "
+                "VALUES (?, ?, 'player', 'Brawl Deck')",
+                (f"brawl-player-{index}", game_id),
+            )
+        conn.execute(
+            "INSERT INTO rank_snapshots "
+            "(session_id, match_id, game_id, captured_at, season_ordinal, rank_format, "
+            "rank_class, rank_level, rank_step, rank_steps, matches_won, matches_lost) "
+            "VALUES ('session-1', 'brawl-match-4', 'brawl-game-4', "
+            "'2026-09-22T16:05:00', 93, 'constructed', 'Diamond', 3, 2, 6, 98, 72)"
+        )
+
+    snapshot = dashboard_snapshot(db_path)
+
+    assert snapshot["rank_progress"][-1]["rank_label"] == "Diamond 3 (2/6)"
+    assert snapshot["ranked_summary"] == {
+        "matches": 3,
+        "wins": 2,
+        "losses": 1,
+        "win_rate": 66.7,
+        "longest_win": 2,
+        "longest_loss": 1,
+    }
+    assert snapshot["ranked_season_summary"] == {
+        **snapshot["ranked_summary"],
+        "season_ordinal": 93,
+    }
 
 
 def test_card_detail_reports_multiplicity(tmp_path):
