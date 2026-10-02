@@ -126,6 +126,23 @@ Primary code paths:
   "Tracker Settings" action opens this dashboard page. `settings_dialog.py` retains
   the PyQt Deck AI settings implementation.
 - `src/mtga_tracker/deckfinder_api.py`: background jobs for the integrated dashboard Deck Finder.
+- `src/mtga_deck_downloader/providers/base.py`: constructs each scraper lazily
+  on first use, under a per-provider lock. Site/source picker metadata must not
+  import scraper libraries, create HTTP clients, or fetch remote decks. Dynamic
+  scraper imports are covered by the packaging spec's package-wide collection.
+  The dashboard's provider cards use compact subtitles with full descriptions
+  in tooltips and a responsive grid sized for all seven sites on desktop.
+- `src/mtga_deck_downloader/providers/youtube.py` + `scrapers/youtube.py` /
+  `youtube_decklist.py`: YouTube creator decks from the latest 15 Videos-tab
+  entries sorted by Latest. Use keyless filtered player metadata, three worker
+  sessions, and a watch-page fallback; never download media or require cookies
+  from a signed-in browser. HGG/Sloth are defaults in `YouTubeCreators`; preserve
+  these entries when old settings payloads omit `youtube`. Normalize Deck/Decklist
+  headings to `Deck` and strip title emoji with the bundled `emoji` dependency.
+  Reuse the existing 10-minute dashboard memory cache; failed/partial fetches
+  show warnings and are not cached. UI uses a simple loading message, no progress
+  bar. See `docs/DECK_FINDER_YOUTUBE.md`; regression fixtures live in
+  `tests/deck_downloader/fixtures/youtube/`.
 - `src/mtga_tracker/collection_api.py` / `collection_export.py` / `inventory.py`: explicit
   collection-export jobs, macOS/Windows process-memory readers, and local card metadata.
 - `src/mtga_tracker/overlay_state.py` / `overlay_launcher.py`: library-composition odds
@@ -284,6 +301,15 @@ Preserve these behaviors unless the user explicitly changes requirements:
   player/opponent average-turn columns. Its deck colors, and those in All Games and opponent
   history, come from that game's submitted `game_deck_cards` snapshot; deck-level pages use
   the newest submitted revision for the named deck.
+- Overview Win Rate Trend uses one compact selector for 1/7/30/60/90 days, all
+  time, or the last 10/25/50/100 games (default: 30 days), independent of the
+  overview Period and From/To filters. It uses a rolling window of 30 finished
+  games, loading earlier history for game-count views; deck and format filters
+  apply to both. All time includes the complete recorded history, and axis
+  dates show years. Average Win Rate uses only games in the chosen range;
+  Low % / High % use complete 30-game rolling windows, with only the
+  low, high, latest, and hovered points marked to avoid clutter. The center
+  axis label counts only the selected range's games, wins, and losses.
 - The Formats table defaults to case-insensitive Format A–Z order. Midweek Magic and Momir are
   excluded in both backend responses and the UI as a safeguard against stale dashboard processes.
 - Best Deck = most total wins among decks with a winning record (>=50% WR, min 8 decided

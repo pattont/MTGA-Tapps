@@ -284,9 +284,12 @@ def _fetch_decks(
     _clear_screen(console)
     source_label = selected_source.name if selected_source else "all matching endpoints"
     try:
-        with console.status(
-            f"[bold cyan]Fetching deck data from {provider.display_name} ({source_label})...[/bold cyan]"
-        ):
+        message = (
+            "Checking the latest 15 YouTube videos for decklists..."
+            if provider.key == "youtube"
+            else f"Fetching deck data from {provider.display_name} ({source_label})..."
+        )
+        with console.status(f"[bold cyan]{message}[/bold cyan]"):
             decks = provider.fetch_decks(
                 selected_format=selected_format,
                 limit=limit,
@@ -299,6 +302,8 @@ def _fetch_decks(
         console.print(f"[red]{exc}[/red]")
         return None
 
+    for warning in getattr(decks, "warnings", []):
+        console.print(warning, style="yellow", markup=False)
     if not decks:
         console.print("\n[yellow]No decks found for the selected filter.[/yellow]")
         return None
@@ -534,7 +539,9 @@ def _show_deck_table(
     if show_placing:
         table.add_column("Place", no_wrap=True)
     if show_player:
-        table.add_column("Player", overflow="fold", max_width=20)
+        table.add_column(
+            "Creator" if provider.key == "youtube" else "Player", overflow="fold", max_width=20
+        )
     table.add_column("Format", no_wrap=True)
     if show_notes:
         table.add_column(
@@ -793,7 +800,7 @@ def _date_column_label(
 ) -> str | None:
     if not any(deck.event_date for deck in decks):
         return None
-    if provider.key == "aetherhub":
+    if provider.key in {"aetherhub", "youtube"}:
         return "Posted"
     if provider.key == "magic_gg":
         return "Date"

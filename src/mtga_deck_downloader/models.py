@@ -43,3 +43,12 @@ class DeckEntry:
     event_date: str | None = None
     deck_text: str | None = None
     notes: str | None = None
+
+
+class DeckFetchResult(list):
+    """List-compatible results with fetch warnings; failures must not be TTL-cached."""
+
+    def __init__(self, decks=(), warnings=()) -> None:
+        super().__init__(decks)
+        self.warnings = list(warnings)
+        self.cacheable = not self.warnings

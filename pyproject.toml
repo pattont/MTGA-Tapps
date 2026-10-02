@@ -22,6 +22,7 @@ dependencies = [
     "cloudscraper>=1.2,<2.0",
     "requests>=2.31,<3.0",
     "rich>=13.7,<14.0",
+    "emoji>=2.14,<3.0",  # Unicode-aware creator deck-title cleanup (offline)
 ]
 
 [project.optional-dependencies]

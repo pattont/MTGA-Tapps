@@ -71,10 +71,28 @@ class CreatorConfig:
 
 
 @dataclass(frozen=True)
+class YouTubeCreatorConfig:
+    channel: str
+    name: str
+    short_name: str | None = None
+
+    @property
+    def label(self) -> str:
+        return (self.short_name or "").strip() or self.name
+
+
+DEFAULT_YOUTUBE_CREATORS = (
+    YouTubeCreatorConfig("https://www.youtube.com/@HelloGoodGame/videos", "Hello Good Game", "HGG"),
+    YouTubeCreatorConfig("https://www.youtube.com/@SlothMtg/videos", "Sloth", "Sloth"),
+)
+
+
+@dataclass(frozen=True)
 class AppConfig:
     moxfield_creators: tuple[CreatorConfig, ...]
     aetherhub_creators: tuple[CreatorConfig, ...] = ()
     tcgplayer_creators: tuple[CreatorConfig, ...] = ()
+    youtube_creators: tuple[YouTubeCreatorConfig, ...] = DEFAULT_YOUTUBE_CREATORS
 
     @property
     def moxfield_names(self) -> tuple[str, ...]:
@@ -92,6 +110,7 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         CreatorConfig(name=name) for name in DEFAULT_AETHERHUB_CREATORS
     ]
     raw_tcgplayer_creators: list[CreatorConfig] = []
+    raw_youtube_creators = list(DEFAULT_YOUTUBE_CREATORS)
 
     resolved_path = resolve_config_path(config_path)
     if resolved_path.exists():
@@ -100,6 +119,12 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         except Exception:
             payload = {}
         if isinstance(payload, dict):
+            if isinstance(payload.get("YouTubeCreators"), list):
+                raw_youtube_creators = [
+                    creator
+                    for item in payload["YouTubeCreators"]
+                    if (creator := parse_youtube_creator(item)) is not None
+                ]
             candidate_names = payload.get("MoxfieldNames")
             if isinstance(candidate_names, list):
                 raw_moxfield_creators = [
@@ -132,7 +157,39 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         moxfield_creators=_dedupe_creators(raw_moxfield_creators),
         aetherhub_creators=_dedupe_creators(raw_aetherhub_creators),
         tcgplayer_creators=_dedupe_creators(raw_tcgplayer_creators),
+        youtube_creators=tuple(
+            {creator.channel.lower(): creator for creator in raw_youtube_creators}.values()
+        ),
     )
+
+
+def parse_youtube_creator(item: object) -> YouTubeCreatorConfig | None:
+    from mtga_deck_downloader.youtube_channels import channel_videos_url
+
+    if isinstance(item, str):
+        item = {"Channel": item}
+    if not isinstance(item, dict):
+        return None
+    reference = item.get("Channel") or item.get("channel") or item.get("Name") or item.get("name")
+    if not isinstance(reference, str):
+        return None
+    try:
+        channel = channel_videos_url(reference)
+    except ValueError:
+        return None
+    name = str(item.get("Name") or item.get("name") or "").strip()
+    if not name or name == reference:
+        default = next(
+            (
+                creator
+                for creator in DEFAULT_YOUTUBE_CREATORS
+                if creator.channel.lower() == channel.lower()
+            ),
+            None,
+        )
+        name = default.name if default else channel.split("/")[-2].lstrip("@")
+    short = item.get("ShortName") or item.get("short_name")
+    return YouTubeCreatorConfig(channel, name, short.strip() if isinstance(short, str) else None)
 
 
 def _dedupe_creators(creators: list[CreatorConfig]) -> tuple[CreatorConfig, ...]:

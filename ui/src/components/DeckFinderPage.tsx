@@ -19,6 +19,16 @@ import { SortableTable, type Column } from './SortableTable';
 const JOB_POLL_MS = 700;
 const JOB_TIMEOUT_MS = 120_000;
 
+const SITE_SUBTITLES: Record<string, string> = {
+  aetherhub: 'Meta & creators',
+  magic_gg: 'Tournaments',
+  moxfield: 'Creators',
+  mtgo: 'Events',
+  tcgplayer: 'Decks & creators',
+  untapped: 'Arena meta',
+  youtube: 'Creators',
+};
+
 /** Port of the terminal app's Arena import formatting: blank line before
     section headers (Sideboard, Companion, Commander) so Arena accepts it. */
 function formatArenaImportText(deckText: string | null | undefined): string | null {
@@ -82,6 +92,7 @@ export function DeckFinderPage() {
   const [provider, setProvider] = useState<DeckFinderProvider | null>(null);
   const [format, setFormat] = useState('any');
   const [sources, setSources] = useState<DeckFinderSource[]>([]);
+  const [sourcesLoaded, setSourcesLoaded] = useState(false);
   const [results, setResults] = useState<DeckFinderResults | null>(null);
   const [variantsParent, setVariantsParent] = useState<DeckFinderDeck | null>(null);
   const [busyNote, setBusyNote] = useState<string | null>(null);
@@ -122,8 +133,14 @@ export function DeckFinderPage() {
     async (nextProvider: DeckFinderProvider, args: FetchArgs, refresh = false) => {
       const seq = beginRequest();
       setLastFetch(args);
-      setBusyNote(`Fetching decks from ${nextProvider.display_name}…`);
-      setResults(null);
+      setBusyNote(
+        nextProvider.key === 'youtube'
+          ? 'Checking the latest 15 YouTube videos for decklists…'
+          : `Fetching decks from ${nextProvider.display_name}…`,
+      );
+      if (!(refresh && nextProvider.key === 'youtube')) {
+        setResults(null);
+      }
       setVariantsParent(null);
       setSelectedDeck(null);
       try {
@@ -161,6 +178,7 @@ export function DeckFinderPage() {
     async (nextProvider: DeckFinderProvider, nextFormat: string) => {
       const seq = beginRequest();
       setSources([]);
+      setSourcesLoaded(false);
       setResults(null);
       setVariantsParent(null);
       setSelectedDeck(null);
@@ -175,6 +193,7 @@ export function DeckFinderPage() {
         const loaded = await fetchDeckFinderSources(nextProvider.key, nextFormat);
         if (requestSeq.current === seq) {
           setSources(loaded);
+          setSourcesLoaded(true);
           if (loaded.length === 1) {
             // Only one source matches this filter — use it automatically,
             // like the terminal app does.
@@ -352,7 +371,10 @@ export function DeckFinderPage() {
   // the terminal app's separate creator table (TCGplayer, Moxfield).
   const regularSources = sources.filter((source) => !source.name.startsWith('Creator: '));
   const creatorSources = sources.filter((source) => source.name.startsWith('Creator: '));
-  const showSources = Boolean(provider?.uses_source_picker && sources.length > 1);
+  const showSources = Boolean(
+    provider?.uses_source_picker &&
+      (sources.length > 1 || (provider.key === 'youtube' && sources.length > 0)),
+  );
   const resultContext = provider
     ? [
         provider.display_name,
@@ -397,10 +419,12 @@ export function DeckFinderPage() {
                   ? 'deckfinder-provider deckfinder-provider-active'
                   : 'deckfinder-provider'
               }
+              aria-pressed={provider?.key === candidate.key}
+              title={candidate.description}
               onClick={() => selectProvider(candidate)}
             >
               <strong>{candidate.display_name}</strong>
-              <span>{candidate.description}</span>
+              <span>{SITE_SUBTITLES[candidate.key] ?? candidate.description}</span>
             </button>
           ))}
         </div>
@@ -428,7 +452,7 @@ export function DeckFinderPage() {
       {showSources && provider && regularSources.length > 0 ? (
         <div className="deckfinder-filter-row">
           <span className="deckfinder-step-label">{provider.source_picker_title}</span>
-          <div className="quick-filters deckfinder-chips" role="group" aria-label="Deck sources">
+          <div className="quick-filters deckfinder-chips" role="group" aria-label={provider.source_picker_title === 'Creators' ? 'Creators' : 'Deck sources'}>
             {provider.allow_all_sources ? (
               <button
                 className={
@@ -552,6 +576,12 @@ export function DeckFinderPage() {
             ))}
           </div>
         </div>
+      ) : null}
+
+      {provider?.key === 'youtube' && sourcesLoaded && sources.length === 0 ? (
+        <p className="empty-state deckfinder-state">
+          Add a YouTube creator in <a href="#/settings">Settings</a> to find their decks.
+        </p>
       ) : null}
 
       {busyNote ? (

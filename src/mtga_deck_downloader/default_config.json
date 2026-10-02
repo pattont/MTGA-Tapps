@@ -36,5 +36,17 @@
       "Name": "Arne Huschenbeth",
       "ShortName": "Arne"
     }
+  ],
+  "YouTubeCreators": [
+    {
+      "Channel": "https://www.youtube.com/@HelloGoodGame/videos",
+      "Name": "Hello Good Game",
+      "ShortName": "HGG"
+    },
+    {
+      "Channel": "https://www.youtube.com/@SlothMtg/videos",
+      "Name": "Sloth",
+      "ShortName": "Sloth"
+    }
   ]
 }

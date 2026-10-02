@@ -2486,17 +2486,31 @@ def dashboard_snapshot(
     season: Optional[int] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
+    trend_days: Optional[int] = None,
+    trend_games: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Return dashboard-friendly aggregate data from SQLite.
 
-    Optional filters narrow every aggregate: `deck` matches the player's deck
-    name, `fmt` matches the raw queue/format string, and `days` keeps games
-    started within the last N days.
+    Optional filters narrow aggregates: `deck` matches the player's deck name,
+    `fmt` matches the raw queue/format string, and `days` keeps games started
+    within the last N days. A trend range overrides the overview's
+    days/since/until range; game-count ranges include 29 earlier games so the
+    first plotted point can use the full 30-game rolling window.
     """
     db_path = Path(db_path).expanduser()
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
     where, params = _games_filter(deck, fmt, days, since, until)
+    trend_where, trend_params = (
+        _games_filter(deck, fmt, None if trend_games is not None else (trend_days or None))
+        if trend_days is not None or trend_games is not None
+        else (where, params)
+    )
+    trend_limit = (
+        f"LIMIT {trend_games + 29}"
+        if trend_games is not None
+        else ("" if trend_days is not None else "LIMIT 200")
+    )
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
@@ -2781,11 +2795,11 @@ def dashboard_snapshot(
                   COALESCE(g.started_at, g.ended_at) AS started_at,
                   g.outcome
                 FROM games g
-                WHERE {where} AND g.outcome IN ('win', 'loss')
+                WHERE {trend_where} AND g.outcome IN ('win', 'loss')
                 ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
-                LIMIT 200
+                {trend_limit}
                 """,
-                params,
+                trend_params,
             )
         )
         trend_rows.reverse()
@@ -5761,13 +5775,17 @@ def _send_bytes(
     content_type: str,
     headers: Dict[str, str] | None = None,
 ) -> None:
-    handler.send_response(status)
-    handler.send_header("Content-Type", content_type)
-    handler.send_header("Content-Length", str(len(body)))
-    for name, value in (headers or {}).items():
-        handler.send_header(name, value)
-    handler.end_headers()
-    handler.wfile.write(body)
+    try:
+        handler.send_response(status)
+        handler.send_header("Content-Type", content_type)
+        handler.send_header("Content-Length", str(len(body)))
+        for name, value in (headers or {}).items():
+            handler.send_header(name, value)
+        handler.end_headers()
+        handler.wfile.write(body)
+    except (BrokenPipeError, ConnectionResetError):
+        # The browser may cancel an in-flight snapshot when a filter changes.
+        handler.close_connection = True
 
 
 def _safe_static_path(static_dir: Path, request_path: str) -> Path | None:
@@ -6235,6 +6253,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if request_path == "/api/snapshot":
             query = parse_qs(parsed.query)
             common = _parse_common_filters(query)
+            trend_days_raw = query.get("trend_days", [None])[0]
+            try:
+                trend_days = int(trend_days_raw) if trend_days_raw is not None else None
+            except ValueError:
+                trend_days = None
+            if trend_days is not None and trend_days not in (0, 1, 7, 30, 60, 90):
+                trend_days = None
+            trend_games_raw = query.get("trend_games", [None])[0]
+            try:
+                trend_games = int(trend_games_raw) if trend_games_raw is not None else None
+            except ValueError:
+                trend_games = None
+            if trend_games is not None and trend_games not in (10, 25, 50, 100):
+                trend_games = None
             season_raw = query.get("season", [None])[0]
             try:
                 season = int(season_raw) if season_raw else None
@@ -6254,6 +6286,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         season=season,
                         since=common["since"],
                         until=common["until"],
+                        trend_days=trend_days,
+                        trend_games=trend_games,
                     )
                 ),
                 )

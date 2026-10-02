@@ -27,12 +27,15 @@ const CREATOR_SITES = [
   ['moxfield', 'Moxfield'],
   ['aetherhub', 'Aetherhub'],
   ['tcgplayer', 'TCGplayer'],
+  ['youtube', 'YouTube'],
 ] as const;
 
 function creatorLines(creators: DeckFinderCreator[]): string {
   return creators
     .map((creator) =>
-      creator.short_name ? `${creator.name} | ${creator.short_name}` : creator.name,
+      creator.short_name
+        ? `${creator.channel ?? creator.name} | ${creator.short_name}`
+        : creator.channel ?? creator.name,
     )
     .join('\n');
 }
@@ -385,7 +388,7 @@ export function SettingsPage() {
       <Section
         id="settings-creators"
         title="Deck Finder Creators"
-        description="Which creators the Deck Finder's Moxfield, Aetherhub, and TCGplayer sites follow. One creator per line. Add a short display name after a pipe — “Ashlizzlle | Ash” makes imported decks show up as “Jeskai Artifacts (Ash)” in Arena."
+        description="Which creators Deck Finder follows on Moxfield, Aetherhub, TCGplayer, and YouTube. One creator per line, with an optional short name after a pipe. For YouTube, enter a channel URL or @handle — “@SlothMtg | Sloth” adds “(Sloth)” to imported deck names."
       >
         {error ? null : creators === null ? (
           <p className="state-panel deckfinder-state" role="status" aria-busy="true">
@@ -707,6 +710,7 @@ function CreatorsForm({ initial }: { initial: DeckFinderCreatorSettings }) {
     moxfield: creatorLines(initial.moxfield),
     aetherhub: creatorLines(initial.aetherhub),
     tcgplayer: creatorLines(initial.tcgplayer),
+    youtube: creatorLines(initial.youtube ?? []),
   }));
   const [status, setStatus] = useState<SaveStatus>('idle');
 
@@ -717,6 +721,7 @@ function CreatorsForm({ initial }: { initial: DeckFinderCreatorSettings }) {
         moxfield: parseCreatorLines(drafts.moxfield ?? ''),
         aetherhub: parseCreatorLines(drafts.aetherhub ?? ''),
         tcgplayer: parseCreatorLines(drafts.tcgplayer ?? ''),
+        youtube: parseCreatorLines(drafts.youtube ?? ''),
       });
       setStatus('saved');
       window.setTimeout(() => setStatus('idle'), 1800);
@@ -735,7 +740,7 @@ function CreatorsForm({ initial }: { initial: DeckFinderCreatorSettings }) {
           <label key={key} className="settings-field">
             <span>{label}</span>
             <textarea
-              placeholder={'CreatorName | Short name'}
+              placeholder={key === 'youtube' ? '@HelloGoodGame | HGG\n@SlothMtg | Sloth' : 'CreatorName | Short name'}
               rows={rows}
               spellCheck={false}
               value={value}

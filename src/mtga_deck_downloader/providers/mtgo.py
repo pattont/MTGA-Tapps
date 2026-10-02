@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from mtga_deck_downloader.models import DeckEntry, DeckSource, MatchFormat
 from mtga_deck_downloader.providers.base import DeckProvider, ResultViewConfig
-from mtga_deck_downloader.scrapers.mtgo import MTGOScraper
 
 
 class MTGOProvider(DeckProvider):
@@ -11,8 +10,7 @@ class MTGOProvider(DeckProvider):
     description = "Recent official Standard events and their published player decklists."
     homepage = "https://www.mtgo.com/decklists"
 
-    def __init__(self) -> None:
-        self._scraper = MTGOScraper()
+    _scraper_path = "mtga_deck_downloader.scrapers.mtgo.MTGOScraper"
 
     @property
     def sources(self) -> list[DeckSource]:

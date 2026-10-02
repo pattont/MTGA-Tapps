@@ -1074,9 +1074,82 @@ a.best-deck-name:focus-visible {
   padding: 12px 16px 16px;
 }
 
+.trend-layout {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  padding: 10px 16px 16px;
+}
+
+.trend-layout .trend-wrap {
+  display: contents;
+}
+
+.trend-range {
+  flex: 0 0 auto;
+}
+
+.trend-range select {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+}
+
 .trend-chart {
   margin: 0;
 }
+
+.trend-layout .trend-chart,
+.trend-layout .empty-state {
+  flex: 1 0 100%;
+  min-width: 0;
+}
+
+.trend-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  margin-bottom: 10px;
+}
+
+.trend-layout .trend-summary {
+  justify-content: flex-end;
+  margin: 0 0 0 auto;
+}
+
+.trend-summary > div {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.trend-summary span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.trend-summary strong {
+  font-size: 0.95rem;
+}
+
+.trend-summary > div:nth-child(2) strong { color: var(--danger); }
+.trend-summary > div:nth-child(3) strong { color: var(--success); }
+
+.trend-point {
+  pointer-events: none;
+  stroke: var(--surface);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.trend-point-low { fill: var(--danger); }
+.trend-point-high { fill: var(--success); }
+.trend-point-latest,
+.trend-point-hover { fill: var(--accent-strong); }
 
 .trend-meta {
   display: flex;
@@ -1130,9 +1203,25 @@ a.best-deck-name:focus-visible {
 .trend-axis {
   display: flex;
   justify-content: space-between;
+  gap: 8px;
   margin-top: 6px;
   color: var(--subtle);
   font-size: 0.76rem;
+}
+
+.trend-axis-record {
+  text-align: center;
+}
+
+@media (max-width: 620px) {
+  .trend-axis {
+    flex-wrap: wrap;
+  }
+
+  .trend-axis-record {
+    order: 3;
+    width: 100%;
+  }
 }
 
 .rank-chart-grid {
@@ -3999,21 +4088,28 @@ tr.deck-change-row-out .card-link {
 
 .deckfinder-providers {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 128px), 1fr));
+  gap: 8px;
   margin: 10px 16px 16px;
 }
 
 .deckfinder-provider {
   display: grid;
-  gap: 6px;
-  padding: 12px 14px;
+  align-content: start;
+  min-width: 0;
+  gap: 4px;
+  padding: 10px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel);
   color: var(--text);
   text-align: left;
   cursor: pointer;
+}
+
+.deckfinder-provider strong {
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
 }
 
 .deckfinder-provider span {

@@ -1,6 +1,5 @@
 from mtga_deck_downloader.models import DeckEntry, DeckSource, MatchFormat
 from mtga_deck_downloader.providers.base import DeckProvider
-from mtga_deck_downloader.scrapers.magic_gg import MagicGGScraper
 
 
 class MagicGGProvider(DeckProvider):
@@ -9,8 +8,7 @@ class MagicGGProvider(DeckProvider):
     description = "Decklists from premier events and pro-level tournaments."
     homepage = "https://magic.gg/decklists"
 
-    def __init__(self) -> None:
-        self._scraper = MagicGGScraper()
+    _scraper_path = "mtga_deck_downloader.scrapers.magic_gg.MagicGGScraper"
 
     @property
     def sources(self) -> list[DeckSource]:

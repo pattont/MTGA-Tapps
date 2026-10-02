@@ -38,6 +38,7 @@ _CREATOR_SITES = (
     ("moxfield", "Moxfield:"),
     ("aetherhub", "Aetherhub:"),
     ("tcgplayer", "TCGplayer:"),
+    ("youtube", "YouTube channel URL / @handle:"),
 )
 
 
@@ -168,7 +169,8 @@ class DeckAISettingsDialog(QDialog):
 
         intro = QLabel(
             "Which creators the Deck Finder's Moxfield, Aetherhub, and "
-            "TCGplayer sites follow. One creator per line. Add a short "
+            "TCGplayer and YouTube sites follow. For YouTube, use a channel URL or @handle. "
+            "One creator per line. Add a short "
             "display name after a pipe — “Ashlizzlle | Ash” makes imported "
             "decks show up as “Jeskai Artifacts (Ash)” in Arena."
         )
@@ -201,7 +203,7 @@ class DeckAISettingsDialog(QDialog):
         for key, edit in self._creator_edits.items():
             lines = []
             for creator in config.get(key) or []:
-                name = str(creator.get("name") or "").strip()
+                name = str(creator.get("channel") or creator.get("name") or "").strip()
                 if not name:
                     continue
                 short = str(creator.get("short_name") or "").strip()

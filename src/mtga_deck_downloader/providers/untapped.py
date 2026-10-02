@@ -2,7 +2,6 @@ from dataclasses import replace
 
 from mtga_deck_downloader.models import DeckEntry, DeckSource, MatchFormat
 from mtga_deck_downloader.providers.base import DeckProvider, ResultViewConfig
-from mtga_deck_downloader.scrapers.untapped import UntappedScraper
 
 
 class UntappedProvider(DeckProvider):
@@ -11,8 +10,7 @@ class UntappedProvider(DeckProvider):
     description = "Arena archetypes with win-rate data and variant decklists."
     homepage = "https://mtga.untapped.gg/constructed/standard/meta"
 
-    def __init__(self) -> None:
-        self._scraper = UntappedScraper()
+    _scraper_path = "mtga_deck_downloader.scrapers.untapped.UntappedScraper"
 
     @property
     def sources(self) -> list[DeckSource]:

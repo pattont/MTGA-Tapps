@@ -3,7 +3,6 @@ from dataclasses import replace
 from mtga_deck_downloader.config import CreatorConfig, load_config
 from mtga_deck_downloader.models import DeckEntry, DeckSource, MatchFormat
 from mtga_deck_downloader.providers.base import DeckProvider
-from mtga_deck_downloader.scrapers.aetherhub import AetherhubScraper
 
 
 class AetherhubProvider(DeckProvider):
@@ -12,8 +11,7 @@ class AetherhubProvider(DeckProvider):
     description = "Tournament and MTGA metagame decks with direct MTGA export text."
     homepage = "https://aetherhub.com/Metagame/Standard-Events/"
 
-    def __init__(self) -> None:
-        self._scraper = AetherhubScraper()
+    _scraper_path = "mtga_deck_downloader.scrapers.aetherhub.AetherhubScraper"
 
     def list_sources(self, selected_format: MatchFormat) -> list[DeckSource]:
         return [

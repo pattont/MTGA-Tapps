@@ -1010,6 +1010,7 @@ describe('App', () => {
         moxfield: [{ name: 'Ashlizzlle', short_name: 'Ash' }],
         aetherhub: [],
         tcgplayer: [],
+        youtube: [{ name: 'Sloth', channel: 'https://www.youtube.com/@SlothMtg/videos', short_name: 'Sloth' }],
       },
       platform: { system: 'macos', collection_export: true },
       startup: {
@@ -1076,6 +1077,17 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Deck Finder Creators' })).toBeInTheDocument();
     expect(await screen.findByLabelText(/Enable AI deck identification/)).toBeChecked();
     expect(screen.getByDisplayValue('Ashlizzlle | Ash')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('https://www.youtube.com/@SlothMtg/videos | Sloth')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('YouTube'), { target: { value: '@HelloGoodGame | HGG\n@SlothMtg | Sloth' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Creators' }));
+    await waitFor(() => {
+      const save = fetchMock.mock.calls.find(([url]) => String(url) === '/api/settings/deck-finder');
+      expect(save).toBeDefined();
+      expect(JSON.parse(String(save?.[1]?.body)).youtube).toEqual([
+        { name: '@HelloGoodGame', short_name: 'HGG' },
+        { name: '@SlothMtg', short_name: 'Sloth' },
+      ]);
+    });
     expect(screen.getByRole('heading', { name: 'Database Health' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open Database Health' })).toHaveAttribute(
       'href',
@@ -1240,7 +1252,7 @@ describe('App', () => {
     await user.selectOptions(screen.getByLabelText('Format'), 'Play');
     await user.selectOptions(screen.getByLabelText('Period'), '30');
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?format=Play&days=30', expect.anything()),
+      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?format=Play&days=30&trend_days=30', expect.anything()),
     );
 
     expect(screen.getAllByRole('link', { name: 'Boros Mouse' })[0]).toHaveAttribute(
@@ -1265,7 +1277,7 @@ describe('App', () => {
     });
 
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?format=Play&days=30', expect.anything()),
+      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?format=Play&days=30&trend_days=30', expect.anything()),
     );
   });
 
@@ -1846,23 +1858,50 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot', expect.anything());
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?trend_days=30', expect.anything());
 
     // The deck filter is a searchable dropdown: open, type, pick.
     await user.click(screen.getByRole('button', { name: 'Deck filter' }));
     await user.type(screen.getByLabelText('Search decks in filter'), 'boros');
     await user.click(screen.getByRole('option', { name: 'Boros Mouse' }));
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?deck=Boros+Mouse', expect.anything()),
+      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?deck=Boros+Mouse&trend_days=30', expect.anything()),
     );
 
     await user.selectOptions(screen.getByLabelText('Period'), '30');
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?deck=Boros+Mouse&days=30', expect.anything()),
+      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?deck=Boros+Mouse&days=30&trend_days=30', expect.anything()),
     );
 
     await user.click(screen.getByRole('button', { name: 'Clear filters' }));
-    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot', expect.anything()));
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?trend_days=30', expect.anything()));
+  });
+
+  it('changes the trend range independently of the overview period', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(snapshot), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    const trendRange = await screen.findByLabelText('Range');
+    expect(trendRange).toHaveValue('days:30');
+    expect(trendRange.closest('.trend-layout')).toContainElement(
+      screen.getByLabelText('Average win rate and rolling extremes'),
+    );
+    expect(within(trendRange).getAllByRole('option').map((option) => option.textContent)).toContain('Last 100 games');
+    await user.selectOptions(screen.getByLabelText('Period'), '7');
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?days=7&trend_days=30', expect.anything()),
+    );
+    await user.selectOptions(trendRange, 'days:0');
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?days=7&trend_days=0', expect.anything()),
+    );
+    await user.selectOptions(trendRange, 'games:25');
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?days=7&trend_games=25', expect.anything()),
+    );
+    expect(screen.getByLabelText('Period')).toHaveValue('7');
   });
 
   it('renders an error state when the API fails', async () => {

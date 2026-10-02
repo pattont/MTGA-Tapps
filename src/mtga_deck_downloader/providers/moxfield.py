@@ -5,7 +5,6 @@ from dataclasses import replace
 from mtga_deck_downloader.config import MoxfieldCreator, load_config
 from mtga_deck_downloader.models import DeckEntry, DeckSource, MatchFormat
 from mtga_deck_downloader.providers.base import DeckProvider
-from mtga_deck_downloader.scrapers.moxfield import MoxfieldScraper
 
 
 class MoxfieldProvider(DeckProvider):
@@ -14,8 +13,7 @@ class MoxfieldProvider(DeckProvider):
     description = "Creator decks from public Moxfield profiles loaded from deckfinder_config.json."
     homepage = "https://moxfield.com/"
 
-    def __init__(self) -> None:
-        self._scraper = MoxfieldScraper()
+    _scraper_path = "mtga_deck_downloader.scrapers.moxfield.MoxfieldScraper"
 
     @property
     def source_picker_title(self) -> str:

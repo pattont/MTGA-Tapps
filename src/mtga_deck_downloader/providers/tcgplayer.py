@@ -5,7 +5,6 @@ from urllib.parse import quote
 from mtga_deck_downloader.config import CreatorConfig, load_config
 from mtga_deck_downloader.models import DeckEntry, DeckSource, MatchFormat
 from mtga_deck_downloader.providers.base import DeckProvider, ResultViewConfig
-from mtga_deck_downloader.scrapers.tcgplayer import TCGPlayerScraper
 
 
 class TCGPlayerProvider(DeckProvider):
@@ -14,8 +13,7 @@ class TCGPlayerProvider(DeckProvider):
     description = "Standard trending decks, latest decks, and recent event finishes with MTGA export text."
     homepage = "https://www.tcgplayer.com/content/magic-the-gathering/decks/format/standard"
 
-    def __init__(self) -> None:
-        self._scraper = TCGPlayerScraper()
+    _scraper_path = "mtga_deck_downloader.scrapers.tcgplayer.TCGPlayerScraper"
 
     @property
     def sources(self) -> list[DeckSource]:

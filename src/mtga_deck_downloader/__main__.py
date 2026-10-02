@@ -34,6 +34,7 @@ def run_diagnostics() -> int:
     print(f"Moxfield creators: {len(config.moxfield_creators)}")
     print(f"Aetherhub creators: {len(config.aetherhub_creators)}")
     print(f"TCGPlayer creators: {len(config.tcgplayer_creators)}")
+    print(f"YouTube creators: {len(config.youtube_creators)}")
     print(f"Providers ({len(providers)}): {provider_names or 'none'}")
 
     if LAST_PROVIDER_ERRORS:

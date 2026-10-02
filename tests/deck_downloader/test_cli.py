@@ -15,13 +15,15 @@ class CLITests(unittest.TestCase):
 
         rendered = output.getvalue()
         self.assertEqual(exit_code, 0)
-        self.assertIn("Providers (6):", rendered)
+        self.assertIn("Providers (7):", rendered)
         self.assertIn("aetherhub.com", rendered)
         self.assertIn("magic.gg", rendered)
         self.assertIn("moxfield.com", rendered)
         self.assertIn("mtgo.com", rendered)
         self.assertIn("tcgplayer.com", rendered)
         self.assertIn("untapped.gg", rendered)
+        self.assertIn("youtube.com", rendered)
+        self.assertIn("YouTube creators:", rendered)
 
 
 if __name__ == "__main__":

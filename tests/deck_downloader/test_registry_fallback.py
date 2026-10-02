@@ -29,3 +29,25 @@ def test_fallback_names_load_the_same_providers(monkeypatch):
     assert "moxfield.com" in names
     assert len(names) == len(registry._KNOWN_PROVIDER_MODULES)
     assert not registry.LAST_PROVIDER_ERRORS
+
+
+def test_scraper_initializes_once_on_first_fetch(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from mtga_deck_downloader.models import MatchFormat
+    from mtga_deck_downloader.providers.moxfield import MoxfieldProvider
+
+    scraper = Mock()
+    scraper.fetch_user_decks.return_value = []
+    factory = Mock(return_value=scraper)
+    loader = Mock(return_value=SimpleNamespace(MoxfieldScraper=factory))
+    monkeypatch.setattr("mtga_deck_downloader.providers.base.import_module", loader)
+    provider = MoxfieldProvider()
+    source = provider.sources[0]
+    loader.assert_not_called()
+    provider.fetch_decks(MatchFormat.ANY, source=source)
+    provider.fetch_decks(MatchFormat.ANY, source=source)
+    loader.assert_called_once_with("mtga_deck_downloader.scrapers.moxfield")
+    factory.assert_called_once_with()
+    assert scraper.fetch_user_decks.call_count == 2

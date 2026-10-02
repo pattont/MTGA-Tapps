@@ -100,7 +100,7 @@ the table. Starting life and command-zone recasts are handled; Brawl is
 recognized from Arena's match format, never from deck size.
 
 **Deck Finder.** Browse current decklists from creators and sites (Moxfield,
-AetherHub, TCGplayer, magic.gg, MTGO, Untapped) right inside the dashboard and
+AetherHub, TCGplayer, magic.gg, MTGO, Untapped, YouTube) right inside the dashboard and
 copy any list to your clipboard in Arena import format.
 
 **Backup & restore.** Everything the tracker knows — games, settings, Deck
@@ -215,15 +215,21 @@ name opening a page with your full history against them:
 The Deck Finder lives **right inside the dashboard** — open it from the
 "Deck Finder" button at the bottom of the sidebar or the menu bar entry. Pick
 a site (AetherHub, magic.gg, Moxfield,
-MTGO, TCGplayer, or untapped.gg) and a format, and it lists matching decks in a
+MTGO, TCGplayer, untapped.gg, or youtube.com) and a format or creator, and it lists matching decks in a
 table tuned to each site — win rates and matches for untapped.gg archetypes,
 event placings for tournament sites, and so on. Open any deck to see its list,
 then **Export to Arena** copies it in Arena's import format (or **Source**
 opens the original page). "Surprise Me" pulls a random importable deck. Your
-own featured creators for AetherHub, Moxfield, and TCGplayer are managed on the
+own featured creators for AetherHub, Moxfield, TCGplayer, and YouTube are managed on the
 **Settings** page (or in `deckfinder_config.json` at the top level of the
 project folder). Everything it needs installs with the tracker; no separate
 setup.
+
+YouTube's **Creators** picker starts with **Hello Good Game** and **Sloth**.
+It reads decklists from the latest 15 video descriptions without an API key,
+cleans title emojis and set/platform suffixes, and adds `(HGG)` or `(Sloth)`
+to the imported deck name. Add another channel URL or `@handle` in Settings.
+See the [YouTube creator guide](docs/DECK_FINDER_YOUTUBE.md).
 
 ![Deck Finder in the dashboard](docs/images/deck-finder.png)
 

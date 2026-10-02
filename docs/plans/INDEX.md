@@ -14,6 +14,8 @@ or operational documentation only.
 | [Format legality](valid_cards_per_format.md) | Proposal; no legality cache/filter | Revalidate data source and historical legality semantics before implementation |
 
 The completed release plan was replaced by [the release guide](../RELEASING.md).
+The completed YouTube creator plan was replaced by the
+[YouTube creator guide](../DECK_FINDER_YOUTUBE.md).
 The completed overlay plan was removed; [the overlay guide](../../overlay/README.md)
 and changelog describe the actual implementation. The old plan included
 superseded choices (off by default, its own tray, no card art, known-top

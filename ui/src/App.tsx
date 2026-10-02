@@ -808,6 +808,7 @@ export default function App() {
   const [theme, setTheme] = useState<ThemeName>(() => readInitialTheme());
   const themeChosenRef = useRef<boolean>(readHasStoredTheme());
   const [filters, setFilters] = useState<SnapshotFilters>(() => parseDashboardRouteFilters(window.location.hash) ?? {});
+  const [trendRange, setTrendRange] = useState('days:30');
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
   const [routeHash, setRouteHash] = useState<string>(() => window.location.hash);
   const deckRoute = useMemo(() => parseDeckRoute(routeHash), [routeHash]);
@@ -960,7 +961,7 @@ export default function App() {
       const controller = new AbortController();
       activeController = controller;
       try {
-        const snapshot = await fetchDashboardSnapshot(filters, controller.signal);
+        const snapshot = await fetchDashboardSnapshot(filters, controller.signal, trendRange);
         if (!ignore && sequence === requestSequence) {
           setLoadState({ status: 'loaded', snapshot, lastUpdated: new Date().toISOString() });
         }
@@ -984,7 +985,7 @@ export default function App() {
       activeController?.abort();
       window.clearInterval(refreshId);
     };
-  }, [filters, deckName, gameId, cardName, opponentRoute, auditRoute, gamesRoute, opponentsRoute]);
+  }, [filters, trendRange, deckName, gameId, cardName, opponentRoute, auditRoute, gamesRoute, opponentsRoute]);
 
   const playerName =
     loadState.status === 'loaded' ? loadState.snapshot.summary.player_name : undefined;
@@ -1100,6 +1101,8 @@ export default function App() {
                 onFiltersChange={updateFilters}
                 refreshError={loadState.refreshError}
                 snapshot={loadState.snapshot}
+                trendRange={trendRange}
+                onTrendRangeChange={setTrendRange}
               />
             ) : null}
           </>
@@ -1115,12 +1118,16 @@ function Dashboard({
   onFiltersChange,
   refreshError,
   snapshot,
+  trendRange,
+  onTrendRangeChange,
 }: {
   filters: SnapshotFilters;
   lastUpdated: string;
   onFiltersChange: (filters: SnapshotFilters) => void;
   refreshError?: string;
   snapshot: DashboardSnapshot;
+  trendRange: string;
+  onTrendRangeChange: (range: string) => void;
 }) {
   const [deckSearch, setDeckSearch] = useState('');
   const [recentQuickFilter, setRecentQuickFilter] = useState('all');
@@ -1342,10 +1349,35 @@ function Dashboard({
       <Section
         id="trend"
         title="Win Rate Trend"
-        description="Rolling win rate across your most recent 30 finished games."
+        description="Rolling win rate over the selected period."
       >
-        <div className="trend-wrap">
-          <TrendChart rows={snapshot.trend} />
+        <div className="trend-layout">
+          <label className="filter-field trend-range">
+            <span className="filter-field-label">Range</span>
+            <select value={trendRange} onChange={(event) => onTrendRangeChange(event.target.value)}>
+              <optgroup label="By time">
+                <option value="days:1">Day</option>
+                <option value="days:7">7 days</option>
+                <option value="days:30">30 days</option>
+                <option value="days:60">60 days</option>
+                <option value="days:90">90 days</option>
+                <option value="days:0">All time</option>
+              </optgroup>
+              <optgroup label="By games">
+                <option value="games:10">Last 10 games</option>
+                <option value="games:25">Last 25 games</option>
+                <option value="games:50">Last 50 games</option>
+                <option value="games:100">Last 100 games</option>
+              </optgroup>
+            </select>
+          </label>
+          <div className="trend-wrap">
+            <TrendChart
+              rows={snapshot.trend}
+              visibleGames={trendRange.startsWith('games:') ? Number(trendRange.slice(6)) : undefined}
+              showSummary
+            />
+          </div>
         </div>
       </Section>
 

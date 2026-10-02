@@ -1337,8 +1337,14 @@ export function snapshotQueryString(filters: SnapshotFilters): string {
 export async function fetchDashboardSnapshot(
   filters: SnapshotFilters = {},
   signal?: AbortSignal,
+  trendRange?: string,
 ): Promise<DashboardSnapshot> {
-  const response = await fetch(`/api/snapshot${snapshotQueryString(filters)}`, { signal });
+  const params = new URLSearchParams(snapshotQueryString(filters).slice(1));
+  if (trendRange) {
+    const [unit, value] = trendRange.split(':');
+    params.set(unit === 'games' ? 'trend_games' : 'trend_days', value);
+  }
+  const response = await fetch(`/api/snapshot${params.size ? `?${params}` : ''}`, { signal });
   if (!response.ok) {
     throw new Error(`Dashboard API returned ${response.status}`);
   }
@@ -1663,6 +1669,7 @@ export interface DeckAiSettings {
 export interface DeckFinderCreator {
   name: string;
   short_name: string | null;
+  channel?: string;
 }
 
 export interface DeckFinderCreatorSettings {
@@ -1670,6 +1677,7 @@ export interface DeckFinderCreatorSettings {
   moxfield: DeckFinderCreator[];
   aetherhub: DeckFinderCreator[];
   tcgplayer: DeckFinderCreator[];
+  youtube?: DeckFinderCreator[];
 }
 
 export interface TrackerInfoSettings {
@@ -1943,6 +1951,7 @@ export async function saveDeckFinderCreators(payload: {
   moxfield: DeckFinderCreator[];
   aetherhub: DeckFinderCreator[];
   tcgplayer: DeckFinderCreator[];
+  youtube?: DeckFinderCreator[];
 }): Promise<DeckFinderCreatorSettings> {
   const response = await fetch('/api/settings/deck-finder', {
     method: 'POST',

@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- Deck Finder now includes **youtube.com → Creators**, with Hello Good Game
+  (HGG) and Sloth available by default. It checks the latest 15 video descriptions
+  without a YouTube login or API key, using small metadata requests with a page
+  fallback. Add more channel URLs or @handles in Settings. Imported names remove
+  emoji and trailing set/platform text; `Decklist` headings become Arena's `Deck`
+  heading. Results reuse the existing 10-minute memory cache, with a simple
+  loading message and Refresh for fresh lists.
+
+### Fixes
+
+- Deck Finder's site picker loads metadata without importing scraper libraries
+  or initializing HTTP clients. Scrapers load when a site is first used.
+  Compact provider cards use short subtitles and less spacing so all seven
+  sites fit on one row at common desktop widths.
+
+- Win Rate Trend now has its own compact range selector for Day, 7/30/60/90 days,
+  All time, or the last 10/25/50/100 games, defaulting to 30 days. Game-count
+  views use earlier games to calculate the 30-game rolling rate while plotting
+  only the selected games. The overview Period dropdown no longer changes this
+  chart. The chart shows Average Win Rate for the selected range, plus Low %
+  and High % from complete 30-game rolling windows with sparse point markers.
+  The summary sits to the right of Range, close above the chart.
+  Beneath the chart, the selected range's game, win, and loss counts replace
+  the old "50% guide" label.
+  Axis dates include the year, and canceled filter requests no longer print
+  broken-pipe tracebacks.
+
 ## 0.6.5.3
 
 ### Fixes

@@ -78,4 +78,48 @@ describe('TrendChart', () => {
 
     expect(container.querySelector('.chart-tooltip')).toBeNull();
   });
+
+  it('shows the year on both ends of the date axis', () => {
+    const historicalRows = [
+      { game_id: '1', started_at: '2025-04-23T12:00:00', outcome: 'win' },
+      { game_id: '2', started_at: '2025-06-10T12:00:00', outcome: 'loss' },
+      { game_id: '3', started_at: '2025-09-01T12:00:00', outcome: 'win' },
+      { game_id: '4', started_at: '2026-02-12T12:00:00', outcome: 'loss' },
+      { game_id: '5', started_at: '2026-09-23T12:00:00', outcome: 'win' },
+    ];
+
+    render(<TrendChart rows={historicalRows} />);
+
+    expect(screen.getByText(/Apr.*23.*2025/)).toBeInTheDocument();
+    expect(screen.getByText(/Sep.*23.*2026/)).toBeInTheDocument();
+  });
+
+  it('plots only the selected games while using earlier games for the rolling rate', () => {
+    const historicalRows = Array.from({ length: 40 }, (_, index) => ({
+      game_id: String(index),
+      started_at: `2026-06-01T12:${String(index).padStart(2, '0')}:00`,
+      outcome: index < 20 ? 'win' : 'loss',
+    }));
+
+    const { container } = render(<TrendChart rows={historicalRows} visibleGames={10} showSummary />);
+
+    expect(screen.getByRole('img', { name: 'Rolling win rate across 10 games, currently 33%' })).toBeInTheDocument();
+    const summary = screen.getByLabelText('Average win rate and rolling extremes');
+    expect(summary).toHaveTextContent('Average Win Rate0%');
+    expect(summary).toHaveTextContent('Low %33%');
+    expect(summary).toHaveTextContent('High %63%');
+    expect(container.querySelector('.trend-axis-record')).toHaveTextContent('10 games · 0 wins / 10 losses');
+    expect(container.querySelectorAll('.trend-point')).toHaveLength(3);
+  });
+
+  it('shows the selected period record under the chart', () => {
+    render(<TrendChart rows={rows} showSummary />);
+
+    const summary = screen.getByLabelText('Average win rate and rolling extremes');
+    expect(summary).toHaveTextContent('Average Win Rate60%');
+    expect(summary).toHaveTextContent('Low %—');
+    expect(summary).toHaveTextContent('High %—');
+    expect(screen.getByText('5 games · 3 wins / 2 losses')).toBeInTheDocument();
+    expect(screen.queryByText('50% guide')).not.toBeInTheDocument();
+  });
 });

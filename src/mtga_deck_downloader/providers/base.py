@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from abc import ABC
 from dataclasses import dataclass
+from importlib import import_module
+from threading import Lock
 
 from mtga_deck_downloader.models import DeckEntry, DeckSource, MatchFormat
 
@@ -22,6 +24,26 @@ class DeckProvider(ABC):
     display_name: str
     description: str
     homepage: str
+    _scraper_path: str
+
+    def __init__(self) -> None:
+        self._scraper_instance = None
+        self._scraper_lock = Lock()
+
+    @property
+    def _scraper(self):
+        """Loading the site picker needs metadata, not scraper libraries or clients."""
+        if self._scraper_instance is not None:
+            return self._scraper_instance
+        with self._scraper_lock:
+            if self._scraper_instance is None:
+                module_name, class_name = self._scraper_path.rsplit(".", 1)
+                self._scraper_instance = getattr(import_module(module_name), class_name)()
+            return self._scraper_instance
+
+    @_scraper.setter
+    def _scraper(self, value) -> None:
+        self._scraper_instance = value
 
     def list_sources(self, selected_format: MatchFormat) -> list[DeckSource]:
         return [source for source in self.sources if source.supports(selected_format)]

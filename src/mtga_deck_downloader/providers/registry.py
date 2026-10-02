@@ -17,6 +17,7 @@ _KNOWN_PROVIDER_MODULES = (
     "mtgo",
     "tcgplayer",
     "untapped",
+    "youtube",
 )
 
 

@@ -264,7 +264,7 @@ def _notes_column_label(provider_key: str) -> str:
 def _date_column_label(provider_key: str, decks) -> Optional[str]:
     if not any(deck.event_date for deck in decks):
         return None
-    if provider_key == "aetherhub":
+    if provider_key in {"aetherhub", "youtube"}:
         return "Posted"
     if provider_key in ("magic_gg", "mtgo"):
         return "Date"
@@ -313,7 +313,9 @@ def _table_spec(
     if show_placing:
         columns.append({"key": "placing", "label": "Place"})
     if show_player:
-        columns.append({"key": "player", "label": "Player"})
+        columns.append(
+            {"key": "player", "label": "Creator" if provider_key == "youtube" else "Player"}
+        )
     columns.append({"key": "format", "label": "Format"})
     if show_notes:
         columns.append({"key": "notes", "label": _notes_column_label(provider_key)})
@@ -436,6 +438,11 @@ def _run_fetch(
     source = _resolve_source(provider, source_url or None, source_name)
     decks = provider.fetch_decks(fmt, limit=limit, source=source)
     view = provider.result_view_config(source)
+    warnings = getattr(decks, "warnings", [])
+    if warnings:
+        view = dataclasses.replace(
+            view, helper_text=" ".join([view.helper_text or "", *warnings]).strip()
+        )
     if (
         provider_key == "untapped"
         and decks
@@ -459,11 +466,11 @@ def _run_fetch(
         {**_serialize_deck(deck), "cells": row} for deck, row in zip(decks, cells)
     ]
     view_payload = {**_serialize_view(view), "columns": columns}
-    _CACHE[(provider_key, fmt_value, source_url, source_name)] = (
-        time.monotonic(),
-        serialized,
-        view_payload,
-    )
+    cache_key = (provider_key, fmt_value, source_url, source_name)
+    if getattr(decks, "cacheable", True):
+        _CACHE[cache_key] = (time.monotonic(), serialized, view_payload)
+    else:
+        _CACHE.pop(cache_key, None)
     return {"decks": serialized, "view": view_payload}
 
 
@@ -483,7 +490,11 @@ def _handle_fetch(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     job_id = _start_job(
         lambda: _run_fetch(provider_key, fmt_value, source_url, source_name, limit),
-        note=f"Fetching decks from {provider_key}…",
+        note=(
+            "Checking the latest 15 YouTube videos for decklists…"
+            if provider_key == "youtube"
+            else f"Fetching decks from {provider_key}…"
+        ),
     )
     return {"job": job_id}
 
@@ -582,6 +593,10 @@ def read_creator_config() -> Dict[str, Any]:
         "moxfield": _creator_list(config.moxfield_creators),
         "aetherhub": _creator_list(config.aetherhub_creators),
         "tcgplayer": _creator_list(config.tcgplayer_creators),
+        "youtube": [
+            {"name": creator.name, "short_name": creator.short_name, "channel": creator.channel}
+            for creator in config.youtube_creators
+        ],
     }
 
 
@@ -615,12 +630,31 @@ def write_creator_config(payload: Dict[str, Any]) -> Dict[str, Any]:
             entries.append(entry)
         return entries
 
-    document = {
-        "MoxfieldNames": _entries("moxfield"),
-        "AtherhubCreators": _entries("aetherhub"),
-        "TcgplayerCreators": _entries("tcgplayer"),
-    }
     path = _writable_config_path()
+    document = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    if not isinstance(document, dict):
+        raise ValueError("Deck Finder configuration must be a JSON object.")
+    document.update(
+        {
+            "MoxfieldNames": _entries("moxfield"),
+            "AtherhubCreators": _entries("aetherhub"),
+            "TcgplayerCreators": _entries("tcgplayer"),
+        }
+    )
+    if "youtube" in payload:
+        from mtga_deck_downloader.config import parse_youtube_creator
+
+        if not isinstance(payload["youtube"], list):
+            raise ValueError("YouTube creators must be a list.")
+        entries = []
+        for item in payload["youtube"]:
+            creator = parse_youtube_creator(item)
+            if creator is None:
+                raise ValueError("Each YouTube creator needs a valid channel URL or @handle.")
+            entries.append(
+                {"Channel": creator.channel, "Name": creator.name, "ShortName": creator.short_name}
+            )
+        document["YouTubeCreators"] = entries
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     _invalidate_providers()

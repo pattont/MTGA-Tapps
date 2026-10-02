@@ -3,11 +3,14 @@ import sqlite3
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from threading import Thread
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
 from mtga_tracker.analytics import AnalyticsStore
 from mtga_tracker.dashboard import (
+    _send_bytes,
     _timeline_text_segments,
     all_games,
     card_detail,
@@ -729,6 +732,82 @@ def test_dashboard_snapshot_includes_win_rate_trend(tmp_path):
     assert [row["game_id"] for row in snapshot["trend"]] == ["game-1", "game-2"]
     assert snapshot["trend"][0]["outcome"] == "win"
     assert snapshot["trend"][1]["outcome"] == "loss"
+
+
+def test_win_rate_trend_period_is_independent_of_overview_period(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    from datetime import datetime, timedelta
+
+    recent_started = (datetime.now() - timedelta(hours=1)).isoformat(timespec="seconds")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """insert into games (id, session_id, match_id, started_at, outcome)
+               values ('game-recent', 'session-1', 'match-1', ?, 'win')""",
+            (recent_started,),
+        )
+        conn.execute(
+            """insert into participants (id, game_id, role, deck_name)
+               values ('player-recent', 'game-recent', 'player', 'Boros Mouse')"""
+        )
+
+    week = dashboard_snapshot(db_path, days=90, trend_days=7)
+    all_time = dashboard_snapshot(db_path, days=7, trend_days=0)
+
+    assert [row["game_id"] for row in week["trend"]] == ["game-recent"]
+    assert [row["game_id"] for row in all_time["trend"]] == ["game-1", "game-2", "game-recent"]
+    assert all_time["summary"]["games"] == 1
+
+
+def test_all_time_win_rate_trend_includes_more_than_200_games(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """insert into games (id, session_id, match_id, started_at, outcome)
+               values (?, 'session-1', 'match-1', ?, 'win')""",
+            [
+                (f'older-{index}', f'2025-01-01T{index // 60:02d}:{index % 60:02d}:00')
+                for index in range(201)
+            ],
+        )
+
+    snapshot = dashboard_snapshot(db_path, trend_days=0)
+
+    assert len(snapshot["trend"]) == 203
+    assert snapshot["trend"][0]["started_at"].startswith("2025-01-01")
+
+
+def test_game_count_trend_includes_rolling_history(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """insert into games (id, session_id, match_id, started_at, outcome)
+               values (?, 'session-1', 'match-1', ?, 'win')""",
+            [
+                (f'extra-{index:02d}', f'2026-07-01T00:{index:02d}:00')
+                for index in range(45)
+            ],
+        )
+
+    snapshot = dashboard_snapshot(db_path, trend_games=10)
+
+    assert len(snapshot["trend"]) == 39
+    assert snapshot["trend"][0]["game_id"] == "extra-06"
+    assert snapshot["trend"][-1]["game_id"] == "extra-44"
+
+
+@pytest.mark.parametrize("disconnect", [BrokenPipeError, ConnectionResetError])
+def test_sending_response_ignores_client_disconnect(disconnect):
+    handler = SimpleNamespace(
+        send_response=Mock(),
+        send_header=Mock(),
+        end_headers=Mock(),
+        wfile=SimpleNamespace(write=Mock(side_effect=disconnect)),
+        close_connection=False,
+    )
+
+    _send_bytes(handler, 200, b"snapshot", "application/json")
+
+    assert handler.close_connection is True
 
 
 def test_dashboard_handler_applies_snapshot_query_filters(tmp_path):
