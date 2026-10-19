@@ -1,0 +1,183 @@
+/**
+ * Stores the Buy on Paper dialog can hand a deck to. Each one turns the cart
+ * into what its bulk-entry page accepts, and the browser opens it in a new
+ * tab. Nothing here talks to a store.
+ *
+ * Formats follow what EDHREC and Cube Cobra send today (see
+ * docs/BUY_ON_PAPER.md). StarCityGames and CoolStuffInc document no way to
+ * prefill their deck builders, so for them the list is copied to the
+ * clipboard and their builder opens, ready to paste.
+ *
+ * Affiliate codes are not set up yet. Fill in AFFILIATE once an account is
+ * approved: an empty value sends a plain link, and the dialog only shows its
+ * commission disclosure for a store whose code is set.
+ */
+
+import type { CartLine } from './paperDeck';
+
+export type VendorId = 'tcgplayer' | 'cardkingdom' | 'manapool' | 'starcitygames' | 'coolstuffinc';
+
+export const AFFILIATE = {
+  /**
+   * Impact tracking link from the TCGplayer affiliate dashboard, without a
+   * query, e.g. "https://partner.tcgplayer.com/c/<publisher>/1830156/21018".
+   * The Mass Entry URL is passed to it as `u`.
+   */
+  tcgplayer: '',
+  /** Card Kingdom partner code (their in-house program), sent as `partner`. */
+  cardkingdom: '',
+  /** Mana Pool referral code (affiliates.manapool.com), sent as `ref`. */
+  manapool: '',
+  /** No affiliate programs found for these two yet. */
+  starcitygames: '',
+  coolstuffinc: '',
+} satisfies Record<VendorId, string>;
+
+/** Shown to the store as the traffic source alongside an affiliate code. */
+const SOURCE = 'tappstracker';
+
+export type VendorRequest =
+  | { kind: 'link'; url: string }
+  | { kind: 'copy'; url: string; text: string };
+
+export interface VendorOptions {
+  setCodes: boolean;
+}
+
+export interface PaperVendor {
+  id: VendorId;
+  name: string;
+  icon: string;
+  /** One line under the picker saying what happens on Buy. */
+  note: string;
+  supportsSetCodes: boolean;
+  buildRequest: (lines: CartLine[], options: VendorOptions) => VendorRequest;
+}
+
+/** Stores take the front face of a double-faced or split card. */
+function storeName(name: string): string {
+  return name.split(' // ')[0].trim();
+}
+
+function plainLines(lines: CartLine[]): string[] {
+  return lines.map((line) => `${line.quantity} ${storeName(line.name)}`);
+}
+
+function withQuery(base: string, params: Record<string, string>): string {
+  const url = new URL(base);
+  for (const [key, value] of Object.entries(params)) {
+    if (value) url.searchParams.set(key, value);
+  }
+  return url.toString();
+}
+
+/** UTF-8 safe base64, as Mana Pool's add-deck link expects. */
+function base64Utf8(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary);
+}
+
+const ICON_BASE = `${import.meta.env.BASE_URL}stores/`;
+
+export const PAPER_VENDORS: PaperVendor[] = [
+  {
+    id: 'tcgplayer',
+    name: 'TCGplayer',
+    icon: `${ICON_BASE}tcgplayer.ico`,
+    note: 'Opens TCGplayer Mass Entry with your list, where you add it to the cart.',
+    supportsSetCodes: true,
+    buildRequest(lines, { setCodes }) {
+      const entries = lines.map((line) => {
+        const base = `${line.quantity} ${storeName(line.name)}`;
+        return setCodes && line.set ? `${base} [${line.set}]${line.collector_number ? ` ${line.collector_number}` : ''}` : base;
+      });
+      const massEntry = withQuery('https://store.tcgplayer.com/massentry', { c: entries.join('||') });
+      return {
+        kind: 'link',
+        url: AFFILIATE.tcgplayer ? withQuery(AFFILIATE.tcgplayer, { subId1: SOURCE, u: massEntry }) : massEntry,
+      };
+    },
+  },
+  {
+    id: 'cardkingdom',
+    name: 'Card Kingdom',
+    icon: `${ICON_BASE}cardkingdom.png`,
+    note: 'Opens Card Kingdom’s deck builder with your list filled in.',
+    supportsSetCodes: false,
+    buildRequest(lines) {
+      const tracked: Record<string, string> = AFFILIATE.cardkingdom
+        ? { partner: AFFILIATE.cardkingdom, utm_source: SOURCE, utm_medium: 'affiliate', utm_campaign: SOURCE }
+        : {};
+      return {
+        kind: 'link',
+        url: withQuery('https://www.cardkingdom.com/builder', { ...tracked, c: plainLines(lines).join('\n') }),
+      };
+    },
+  },
+  {
+    id: 'manapool',
+    name: 'Mana Pool',
+    icon: `${ICON_BASE}manapool.png`,
+    note: 'Opens Mana Pool’s deck import with your list filled in.',
+    supportsSetCodes: false,
+    buildRequest(lines) {
+      return {
+        kind: 'link',
+        url: withQuery('https://manapool.com/add-deck', {
+          ref: AFFILIATE.manapool,
+          deck: base64Utf8(plainLines(lines).join('\n')),
+        }),
+      };
+    },
+  },
+  {
+    id: 'starcitygames',
+    name: 'StarCityGames',
+    icon: `${ICON_BASE}starcitygames.png`,
+    note: 'Copies your list and opens the StarCityGames deck builder. Paste it there and choose Get My Deck!',
+    supportsSetCodes: false,
+    buildRequest(lines) {
+      return { kind: 'copy', url: 'https://starcitygames.com/shop/deck-builder/', text: plainLines(lines).join('\n') };
+    },
+  },
+  {
+    id: 'coolstuffinc',
+    name: 'CoolStuffInc',
+    icon: `${ICON_BASE}coolstuffinc.png`,
+    note: 'Copies your list and opens the CoolStuffInc deck builder. Paste it there and choose Build It!',
+    supportsSetCodes: false,
+    buildRequest(lines) {
+      return { kind: 'copy', url: 'https://www.coolstuffinc.com/main_deckBuilder.php', text: plainLines(lines).join('\n') };
+    },
+  },
+];
+
+export function vendorById(id: string): PaperVendor | undefined {
+  return PAPER_VENDORS.find((vendor) => vendor.id === id);
+}
+
+export function affiliateActive(vendor: PaperVendor): boolean {
+  return Boolean(AFFILIATE[vendor.id]);
+}
+
+/**
+ * Open the store in a new tab, copying the list first when the store can't
+ * take it in the link. Resolves to whether a copy was needed and worked.
+ */
+export async function openVendorRequest(request: VendorRequest): Promise<{ copied: boolean | null }> {
+  let copied: boolean | null = null;
+  if (request.kind === 'copy') {
+    // Copy before opening: the clipboard needs this page focused, and the
+    // click still counts as the user's action for window.open afterwards.
+    try {
+      await navigator.clipboard.writeText(request.text);
+      copied = true;
+    } catch {
+      copied = false;
+    }
+  }
+  window.open(request.url, '_blank', 'noopener,noreferrer');
+  return { copied };
+}

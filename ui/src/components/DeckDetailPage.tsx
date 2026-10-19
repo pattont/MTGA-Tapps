@@ -63,6 +63,8 @@ import { makeCommanderColumns } from '../commanderColumns';
 import { DeckVisual } from './DeckVisual';
 import { FilterBar } from './FilterBar';
 import { Section } from './Section';
+import { BuyPaperButton, BuyPaperDialog } from './BuyPaperDialog';
+import { parseDeckFinderImport } from '../deckFinderImport';
 import { ManaReadinessTable } from './ManaReadinessTable';
 import { MetricCard } from './MetricCard';
 import { SortableTable, type Column } from './SortableTable';
@@ -628,6 +630,7 @@ export function DeckDetailPage({
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [buyingOpener, setBuyingOpener] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -764,6 +767,9 @@ export function DeckDetailPage({
     ],
     ['Mana spent / turn', manaCell(playerManaStats.per_turn), manaCell(opponentManaStats.per_turn)],
   ];
+
+  // The Arena export already adds a Brawl commander back as its own section.
+  const buySections = deckExport.available ? parseDeckFinderImport(deckExport.text)?.sections : undefined;
 
   async function copyArenaDeck() {
     if (!deckExport?.available || !deckExport.text) {
@@ -1262,6 +1268,12 @@ export function DeckDetailPage({
       <Section
         id="deck-cards"
         title="Deck List & Card Performance"
+        headingAction={
+          <BuyPaperButton
+            disabled={!buySections?.length}
+            onOpen={setBuyingOpener}
+          />
+        }
         description={
           deckExport.available
             ? 'Latest captured main deck and sideboard counts, with tracked performance for each card.'
@@ -1309,6 +1321,14 @@ export function DeckDetailPage({
               }
             />
           </>
+        ) : null}
+        {buyingOpener && buySections?.length ? (
+          <BuyPaperDialog
+            deckName={detail.deck_name}
+            sections={buySections}
+            onClose={() => setBuyingOpener(null)}
+            returnFocus={buyingOpener}
+          />
         ) : null}
       </Section>
 

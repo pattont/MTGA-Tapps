@@ -342,6 +342,20 @@ Primary code paths:
   show warnings and are not cached. UI uses a simple loading message, no progress
   bar. The README covers creator setup; regression fixtures live in
   `tests/deck_downloader/fixtures/youtube/`.
+- `ui/src/components/BuyPaperDialog.tsx` + `cardPrices.ts` / `paperDeck.ts` /
+  `paperVendors.ts` / `scryfallQueue.ts`: Buy on Paper (frontend only, no Python
+  or schema). The button sits beside the Arena export in Deck Finder, the Deck
+  Manager deck dialog header, and the deck page's Deck List section heading.
+  Prices are Scryfall TCGplayer-market prices: one collection pass, then batched
+  `(!"A" or !"B")` searches sorted by `usd`, with basics searched separately.
+  Scryfall allows 2 requests per second on search/collection and locks the caller
+  out after a 429 (seen as a CORS error in the browser), so every price call
+  goes through `scryfallFetch`, which spaces calls and backs off for a minute.
+  Never add per-card requests. Settled results cache in localStorage for 24 h.
+  Store links follow EDHREC/Cube Cobra formats; SCG and CSI copy the list and open
+  their builder. Empty `AFFILIATE` values mean plain links, and the commission
+  disclosure shows only for a store with a code. Never track a paper collection.
+  See `docs/BUY_ON_PAPER.md`.
 - `src/mtga_tracker/collection_api.py` / `collection_export.py` / `inventory.py`: explicit
   collection-export jobs, macOS/Windows process-memory readers, and local card metadata.
 - `src/mtga_tracker/overlay_state.py` / `overlay_launcher.py`: library-composition odds

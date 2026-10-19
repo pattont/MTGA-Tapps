@@ -22,6 +22,7 @@ import { Section } from './Section';
 import { SortableTable, type Column } from './SortableTable';
 import { parseDeckFinderImport } from '../deckFinderImport';
 import { DeckFinderDeckList } from './DeckFinderDeckList';
+import { BuyPaperButton, BuyPaperDialog } from './BuyPaperDialog';
 
 const JOB_POLL_MS = 700;
 /** Arena status refresh while a deck is open; Add to Arena re-checks everything when clicked. */
@@ -132,6 +133,7 @@ export function DeckFinderPage() {
   const [saving, setSaving] = useState(false);
   const [collections, setCollections] = useState<DeckCollection[]>([]);
   const [pickingCollection, setPickingCollection] = useState<HTMLElement | null>(null);
+  const [buyingOpener, setBuyingOpener] = useState<HTMLElement | null>(null);
   const [collectionQuery, setCollectionQuery] = useState('');
   const [transferProgress, setTransferProgress] = useState<NativeDeckJob['progress']>();
   const collectionsLoaded = useRef(false);
@@ -825,6 +827,7 @@ export function DeckFinderPage() {
                             ? 'Export Failed'
                             : 'Export to Arena'}
                       </button>
+                      <BuyPaperButton disabled={!parsedDeck} onOpen={setBuyingOpener} />
                     </div>
                   </div>
                   <p className="section-description">
@@ -887,6 +890,11 @@ export function DeckFinderPage() {
             )}
           </div>
         </section>
+      ) : null}
+      {/* Outside the selected-deck panel so its provider-colored headings don't apply. */}
+      {buyingOpener && selectedDeck && parsedDeck ? (
+        <BuyPaperDialog deckName={parsedDeck.name || selectedDeck.name} sections={parsedDeck.sections}
+          onClose={() => setBuyingOpener(null)} returnFocus={buyingOpener} />
       ) : null}
     </div>
   );

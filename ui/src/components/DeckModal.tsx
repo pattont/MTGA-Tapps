@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type MouseEvent, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 
 function onBackdrop(event: MouseEvent<HTMLDialogElement>) {
@@ -15,6 +15,8 @@ export function DeckModal({ title, busy, onClose, returnFocus, headerActions, wi
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const pressedBackdrop = useRef(false);
+  // Unique per dialog: Buy on Paper opens on top of the Deck Manager dialog.
+  const titleId = `deck-manager-modal-title-${useId().replace(/:/gu, '')}`;
   useEffect(() => {
     const dialog = dialogRef.current;
     const opener = returnFocus ?? document.activeElement;
@@ -39,7 +41,7 @@ export function DeckModal({ title, busy, onClose, returnFocus, headerActions, wi
       ref={dialogRef}
       className={wide ? 'deck-manager-modal deck-manager-modal-wide' : 'deck-manager-modal'}
       aria-modal="true"
-      aria-labelledby="deck-manager-modal-title"
+      aria-labelledby={titleId}
       onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}
       // Only a press and release both on the backdrop closes; a text selection
       // dragged out of the dialog ends with a click there too.
@@ -51,7 +53,7 @@ export function DeckModal({ title, busy, onClose, returnFocus, headerActions, wi
       }}
     >
       <div className="deck-manager-modal-heading">
-        <h3 id="deck-manager-modal-title" tabIndex={-1} autoFocus>{title}</h3>
+        <h3 id={titleId} tabIndex={-1} autoFocus>{title}</h3>
         <div className="deck-manager-heading-actions">
           {headerActions}
           <button type="button" className="deck-manager-close" aria-label="Close dialog" disabled={busy} onClick={onClose}>

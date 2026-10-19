@@ -4464,7 +4464,9 @@ tr.deck-change-row-out .card-link {
 
 .deckfinder-title-actions {
   display: inline-flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 8px;
 }
@@ -6896,4 +6898,127 @@ a.sidebar-deck-finder {
   justify-content: flex-end;
   gap: 12px;
   margin-bottom: 10px;
+}
+
+/* Buy on Paper dialog: Moxfield-style store picker and options on the left,
+   the card list with live prices and the estimated total on the right. */
+.buy-paper-open svg { width: 16px; height: 16px; }
+.buy-paper {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 28px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.buy-paper h4 { margin: 0 0 10px; font-size: 1rem; }
+.buy-paper-options h4 + * { margin-bottom: 0; }
+.buy-paper-options h4:not(:first-of-type) { margin-top: 26px; }
+.buy-paper-deck-name { margin: 0 0 18px; color: var(--muted); font-size: 0.9rem; overflow-wrap: anywhere; }
+.buy-paper-store-note { margin: 8px 0 0; color: var(--muted); font-size: 0.82rem; line-height: 1.45; }
+.buy-paper-vendor-icon { width: 20px; height: 20px; flex-shrink: 0; border-radius: 4px; object-fit: contain; }
+
+.buy-paper-picker { position: relative; }
+.buy-paper-picker-button {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 0 14px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text);
+  font: inherit; font-size: 1rem; text-align: left; cursor: pointer;
+}
+.buy-paper-picker-button:hover, .buy-paper-picker-button[aria-expanded="true"] { border-color: var(--accent); }
+.buy-paper-picker-button:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+.buy-paper-picker-button span { flex: 1; }
+.buy-paper-picker-chevron { width: 18px; height: 18px; color: var(--muted); }
+.buy-paper-picker-list {
+  position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; min-width: 240px; margin: 0; padding: 4px;
+  list-style: none; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-strong);
+  box-shadow: var(--shadow);
+}
+.buy-paper-picker-list:focus { outline: none; }
+.buy-paper-picker-list li {
+  display: flex; align-items: center; gap: 12px; min-height: 42px; padding: 0 12px; border-radius: 6px;
+  cursor: pointer;
+}
+.buy-paper-picker-list li.buy-paper-picker-option-active { background: color-mix(in srgb, var(--accent) 16%, var(--panel-strong)); }
+.buy-paper-picker-list li[aria-selected="true"] { color: var(--accent-strong); font-weight: 700; }
+
+.buy-paper-check { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 12px; cursor: pointer; }
+.buy-paper-check span { line-height: 1.35; }
+.buy-paper-check small { display: block; margin-top: 2px; color: var(--muted); font-size: 0.8rem; }
+.deck-manager-modal .buy-paper input[type="checkbox"] {
+  display: inline-block; flex-shrink: 0; width: 18px; height: 18px; margin: 1px 0 0; padding: 0;
+  accent-color: var(--accent);
+}
+.buy-paper-check:has(input:disabled) { cursor: default; color: var(--muted); }
+
+.buy-paper-cards { display: flex; flex-direction: column; min-width: 0; }
+.buy-paper-cards-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.buy-paper-cards-heading h4 span { color: var(--muted); font-weight: 400; }
+.buy-paper-boards { position: relative; }
+.buy-paper-boards summary {
+  display: inline-flex; align-items: center; gap: 6px; color: var(--accent-strong); font-size: 0.92rem;
+  cursor: pointer; list-style: none;
+}
+.buy-paper-boards summary::-webkit-details-marker { display: none; }
+.buy-paper-boards summary svg { width: 15px; height: 15px; }
+.buy-paper-boards-menu {
+  position: absolute; z-index: 5; right: 0; top: calc(100% + 6px); min-width: 170px; padding: 12px 14px 2px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--panel-strong); box-shadow: var(--shadow);
+}
+
+.buy-paper-list {
+  height: min(420px, 48dvh); overflow-y: auto; overscroll-behavior: contain; padding: 4px 12px 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+}
+.buy-paper-board h5 { margin: 10px 0 6px; font-size: 0.85rem; }
+.buy-paper-board ul { margin: 0; padding: 0; list-style: none; }
+.buy-paper-row {
+  display: grid; grid-template-columns: auto 38px minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  padding: 5px 4px; border-radius: 6px; cursor: pointer;
+}
+.buy-paper-row:hover { background: var(--hover-tint); }
+.buy-paper-row:has(input:disabled) { cursor: default; }
+.buy-paper-qty {
+  display: grid; place-items: center; height: 38px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--panel); font-size: 1rem; font-variant-numeric: tabular-nums;
+}
+.buy-paper-card { min-width: 0; }
+.buy-paper-card strong { display: block; font-weight: 600; overflow-wrap: anywhere; }
+.buy-paper-card small { display: block; color: var(--muted); font-size: 0.78rem; overflow-wrap: anywhere; }
+.buy-paper-price { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.buy-paper-price small { display: block; color: var(--muted); font-size: 0.74rem; }
+.buy-paper-price-pending { color: var(--muted); }
+.buy-paper-row-off .buy-paper-qty, .buy-paper-row-off .buy-paper-card, .buy-paper-row-off .buy-paper-price { opacity: 0.45; }
+
+.buy-paper-summary { margin: 14px 0 0; padding: 0 14px; }
+.buy-paper-summary > div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; }
+.buy-paper-summary dt, .buy-paper-summary dd { margin: 0; }
+.buy-paper-summary dd { font-variant-numeric: tabular-nums; }
+.buy-paper-summary-note { color: var(--muted); font-size: 0.88rem; }
+.buy-paper-total { margin-top: 8px; padding-top: 12px !important; border-top: 1px solid var(--border); font-size: 1.08rem; font-weight: 750; }
+.buy-paper-total dt { display: inline-flex; align-items: center; gap: 8px; }
+.buy-paper-help { display: inline-flex; color: var(--muted); cursor: help; }
+.buy-paper-help svg { width: 17px; height: 17px; }
+.buy-paper-status { min-height: 1.3em; margin: 8px 14px 0; color: var(--muted); font-size: 0.82rem; }
+
+.buy-paper-footer {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px;
+  margin: 18px -24px -24px; padding: 16px 24px; border-top: 1px solid var(--border);
+}
+.buy-paper-disclosure { flex: 1 1 260px; margin: 0; color: var(--muted); font-size: 0.78rem; }
+.buy-paper-footer .deck-neutral-button { min-height: 42px; padding: 0 18px; font-size: 0.92rem; }
+.buy-paper-buy {
+  display: inline-flex; align-items: center; gap: 10px; min-height: 42px; padding: 0 18px;
+  border: 1px solid #f4c95d; border-radius: 6px; background: #f4c95d; color: #241c07;
+  font: inherit; font-size: 0.95rem; font-weight: 750; cursor: pointer;
+}
+.buy-paper-buy:hover:not(:disabled), .buy-paper-buy:focus-visible { background: #ffda79; border-color: #ffda79; }
+.buy-paper-buy:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+.buy-paper-buy:disabled { opacity: 0.5; cursor: default; }
+
+@media (max-width: 760px) {
+  .buy-paper { grid-template-columns: 1fr; gap: 20px; }
+  .buy-paper-list { height: min(360px, 45dvh); }
+}
+.buy-paper-retry {
+  padding: 0; border: 0; background: none; color: var(--accent-strong); font: inherit; text-decoration: underline;
+  cursor: pointer;
 }

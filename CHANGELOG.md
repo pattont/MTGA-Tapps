@@ -2,6 +2,16 @@
 
 ## 0.7.1
 
+### Buy on Paper
+
+- New **Buy on Paper** button in Deck Finder, a saved deck in Deck Manager, and
+  a deck page's Deck List section. It prices every card at its cheapest English
+  paper printing (TCGplayer market price, via Scryfall) and updates the total
+  as you untick cards or boards you already own. Then choose TCGplayer, Card
+  Kingdom or Mana Pool to open the list in that store, or StarCityGames or
+  CoolStuffInc to copy it and open their deck builder. Arena-only cards are
+  marked and left out.
+
 ### Replay
 
 - Export video no longer fails with "decoderConfig is null" in browsers whose
