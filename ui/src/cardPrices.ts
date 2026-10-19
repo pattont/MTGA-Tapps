@@ -31,6 +31,10 @@ export interface PaperPrinting {
   /** Lowest listed USD price across finishes, or null when none is listed. */
   usd: number | null;
   finish: 'nonfoil' | 'foil' | 'etched' | null;
+  /** From a store's own list: false when the store has it listed but sold out. */
+  in_stock?: boolean;
+  /** The chosen store doesn't list this card; the price is the TCGplayer estimate. */
+  estimate?: boolean;
 }
 
 export interface PaperCardInfo {

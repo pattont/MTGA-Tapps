@@ -1270,6 +1270,7 @@ export function DeckDetailPage({
         title="Deck List & Card Performance"
         headingAction={
           <BuyPaperButton
+            className="deck-export-button"
             disabled={!buySections?.length}
             onOpen={setBuyingOpener}
           />

@@ -1,14 +1,24 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaperCardInfo } from '../cardPrices';
+import type { StorePrice } from '../storePrices';
 import { BuyPaperDialog } from './BuyPaperDialog';
 
-vi.mock('../cardPrices', () => ({ lookupPaperPrices: vi.fn() }));
+vi.mock('../cardPrices', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../cardPrices')>()),
+  lookupPaperPrices: vi.fn(),
+}));
+vi.mock('../storePrices', () => ({ fetchStorePrices: vi.fn() }));
 import { lookupPaperPrices } from '../cardPrices';
+import { fetchStorePrices } from '../storePrices';
 
 const paper = (name: string, usd: number, set = 'FDN'): PaperCardInfo => ({
   status: 'paper', name, rebalanced: false, cheapest: true,
   printing: { set, set_name: 'Foundations', collector_number: '12', usd, finish: 'nonfoil' },
+});
+
+const store = (name: string, usd: number, inStock = true): StorePrice => ({
+  name, usd, set: 'DOM', set_name: 'Dominaria', collector_number: '60', finish: 'nonfoil', in_stock: inStock, url: null,
 });
 
 const sections = [
@@ -34,10 +44,12 @@ beforeEach(() => {
     expect(names).toEqual(['Opt', 'Alchemy Only', 'Island', 'Negate']);
     return map;
   });
+  vi.mocked(fetchStorePrices).mockResolvedValue({ prices: new Map(), asOf: '' });
 });
 
+/** The total's final value (the visible digits count up to it). */
 function total() {
-  return screen.getByText('Estimated Total').closest('div')!.querySelector('dd')!.textContent;
+  return screen.getByText('Estimated Total').closest('div')!.querySelector('dd .visually-hidden')!.textContent;
 }
 
 describe('BuyPaperDialog', () => {
@@ -51,6 +63,7 @@ describe('BuyPaperDialog', () => {
     expect(screen.getByRole('checkbox', { name: 'Buy 2 Alchemy Only' })).toBeDisabled();
     expect(screen.getAllByText('$1.00')).toHaveLength(2); // 4 Opt and 20 Island
     expect(screen.getByText('$0.25 ea')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('TCGplayer market prices via Scryfall');
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Buy 4 Opt' }));
     expect(total()).toBe('$2.50');
@@ -64,7 +77,58 @@ describe('BuyPaperDialog', () => {
     expect(screen.getByRole('button', { name: /Buy @/u })).toBeDisabled();
   });
 
+  it('reprices the cart from the chosen store’s own list', async () => {
+    let finish!: (value: { prices: Map<string, StorePrice | null>; asOf: string }) => void;
+    vi.mocked(fetchStorePrices).mockImplementation((vendor, _names, options) => {
+      if (vendor === 'manapool') {
+        return Promise.resolve({ prices: new Map([['Opt', store('Opt', 0.15)], ['Island', store('Island', 0.05)], ['Negate', store('Negate', 0.2)]]), asOf: '' });
+      }
+      options?.onLoading?.();
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    const { container } = render(<BuyPaperDialog deckName="Izzet Tempo" sections={sections} onClose={() => {}} returnFocus={null} />);
+    await screen.findByText('Cards');
+    // Both store lists load as the dialog opens.
+    expect(fetchStorePrices).toHaveBeenCalledWith('cardkingdom', ['Opt', 'Alchemy Only', 'Island', 'Negate'], expect.anything());
+    expect(fetchStorePrices).toHaveBeenCalledWith('manapool', ['Opt', 'Alchemy Only', 'Island', 'Negate'], expect.anything());
+
+    fireEvent.click(screen.getByRole('button', { name: /Store/u }));
+    fireEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Card Kingdom' }));
+
+    expect(screen.getByRole('status')).toHaveTextContent('Downloading Card Kingdom’s price list');
+    expect(container.querySelectorAll('.buy-paper-price .buy-paper-skeleton')).toHaveLength(3);
+
+    await act(async () => {
+      finish({
+        prices: new Map([['Opt', store('Opt', 0.35)], ['Island', store('Island', 0.1, false)], ['Negate', null]]),
+        asOf: '2026-10-18 19:08:27',
+      });
+    });
+    // 4 × 0.35 + 20 × 0.10 + 3 × 0.50 (Negate isn't listed: TCGplayer estimate)
+    expect(total()).toBe('$4.90');
+    expect(screen.getByText('Sold out')).toBeInTheDocument();
+    expect(screen.getByText('Not listed · TCGplayer est.')).toBeInTheDocument();
+    expect(screen.getByText('Sold out at Card Kingdom')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Card Kingdom prices as of 2026-10-18');
+    expect(screen.getAllByText('Dominaria (DOM) #60')).toHaveLength(2);
+
+    // Compare stores: each store's total for the same selection, lowest marked.
+    const compare = screen.getByRole('list', { name: 'Compare stores' });
+    const rowFor = (name: string) => within(compare).getByRole('button', { name: new RegExp(name, 'u') });
+    expect(rowFor('Card Kingdom')).toHaveAttribute('aria-pressed', 'true');
+    expect(rowFor('Card Kingdom').querySelector('.visually-hidden')).toHaveTextContent('$4.90');
+    expect(rowFor('Mana Pool').querySelector('.visually-hidden')).toHaveTextContent('$2.20');
+    expect(rowFor('TCGplayer').querySelector('.visually-hidden')).toHaveTextContent('$3.50');
+    expect(rowFor('Mana Pool')).toHaveTextContent('Lowest');
+    expect(rowFor('StarCityGames')).toHaveTextContent('est.');
+
+    fireEvent.click(rowFor('Mana Pool'));
+    expect(total()).toBe('$2.20');
+    expect(screen.getByRole('button', { name: 'Buy @ Mana Pool' })).toBeInTheDocument();
+  });
+
   it('opens the chosen store with the selected cards', async () => {
+    vi.mocked(fetchStorePrices).mockResolvedValue({ prices: new Map(), asOf: '' });
     const open = vi.spyOn(window, 'open').mockReturnValue(null);
     render(<BuyPaperDialog deckName="Izzet Tempo" sections={sections} onClose={() => {}} returnFocus={null} />);
     await screen.findByText('Cards');

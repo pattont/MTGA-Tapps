@@ -5,12 +5,17 @@
 ### Buy on Paper
 
 - New **Buy on Paper** button in Deck Finder, a saved deck in Deck Manager, and
-  a deck page's Deck List section. It prices every card at its cheapest English
-  paper printing (TCGplayer market price, via Scryfall) and updates the total
+  a deck page's Deck List section. It prices every card and updates the total
   as you untick cards or boards you already own. Then choose TCGplayer, Card
   Kingdom or Mana Pool to open the list in that store, or StarCityGames or
   CoolStuffInc to copy it and open their deck builder. Arena-only cards are
   marked and left out.
+- Each store prices the cart from its own list: TCGplayer market prices via
+  Scryfall, and Card Kingdom's and Mana Pool's published price lists, which the
+  tracker downloads at most once a day. **Compare stores** shows every store's
+  total side by side and marks the lowest. Switching stores animates each price
+  and the total to the new values. Cards a store has sold out or doesn't list
+  are marked.
 
 ### Replay
 

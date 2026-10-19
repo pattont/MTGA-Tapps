@@ -343,15 +343,22 @@ Primary code paths:
   bar. The README covers creator setup; regression fixtures live in
   `tests/deck_downloader/fixtures/youtube/`.
 - `ui/src/components/BuyPaperDialog.tsx` + `cardPrices.ts` / `paperDeck.ts` /
-  `paperVendors.ts` / `scryfallQueue.ts`: Buy on Paper (frontend only, no Python
-  or schema). The button sits beside the Arena export in Deck Finder, the Deck
-  Manager deck dialog header, and the deck page's Deck List section heading.
+  `paperVendors.ts` / `scryfallQueue.ts` / `storePrices.ts`: Buy on Paper (no
+  schema). A green button sits between Source and Export to Arena in Deck Finder,
+  in the Deck Manager deck dialog header, and in the deck page's Deck List section heading.
   Prices are Scryfall TCGplayer-market prices: one collection pass, then batched
   `(!"A" or !"B")` searches sorted by `usd`, with basics searched separately.
   Scryfall allows 2 requests per second on search/collection and locks the caller
   out after a 429 (seen as a CORS error in the browser), so every price call
   goes through `scryfallFetch`, which spaces calls and backs off for a minute.
   Never add per-card requests. Settled results cache in localStorage for 24 h.
+  Card Kingdom and Mana Pool price from their own public lists:
+  `src/mtga_tracker/paper_prices.py` downloads each (50–70 MB) on a background
+  thread at most daily. It stream-parses with ijson, keeps the cheapest in-stock
+  copy per name and face, and caches the result in `<data dir>/paper_prices/`;
+  `GET /api/paper-prices` answers ready/loading/error and never blocks. The
+  dialog loads both lists when it opens, for Compare stores. SCG/CSI show the
+  TCGplayer estimate. Tests (`tests/test_paper_prices.py`) never download.
   Store links follow EDHREC/Cube Cobra formats; SCG and CSI copy the list and open
   their builder. Empty `AFFILIATE` values mean plain links, and the commission
   disclosure shows only for a store with a code. Never track a paper collection.

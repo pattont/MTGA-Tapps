@@ -124,8 +124,9 @@ directly: tested on Apple Silicon Macs, newly enabled on 64-bit Windows. See [De
 below.
 
 **Buy on Paper.** From Deck Finder, Deck Manager or a deck page, see what a deck
-costs in paper card by card, untick what you already own, and open the rest in
-TCGplayer, Card Kingdom, Mana Pool, StarCityGames or CoolStuffInc. See
+costs in paper card by card, untick what you already own, and compare totals at
+TCGplayer, Card Kingdom and Mana Pool from each store's own prices. Then open the
+rest in that store, or in StarCityGames or CoolStuffInc. See
 [Buy on Paper](docs/BUY_ON_PAPER.md).
 
 **Backup & restore.** Everything the tracker knows — games, settings, Deck

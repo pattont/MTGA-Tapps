@@ -5,7 +5,8 @@
  */
 
 import type { ImportSection } from './deckFinderImport';
-import type { PaperCardInfo, PaperPriceMap } from './cardPrices';
+import { paperLookupName, type PaperCardInfo, type PaperPriceMap } from './cardPrices';
+import type { StorePrice } from './storePrices';
 
 export type BoardId = 'commander' | 'companion' | 'main' | 'sideboard' | 'maybeboard';
 
@@ -76,6 +77,45 @@ export function isBuyable(info: PaperCardInfo | null | undefined): boolean {
   return !info || info.status === 'paper';
 }
 
+/** The name a store's price list is searched by for an Arena card name. */
+export function storeLookupName(arenaName: string): string {
+  return paperLookupName(arenaName).name;
+}
+
+/**
+ * Swap in one store's own prices. A card the store lists takes its cheapest
+ * in-stock printing there (or its sold-out listing); a card it doesn't list
+ * keeps the Scryfall printing, marked as an estimate.
+ */
+export function applyStorePrices(
+  arenaNames: string[],
+  scryfall: PaperPriceMap,
+  store: Map<string, StorePrice | null>,
+): PaperPriceMap {
+  const result: PaperPriceMap = new Map();
+  for (const arenaName of arenaNames) {
+    const info = scryfall.get(arenaName) ?? null;
+    const entry = store.get(storeLookupName(arenaName)) ?? null;
+    if (entry) {
+      result.set(arenaName, {
+        status: 'paper',
+        name: info?.name ?? entry.name,
+        rebalanced: paperLookupName(arenaName).rebalanced,
+        cheapest: true,
+        printing: {
+          set: entry.set, set_name: entry.set_name, collector_number: entry.collector_number,
+          usd: entry.usd, finish: entry.finish, in_stock: entry.in_stock,
+        },
+      });
+    } else if (info?.status === 'paper' && info.printing) {
+      result.set(arenaName, { ...info, printing: { ...info.printing, estimate: true } });
+    } else {
+      result.set(arenaName, info);
+    }
+  }
+  return result;
+}
+
 export interface CartLine {
   /** Paper name when known, else the Arena name (the store gets to try). */
   name: string;
@@ -101,6 +141,10 @@ export interface CartSummary {
   unpricedCount: number;
   /** Selected copies left out because they have no paper printing. */
   unavailableCount: number;
+  /** Copies the chosen store lists but has sold out. */
+  outOfStockCount: number;
+  /** Copies the chosen store doesn't list, priced at the TCGplayer estimate. */
+  estimateCount: number;
 }
 
 export function rowSelected(row: PaperDeckCard, options: CartOptions): boolean {
@@ -116,6 +160,8 @@ export function buildCart(rows: PaperDeckCard[], prices: PaperPriceMap, options:
   let cardCount = 0;
   let unpricedCount = 0;
   let unavailableCount = 0;
+  let outOfStockCount = 0;
+  let estimateCount = 0;
   for (const row of rows) {
     if (!rowSelected(row, options)) continue;
     const info = prices.get(row.name) ?? null;
@@ -127,6 +173,8 @@ export function buildCart(rows: PaperDeckCard[], prices: PaperPriceMap, options:
     const usd = info?.printing?.usd ?? null;
     if (usd === null) unpricedCount += row.quantity;
     else total += usd * row.quantity;
+    if (info?.printing?.in_stock === false) outOfStockCount += row.quantity;
+    if (info?.printing?.estimate) estimateCount += row.quantity;
     const name = info?.name ?? row.name;
     const existing = lines.get(name.toLowerCase());
     if (existing) {
@@ -146,6 +194,8 @@ export function buildCart(rows: PaperDeckCard[], prices: PaperPriceMap, options:
     total: Math.round(total * 100) / 100,
     unpricedCount,
     unavailableCount,
+    outOfStockCount,
+    estimateCount,
   };
 }
 

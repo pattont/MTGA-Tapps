@@ -14,6 +14,7 @@
  */
 
 import type { CartLine } from './paperDeck';
+import type { StorePriceSource } from './storePrices';
 
 export type VendorId = 'tcgplayer' | 'cardkingdom' | 'manapool' | 'starcitygames' | 'coolstuffinc';
 
@@ -48,6 +49,11 @@ export interface PaperVendor {
   id: VendorId;
   name: string;
   icon: string;
+  /**
+   * Where card prices come from: the store's own list via the dashboard, or
+   * Scryfall's TCGplayer market price for stores that publish none.
+   */
+  priceSource: StorePriceSource | 'tcgplayer';
   /** One line under the picker saying what happens on Buy. */
   note: string;
   supportsSetCodes: boolean;
@@ -86,6 +92,7 @@ export const PAPER_VENDORS: PaperVendor[] = [
     id: 'tcgplayer',
     name: 'TCGplayer',
     icon: `${ICON_BASE}tcgplayer.ico`,
+    priceSource: 'tcgplayer',
     note: 'Opens TCGplayer Mass Entry with your list, where you add it to the cart.',
     supportsSetCodes: true,
     buildRequest(lines, { setCodes }) {
@@ -104,6 +111,7 @@ export const PAPER_VENDORS: PaperVendor[] = [
     id: 'cardkingdom',
     name: 'Card Kingdom',
     icon: `${ICON_BASE}cardkingdom.png`,
+    priceSource: 'cardkingdom',
     note: 'Opens Card Kingdom’s deck builder with your list filled in.',
     supportsSetCodes: false,
     buildRequest(lines) {
@@ -120,6 +128,7 @@ export const PAPER_VENDORS: PaperVendor[] = [
     id: 'manapool',
     name: 'Mana Pool',
     icon: `${ICON_BASE}manapool.png`,
+    priceSource: 'manapool',
     note: 'Opens Mana Pool’s deck import with your list filled in.',
     supportsSetCodes: false,
     buildRequest(lines) {
@@ -136,6 +145,7 @@ export const PAPER_VENDORS: PaperVendor[] = [
     id: 'starcitygames',
     name: 'StarCityGames',
     icon: `${ICON_BASE}starcitygames.png`,
+    priceSource: 'tcgplayer',
     note: 'Copies your list and opens the StarCityGames deck builder. Paste it there and choose Get My Deck!',
     supportsSetCodes: false,
     buildRequest(lines) {
@@ -146,6 +156,7 @@ export const PAPER_VENDORS: PaperVendor[] = [
     id: 'coolstuffinc',
     name: 'CoolStuffInc',
     icon: `${ICON_BASE}coolstuffinc.png`,
+    priceSource: 'tcgplayer',
     note: 'Copies your list and opens the CoolStuffInc deck builder. Paste it there and choose Build It!',
     supportsSetCodes: false,
     buildRequest(lines) {

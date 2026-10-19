@@ -814,6 +814,7 @@ export function DeckFinderPage() {
                       >
                         <ExternalLink aria-hidden="true" /> Source
                       </a>
+                      <BuyPaperButton className="deck-export-button" disabled={!parsedDeck} onOpen={setBuyingOpener} />
                       <button
                         className="deck-export-button deckfinder-title-export"
                         disabled={!selectedDeck.deck_text}
@@ -827,7 +828,6 @@ export function DeckFinderPage() {
                             ? 'Export Failed'
                             : 'Export to Arena'}
                       </button>
-                      <BuyPaperButton disabled={!parsedDeck} onOpen={setBuyingOpener} />
                     </div>
                   </div>
                   <p className="section-description">
