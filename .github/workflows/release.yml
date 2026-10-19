@@ -118,6 +118,11 @@ jobs:
           security import "$P12" -k "$KEYCHAIN" -f pkcs12 \
             -P "$MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign
           rm -f "$P12"
+          # codesign only finds identities in keychains on the search list, so
+          # prepend the temporary keychain to the user's list for this job.
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | tr -d '"')
           # Lets codesign use the key without a (headless, unanswerable) prompt.
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
             -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
@@ -142,6 +147,10 @@ jobs:
         run: |
           rm -f "$RUNNER_TEMP/tapps-signing.p12"
           if [[ -f "$RUNNER_TEMP/tapps-signing.keychain-db" ]]; then
+            # Drop it from the search list first, then delete it.
+            # shellcheck disable=SC2046
+            security list-keychains -d user -s \
+              $(security list-keychains -d user | tr -d '"' | grep -v tapps-signing) || true
             security delete-keychain "$RUNNER_TEMP/tapps-signing.keychain-db"
           fi
 

@@ -121,7 +121,7 @@ begin
   Result := True;
   { The tracker passes its own PID in /WAITPID and exits. Wait until it is
     really gone (every DLL and .pyd in _internal unmapped) BEFORE
-    [InstallDelete] removes _internal: that deletion is not rolled back if
+    the InstallDelete section removes _internal: that deletion is not rolled back if
     a locked file later aborts the install. A handle of 0 means the process
     has already exited. Timing out aborts Setup (exit code 1) with nothing
     touched; the still-running tracker reports the failure itself. }
@@ -131,8 +131,7 @@ begin
     ProcessHandle := TappsOpenProcess(TappsSynchronize, False, Pid);
     if ProcessHandle <> 0 then
     begin
-      Log(Format('Waiting up to %d ms for tracker PID %d to exit.',
-        [TappsWaitPidTimeoutMs, Pid]));
+      Log(Format('Waiting up to %d ms for tracker PID %d to exit.', [TappsWaitPidTimeoutMs, Pid]));
       if TappsWaitForSingleObject(ProcessHandle, TappsWaitPidTimeoutMs) <> TappsWaitObject0 then
       begin
         Log(Format('Tracker PID %d is still running; aborting the update.', [Pid]));
@@ -178,8 +177,7 @@ begin
       try
         if not ExecAsOriginalUser(RelaunchExe, '--update-failed', '', SW_SHOWNORMAL,
           ewNoWait, ResultCode) then
-          Log(Format('Could not relaunch %s after a failed update (code %d).',
-            [RelaunchExe, ResultCode]));
+          Log(Format('Could not relaunch %s after a failed update (code %d).', [RelaunchExe, ResultCode]));
       except
         Log('Relaunch after a failed update raised: ' + GetExceptionMessage);
       end;
