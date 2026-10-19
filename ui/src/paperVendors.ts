@@ -4,9 +4,10 @@
  * tab. Nothing here talks to a store.
  *
  * Formats follow what EDHREC and Cube Cobra send today (see
- * docs/BUY_ON_PAPER.md). StarCityGames and CoolStuffInc document no way to
- * prefill their deck builders, so for them the list is copied to the
- * clipboard and their builder opens, ready to paste.
+ * docs/BUY_ON_PAPER.md). StarCityGames and CoolStuffInc publish no prices and
+ * document no way to prefill their deck builders, so the dialog lists them as
+ * coming soon and they can't be chosen. Their copy-and-open handoff stays here
+ * for when a way to price them turns up.
  *
  * Affiliate codes are not set up yet. Fill in AFFILIATE once an account is
  * approved: an empty value sends a plain link, and the dialog only shows its
@@ -55,8 +56,13 @@ export interface PaperVendor {
    * no prices. Never another store's prices: they'd be wrong for this one.
    */
   priceSource: StorePriceSource | 'tcgplayer' | null;
-  /** One line under the picker saying what happens on Buy. */
+  /** One line under the store list saying what happens on Buy. */
   note: string;
+  /**
+   * Listed but not yet usable: no way to price the cart. The dialog shows
+   * "Coming soon" and the store can't be chosen.
+   */
+  comingSoon?: boolean;
   supportsSetCodes: boolean;
   buildRequest: (lines: CartLine[], options: VendorOptions) => VendorRequest;
 }
@@ -88,7 +94,7 @@ function base64Utf8(text: string): string {
 
 const ICON_BASE = `${import.meta.env.BASE_URL}stores/`;
 
-/** Alphabetical, as the picker and Compare stores list them. */
+/** Alphabetical, as the dialog lists them. */
 export const PAPER_VENDORS: PaperVendor[] = [
   {
     id: 'cardkingdom',
@@ -109,6 +115,7 @@ export const PAPER_VENDORS: PaperVendor[] = [
   },
   {
     id: 'coolstuffinc',
+    comingSoon: true,
     name: 'CoolStuffInc',
     icon: `${ICON_BASE}coolstuffinc.png`,
     priceSource: null,
@@ -137,6 +144,7 @@ export const PAPER_VENDORS: PaperVendor[] = [
   },
   {
     id: 'starcitygames',
+    comingSoon: true,
     name: 'StarCityGames',
     icon: `${ICON_BASE}starcitygames.png`,
     priceSource: null,
@@ -172,6 +180,12 @@ export const DEFAULT_VENDOR_ID: VendorId = 'tcgplayer';
 
 export function vendorById(id: string): PaperVendor | undefined {
   return PAPER_VENDORS.find((vendor) => vendor.id === id);
+}
+
+/** A store the dialog can switch to: listed and not coming soon. */
+export function selectableVendor(id: string): PaperVendor | undefined {
+  const vendor = vendorById(id);
+  return vendor && !vendor.comingSoon ? vendor : undefined;
 }
 
 export function affiliateActive(vendor: PaperVendor): boolean {

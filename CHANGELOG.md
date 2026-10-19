@@ -7,17 +7,17 @@
 - New **Buy on Paper** button in Deck Finder, a saved deck in Deck Manager, and
   a deck page's Deck List section. It prices every card and updates the total
   as you untick cards or boards you already own. Then choose TCGplayer, Card
-  Kingdom or Mana Pool to open the list in that store, or StarCityGames or
-  CoolStuffInc to copy it and open their deck builder. Arena-only cards are
-  marked and left out.
+  Kingdom or Mana Pool to open the list in that store. StarCityGames and
+  CoolStuffInc are listed as coming soon. Arena-only cards are marked and left
+  out.
 - Each store prices the cart from its own list: TCGplayer market prices via
   Scryfall, and Card Kingdom's and Mana Pool's published price lists, which the
-  tracker downloads at most once a day. **Compare stores** shows every store's
-  total side by side, in alphabetical order, and marks the lowest among stores
-  that price every card. Switching stores animates each price and the total to
-  the new values. A store only ever shows its own prices: a card it doesn't
-  list shows a dash and is left out of its total, and StarCityGames and
-  CoolStuffInc, which publish no prices, show dashes. TCGplayer is the default.
+  tracker downloads at most once a day. The store list is also the store
+  picker: it shows every store's total side by side, in alphabetical order,
+  and marks the lowest among stores that price every card. Switching stores
+  animates each price and the total to the new values. A store only ever shows
+  its own prices: a card it doesn't list shows a dash and is left out of its
+  total. TCGplayer is the default.
 - Settings has a **Buy on Paper** switch after In-game overlay. It explains the
   store price downloads (about 120 MB a day at most, a summary of about 16 MB
   kept). Turning it off hides the button everywhere, stops downloads and

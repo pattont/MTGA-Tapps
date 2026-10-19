@@ -93,8 +93,7 @@ describe('BuyPaperDialog', () => {
     expect(fetchStorePrices).toHaveBeenCalledWith('cardkingdom', ['Opt', 'Alchemy Only', 'Island', 'Negate'], expect.anything());
     expect(fetchStorePrices).toHaveBeenCalledWith('manapool', ['Opt', 'Alchemy Only', 'Island', 'Negate'], expect.anything());
 
-    fireEvent.click(screen.getByRole('button', { name: /Store/u }));
-    fireEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Card Kingdom' }));
+    fireEvent.click(within(screen.getByRole('list', { name: 'Store' })).getByRole('button', { name: /^Card Kingdom/u }));
 
     expect(screen.getByRole('status')).toHaveTextContent('Downloading Card Kingdom’s price list');
     expect(container.querySelectorAll('.buy-paper-price .buy-paper-skeleton')).toHaveLength(3);
@@ -116,9 +115,9 @@ describe('BuyPaperDialog', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Card Kingdom prices as of 2026-10-18');
     expect(screen.getAllByText('Dominaria (DOM) #60')).toHaveLength(2);
 
-    // Compare stores: alphabetical, each store's own total, lowest marked only
+    // The store list: alphabetical, each store's own total, lowest marked only
     // among stores that price every card.
-    const compare = screen.getByRole('list', { name: 'Compare stores' });
+    const compare = screen.getByRole('list', { name: 'Store' });
     expect(Array.from(compare.querySelectorAll('.buy-paper-compare-name'), (name) => name.firstChild?.textContent))
       .toEqual(['Card Kingdom', 'CoolStuffInc', 'Mana Pool', 'StarCityGames', 'TCGplayer']);
     const rowFor = (name: string) => within(compare).getByRole('button', { name: new RegExp(`^${name}`, 'u') });
@@ -128,20 +127,17 @@ describe('BuyPaperDialog', () => {
     expect(rowFor('Mana Pool').querySelector('.visually-hidden')).toHaveTextContent('$2.20');
     expect(rowFor('TCGplayer').querySelector('.visually-hidden')).toHaveTextContent('$3.50');
     expect(rowFor('Mana Pool')).toHaveTextContent('Lowest');
-    expect(rowFor('StarCityGames')).toHaveTextContent('—');
-    expect(rowFor('StarCityGames')).not.toHaveTextContent('$');
-    expect(rowFor('CoolStuffInc')).not.toHaveTextContent('$');
+    // Stores with no way to price the cart are coming soon and can't be chosen.
+    for (const name of ['StarCityGames', 'CoolStuffInc']) {
+      expect(rowFor(name)).toHaveTextContent('Coming soon');
+      expect(rowFor(name)).not.toHaveTextContent('$');
+      expect(rowFor(name)).toBeDisabled();
+    }
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
 
     fireEvent.click(rowFor('Mana Pool'));
     expect(total()).toBe('$2.20');
     expect(screen.getByRole('button', { name: 'Buy @ Mana Pool' })).toBeInTheDocument();
-
-    // A store with no price list shows dashes, not another store's prices.
-    fireEvent.click(rowFor('StarCityGames'));
-    expect(screen.getByText('Estimated Total').closest('div')!.querySelector('dd')).toHaveTextContent('—');
-    expect(container.querySelectorAll('.buy-paper-price')).toHaveLength(4);
-    container.querySelectorAll('.buy-paper-price').forEach((cell) => expect(cell).toHaveTextContent(/^—$/u));
-    expect(screen.getByRole('status')).toHaveTextContent('StarCityGames publishes no price list');
   });
 
   it('shows no prices when a store’s list can’t be loaded', async () => {
@@ -153,12 +149,18 @@ describe('BuyPaperDialog', () => {
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Couldn’t load Card Kingdom’s price list, so no prices are shown.'));
     expect(screen.getByText('Estimated Total').closest('div')!.querySelector('dd')).toHaveTextContent('—');
     container.querySelectorAll('.buy-paper-price').forEach((cell) => expect(cell).toHaveTextContent(/^—$/u));
-    const compare = screen.getByRole('list', { name: 'Compare stores' });
+    const compare = screen.getByRole('list', { name: 'Store' });
     expect(within(compare).getByRole('button', { name: /^Mana Pool/u })).not.toHaveTextContent('$');
     expect(within(compare).getByRole('button', { name: /^TCGplayer/u }).querySelector('.visually-hidden')).toHaveTextContent('$3.50');
   });
 
   it('starts on TCGplayer', async () => {
+    render(<BuyPaperDialog sections={sections} onClose={() => {}} returnFocus={null} />);
+    expect(await screen.findByRole('button', { name: 'Buy @ TCGplayer' })).toBeInTheDocument();
+  });
+
+  it('falls back to TCGplayer when the saved store is coming soon', async () => {
+    localStorage.setItem('mtga-tracker-buy-paper-v1', JSON.stringify({ vendor: 'starcitygames' }));
     render(<BuyPaperDialog sections={sections} onClose={() => {}} returnFocus={null} />);
     expect(await screen.findByRole('button', { name: 'Buy @ TCGplayer' })).toBeInTheDocument();
   });
@@ -169,8 +171,7 @@ describe('BuyPaperDialog', () => {
     render(<BuyPaperDialog sections={sections} onClose={() => {}} returnFocus={null} />);
     await screen.findByText('Cards');
 
-    fireEvent.click(screen.getByRole('button', { name: /Store/u }));
-    fireEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Card Kingdom' }));
+    fireEvent.click(within(screen.getByRole('list', { name: 'Store' })).getByRole('button', { name: /^Card Kingdom/u }));
     fireEvent.click(screen.getByRole('button', { name: 'Buy @ Card Kingdom' }));
 
     await waitFor(() => expect(open).toHaveBeenCalled());

@@ -6945,29 +6945,6 @@ a.sidebar-deck-finder {
 .buy-paper-store-note { margin: 8px 0 0; color: var(--muted); font-size: 0.8rem; line-height: 1.45; }
 .buy-paper-vendor-icon { width: 20px; height: 20px; flex-shrink: 0; border-radius: 4px; object-fit: contain; }
 
-.buy-paper-picker { position: relative; }
-.buy-paper-picker-button {
-  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 0 14px;
-  border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text);
-  font: inherit; font-size: 0.95rem; text-align: left; cursor: pointer;
-}
-.buy-paper-picker-button:hover, .buy-paper-picker-button[aria-expanded="true"] { border-color: var(--accent); }
-.buy-paper-picker-button:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
-.buy-paper-picker-button span { flex: 1; }
-.buy-paper-picker-chevron { width: 18px; height: 18px; color: var(--muted); }
-.buy-paper-picker-list {
-  position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; min-width: 240px; margin: 0; padding: 4px;
-  list-style: none; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-strong);
-  box-shadow: var(--shadow);
-}
-.buy-paper-picker-list:focus { outline: none; }
-.buy-paper-picker-list li {
-  display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 0 12px; border-radius: 6px;
-  cursor: pointer;
-}
-.buy-paper-picker-list li.buy-paper-picker-option-active { background: color-mix(in srgb, var(--accent) 16%, var(--panel-strong)); }
-.buy-paper-picker-list li[aria-selected="true"] { color: var(--accent-strong); font-weight: 700; }
-
 .buy-paper-check { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 10px; font-size: 0.92rem; cursor: pointer; }
 .buy-paper-check span { line-height: 1.35; }
 .buy-paper-check small { display: block; margin-top: 2px; color: var(--muted); font-size: 0.78rem; }
@@ -7105,14 +7082,16 @@ a.sidebar-deck-finder {
   .buy-paper-list { height: min(380px, 50dvh); }
 }
 
-/* Compare stores: fills the options column with each store's total. */
+/* The store list: picks the store and shows each one's total. */
 .buy-paper-compare { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
 .buy-paper-compare button {
   display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px; padding: 0 12px;
   border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text);
   font: inherit; font-size: 0.88rem; text-align: left; cursor: pointer;
 }
-.buy-paper-compare button:hover { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
+.buy-paper-compare button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
+.buy-paper-compare button:disabled { color: var(--muted); background: transparent; border-style: dashed; cursor: default; }
+.buy-paper-compare button:disabled .buy-paper-vendor-icon { filter: grayscale(1); opacity: 0.6; }
 .buy-paper-compare button:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
 .buy-paper-compare .buy-paper-compare-current {
   border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); font-weight: 650;

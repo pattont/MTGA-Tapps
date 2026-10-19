@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
-import { ChevronDown, CircleHelp, Funnel, ShoppingCart } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { CircleHelp, Funnel, ShoppingCart } from 'lucide-react';
 import type { ImportSection } from '../deckFinderImport';
 import { lookupPaperPrices, type PaperPriceMap } from '../cardPrices';
 import {
@@ -7,7 +7,7 @@ import {
   paperDeckFromSections, rowSelected, storeLookupName, withoutPrices, type BoardId, type CartSummary,
 } from '../paperDeck';
 import {
-  DEFAULT_VENDOR_ID, PAPER_VENDORS, affiliateActive, openVendorRequest, vendorById, type PaperVendor,
+  DEFAULT_VENDOR_ID, PAPER_VENDORS, affiliateActive, openVendorRequest, selectableVendor, type PaperVendor,
 } from '../paperVendors';
 import { fetchStorePrices, type StorePriceResult, type StorePriceSource } from '../storePrices';
 import { DeckModal } from './DeckModal';
@@ -27,7 +27,7 @@ function loadPrefs(): Prefs {
     const parsed = JSON.parse(localStorage.getItem(PREFS_KEY) ?? 'null') as Partial<Prefs> | null;
     if (!parsed) return fallback;
     return {
-      vendor: vendorById(parsed.vendor ?? '')?.id ?? fallback.vendor,
+      vendor: selectableVendor(parsed.vendor ?? '')?.id ?? fallback.vendor,
       setCodes: Boolean(parsed.setCodes),
       skipBasics: Boolean(parsed.skipBasics),
     };
@@ -46,95 +46,6 @@ function savePrefs(prefs: Prefs) {
 
 function VendorMark({ vendor }: { vendor: PaperVendor }) {
   return <img className="buy-paper-vendor-icon" src={vendor.icon} alt="" width={20} height={20} />;
-}
-
-/** Store picker styled like a select, with each store's icon in the list. */
-function VendorPicker({ value, onChange }: { value: PaperVendor; onChange: (vendor: PaperVendor) => void }) {
-  const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(0);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const listRef = useRef<HTMLUListElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    listRef.current?.focus();
-    const close = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, [open]);
-
-  function openList() {
-    setActive(Math.max(0, PAPER_VENDORS.findIndex((vendor) => vendor.id === value.id)));
-    setOpen(true);
-  }
-
-  function choose(index: number) {
-    onChange(PAPER_VENDORS[index]);
-    setOpen(false);
-    rootRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
-  }
-
-  function onListKey(event: KeyboardEvent<HTMLUListElement>) {
-    if (event.key === 'ArrowDown') { event.preventDefault(); setActive((index) => Math.min(index + 1, PAPER_VENDORS.length - 1)); }
-    else if (event.key === 'ArrowUp') { event.preventDefault(); setActive((index) => Math.max(index - 1, 0)); }
-    else if (event.key === 'Home') { event.preventDefault(); setActive(0); }
-    else if (event.key === 'End') { event.preventDefault(); setActive(PAPER_VENDORS.length - 1); }
-    else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); choose(active); }
-    else if (event.key === 'Escape' || event.key === 'Tab') {
-      // Escape closes the list, not the whole dialog.
-      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); }
-      setOpen(false);
-      rootRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
-    }
-  }
-
-  return (
-    <div className="buy-paper-picker" ref={rootRef}>
-      <button
-        type="button"
-        className="buy-paper-picker-button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-labelledby="buy-paper-store-label buy-paper-store-value"
-        onClick={() => (open ? setOpen(false) : openList())}
-        onKeyDown={(event) => {
-          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); openList(); }
-        }}
-      >
-        <VendorMark vendor={value} />
-        <span id="buy-paper-store-value">{value.name}</span>
-        <ChevronDown aria-hidden="true" className="buy-paper-picker-chevron" />
-      </button>
-      {open ? (
-        <ul
-          ref={listRef}
-          className="buy-paper-picker-list"
-          role="listbox"
-          tabIndex={-1}
-          aria-labelledby="buy-paper-store-label"
-          aria-activedescendant={`buy-paper-store-${PAPER_VENDORS[active].id}`}
-          onKeyDown={onListKey}
-        >
-          {PAPER_VENDORS.map((vendor, index) => (
-            <li
-              key={vendor.id}
-              id={`buy-paper-store-${vendor.id}`}
-              role="option"
-              aria-selected={vendor.id === value.id}
-              className={index === active ? 'buy-paper-picker-option-active' : undefined}
-              onMouseEnter={() => setActive(index)}
-              onClick={() => choose(index)}
-            >
-              <VendorMark vendor={vendor} />
-              {vendor.name}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
-  );
 }
 
 export interface BuyPaperDialogProps {
@@ -208,7 +119,7 @@ export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialo
   const [storeAttempt, setStoreAttempt] = useState(0);
   const [opened, setOpened] = useState<string | null>(null);
 
-  const vendor = vendorById(prefs.vendor) ?? vendorById(DEFAULT_VENDOR_ID)!;
+  const vendor = selectableVendor(prefs.vendor) ?? selectableVendor(DEFAULT_VENDOR_ID)!;
   const updatePrefs = (patch: Partial<Prefs>) => setPrefs((current) => {
     const next = { ...current, ...patch };
     savePrefs(next);
@@ -276,17 +187,16 @@ export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialo
   const cart = buildCart(rows, prices, options);
   const setCodes = prefs.setCodes && vendor.supportsSetCodes;
 
-  // Compare stores: the same selection priced at each store.
+  // The store list: the same selection priced at each store.
   const comparison = PAPER_VENDORS.map((entry) => {
+    const unavailable = entry.comingSoon || entry.priceSource === null;
     const failed = storeFailed(entry.priceSource);
-    const map = entry.priceSource === null || failed ? null : pricesFor(entry.priceSource);
+    const map = unavailable || failed ? null : pricesFor(entry.priceSource);
     return {
       vendor: entry,
       cart: map ? buildCart(rows, map, options) : null,
-      loading: entry.priceSource !== null && !failed && (!map || pending > 0),
-      noPriceReason: entry.priceSource === null
-        ? `${entry.name} publishes no price list. It prices your cart at checkout.`
-        : failed ? `Couldn’t load ${entry.name}’s price list.` : `${entry.name} has no price for these cards.`,
+      loading: !unavailable && !failed && (!map || pending > 0),
+      noPriceReason: failed ? `Couldn’t load ${entry.name}’s price list.` : `${entry.name} has no price for these cards.`,
     };
   });
   // Only a store that prices every selected card can be called the lowest.
@@ -327,7 +237,6 @@ export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialo
 
   let status: ReactNode;
   if (opened) status = opened;
-  else if (source === null) status = `${vendor.name} publishes no price list, so no prices are shown. It prices your cart at checkout.`;
   else if (pending > 0) status = `Finding the cheapest printings… ${pending} card${pending === 1 ? '' : 's'} left`;
   else if (storeDownloading) status = `Downloading ${vendor.name}’s price list. This happens once a day and takes a few seconds.`;
   else if (storeLoading) status = `Loading ${vendor.name} prices…`;
@@ -354,7 +263,42 @@ export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialo
       <div className="buy-paper">
         <div className="buy-paper-options">
           <h4 id="buy-paper-store-label">Store</h4>
-          <VendorPicker value={vendor} onChange={(next) => { updatePrefs({ vendor: next.id }); setOpened(null); }} />
+          <ul className="buy-paper-compare" aria-labelledby="buy-paper-store-label">
+            {comparison.map((entry) => (
+              <li key={entry.vendor.id}>
+                <button
+                  type="button"
+                  className={entry.vendor.id === vendor.id ? 'buy-paper-compare-current' : undefined}
+                  aria-pressed={entry.vendor.id === vendor.id}
+                  disabled={entry.vendor.comingSoon}
+                  onClick={() => { updatePrefs({ vendor: entry.vendor.id }); setOpened(null); }}
+                >
+                  <VendorMark vendor={entry.vendor} />
+                  <span className="buy-paper-compare-name">
+                    {entry.vendor.name}
+                    {lowest === entry.vendor.id ? <em className="buy-paper-tag buy-paper-tag-best">Lowest</em> : null}
+                  </span>
+                  <span className="buy-paper-compare-total">
+                    {entry.vendor.comingSoon
+                      ? <em className="buy-paper-tag buy-paper-tag-soon">Coming soon</em>
+                      : entry.loading
+                        ? <span className="buy-paper-skeleton" />
+                        : !entry.cart || (entry.cart.cardCount > 0 && entry.cart.pricedCount === 0)
+                          ? <span className="buy-paper-no-price" title={entry.noPriceReason}>—<span className="visually-hidden"> {entry.noPriceReason}</span></span>
+                          : <>
+                            {entry.cart.unpricedCount ? (
+                              <small title={`${entry.cart.unpricedCount} of your cards have no ${entry.vendor.name} price, so they aren’t in this total.`}>
+                                {entry.cart.unpricedCount} missing
+                              </small>
+                            ) : null}
+                            <AnimatedAmount value={entry.cart.total} />
+                          </>}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="buy-paper-compare-note">Your selection at each store’s cheapest in-stock prices. A dash means the store has no price to show; cards without one aren’t in its total.</p>
           <p className="buy-paper-store-note">{vendor.note}</p>
 
           <h4>Options</h4>
@@ -376,41 +320,6 @@ export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialo
             <input type="checkbox" checked={prefs.skipBasics} onChange={(event) => updatePrefs({ skipBasics: event.target.checked })} />
             <span>Skip basic lands<small>Leave out Plains, Island, Swamp, Mountain, Forest and Wastes.</small></span>
           </label>
-
-          <h4 id="buy-paper-compare-label">Compare stores</h4>
-          <ul className="buy-paper-compare" aria-labelledby="buy-paper-compare-label">
-            {comparison.map((entry) => (
-              <li key={entry.vendor.id}>
-                <button
-                  type="button"
-                  className={entry.vendor.id === vendor.id ? 'buy-paper-compare-current' : undefined}
-                  aria-pressed={entry.vendor.id === vendor.id}
-                  onClick={() => { updatePrefs({ vendor: entry.vendor.id }); setOpened(null); }}
-                >
-                  <VendorMark vendor={entry.vendor} />
-                  <span className="buy-paper-compare-name">
-                    {entry.vendor.name}
-                    {lowest === entry.vendor.id ? <em className="buy-paper-tag buy-paper-tag-best">Lowest</em> : null}
-                  </span>
-                  <span className="buy-paper-compare-total">
-                    {entry.loading
-                      ? <span className="buy-paper-skeleton" />
-                      : !entry.cart || (entry.cart.cardCount > 0 && entry.cart.pricedCount === 0)
-                        ? <span className="buy-paper-no-price" title={entry.noPriceReason}>—<span className="visually-hidden"> {entry.noPriceReason}</span></span>
-                        : <>
-                          {entry.cart.unpricedCount ? (
-                            <small title={`${entry.cart.unpricedCount} of your cards have no ${entry.vendor.name} price, so they aren’t in this total.`}>
-                              {entry.cart.unpricedCount} missing
-                            </small>
-                          ) : null}
-                          <AnimatedAmount value={entry.cart.total} />
-                        </>}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-          <p className="buy-paper-compare-note">Your selection at each store’s cheapest in-stock prices. A dash means the store has no price to show: StarCityGames and CoolStuffInc publish no price list.</p>
         </div>
 
         <div className="buy-paper-cards">
@@ -521,15 +430,11 @@ export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialo
                     <CircleHelp aria-hidden="true" />
                   </button>
                   <span id="buy-paper-estimate-tip" role="tooltip" className="buy-paper-tooltip">
-                    {source === null
-                      ? `${vendor.name} publishes no price list, so there’s no estimate here. It prices your cart at checkout.`
-                      : <>
-                        {source === 'tcgplayer'
-                          ? 'Prices are TCGplayer market prices, updated once a day, and may differ at checkout.'
-                          : `Prices come from ${vendor.name}’s price list, updated once a day, and may differ at checkout.`}
-                        {' '}Prices also vary based on the condition of the card selected at checkout.
-                        {' '}Cards without a {vendor.name} price show a dash and aren’t in the total.
-                      </>}
+                    {source === 'tcgplayer'
+                      ? 'Prices are TCGplayer market prices, updated once a day, and may differ at checkout.'
+                      : `Prices come from ${vendor.name}’s price list, updated once a day, and may differ at checkout.`}
+                    {' '}Prices also vary based on the condition of the card selected at checkout.
+                    {' '}Cards without a {vendor.name} price show a dash and aren’t in the total.
                   </span>
                 </span>
               </dt>

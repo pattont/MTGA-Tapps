@@ -9,23 +9,24 @@ or deck builder. The button sits beside the Arena export on three screens:
   It uses the newest submitted decklist, including a Brawl commander.
 
 The dialog works like Moxfield's Buy dialog, without selling or a paper
-collection. Pick a store, untick any card or board you already own, and the
-total updates as you go. The tracker doesn't record what you own or buy.
+collection. Pick a store from the list on the left, untick any card or board
+you already own, and the total updates as you go. The tracker doesn't record what you own or buy.
 
 A store only ever shows its own prices. Where a store has no price for a card,
 the dialog shows a dash rather than another store's price, which would be
-wrong for that store. **Compare stores** lists the stores alphabetically with
-each one's total for the current selection; clicking a row switches stores.
-TCGplayer is the default. When the store changes, each card's new price fades
+wrong for that store. The **Store** list is the only store picker: it lists the
+stores alphabetically with each one's total for the current selection, and
+clicking a row switches stores. A store we have no way to price shows
+**Coming soon** and can't be chosen. TCGplayer is the default. When the store changes, each card's new price fades
 in one row after another and the total counts to its new value. While a list
 loads, prices shimmer.
 
 | Store | Prices |
 | --- | --- |
 | Card Kingdom | Card Kingdom's published price list |
-| CoolStuffInc | None published: dashes; the store prices the cart at checkout |
+| CoolStuffInc | None published: coming soon |
 | Mana Pool | Mana Pool's published price list |
-| StarCityGames | None published: dashes; the store prices the cart at checkout |
+| StarCityGames | None published: coming soon |
 | TCGplayer | Scryfall's TCGplayer market price |
 
 ## Store price lists
@@ -88,7 +89,7 @@ A card the store lists but has sold out is tagged "Sold out" and priced at its
 listing. If a store's list can't be loaded, the dialog shows dashes and offers
 **Try again**.
 
-In Compare stores, a total that leaves cards out says how many ("3 missing").
+In the store list, a total that leaves cards out says how many ("3 missing").
 "Lowest" goes only to a store that prices every selected card, so a partial
 total never wins on missing cards.
 
@@ -132,12 +133,13 @@ EDHREC and Cube Cobra send today:
 | TCGplayer | `store.tcgplayer.com/massentry?c=` with entries joined by `\|\|`. With set codes on, each entry reads `qty Name [SET] number`. | Impact tracking link with the Mass Entry URL as `u` |
 | Card Kingdom | `cardkingdom.com/builder?c=`, one card per line | `partner` (in-house program) |
 | Mana Pool | `manapool.com/add-deck?deck=`, the list as UTF-8 base64 | `ref` |
-| StarCityGames | The list is copied to the clipboard and the deck builder opens for pasting | none found |
-| CoolStuffInc | The list is copied to the clipboard and the deck builder opens for pasting | none found |
+| StarCityGames | Coming soon. Kept for later: copy the list and open the deck builder for pasting | none found |
+| CoolStuffInc | Coming soon. Kept for later: copy the list and open the deck builder for pasting | none found |
 
-StarCityGames and CoolStuffInc document no way to prefill their deck builders.
-Someone needs to inspect their forms in a browser before a direct handoff is
-added. Double-faced and split cards are sent by their front face name.
+StarCityGames and CoolStuffInc publish no prices and document no way to prefill
+their deck builders, so they are marked `comingSoon` in `paperVendors.ts`. To
+turn one on, find a price source that is that store's own (never another
+store's), give it a `priceSource`, and remove `comingSoon`. Double-faced and split cards are sent by their front face name.
 
 ## Turning on affiliate links
 

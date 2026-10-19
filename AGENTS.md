@@ -357,10 +357,13 @@ Primary code paths:
   thread at most daily. It stream-parses with ijson, keeps the cheapest in-stock
   copy per name and face, and caches the result in `<data dir>/paper_prices/`;
   `GET /api/paper-prices` answers ready/loading/error and never blocks. The
-  dialog loads both lists when it opens, for Compare stores. A store shows only
-  its own prices, never another store's as a stand-in: unlisted cards, SCG/CSI
-  (no list, `priceSource: null`) and a list that failed to load show a dash and
-  stay out of totals. Stores are listed alphabetically; TCGplayer is the default.
+  dialog loads both lists when it opens, for the store list. That list is the
+  only store picker (no dropdown) and shows each store's total. A store shows only
+  its own prices, never another store's as a stand-in: unlisted cards and a list
+  that failed to load show a dash and stay out of totals. A store we can't price
+  (SCG/CSI: `priceSource: null`, `comingSoon`) shows "Coming soon" and can't be
+  chosen; a saved choice of one falls back to TCGplayer. Stores are listed
+  alphabetically; TCGplayer is the default.
   Tests (`tests/test_paper_prices.py`) never download.
   Settings → Buy on Paper (after In-game overlay; `settings.json`
   `buy_on_paper.enabled`, default on) is the off switch. Off hides every button
@@ -368,8 +371,8 @@ Primary code paths:
   through a generation counter, makes lookups answer 403, and deletes the price
   folder. The folder holds one index per store plus at most one capped download
   each; every refresh sweeps leftovers. Keep it bounded.
-  Store links follow EDHREC/Cube Cobra formats; SCG and CSI copy the list and open
-  their builder. Empty `AFFILIATE` values mean plain links, and the commission
+  Store links follow EDHREC/Cube Cobra formats; SCG and CSI keep a dormant
+  copy-and-open handoff for when they can be priced. Empty `AFFILIATE` values mean plain links, and the commission
   disclosure shows only for a store with a code. Never track a paper collection.
   See `docs/BUY_ON_PAPER.md`.
 - `src/mtga_tracker/collection_api.py` / `collection_export.py` / `inventory.py`: explicit

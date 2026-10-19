@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CartLine } from './paperDeck';
-import { AFFILIATE, PAPER_VENDORS, openVendorRequest, vendorById } from './paperVendors';
+import { AFFILIATE, PAPER_VENDORS, openVendorRequest, selectableVendor, vendorById } from './paperVendors';
 
 const lines: CartLine[] = [
   { name: 'Fable of the Mirror-Breaker // Reflection of Kiki-Jiki', quantity: 4, set: 'NEO', collector_number: '141' },
@@ -27,6 +27,10 @@ describe('paper store requests', () => {
     // Stores without their own price list never borrow another store's prices.
     expect(vendorById('starcitygames')!.priceSource).toBeNull();
     expect(vendorById('coolstuffinc')!.priceSource).toBeNull();
+    // ...and can't be chosen until there's a way to price them.
+    expect(PAPER_VENDORS.filter((vendor) => vendor.comingSoon).map((vendor) => vendor.id)).toEqual(['coolstuffinc', 'starcitygames']);
+    expect(selectableVendor('starcitygames')).toBeUndefined();
+    expect(selectableVendor('tcgplayer')?.id).toBe('tcgplayer');
     PAPER_VENDORS.forEach((vendor) => expect(vendor.icon).toMatch(/\/stores\/[a-z]+\.(png|ico)$/u));
   });
 
