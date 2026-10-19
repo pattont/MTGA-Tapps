@@ -11,6 +11,8 @@ Endpoints (all under /api/settings):
 - POST /api/settings/deck-finder -> save the creator lists
 - POST /api/settings/overlay   -> {enabled} start/stop the in-game overlay, or
                                   {request: "open-settings"} to open its ⚙ flyout
+- POST /api/settings/buy-on-paper -> {enabled} show Buy on Paper; off stops store
+                                  price downloads and deletes the saved lists
 """
 
 from __future__ import annotations
@@ -22,7 +24,13 @@ from typing import Any, Dict, Optional, Tuple
 #: the model, default model) — mirrors settings_dialog._PROVIDERS.
 AI_PROVIDERS = (
     ("openai", "OpenAI", "CHATGPT_API_KEY", "DECK_LLM_OPENAI_MODEL", "gpt-4o-mini"),
-    ("claude", "Anthropic (Claude)", "CLAUDE_API_KEY", "DECK_LLM_CLAUDE_MODEL", "claude-3-5-haiku-20241022"),
+    (
+        "claude",
+        "Anthropic (Claude)",
+        "CLAUDE_API_KEY",
+        "DECK_LLM_CLAUDE_MODEL",
+        "claude-3-5-haiku-20241022",
+    ),
     ("gemini", "Gemini", "GEMINI_API_KEY", "DECK_LLM_GEMINI_MODEL", "gemini-2.0-flash"),
 )
 
@@ -149,7 +157,9 @@ def _tracker_info(db_path: Optional[Path]) -> Dict[str, Any]:
 def _platform_info() -> Dict[str, Any]:
     import sys
 
-    system = "macos" if sys.platform == "darwin" else "windows" if sys.platform == "win32" else "other"
+    system = (
+        "macos" if sys.platform == "darwin" else "windows" if sys.platform == "win32" else "other"
+    )
     return {
         "system": system,
         # Collection export reads process memory, which only the macOS/Windows
@@ -233,6 +243,7 @@ def handle_get(path: str, db_path: Optional[Path] = None) -> Optional[Tuple[int,
     if path != "/api/settings":
         return None
     try:
+        from . import paper_prices
         from .deckfinder_api import read_creator_config
 
         return 200, {
@@ -245,6 +256,7 @@ def handle_get(path: str, db_path: Optional[Path] = None) -> Optional[Tuple[int,
             "platform": _platform_info(),
             "startup": _startup_payload(),
             "overlay": _overlay_status(),
+            "buy_on_paper": paper_prices.status(),
         }
     except Exception as exc:  # pragma: no cover - defensive surface
         return 500, {"error": f"{type(exc).__name__}: {exc}"}
@@ -262,6 +274,12 @@ def handle_post(path: str, payload: Dict[str, Any]) -> Optional[Tuple[int, Dict[
             return 200, {"startup": _save_startup(payload)}
         if path == "/api/settings/overlay":
             return 200, {"overlay": _set_overlay_enabled(payload)}
+        if path == "/api/settings/buy-on-paper":
+            from . import paper_prices
+
+            if not isinstance(payload.get("enabled"), bool):
+                raise ValueError("'enabled' must be a boolean")
+            return 200, {"buy_on_paper": paper_prices.set_enabled(payload["enabled"])}
     except (ValueError, TypeError) as exc:
         return 400, {"error": str(exc)}
     except Exception as exc:  # pragma: no cover - defensive surface

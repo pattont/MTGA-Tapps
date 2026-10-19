@@ -2,7 +2,8 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaperCardInfo } from '../cardPrices';
 import type { StorePrice } from '../storePrices';
-import { BuyPaperDialog } from './BuyPaperDialog';
+import { BuyPaperButton, BuyPaperDialog } from './BuyPaperDialog';
+import { resetBuyOnPaperSetting, saveBuyOnPaperEnabled } from '../buyOnPaperSetting';
 
 vi.mock('../cardPrices', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../cardPrices')>()),
@@ -54,7 +55,7 @@ function total() {
 
 describe('BuyPaperDialog', () => {
   it('prices each card, leaves out Arena-only cards and updates the total live', async () => {
-    render(<BuyPaperDialog deckName="Izzet Tempo" sections={sections} onClose={() => {}} returnFocus={null} />);
+    render(<BuyPaperDialog sections={sections} onClose={() => {}} returnFocus={null} />);
 
     expect(await screen.findByText('Cards')).toHaveTextContent('Cards (27 selected)');
     // 4 × 0.25 + 20 × 0.05 + 3 × 0.50
@@ -86,7 +87,7 @@ describe('BuyPaperDialog', () => {
       options?.onLoading?.();
       return new Promise((resolve) => { finish = resolve; });
     });
-    const { container } = render(<BuyPaperDialog deckName="Izzet Tempo" sections={sections} onClose={() => {}} returnFocus={null} />);
+    const { container } = render(<BuyPaperDialog sections={sections} onClose={() => {}} returnFocus={null} />);
     await screen.findByText('Cards');
     // Both store lists load as the dialog opens.
     expect(fetchStorePrices).toHaveBeenCalledWith('cardkingdom', ['Opt', 'Alchemy Only', 'Island', 'Negate'], expect.anything());
@@ -130,7 +131,7 @@ describe('BuyPaperDialog', () => {
   it('opens the chosen store with the selected cards', async () => {
     vi.mocked(fetchStorePrices).mockResolvedValue({ prices: new Map(), asOf: '' });
     const open = vi.spyOn(window, 'open').mockReturnValue(null);
-    render(<BuyPaperDialog deckName="Izzet Tempo" sections={sections} onClose={() => {}} returnFocus={null} />);
+    render(<BuyPaperDialog sections={sections} onClose={() => {}} returnFocus={null} />);
     await screen.findByText('Cards');
 
     fireEvent.click(screen.getByRole('button', { name: /Store/u }));
@@ -144,5 +145,28 @@ describe('BuyPaperDialog', () => {
     expect(open.mock.calls[0][1]).toBe('_blank');
     expect(screen.getByRole('status')).toHaveTextContent('Opened Card Kingdom in a new tab.');
     expect(JSON.parse(localStorage.getItem('mtga-tracker-buy-paper-v1')!).vendor).toBe('cardkingdom');
+  });
+});
+
+describe('Buy on Paper setting', () => {
+  it('hides the button until the switch is known and when it is turned off', async () => {
+    resetBuyOnPaperSetting();
+    let answer!: (response: Response) => void;
+    const fetchMock = vi.fn((url: string) => (url === '/api/paper-prices/status'
+      ? new Promise<Response>((resolve) => { answer = resolve; })
+      : Promise.resolve(new Response(JSON.stringify({ buy_on_paper: { enabled: false, cache_bytes: 0 } }), { status: 200 }))));
+    vi.stubGlobal('fetch', fetchMock);
+    localStorage.setItem('mtga-tracker-paper-prices-v1', '{}');
+
+    render(<BuyPaperButton onOpen={() => {}} />);
+    expect(screen.queryByRole('button', { name: 'Buy on Paper' })).not.toBeInTheDocument();
+    await act(async () => { answer(new Response(JSON.stringify({ enabled: true, cache_bytes: 0 }), { status: 200 })); });
+    expect(screen.getByRole('button', { name: 'Buy on Paper' })).toBeInTheDocument();
+
+    await act(async () => { await saveBuyOnPaperEnabled(false); });
+    expect(fetchMock).toHaveBeenCalledWith('/api/settings/buy-on-paper', expect.objectContaining({ body: '{"enabled":false}' }));
+    expect(screen.queryByRole('button', { name: 'Buy on Paper' })).not.toBeInTheDocument();
+    expect(localStorage.getItem('mtga-tracker-paper-prices-v1')).toBeNull();
+    vi.unstubAllGlobals();
   });
 });

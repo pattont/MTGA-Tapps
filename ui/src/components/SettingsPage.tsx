@@ -12,6 +12,7 @@ import {
   type CollectionExportFormat,
   type CollectionExportJob,
   type OverlaySettings,
+  type BuyOnPaperSettings,
   type DeckAiSettings,
   type DeckFinderCreator,
   type DeckFinderCreatorSettings,
@@ -20,6 +21,7 @@ import {
   type TrackerInfoSettings,
 } from '../api';
 import { Section } from './Section';
+import { saveBuyOnPaperEnabled } from '../buyOnPaperSetting';
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -287,6 +289,7 @@ export function SettingsPage() {
   const [platform, setPlatform] = useState<PlatformSettings | null>(null);
   const [startup, setStartup] = useState<StartupSettings | null>(null);
   const [overlay, setOverlay] = useState<OverlaySettings | null>(null);
+  const [buyOnPaper, setBuyOnPaper] = useState<BuyOnPaperSettings | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -299,6 +302,7 @@ export function SettingsPage() {
           setPlatform(settings.platform);
           setStartup(settings.startup);
           setOverlay(settings.overlay ?? null);
+          setBuyOnPaper(settings.buy_on_paper ?? { enabled: true, cache_bytes: 0 });
         }
       })
       .catch((exc: unknown) => {
@@ -358,6 +362,22 @@ export function SettingsPage() {
           </p>
         ) : (
           <OverlayForm initial={overlay} platform={platform} />
+        )}
+      </Section>
+
+      <Section
+        id="settings-buy-on-paper"
+        title="Buy on Paper"
+        description="Price a deck in paper and open it at a card store, from Deck Finder, Deck Manager and deck pages."
+      >
+        {error ? (
+          <p className="empty-state deckfinder-state">{error}</p>
+        ) : buyOnPaper === null ? (
+          <p className="state-panel deckfinder-state" role="status" aria-busy="true">
+            Loading...
+          </p>
+        ) : (
+          <BuyOnPaperForm initial={buyOnPaper} />
         )}
       </Section>
 
@@ -598,6 +618,70 @@ function OverlayForm({
           </span>
           <span className="overlay-key overlay-key-note">Looks and behaviour: the overlay's ⚙ menu. Also in the menu bar: Start / Stop Overlay.</span>
         </div>
+      ) : null}
+      {error ? (
+        <p className="collection-export-status collection-export-fail overlay-card-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function formatMegabytes(bytes: number): string {
+  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function BuyOnPaperForm({ initial }: { initial: BuyOnPaperSettings }) {
+  const [settings, setSettings] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function setEnabled(enabled: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      setSettings(await saveBuyOnPaperEnabled(enabled));
+    } catch (exc: unknown) {
+      setError(exc instanceof Error ? exc.message : 'Buy on Paper could not be changed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const stored = settings.cache_bytes > 0 ? ` Saved price lists use ${formatMegabytes(settings.cache_bytes)}.` : '';
+  return (
+    <div className={`overlay-card overlay-card-${settings.enabled ? 'on' : 'off'}`}>
+      <div className="overlay-card-main">
+        <span aria-hidden="true" className="overlay-card-dot" />
+        <div className="overlay-card-text">
+          <p className="overlay-card-title" role="status">
+            {settings.enabled ? 'Buy on Paper is on' : 'Buy on Paper is off'}
+          </p>
+          <p className="overlay-card-detail">
+            {settings.enabled
+              ? <>Decks show a Buy on Paper button. To price cards, the tracker downloads Card Kingdom’s and
+                Mana Pool’s public price lists (about 120 MB together) the first time you open it each day,
+                and keeps a small summary in its data folder. TCGplayer prices come from Scryfall.{stored}</>
+              : 'No button and no price downloads. The saved price lists have been deleted.'}
+          </p>
+        </div>
+        <div className="overlay-card-actions">
+          {settings.enabled ? (
+            <button aria-label="Turn off Buy on Paper" className="deck-neutral-button" disabled={busy} type="button" onClick={() => void setEnabled(false)}>
+              Turn off
+            </button>
+          ) : (
+            <button aria-label="Turn on Buy on Paper" className="deck-export-button" disabled={busy} type="button" onClick={() => void setEnabled(true)}>
+              Turn on
+            </button>
+          )}
+        </div>
+      </div>
+      {settings.enabled ? (
+        <p className="overlay-card-keys buy-paper-settings-note">
+          Turning it off hides the button, stops any download in progress and deletes the saved price lists.
+        </p>
       ) : null}
       {error ? (
         <p className="collection-export-status collection-export-fail overlay-card-error" role="alert">

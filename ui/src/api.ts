@@ -1768,6 +1768,14 @@ export interface TrackerSettings {
   platform: PlatformSettings;
   startup: StartupSettings;
   overlay: OverlaySettings;
+  /** Missing from trackers older than Buy on Paper. */
+  buy_on_paper?: BuyOnPaperSettings;
+}
+
+export interface BuyOnPaperSettings {
+  enabled: boolean;
+  /** Bytes the saved store price lists take on disk. */
+  cache_bytes: number;
 }
 
 export async function fetchTrackerSettings(signal?: AbortSignal): Promise<TrackerSettings> {

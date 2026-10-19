@@ -359,6 +359,12 @@ Primary code paths:
   `GET /api/paper-prices` answers ready/loading/error and never blocks. The
   dialog loads both lists when it opens, for Compare stores. SCG/CSI show the
   TCGplayer estimate. Tests (`tests/test_paper_prices.py`) never download.
+  Settings → Buy on Paper (after In-game overlay; `settings.json`
+  `buy_on_paper.enabled`, default on) is the off switch. Off hides every button
+  (`BuyPaperButton` reads `ui/src/buyOnPaperSetting.ts`), cancels downloads
+  through a generation counter, makes lookups answer 403, and deletes the price
+  folder. The folder holds one index per store plus at most one capped download
+  each; every refresh sweeps leftovers. Keep it bounded.
   Store links follow EDHREC/Cube Cobra formats; SCG and CSI copy the list and open
   their builder. Empty `AFFILIATE` values mean plain links, and the commission
   disclosure shows only for a store with a code. Never track a paper collection.

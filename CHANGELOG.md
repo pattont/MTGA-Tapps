@@ -16,6 +16,15 @@
   total side by side and marks the lowest. Switching stores animates each price
   and the total to the new values. Cards a store has sold out or doesn't list
   are marked.
+- Settings has a **Buy on Paper** switch after In-game overlay. It explains the
+  store price downloads (about 120 MB a day at most, a summary of about 16 MB
+  kept). Turning it off hides the button everywhere, stops downloads and
+  deletes the saved price lists.
+
+### Deck page
+
+- The Save to collection button beside Copy Arena Deck is gone. Save decks from
+  Deck Finder or Deck Manager instead.
 
 ### Replay
 

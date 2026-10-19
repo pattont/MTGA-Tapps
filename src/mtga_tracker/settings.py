@@ -184,3 +184,19 @@ def save_startup_settings(
     }
     _write_document(path, document)
     return load_app_settings(path, create=False)
+
+
+def read_settings_section(name: str, path: Optional[Path] = None) -> Dict[str, Any]:
+    """One top-level section of settings.json ({} when missing or unreadable)."""
+    path = Path(path or SETTINGS_PATH).expanduser()
+    section = _read_document(path).get(name) if path.exists() else None
+    return dict(section) if isinstance(section, dict) else {}
+
+
+def merge_settings_section(name: str, values: Dict[str, Any], path: Optional[Path] = None) -> None:
+    """Merge values into one section, atomically, keeping every other setting."""
+    path = Path(path or SETTINGS_PATH).expanduser()
+    document = _read_document(path) if path.exists() else _default_document()
+    section = document.get(name)
+    document[name] = {**(section if isinstance(section, dict) else {}), **values}
+    _write_document(path, document)

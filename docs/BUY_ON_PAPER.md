@@ -51,6 +51,34 @@ oversized and art cards) are skipped. The result, about 8 MB, is saved as
 Names match on the full name or any face, because Card Kingdom names
 double-faced cards by their front face.
 
+The folder stays small: one index per store (about 8 MB each, about 16 MB
+together). While a refresh runs, the folder also holds that store's download,
+capped at 250 MB; today's lists are 50–70 MB. Each refresh replaces its
+store's index in place. It also deletes that store's half-written files from
+an interrupted run and anything that isn't a current index, so nothing builds
+up over time.
+
+## Turning it off
+
+**Settings → Buy on Paper**, right after In-game overlay, explains the
+downloads and has a Turn off / Turn on button. The switch is saved in
+`settings.json` as `buy_on_paper.enabled` and is on by default. Turning it
+off does four things:
+
+- **Hides the button** on all three screens at once (`ui/src/buyOnPaperSetting.ts`
+  reads `GET /api/paper-prices/status` once per page load).
+- **Stops downloads:** any download in progress stops at its next chunk and
+  keeps nothing, and lookups answer `403 disabled`.
+- **Deletes the price folder.**
+- **Clears the dialog's Scryfall price cache** from browser storage.
+
+`POST /api/settings/buy-on-paper {enabled}` makes the change. A download
+started before the switch was turned off can't save its result afterwards,
+because the save checks the switch under the same lock that turning it off
+takes.
+
+## Dialog details
+
 In the dialog, a card the chosen store doesn't list keeps its TCGplayer
 estimate, tagged "Not listed · TCGplayer est.". A card the store lists but has
 sold out is tagged "Sold out" and priced at its listing. The summary counts

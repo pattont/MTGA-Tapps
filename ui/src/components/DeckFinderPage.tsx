@@ -893,7 +893,7 @@ export function DeckFinderPage() {
       ) : null}
       {/* Outside the selected-deck panel so its provider-colored headings don't apply. */}
       {buyingOpener && selectedDeck && parsedDeck ? (
-        <BuyPaperDialog deckName={parsedDeck.name || selectedDeck.name} sections={parsedDeck.sections}
+        <BuyPaperDialog sections={parsedDeck.sections}
           onClose={() => setBuyingOpener(null)} returnFocus={buyingOpener} />
       ) : null}
     </div>

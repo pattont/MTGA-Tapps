@@ -6233,7 +6233,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             status, body = handled or (404, {"error": "Unknown Deck Manager endpoint."})
             _send_bytes(self, status, json.dumps(body).encode("utf-8"), "application/json; charset=utf-8", {"Cache-Control": "no-store"})
             return
-        if request_path == "/api/paper-prices":
+        if request_path in ("/api/paper-prices", "/api/paper-prices/status"):
             # Buy on Paper: store price lists, downloaded at most daily.
             from . import paper_prices
 

@@ -601,7 +601,7 @@ export function DeckManagerPage() {
         </DeckModal>
       ) : null}
       {buyingOpener && modal === 'deck' && activeDetail ? (
-        <BuyPaperDialog deckName={activeDetail.name} sections={managedDeckSections(activeDetail)}
+        <BuyPaperDialog sections={managedDeckSections(activeDetail)}
           onClose={() => setBuyingOpener(null)} returnFocus={buyingOpener} />
       ) : null}
     </section>

@@ -9,6 +9,7 @@ import {
 import { PAPER_VENDORS, affiliateActive, openVendorRequest, vendorById, type PaperVendor } from '../paperVendors';
 import { fetchStorePrices, type StorePriceResult, type StorePriceSource } from '../storePrices';
 import { DeckModal } from './DeckModal';
+import { useBuyOnPaperEnabled } from '../buyOnPaperSetting';
 
 const PREFS_KEY = 'mtga-tracker-buy-paper-v1';
 
@@ -135,7 +136,6 @@ function VendorPicker({ value, onChange }: { value: PaperVendor; onChange: (vend
 }
 
 export interface BuyPaperDialogProps {
-  deckName: string;
   sections: ImportSection[];
   onClose: () => void;
   returnFocus: HTMLElement | null;
@@ -182,7 +182,7 @@ type StoreState =
 const STORE_SOURCES: StorePriceSource[] = ['cardkingdom', 'manapool'];
 
 /** "Buy on paper": pick a store, choose cards, see live prices, open the store's cart. */
-export function BuyPaperDialog({ deckName, sections, onClose, returnFocus }: BuyPaperDialogProps) {
+export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialogProps) {
   const rows = useMemo(() => paperDeckFromSections(sections), [sections]);
   const presentBoards = useMemo(() => BOARD_ORDER.filter((board) => rows.some((row) => row.board === board)), [rows]);
   const [prefs, setPrefs] = useState(loadPrefs);
@@ -328,7 +328,6 @@ export function BuyPaperDialog({ deckName, sections, onClose, returnFocus }: Buy
     <DeckModal title="Buy on Paper" busy={false} onClose={onClose} returnFocus={returnFocus} wide className="buy-paper-modal">
       <div className="buy-paper">
         <div className="buy-paper-options">
-          <p className="buy-paper-deck-name">{deckName}</p>
           <h4 id="buy-paper-store-label">Store</h4>
           <VendorPicker value={vendor} onChange={(next) => { updatePrefs({ vendor: next.id }); setOpened(null); }} />
           <p className="buy-paper-store-note">{vendor.note}</p>
@@ -480,15 +479,18 @@ export function BuyPaperDialog({ deckName, sections, onClose, returnFocus }: Buy
             <div className="buy-paper-total">
               <dt>
                 Estimated Total
-                <span
-                  className="buy-paper-help"
-                  tabIndex={0}
-                  role="img"
-                  aria-label="About this estimate"
-                  title={source === 'tcgplayer'
-                    ? 'Each card’s cheapest English paper printing at its TCGplayer market price, from Scryfall (updated daily). The store sets its own prices and stock, so the cart total will differ.'
-                    : `Each card’s cheapest in-stock copy in ${vendor.name}’s published price list (refreshed daily), any condition. Cards ${vendor.name} doesn’t list use the TCGplayer estimate. The cart total may differ.`}
-                ><CircleHelp aria-hidden="true" /></span>
+                <span className="buy-paper-help">
+                  <button type="button" className="buy-paper-help-button" aria-label="About this estimate" aria-describedby="buy-paper-estimate-tip">
+                    <CircleHelp aria-hidden="true" />
+                  </button>
+                  <span id="buy-paper-estimate-tip" role="tooltip" className="buy-paper-tooltip">
+                    {source === 'tcgplayer'
+                      ? 'Prices are TCGplayer market prices, updated once a day, and may differ at checkout.'
+                      : `Prices come from ${vendor.name}’s price list, updated once a day, and may differ at checkout.`}
+                    {' '}Prices also vary based on the condition of the card selected at checkout.
+                    {source === 'tcgplayer' ? null : ` Cards ${vendor.name} doesn’t list use the TCGplayer estimate.`}
+                  </span>
+                </span>
               </dt>
               <dd><AnimatedAmount value={cart.total} busy={storeLoading} /></dd>
             </div>
@@ -510,10 +512,15 @@ export function BuyPaperDialog({ deckName, sections, onClose, returnFocus }: Buy
   );
 }
 
-/** The button the three deck screens show beside their Arena export. */
+/**
+ * The button the three deck screens show beside their Arena export. Renders
+ * nothing while Buy on Paper is turned off in Settings.
+ */
 export function BuyPaperButton({ disabled, onOpen, className = '' }: {
   disabled?: boolean; onOpen: (opener: HTMLElement) => void; className?: string;
 }) {
+  const enabled = useBuyOnPaperEnabled();
+  if (!enabled) return null;
   return (
     <button
       type="button"

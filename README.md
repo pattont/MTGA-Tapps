@@ -117,7 +117,7 @@ native deck integration is supported.
 **Deck Manager (beta).** Keep decks beyond Arena's active-deck limit in a
 local library separate from your played-deck statistics. Organize them with
 named collections, revisions, tags, notes, search and recoverable Trash. Save
-from Deck Finder or played-deck history, import a decklist, or capture lists
+from Deck Finder, import a decklist, or capture lists
 available in Arena's log. Copy a saved list into Arena on either platform.
 The guarded native integration can also back up, move and restore decks
 directly: tested on Apple Silicon Macs, newly enabled on 64-bit Windows. See [Deck Manager](#deck-manager-beta)
@@ -311,8 +311,8 @@ Deck Manager is a local library independent of Arena's active roster and the
 dashboard's played-deck statistics. Keep decks even after removing them from
 Arena, with no library deck-count limit. Open it from the sidebar to organize
 decks in collections, search by name or tag, browse revisions, add notes, and
-recover decks from Trash. Add a list yourself, save one from Deck Finder or a
-played deck's detail page, or capture lists available in Arena's log. The
+recover decks from Trash. Add a list yourself, save one from Deck Finder, or
+capture lists available in Arena's log. The
 library works while Arena is closed and is included in tracker backups.
 
 ![Deck Manager Saved tab with collections and deck status badges](docs/images/deck-manager.png)
