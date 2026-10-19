@@ -216,3 +216,82 @@ def test_newest_finished_game_id_tolerates_a_database_without_games(tmp_path):
     db_path = tmp_path / "empty.sqlite3"
     sqlite3.connect(db_path).close()
     assert menu_app.newest_finished_game_id(db_path) is None
+
+
+def test_tray_update_item_mirrors_the_updater(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from PyQt6.QtWidgets import QApplication
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("MTGA_TRACKER_DISABLE_UPDATES", "1")
+    application = QApplication.instance() or QApplication([])
+    args = SimpleNamespace(
+        host="127.0.0.1",
+        port=0,
+        db=tmp_path / "t.sqlite3",
+        log_path=None,
+        no_browser=True,
+        after_update=False,
+        updated_from=None,
+        update_failed=None,
+    )
+    controller = menu_app.MenuBarController(application, args)
+    messages = []
+    monkeypatch.setattr(controller.tray, "showMessage", lambda *a: messages.append(a[1]))
+    action = controller.update_action
+    assert not action.isVisible()
+
+    controller._sync_update_action({"state": "available", "latest_version": "0.6.6"})
+    assert action.isVisible() and action.text() == "Update available: v0.6.6…"
+    controller._sync_update_action(
+        {"state": "downloading", "latest_version": "0.6.6", "progress": {"fraction": 0.42}}
+    )
+    assert action.text() == "Downloading update… 42%"
+    controller._sync_update_action({"state": "ready", "latest_version": "0.6.6"})
+    assert action.text() == "Restart to Update (v0.6.6)"
+    assert messages and "ready" in messages[0]
+    controller._sync_update_action({"state": "installing", "latest_version": "0.6.6"})
+    assert action.text() == "Restarting…"
+    controller._sync_update_action({"state": "up_to_date"})
+    assert not action.isVisible()
+    # The tracker-status slot is still a method (an attribute once shadowed it).
+    controller._update_status("tracker-running")
+    assert controller.status_action.text() == "Tracker: Running"
+
+
+def test_abandoned_install_and_quit_is_reported_then_quits(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from PyQt6.QtWidgets import QApplication
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("MTGA_TRACKER_DISABLE_UPDATES", "1")
+    application = QApplication.instance() or QApplication([])
+    args = SimpleNamespace(
+        host="127.0.0.1",
+        port=0,
+        db=tmp_path / "t.sqlite3",
+        log_path=None,
+        no_browser=True,
+        after_update=False,
+        updated_from=None,
+        update_failed=None,
+    )
+    controller = menu_app.MenuBarController(application, args)
+    warnings, quits = [], []
+    monkeypatch.setattr(menu_app.QMessageBox, "warning", lambda *a: warnings.append(a[2]))
+    monkeypatch.setattr(controller.app, "quit", lambda: quits.append(True))
+    controller.updates = SimpleNamespace(
+        status=lambda: {
+            "state": "error",
+            "error": {"code": "backup-failed", "message": "disk full"},
+        }
+    )
+    controller._quitting_for_update = True
+    controller._on_update_exit()
+    assert quits == [True] and "disk full" in warnings[0]
+    # A successful hand-off quits without a message.
+    controller.updates = SimpleNamespace(status=lambda: {"state": "installing", "error": None})
+    controller._on_update_exit()
+    assert quits == [True, True] and len(warnings) == 1

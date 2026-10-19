@@ -37,8 +37,10 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon,
 )
 
-from .app import CallbackTextStream, UnifiedLauncher
+from .app import CallbackTextStream, UnifiedLauncher, _update_flags
 from .overlay_launcher import get_manager as get_overlay_manager
+from .updater import UpdateBlocked, UpdateError
+from .updater import get_manager as get_update_manager
 from .paths import DATA_DIR, raise_open_file_limit
 from .tray_menu import tray_menu_origin
 from .settings import AppSettings, load_app_settings
@@ -123,10 +125,13 @@ def _instance_lock_path() -> Path:
     return Path(tempfile.gettempdir()) / f"mtga-tracker-{user_id}.lock"
 
 
-def _acquire_instance_lock() -> QLockFile | None:
-    """Keep duplicate source and packaged menu controllers from running together."""
+def _acquire_instance_lock(timeout_ms: int = 0) -> QLockFile | None:
+    """Keep duplicate source and packaged menu controllers from running together.
+
+    A relaunch after an update waits `timeout_ms` for the old process to
+    release the lock instead of reporting "already running"."""
     lock = QLockFile(str(_instance_lock_path()))
-    if not lock.tryLock(0):
+    if not lock.tryLock(timeout_ms):
         return None
     return lock
 
@@ -139,6 +144,10 @@ class AppSignals(QObject):
     log_text = pyqtSignal(str)
     status_changed = pyqtSignal(str)
     overlay_changed = pyqtSignal(dict)
+    update_changed = pyqtSignal(dict)
+    #: Emitted from the updater thread once the installer is spawned; queued
+    #: onto the GUI thread, where it quits the application.
+    update_exit = pyqtSignal()
 
 
 class LiveLogWindow(QMainWindow):
@@ -290,8 +299,13 @@ class MenuBarController(QObject):
             output_stream=self.log_stream,
             status_callback=self.signals.status_changed.emit,
             use_colors=True,
+            update_flags=_update_flags(args),
         )
         self._shutting_down = False
+        self._update_state: Optional[str] = None
+        self._last_update_status: dict = {}
+        self._announced_update_result = False
+        self._quitting_for_update = False
 
         self.tray = QSystemTrayIcon(self._tray_icon(), self)
         _set_tray_tooltip(self.tray)
@@ -305,6 +319,16 @@ class MenuBarController(QObject):
         self.overlay_status_action = QAction("Overlay: Stopped", self)
         self.overlay_status_action.setIcon(_status_dot_icon(self.STATUS_COLORS["tracker-stopped"]))
         self.menu.addAction(self.overlay_status_action)
+        # In-app update: hidden until an update is available. First actionable
+        # item when shown ("Restart to Update (v0.6.6)").
+        self.update_action = QAction("Restart to Update", self)
+        self.update_action.setVisible(False)
+        self.update_action.triggered.connect(self.update_action_triggered)
+        self.menu.addAction(self.update_action)
+        self.updates = get_update_manager()
+        self.updates.add_listener(self.signals.update_changed.emit)
+        self.signals.update_changed.connect(self._sync_update_action)
+        self.signals.update_exit.connect(self._on_update_exit)
         self.menu.addSeparator()
 
         # Order matters (same on macOS and Windows): Live Scoreboard, Replays,
@@ -367,7 +391,7 @@ class MenuBarController(QObject):
 
         self.menu.addSeparator()
         self.quit_action = QAction("Quit Tapps Tracker", self)
-        self.quit_action.triggered.connect(self.app.quit)
+        self.quit_action.triggered.connect(self.quit_requested)
         self.menu.addAction(self.quit_action)
 
         if sys.platform == "darwin":
@@ -404,6 +428,8 @@ class MenuBarController(QObject):
         try:
             url = self.launcher.start_dashboard()
             self.log_window.append_text(f"Dashboard: {url}\n")
+            self.launcher.start_updater(request_exit=self.signals.update_exit.emit)
+            self._sync_update_action(self.updates.status())
             self.launcher.start_tracker(background=True)
             self._start_overlay(url)
             if not self.args.no_browser:
@@ -516,6 +542,149 @@ class MenuBarController(QObject):
             _status_dot_icon(self.STATUS_COLORS["tracker-running" if running else "tracker-stopped"])
         )
 
+    # -- updates -------------------------------------------------------------
+
+    def _sync_update_action(self, status: dict) -> None:
+        """Mirror the updater's state in the tray (the dashboard pill reads
+        the same manager through /api/update)."""
+        self._last_update_status = dict(status or {})
+        state = str(status.get("state") or "")
+        version = status.get("latest_version") or ""
+        action = self.update_action
+        visible = not status.get("skipped") and state in (
+            "available",
+            "downloading",
+            "ready",
+            "installing",
+        )
+        action.setEnabled(state != "installing")
+        if state == "available":
+            action.setText(f"Update available: v{version}…")
+        elif state == "downloading":
+            fraction = (status.get("progress") or {}).get("fraction") or 0.0
+            action.setText(f"Downloading update… {int(float(fraction) * 100)}%")
+        elif state == "ready":
+            action.setText(f"Restart to Update (v{version})")
+        elif state == "installing":
+            action.setText("Restarting…")
+        action.setVisible(bool(visible))
+
+        if state == "ready" and self._update_state not in (None, "ready", "installing"):
+            self.tray.showMessage(
+                "Tapps Tracker",
+                f"Update v{version} is ready. Restart from this menu when you're done playing.",
+                QSystemTrayIcon.MessageIcon.Information,
+                8000,
+            )
+        if not self._announced_update_result:
+            just = status.get("just_updated") or {}
+            error = status.get("error") or {}
+            if just.get("ok"):
+                self._announced_update_result = True
+                self.tray.showMessage(
+                    "Tapps Tracker",
+                    f"Updated to v{just.get('to')}.",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    6000,
+                )
+            elif error.get("code") in ("install-failed", "install-not-applied"):
+                self._announced_update_result = True
+                self.tray.showMessage(
+                    "Tapps Tracker",
+                    "The update could not be installed. Open Tracker Settings for details.",
+                    QSystemTrayIcon.MessageIcon.Warning,
+                    8000,
+                )
+        self._update_state = state
+
+    def update_action_triggered(self) -> None:
+        status = self.updates.status()
+        if status.get("state") != "ready" or not status.get("can_install"):
+            self.open_dashboard("/#/settings")
+            return
+        self._install_update()
+
+    def _install_update(self, *, force: bool = False) -> None:
+        try:
+            self.updates.request_install(force=force)
+        except UpdateBlocked as exc:
+            if exc.code == "game-in-progress":
+                answer = QMessageBox.question(
+                    self.log_window,
+                    "Tapps Tracker",
+                    "Finish your game first. Install the update after this game?\n\n"
+                    "The tracker will be offline for about 10 seconds while it restarts.",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                )
+                if answer == QMessageBox.StandardButton.Yes:
+                    self._request_install_quietly(when="idle")
+            elif exc.code == "arena-running" and not force:
+                answer = QMessageBox.question(
+                    self.log_window,
+                    "Tapps Tracker",
+                    "Arena is open. The tracker will be offline for about 10 seconds; "
+                    "don't start a match until it's back.\n\nRestart to update now?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                )
+                if answer == QMessageBox.StandardButton.Yes:
+                    self._install_update(force=True)
+            else:
+                QMessageBox.information(
+                    self.log_window,
+                    "Tapps Tracker",
+                    "The update will be ready to install once the running "
+                    f"{exc.code.replace('-', ' ')} job finishes.",
+                )
+        except UpdateError as exc:
+            QMessageBox.information(self.log_window, "Tapps Tracker", str(exc))
+
+    def _request_install_quietly(self, **kwargs: Any) -> bool:
+        try:
+            self.updates.request_install(**kwargs)
+            return True
+        except UpdateError:
+            return False
+
+    def quit_requested(self) -> None:
+        """Quit; when a verified update is ready, offer to install it on the
+        way out (no relaunch)."""
+        status = self.updates.status()
+        if status.get("state") == "ready" and status.get("can_install"):
+            answer = QMessageBox.question(
+                self.log_window,
+                "Tapps Tracker",
+                f"Update v{status.get('latest_version')} is ready. Install it and quit?",
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No
+                | QMessageBox.StandardButton.Cancel,
+            )
+            if answer == QMessageBox.StandardButton.Cancel:
+                return
+            if answer == QMessageBox.StandardButton.Yes:
+                self._quitting_for_update = True
+                if self._request_install_quietly(force=True, relaunch=False):
+                    # The updater quits the app (update_exit) once the
+                    # installer is running, or after reporting why not.
+                    return
+                self._quitting_for_update = False
+        self.app.quit()
+
+    def _on_update_exit(self) -> None:
+        """The updater asks the app to quit: the installer is running, or an
+        "install and quit" was abandoned, which the user is told about first."""
+        status = self.updates.status()
+        error = status.get("error") or {}
+        if self._quitting_for_update and status.get("state") == "error":
+            QMessageBox.warning(
+                self.log_window,
+                "Tapps Tracker",
+                "The update was not installed: "
+                f"{error.get('message') or error.get('code') or 'unknown error'}\n\n"
+                "Tapps Tracker will quit now. You can install the update the next time "
+                "it runs.",
+            )
+        self.app.quit()
+
     def toggle_tracker(self) -> None:
         if self.launcher.tracker_is_running:
             self.toggle_tracker_action.setEnabled(False)
@@ -576,6 +745,7 @@ class MenuBarController(QObject):
         self.toggle_tracker_action.setEnabled(False)
         self._overlay_timer.stop()
         self.overlay.stop()
+        self.updates.stop()
         self.launcher.shutdown()
         self.tray.hide()
 
@@ -587,9 +757,10 @@ def run_menu_app(args: Any) -> int:
     QApplication.setApplicationDisplayName(_APP_NAME)
     QApplication.setOrganizationName(_APP_NAME)
     app = QApplication.instance() or QApplication([])
-    instance_lock = _acquire_instance_lock()
+    after_update = bool(getattr(args, "after_update", False))
+    instance_lock = _acquire_instance_lock(30000 if after_update else 0)
     if instance_lock is None:
-        if getattr(args, "login_start", False):
+        if getattr(args, "login_start", False) or after_update:
             return 0
         # Windowed builds have no console — tell the user visibly. This is
         # the path hit when relaunching before the old process finishes

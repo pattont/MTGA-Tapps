@@ -51,7 +51,13 @@ fi
 # shows the hard "Not Opened / Move to Trash" dialog and never offers the
 # Privacy & Security "Open Anyway" escape hatch. An ad-hoc seal restores
 # that flow for unsigned distribution. MACOS_SIGN_IDENTITY overrides with a
-# real Developer ID when one is available.
+# real Developer ID when one is available, or with the project's stable
+# self-signed identity (scripts/create_macos_signing_identity.sh; CI imports
+# it from secrets). A stable identity makes the designated requirement
+# "identifier ... and certificate leaf = H..." instead of a per-build cdhash,
+# so TCC grants survive in-app updates. Gatekeeper trusts neither, so the
+# first-install flow is the same. MACOS_SIGN_KEYCHAIN optionally names the
+# keychain holding that identity (passed to codesign --keychain).
 APP_PATH="$ROOT_DIR/dist/MTGA Tracker.app"
 PLIST_PATH="$APP_PATH/Contents/Info.plist"
 
@@ -87,9 +93,16 @@ elif [[ "${OVERLAY_REQUIRED:-0}" == "1" ]]; then
   exit 1
 fi
 
-codesign --force --deep --sign "${MACOS_SIGN_IDENTITY:--}" "$APP_PATH"
+CODESIGN_ARGS=(--force --deep --sign "${MACOS_SIGN_IDENTITY:--}")
+if [[ -n "${MACOS_SIGN_IDENTITY:-}" && -n "${MACOS_SIGN_KEYCHAIN:-}" ]]; then
+  CODESIGN_ARGS+=(--keychain "$MACOS_SIGN_KEYCHAIN")
+fi
+codesign "${CODESIGN_ARGS[@]}" "$APP_PATH"
 codesign --verify --deep --strict "$APP_PATH"
 echo "Signed ($([ -n "${MACOS_SIGN_IDENTITY:-}" ] && echo "identity: $MACOS_SIGN_IDENTITY" || echo "ad-hoc")): $APP_PATH"
+# The designated requirement is what TCC remembers; with a stable identity it
+# must read the same for every release.
+codesign --display --requirements - "$APP_PATH" 2>&1 | grep '^designated' || true
 
 echo "Built: $APP_PATH"
 if [[ "$FAST_BUILD" == "1" ]]; then

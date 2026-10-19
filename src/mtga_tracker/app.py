@@ -14,11 +14,15 @@ from .analytics import AnalyticsStore
 from .dashboard import DEFAULT_DB_PATH, create_dashboard_server
 from .deck_downloader_launcher import DECK_FINDER_FLAG
 from .log_parser import MTGALogParser
-from .single_instance import SingleInstanceGuard
+from .single_instance import SingleInstanceGuard, acquire_with_retry
 from .tracker import CardTracker
 
 
 StatusCallback = Callable[[str], None]
+
+#: How long a version relaunched by the updater waits for the old process's
+#: instance locks before giving up quietly.
+AFTER_UPDATE_LOCK_WAIT_S = 60.0
 
 
 class CallbackTextStream:
@@ -61,6 +65,7 @@ class UnifiedLauncher:
         output_stream: Optional[TextIO] = None,
         status_callback: Optional[StatusCallback] = None,
         use_colors: Optional[bool] = None,
+        update_flags: Optional[dict] = None,
     ):
         self.host = host
         self.requested_port = port
@@ -75,6 +80,13 @@ class UnifiedLauncher:
         self.tracker_thread: Optional[threading.Thread] = None
         self.tracker_error: Optional[Exception] = None
         self._stop_requested = threading.Event()
+        #: Clear while a tracker session runs on any thread (the background
+        #: worker, or the main thread in --no-gui mode); set once it returned.
+        self._tracker_stopped = threading.Event()
+        self._tracker_stopped.set()
+        self._stop_status_pending = False
+        #: --after-update / --updated-from / --update-failed from this launch.
+        self.update_flags = dict(update_flags or {})
 
     @property
     def dashboard_url(self) -> Optional[str]:
@@ -86,6 +98,16 @@ class UnifiedLauncher:
     @property
     def tracker_is_running(self) -> bool:
         return self.tracker_thread is not None and self.tracker_thread.is_alive()
+
+    @property
+    def tracker_active(self) -> bool:
+        """True while a tracker session runs, background or foreground."""
+        return not self._tracker_stopped.is_set()
+
+    def wait_tracker_stopped(self, timeout: float) -> bool:
+        """Wait until no tracker session is running (a foreground session
+        returns from start_tracker); False when it is still running."""
+        return self._tracker_stopped.wait(timeout)
 
     def _set_status(self, status: str) -> None:
         self.status_callback(status)
@@ -171,14 +193,17 @@ class UnifiedLauncher:
         finally:
             self.tracker = None
             self._mark_tracker_stopped()
-            if not self._stop_requested.is_set():
+            if not self._stop_requested.is_set() or self._stop_status_pending:
+                self._stop_status_pending = False
                 self._set_status("tracker-stopped")
+            self._tracker_stopped.set()
 
     def start_tracker(self, *, background: bool = True) -> None:
         """Start a fresh tracker session in the background or current thread."""
         if self.tracker_is_running:
             return
         self._stop_requested.clear()
+        self._tracker_stopped.clear()
         if not background:
             self._run_tracker()
             return
@@ -208,6 +233,12 @@ class UnifiedLauncher:
         thread = self.tracker_thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=timeout)
+            if thread.is_alive():
+                # Still finishing a write: keep the reference so
+                # tracker_is_running stays true and nothing starts a second
+                # tracker beside it. Its own exit reports "stopped".
+                self._stop_status_pending = True
+                return
         self.tracker_thread = None
         self._mark_tracker_stopped()
         self._set_status("tracker-stopped")
@@ -225,9 +256,35 @@ class UnifiedLauncher:
         self.dashboard_thread = None
         self._set_status("dashboard-stopped")
 
+    def start_updater(
+        self, request_exit: Callable[[], None], *, foreground_tracker: bool = False
+    ) -> None:
+        """Start the in-app updater (a no-op unless this is a frozen build
+        with update checks on). Call after start_dashboard(), never from it:
+        tests and tools create launchers freely."""
+        from .updater import get_manager
+
+        manager = get_manager()
+        manager.configure(
+            db_path=self.db_path,
+            launcher=self,
+            request_exit=request_exit,
+            foreground_tracker=foreground_tracker,
+            launch_flags=self.update_flags,
+        )
+        manager.start()
+
     def shutdown(self) -> None:
         self.stop_tracker()
         self.stop_dashboard()
+
+
+def _update_flags(args: argparse.Namespace) -> dict:
+    return {
+        "after_update": bool(getattr(args, "after_update", False)),
+        "updated_from": getattr(args, "updated_from", None),
+        "update_failed": getattr(args, "update_failed", None),
+    }
 
 
 def _run_without_gui(args: argparse.Namespace) -> int:
@@ -236,20 +293,47 @@ def _run_without_gui(args: argparse.Namespace) -> int:
         port=args.port,
         db_path=args.db,
         log_path=args.log_path,
+        update_flags=_update_flags(args),
     )
+    from .updater import get_manager
+
     try:
         url = launcher.start_dashboard()
         print(f"Dashboard: {url}")
         if not args.no_browser:
             launcher.open_dashboard()
-        launcher.start_tracker(background=False)
+        # The tracker owns this thread; an install stops it, which returns
+        # start_tracker() below, and the process exits once the detached
+        # installer is spawned.
+        launcher.start_updater(lambda: None, foreground_tracker=True)
+        while True:
+            launcher.start_tracker(background=False)
+            if get_manager().wait_for_handoff() != "resumed":
+                break
+            print("Update could not be installed; tracking resumed.")
         return 1 if launcher.tracker_error else 0
     finally:
+        get_manager().stop()
         launcher.shutdown()
+
+
+def _with_relaunch_arguments(arguments: list) -> list:
+    """A relaunch by the updater's installer/helper carries only the update
+    flags; put back the command line the updated run was started with
+    (recorded in pending.json), so --db, --port and --no-gui survive."""
+    if "--after-update" not in arguments and not any(
+        item == "--update-failed" or item.startswith("--update-failed=") for item in arguments
+    ):
+        return arguments
+    from .updater_support import read_relaunch_arguments
+
+    recorded = read_relaunch_arguments()
+    return (recorded + arguments) if recorded else arguments
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
+    arguments = _with_relaunch_arguments(arguments)
     if DECK_FINDER_FLAG in arguments:
         # The packaged tracker doubles as the Deck Finder terminal tool: the
         # dashboard's launcher runs this same binary with the flag inside a
@@ -271,18 +355,31 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--no-gui", action="store_true", help="Run in one terminal without the menu bar.")
     parser.add_argument("--no-browser", action="store_true", help="Do not open the dashboard automatically.")
     parser.add_argument("--login-start", action="store_true", help=argparse.SUPPRESS)
-    args = parser.parse_args(argv)
+    # Passed by the updater's installer/helper when it relaunches the app.
+    parser.add_argument("--after-update", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--updated-from", default=None, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--update-failed", nargs="?", const="unknown", default=None, help=argparse.SUPPRESS
+    )
+    args = parser.parse_args(arguments)
     from .settings import load_app_settings
 
     app_settings = load_app_settings(create=False)
     if args.port is None:
         args.port = app_settings.dashboard_port
-    # Keep --no-browser as a one-run override of the saved preference.
-    args.no_browser = args.no_browser or not app_settings.open_dashboard_on_launch
+    # Keep --no-browser as a one-run override of the saved preference. A
+    # relaunch after an update never opens a tab: the old one reloads itself.
+    args.no_browser = (
+        args.no_browser or args.after_update or not app_settings.open_dashboard_on_launch
+    )
 
     instance_guard = SingleInstanceGuard()
     try:
-        guard_acquired = instance_guard.acquire()
+        if args.after_update:
+            # The old version may still be shutting down; wait for its lock.
+            guard_acquired = acquire_with_retry(instance_guard, AFTER_UPDATE_LOCK_WAIT_S)
+        else:
+            guard_acquired = instance_guard.acquire()
     except OSError as exc:
         message = f"Tapps Tracker could not establish its single-instance lock: {exc}"
         if args.no_gui:
@@ -294,6 +391,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1
 
     if not guard_acquired:
+        if args.after_update:
+            from .updater_support import append_log
+
+            append_log("relaunch after update found another instance still running; exiting")
+            return 0
         if args.login_start:
             return 0
         message = (

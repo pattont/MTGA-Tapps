@@ -1123,3 +1123,86 @@ def test_backfill_card_stats_fills_rows_without_stats_only(tmp_path):
     assert rows["Island"] == (None, None)
     assert AnalyticsStore.backfill_card_stats(conn, index) == 0
     assert AnalyticsStore.backfill_card_stats(conn, {}) == 0
+
+
+def test_a_failing_migration_rolls_back_only_itself(tmp_path, monkeypatch):
+    import sqlite3
+
+    import pytest
+
+    base = AnalyticsStore.migration_steps()
+
+    def good(conn):
+        conn.execute("CREATE TABLE migration_good (x INTEGER)")
+        conn.execute("INSERT INTO migration_good VALUES (1)")
+
+    def bad(conn):
+        conn.execute("CREATE TABLE migration_bad (x INTEGER)")
+        conn.execute("INSERT INTO migration_bad VALUES (1)")
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        AnalyticsStore, "migration_steps", staticmethod(lambda: base + ((998, good), (999, bad)))
+    )
+    path = tmp_path / "tracker.sqlite3"
+    store = AnalyticsStore(path)
+    with pytest.raises(RuntimeError):
+        store.connect()
+    store._conn.close()
+
+    conn = sqlite3.connect(path)
+    applied = {row[0] for row in conn.execute("SELECT version FROM schema_migrations")}
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    conn.close()
+    assert 998 in applied and 999 not in applied
+    assert max(v for v, _m in base) in applied  # every earlier step stayed applied
+    assert "migration_good" in tables and "migration_bad" not in tables
+
+
+def test_database_newer_than_the_app_still_opens_with_a_warning(tmp_path, capsys):
+    from mtga_tracker import analytics
+
+    path = tmp_path / "tracker.sqlite3"
+    store = AnalyticsStore(path)
+    conn = store.connect()
+    conn.execute(
+        "INSERT INTO schema_migrations(version, applied_at) VALUES (9999, datetime('now'))"
+    )
+    conn.commit()
+    store.close()
+    try:
+        reopened = AnalyticsStore(path)
+        assert reopened.connect() is not None
+        reopened.close()
+        assert analytics.DB_SCHEMA_STATUS["newer_than_app"] is True
+        assert analytics.DB_SCHEMA_STATUS["database"] == 9999
+        assert "newer Tapps Tracker" in capsys.readouterr().out
+    finally:
+        fresh = AnalyticsStore(tmp_path / "fresh.sqlite3")
+        fresh.connect()
+        fresh.close()
+    assert analytics.DB_SCHEMA_STATUS["newer_than_app"] is False
+
+
+def test_newer_schema_warning_prints_once_per_process(tmp_path, capsys, monkeypatch):
+    from mtga_tracker import analytics
+
+    monkeypatch.setattr(analytics, "_SCHEMA_WARNING_PRINTED", False)
+    path = tmp_path / "tracker.sqlite3"
+    store = AnalyticsStore(path)
+    conn = store.connect()
+    conn.execute(
+        "INSERT INTO schema_migrations(version, applied_at) VALUES (9999, datetime('now'))"
+    )
+    conn.commit()
+    store.close()
+    capsys.readouterr()
+    for _ in range(3):
+        again = AnalyticsStore(path)
+        again.connect()
+        again.close()
+        assert analytics.DB_SCHEMA_STATUS["newer_than_app"] is True
+    assert capsys.readouterr().out.count("newer Tapps Tracker") == 1
+    fresh = AnalyticsStore(tmp_path / "fresh.sqlite3")
+    fresh.connect()
+    fresh.close()

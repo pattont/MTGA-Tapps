@@ -18,12 +18,36 @@ is writing to the database.
 
 from __future__ import annotations
 
+import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterator, Optional, Tuple
 
 from . import backup
 
 Response = Tuple[int, Dict[str, Any]]
+
+#: Restores and merges in flight; the updater refuses to install while one
+#: is swapping the database.
+_RESTORES_ACTIVE = 0
+_RESTORES_LOCK = threading.Lock()
+
+
+@contextmanager
+def _restore_in_flight() -> Iterator[None]:
+    global _RESTORES_ACTIVE
+    with _RESTORES_LOCK:
+        _RESTORES_ACTIVE += 1
+    try:
+        yield
+    finally:
+        with _RESTORES_LOCK:
+            _RESTORES_ACTIVE -= 1
+
+
+def restore_in_progress() -> bool:
+    with _RESTORES_LOCK:
+        return _RESTORES_ACTIVE > 0
 
 
 def handle_get(path: str, db_path: Path) -> Optional[Response]:
@@ -80,21 +104,26 @@ def handle_post(
             if not target:
                 return 400, {"error": "No backup file given", "code": "no-path"}
             confirm = payload.get("confirm")
-            result = backup.restore_backup(
-                Path(str(target)),
-                db_path,
-                confirm=str(confirm) if confirm else None,
-                tracker_control=tracker_control,
-                before_swap=before_swap,
-            )
+            with _restore_in_flight():
+                result = backup.restore_backup(
+                    Path(str(target)),
+                    db_path,
+                    confirm=str(confirm) if confirm else None,
+                    tracker_control=tracker_control,
+                    before_swap=before_swap,
+                )
             return 200, {"restore": result, "status": backup.backup_status(db_path)}
         if path == "/api/backup/merge":
             target = payload.get("path")
             if not target:
                 return 400, {"error": "No backup file given", "code": "no-path"}
-            result = backup.merge_backup(
-                Path(str(target)), db_path, tracker_control=tracker_control, before_swap=before_swap
-            )
+            with _restore_in_flight():
+                result = backup.merge_backup(
+                    Path(str(target)),
+                    db_path,
+                    tracker_control=tracker_control,
+                    before_swap=before_swap,
+                )
             return 200, {"merge": result, "status": backup.backup_status(db_path)}
         if path == "/api/backup/delete":
             target = payload.get("path")

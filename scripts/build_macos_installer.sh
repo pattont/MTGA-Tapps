@@ -32,3 +32,15 @@ hdiutil create \
   "$DMG_PATH"
 
 echo "Built: $DMG_PATH"
+
+# The in-app updater's payload: a zip of the .app (docs/plans/AUTO_UPDATE.md).
+# Only ditto keeps the bundle's symlinks and code signature intact (zip -r and
+# Python's zipfile both break the seal), and these flags leave out resource
+# forks, extended attributes, ACLs and quarantine, so a quarantined build
+# tree cannot carry com.apple.quarantine into users' updated apps. The app
+# unpacks it with `ditto -x -k --noqtn`. Same version stem as the DMG.
+ZIP_PATH="$ROOT_DIR/dist/MTGA-Tracker-${VERSION:-dev}-macos.zip"
+rm -f "$ZIP_PATH"
+ditto -c -k --norsrc --noextattr --noacl --noqtn --keepParent "$APP_PATH" "$ZIP_PATH"
+echo "Built: $ZIP_PATH"
+shasum -a 256 "$DMG_PATH" "$ZIP_PATH"

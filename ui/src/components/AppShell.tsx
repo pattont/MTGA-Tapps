@@ -45,9 +45,10 @@ import { TRACKER_NAME } from '../branding';
 import { dashboardNavItems, type AppNavItem } from '../nav';
 import { REPLAY_ROUTE_HASH, parseDeckFinderRoute, parseDeckManagerRoute } from '../routes';
 import type { ThemeName } from '../theme';
-import { checkForUpdate, type UpdateInfo } from '../updateCheck';
 import { CardSearch } from './CardSearch';
 import { CollapseToggle } from './CollapseToggle';
+import { UpdateIndicator, UpdateNotices } from './UpdateIndicator';
+import { UpdateStatusContext, useUpdateStatus } from './useUpdateStatus';
 
 interface AppShellProps {
   theme: ThemeName;
@@ -180,7 +181,8 @@ export function AppShell({
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
   const [version, setVersion] = useState<string | null>(null);
-  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  // Tracker-side update status, shared with Settings → Updates.
+  const update = useUpdateStatus();
   // Green when the tracker is running (live or idle), red when it is not.
   const [trackerState, setTrackerState] = useState<'live' | 'idle' | 'offline' | null>(null);
 
@@ -223,14 +225,6 @@ export function AppShell({
       .then((payload: { version?: string } | null) => {
         if (!cancelled && payload?.version) {
           setVersion(payload.version);
-          // Production builds only: one GitHub API call per day, cached.
-          if (import.meta.env.PROD) {
-            void checkForUpdate(payload.version).then((info) => {
-              if (!cancelled) {
-                setUpdate(info);
-              }
-            });
-          }
         }
       })
       .catch(() => {
@@ -434,6 +428,7 @@ export function AppShell({
         </nav>
         {collapsed ? (
           <div className="sidebar-bottom sidebar-bottom-mini">
+            <UpdateIndicator collapsed controller={update} />
             <a
               aria-current={replayActive ? 'page' : undefined}
               aria-label="Replay (Beta)"
@@ -458,17 +453,7 @@ export function AppShell({
           </div>
         ) : (
           <div className="sidebar-bottom">
-            {update ? (
-              <a
-                className="sidebar-update"
-                href={update.url}
-                rel="noreferrer"
-                target="_blank"
-                title="A newer version is available on GitHub"
-              >
-                Update {update.tag} available →
-              </a>
-            ) : null}
+            <UpdateIndicator controller={update} />
             <a
               aria-current={replayActive ? 'page' : undefined}
               className={`sidebar-replay replay-wide-only${replayActive ? ' sidebar-replay-active' : ''}`}
@@ -486,6 +471,7 @@ export function AppShell({
               <Layers aria-hidden="true" />
               <span className="sidebar-nav-label">Deck Manager <span className="sidebar-beta">Beta</span></span>
             </a>
+            <UpdateNotices controller={update} />
             {version ? (
               <span aria-label={`Tracker version ${version}`} className="sidebar-version">
                 v{version}
@@ -516,7 +502,7 @@ export function AppShell({
             </a>
           </div>
         </header>
-        {children}
+        <UpdateStatusContext.Provider value={update}>{children}</UpdateStatusContext.Provider>
       </main>
       {showBackToTop ? (
         <button

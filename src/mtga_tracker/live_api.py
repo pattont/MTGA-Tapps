@@ -143,10 +143,19 @@ def _live_status(conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
     return _dict_row(cursor)
 
 
+def _naive_local(value: Optional[datetime]) -> Optional[datetime]:
+    if value is not None and value.tzinfo is not None:
+        return value.astimezone().replace(tzinfo=None)
+    return value
+
+
 def _tracker_state(status: Optional[Dict[str, Any]], now: datetime) -> str:
+    """live / idle / offline from the live row: the single place the
+    heartbeat age (OFFLINE_AFTER_SECONDS) decides whether a tracker runs."""
     if status is None:
         return "offline"
-    updated_at = _parse_iso(status.get("updated_at"))
+    updated_at = _naive_local(_parse_iso(status.get("updated_at")))
+    now = _naive_local(now) or datetime.now()
     if updated_at is None or now - updated_at > timedelta(seconds=OFFLINE_AFTER_SECONDS):
         return "offline"
     return "live" if status.get("in_game") else "idle"
@@ -754,6 +763,48 @@ def build_status_payload(db_path: Path) -> Dict[str, Any]:
             "session_id": status.get("session_id") if status else None,
         }
     }
+
+
+def game_activity(db_path: Path, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """What the database says about play right now, from one read-only
+    connection: the tracker state (live / idle / offline by heartbeat age),
+    the live row's raw `in_game` flag, and when the newest game ended.
+
+    `in_game` is reported whatever the heartbeat's age; callers that need a
+    running tracker combine it with `tracker`. A missing database or table
+    reads as offline and idle; any other database error propagates so a
+    guard can fail closed.
+    """
+    result: Dict[str, Any] = {
+        "tracker": "offline",
+        "in_game": False,
+        "updated_at": None,
+        "last_game_ended_at": None,
+    }
+    path = Path(db_path).expanduser()
+    if not path.is_file():
+        return result
+    current = _naive_local(now) or datetime.now()
+    conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)
+    try:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name IN ('live_status', 'games')"
+            )
+        }
+        status = _live_status(conn) if "live_status" in tables else None
+        if "games" in tables:
+            row = conn.execute("SELECT MAX(ended_at) FROM games").fetchone()
+            result["last_game_ended_at"] = row[0] if row and row[0] else None
+    finally:
+        conn.close()
+    if status is not None:
+        result["in_game"] = bool(status.get("in_game"))
+        result["updated_at"] = status.get("updated_at")
+    result["tracker"] = _tracker_state(status, current)
+    return result
 
 
 #: The overlay polls three times a second; between console lines the live

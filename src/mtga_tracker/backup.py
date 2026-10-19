@@ -51,14 +51,19 @@ TRUNCATED_TABLES = ("raw_game_payloads", "live_status")
 #: Where the pre-restore safety copy goes, and its file-name tag.
 SAFETY_DIR_NAME = "backups"
 SAFETY_TAG = "pre-restore"
+#: The mandatory snapshot the updater takes before installing a new version
+#: (tag "pre-update-<old version>"), kept beside the pre-restore copies.
+PRE_UPDATE_TAG = "pre-update"
 
 #: A live_status heartbeat younger than this means a tracker is writing to
 #: the database right now (mirrors live_api.OFFLINE_AFTER_SECONDS).
 TRACKER_ACTIVE_WITHIN_SECONDS = 20.0
 
 #: settings.json values that describe *this* computer and never travel with
-#: a backup: the backup section itself, the port, the window size.
-LOCAL_SETTINGS_SECTIONS = ("backup", "dashboard", "live_log_window")
+#: a backup: the backup section itself, the port, the window size, and the
+#: update preferences (restoring a laptop backup must not turn on a
+#: desktop's automatic installs).
+LOCAL_SETTINGS_SECTIONS = ("backup", "dashboard", "live_log_window", "updates")
 
 #: Deck AI keys scrubbed when the export leaves API keys out.
 SECRET_KEY_PATTERN = re.compile(r"(API_KEY|_KEY|TOKEN|SECRET)$", re.IGNORECASE)
@@ -619,9 +624,11 @@ def tracker_active(db_path: Path, *, now: Optional[datetime] = None) -> bool:
     return current - stamp < timedelta(seconds=TRACKER_ACTIVE_WITHIN_SECONDS)
 
 
-def _prune_safety_backups(folder: Path, keep: int = 2) -> None:
+def _prune_safety_backups(folder: Path, keep: int = 2, tag: str = SAFETY_TAG) -> None:
+    """Keep the newest `keep` safety backups carrying `tag`; other tags'
+    files are never touched."""
     files = sorted(
-        (p for p in folder.glob(f"*-{SAFETY_TAG}*{BACKUP_SUFFIX}") if p.is_file()),
+        (p for p in Path(folder).glob(f"*-{tag}*{BACKUP_SUFFIX}") if p.is_file()),
         key=lambda p: p.name,
         reverse=True,
     )
@@ -630,6 +637,20 @@ def _prune_safety_backups(folder: Path, keep: int = 2) -> None:
             stale.unlink()
         except OSError:
             pass
+
+
+def pre_update_backup(db_path: Path, from_version: str, *, keep: int = 2) -> Dict[str, Any]:
+    """The updater's mandatory snapshot: a normal restorable `.tappsbackup`
+    in `<data>/backups`, tagged `pre-update-<from_version>`, newest `keep`
+    retained. Raises on any failure so the install aborts before anything
+    is stopped."""
+    folder = Path(db_path).parent / SAFETY_DIR_NAME
+    safe_version = re.sub(r"[^0-9A-Za-z.+_-]", "_", str(from_version or "unknown"))
+    result = export_backup(
+        Path(db_path), folder, tag=f"{PRE_UPDATE_TAG}-{safe_version}", record=False
+    )
+    _prune_safety_backups(folder, keep=keep, tag=PRE_UPDATE_TAG)
+    return result
 
 
 #: How long a file operation keeps retrying while Windows reports the file

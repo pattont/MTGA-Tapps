@@ -21,6 +21,8 @@ dependencies = [
     "beautifulsoup4>=4.12,<5.0",
     "cloudscraper>=1.2,<2.0",
     "requests>=2.31,<3.0",
+    # In-app updater: PEP 440 version ordering (0.6.5.4 > 0.6.5.3, rc tags).
+    "packaging>=23",
     "rich>=13.7,<14.0",
     "emoji>=2.14,<3.0",  # Unicode-aware creator deck-title cleanup (offline)
     "frida==17.9.0; platform_system == 'Darwin'", # Native Arena deck adapter

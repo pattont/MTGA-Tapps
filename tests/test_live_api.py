@@ -962,3 +962,79 @@ def test_readonly_open_retries_once_on_cantopen(monkeypatch, tmp_path):
     with pytest.raises(_sqlite3.OperationalError):
         live_api._open_readonly("file:/nowhere/x.sqlite3?mode=ro")
     assert len(calls) == 1
+
+
+def test_game_activity_reads_heartbeat_flag_and_last_game(tmp_path):
+    import sqlite3
+
+    missing = live_api.game_activity(tmp_path / "missing.sqlite3")
+    assert missing == {
+        "tracker": "offline",
+        "in_game": False,
+        "updated_at": None,
+        "last_game_ended_at": None,
+    }
+
+    bare = tmp_path / "bare.sqlite3"
+    sqlite3.connect(bare).close()
+    assert live_api.game_activity(bare)["tracker"] == "offline"
+
+    db = tmp_path / "live.sqlite3"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE live_status (id INTEGER PRIMARY KEY, updated_at TEXT, in_game INTEGER)"
+    )
+    conn.execute("CREATE TABLE games (id TEXT, ended_at TEXT)")
+    now = datetime(2026, 10, 18, 12, 0, 0)
+    conn.execute(
+        "INSERT INTO live_status VALUES (1, ?, 1)", ((now - timedelta(seconds=5)).isoformat(),)
+    )
+    conn.execute(
+        "INSERT INTO games VALUES ('G1', '2026-10-18T11:50:00'), ('G2', '2026-10-18T11:58:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    fresh = live_api.game_activity(db, now=now)
+    assert fresh["tracker"] == "live" and fresh["in_game"] is True
+    assert fresh["last_game_ended_at"] == "2026-10-18T11:58:00"
+    stale = live_api.game_activity(db, now=now + timedelta(minutes=5))
+    # A dead tracker's flag is still reported raw, but the tracker is offline.
+    assert stale["tracker"] == "offline" and stale["in_game"] is True
+
+
+def test_deck_native_game_guard_delegates_to_game_activity(tmp_path):
+    import sqlite3
+
+    from mtga_tracker import deck_native_api
+
+    db = tmp_path / "t.sqlite3"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE live_status (id INTEGER PRIMARY KEY, in_game INTEGER)")
+    conn.execute("INSERT INTO live_status VALUES (1, 1)")
+    conn.commit()
+    conn.close()
+    assert deck_native_api.game_in_progress(db) is True
+    assert deck_native_api.game_in_progress(tmp_path / "missing.sqlite3") is False
+    assert deck_native_api.job_active() is False
+
+
+def test_game_activity_and_the_status_light_share_one_heartbeat_rule(tmp_path, monkeypatch):
+    import sqlite3
+    from datetime import timezone
+
+    db = tmp_path / "live.sqlite3"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE live_status (id INTEGER PRIMARY KEY, updated_at TEXT, in_game INTEGER)"
+    )
+    # An offset-aware heartbeat (the naive/aware mix used to raise).
+    conn.execute(
+        "INSERT INTO live_status VALUES (1, ?, 0)", (datetime.now(timezone.utc).isoformat(),)
+    )
+    conn.commit()
+    conn.close()
+    assert live_api.game_activity(db)["tracker"] == "idle"
+    assert live_api.build_status_payload(db)["tracker"]["state"] == "idle"
+    monkeypatch.setattr(live_api, "_tracker_state", lambda status, now: "sentinel")
+    assert live_api.game_activity(db)["tracker"] == "sentinel"

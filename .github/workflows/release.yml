@@ -1,9 +1,11 @@
 name: Release
 
-# Builds the macOS DMG and Windows zip + setup.exe and attaches them to a
-# DRAFT GitHub Release. Trigger by pushing a version tag (v0.2.0,
-# v0.3.0-alpha.1, ...) or manually from the Actions tab. Publishing the draft
-# on github.com is the human "go" button. Ordinary pushes never run this.
+# Builds the macOS DMG + updater zip and the Windows zip + setup.exe and
+# attaches them to a DRAFT GitHub Release, then (tags only) the `manifest` job
+# adds the signed in-app update manifest (latest.json, latest.json.sig,
+# SHA256SUMS). Trigger by pushing a version tag (v0.2.0, v0.3.0-alpha.1, ...)
+# or manually from the Actions tab. Publishing the draft on github.com is the
+# human "go" button. Ordinary pushes never run this. See docs/RELEASING.md.
 
 on:
   push:
@@ -22,9 +24,13 @@ jobs:
         include:
           # The build scripts embed the app version in the artifact names
           # (e.g. MTGA-Tracker-0.3.1.dmg), so match them with globs.
+          # The -macos.zip is the in-app updater's payload (a ditto zip of
+          # the .app); the DMG stays the first-install download.
           - os: macos-latest
             build: bash scripts/build_macos_installer.sh
-            artifact: dist/MTGA-Tracker-*.dmg
+            artifact: |
+              dist/MTGA-Tracker-*.dmg
+              dist/MTGA-Tracker-*-macos.zip
           - os: windows-latest
             build: pwsh scripts/build_windows_app.ps1
             artifact: |
@@ -78,8 +84,66 @@ jobs:
       - name: Install Python build dependencies
         run: python3 -m pip install -e ".[gui,build]"
 
+      # One stable, self-signed code-signing identity for every release
+      # (scripts/create_macos_signing_identity.sh). It keeps the app's
+      # designated requirement the same across versions, so macOS privacy
+      # (TCC) grants survive in-app updates; Gatekeeper trusts it no more
+      # than ad-hoc. Imported into a throwaway keychain that only codesign
+      # reads (via MACOS_SIGN_KEYCHAIN); the user search list is untouched.
+      # Without the secret the build stays ad-hoc signed, with a warning.
+      - name: Import macOS signing identity
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          MACOS_SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
+          MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${MACOS_SIGNING_P12:-}" ]]; then
+            echo "::warning::MACOS_SIGNING_P12 is not set; this build is ad-hoc signed and macOS privacy grants will not survive an update to it."
+            exit 0
+          fi
+          if [[ -z "${MACOS_SIGNING_P12_PASSWORD:-}" ]]; then
+            echo "::error::MACOS_SIGNING_P12 is set but MACOS_SIGNING_P12_PASSWORD is empty."
+            exit 1
+          fi
+          KEYCHAIN="$RUNNER_TEMP/tapps-signing.keychain-db"
+          P12="$RUNNER_TEMP/tapps-signing.p12"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          printf '%s' "$MACOS_SIGNING_P12" | base64 --decode > "$P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -f pkcs12 \
+            -P "$MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$P12"
+          # Lets codesign use the key without a (headless, unanswerable) prompt.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          # Self-signed, so it is listed as CSSMERR_TP_NOT_TRUSTED; codesign
+          # signs with it all the same. Sign by SHA-1 hash, not by name.
+          IDENTITY="$(security find-identity -p codesigning "$KEYCHAIN" \
+            | awk '/"Tapps Tracker Code Signing"/ { print $2; exit }')"
+          if [[ -z "$IDENTITY" ]]; then
+            echo "::error::No 'Tapps Tracker Code Signing' identity in MACOS_SIGNING_P12."
+            exit 1
+          fi
+          echo "Signing identity: $IDENTITY"
+          echo "MACOS_SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "MACOS_SIGN_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
       - name: Build installer
         run: ${{ matrix.build }}
+
+      - name: Remove macOS signing keychain
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/tapps-signing.p12"
+          if [[ -f "$RUNNER_TEMP/tapps-signing.keychain-db" ]]; then
+            security delete-keychain "$RUNNER_TEMP/tapps-signing.keychain-db"
+          fi
 
       # Anything listed here is a tracked file the build modified — the
       # thing that would have dirtied the version above. Should be empty.
@@ -88,16 +152,96 @@ jobs:
         shell: bash
         run: git status --porcelain --untracked-files=no
 
+      # A tag with a hyphen (v0.6.7-rc.1) is a prerelease and is never made
+      # "latest": the in-app updater reads releases/latest/download/latest.json,
+      # which GitHub never serves from drafts or prereleases.
       - name: Upload artifact to draft release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
           draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') && 'true' || 'false' }}
+          fail_on_unmatched_files: true
           files: ${{ matrix.artifact }}
 
-      - name: Upload artifact (manual runs)
-        if: "!startsWith(github.ref, 'refs/tags/')"
+      # Always, tags included: a draft's assets cannot be downloaded back by
+      # tag, so the manifest job reads these Actions artifacts instead.
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-build
           path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  # Signed in-app update manifest (docs/plans/AUTO_UPDATE.md, section 3).
+  # Runs only after BOTH platform builds succeed, so a release never gets a
+  # manifest that points at a missing asset. The Ed25519 private key is the
+  # UPDATE_SIGNING_KEY secret; the maintainer keeps the same PEM offline.
+  manifest:
+    name: Update manifest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-build"
+          path: dist
+          merge-multiple: true
+
+      - name: Install manifest dependencies
+        run: python3 -m pip install packaging
+
+      # Offline: dummy assets and a throwaway key, proves this runner's
+      # openssl signs and verifies the way the app expects.
+      - name: Manifest script self-test
+        run: python3 scripts/make_update_manifest.py --self-test
+
+      # Fails when any filename version differs from the tag or an asset
+      # is missing, and re-verifies the signature against the public key
+      # embedded in the app (src/mtga_tracker/updater.py), so a wrong or
+      # rotated secret cannot ship a manifest no client would accept.
+      - name: Build and sign latest.json
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${UPDATE_SIGNING_KEY:-}" ]]; then
+            echo "::error::The UPDATE_SIGNING_KEY secret is empty; cannot sign the update manifest."
+            exit 1
+          fi
+          python3 scripts/make_update_manifest.py \
+            --tag "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dist dist \
+            --out update-manifest \
+            --sign-key-env UPDATE_SIGNING_KEY \
+            --verify-public-key c928a585f5d6a4934ddb35a171769b4a2a6cd5d40921d39d4dd26497fe59d9a7
+          cat update-manifest/SHA256SUMS
+
+      - name: Attach manifest to draft release
+        uses: softprops/action-gh-release@v3
+        with:
+          draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') && 'true' || 'false' }}
+          fail_on_unmatched_files: true
+          files: |
+            update-manifest/latest.json
+            update-manifest/latest.json.sig
+            update-manifest/SHA256SUMS
+
+      - name: Upload manifest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-manifest
+          path: update-manifest/
+          if-no-files-found: error

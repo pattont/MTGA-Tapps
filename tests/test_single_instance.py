@@ -43,3 +43,32 @@ def test_windows_mutex_rejects_a_second_holder_and_recovers_after_release():
     first.release()
     assert second.acquire() is True
     second.release()
+
+
+def test_acquire_with_retry_waits_then_gives_up():
+    from mtga_tracker.single_instance import acquire_with_retry
+
+    class Guard:
+        def __init__(self, free_after):
+            self.calls = 0
+            self.free_after = free_after
+
+        def acquire(self):
+            self.calls += 1
+            return self.calls > self.free_after
+
+    now = [0.0]
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    guard = Guard(free_after=2)
+    assert acquire_with_retry(guard, 60, sleep=sleep, clock=lambda: now[0]) is True
+    assert guard.calls == 3 and sleeps == [0.5, 0.5]
+
+    never = Guard(free_after=10**6)
+    now[0] = 0.0
+    assert acquire_with_retry(never, 2.0, sleep=sleep, clock=lambda: now[0]) is False
+    assert never.calls == 5

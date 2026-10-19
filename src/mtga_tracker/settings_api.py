@@ -7,6 +7,8 @@ deckfinder_config.json) are readable/writable from the web Settings page.
 Endpoints (all under /api/settings):
 - GET  /api/settings           -> tracker, startup, Deck AI/Finder, platform, overlay
 - POST /api/settings/startup   -> save login and automatic-browser preferences
+- POST /api/settings/updates   -> save update preferences (partial booleans:
+                                  check, auto_download, auto_install)
 - POST /api/settings/deck-ai   -> save AI provider/keys/models
 - POST /api/settings/deck-finder -> save the creator lists
 - POST /api/settings/overlay   -> {enabled} start/stop the in-game overlay, or
@@ -209,6 +211,54 @@ def _save_startup(payload: Dict[str, Any]) -> Dict[str, Any]:
     return _startup_payload()
 
 
+UPDATE_SETTING_KEYS = ("check", "auto_download", "auto_install")
+
+
+def _updates_payload() -> Dict[str, Any]:
+    from .settings import load_app_settings
+    from .updater import get_manager
+
+    settings = load_app_settings(create=False)
+    try:
+        support = get_manager().support()
+    except Exception:  # pragma: no cover - defensive surface
+        support = {"supported": False, "install_kind": "unknown"}
+    return {
+        "check": settings.update_check,
+        "auto_download": settings.update_auto_download,
+        "auto_install": settings.auto_install_updates,
+        "channel": settings.update_channel,
+        "skipped_version": settings.skipped_update_version,
+        "supported": bool(support.get("supported")),
+        "install_kind": str(support.get("install_kind") or "unknown"),
+    }
+
+
+def _save_updates(payload: Dict[str, Any]) -> Dict[str, Any]:
+    from .settings import load_app_settings, save_update_settings
+    from .updater import get_manager
+
+    if not any(key in payload for key in UPDATE_SETTING_KEYS):
+        raise ValueError("An update setting is required.")
+    for key in UPDATE_SETTING_KEYS:
+        if key in payload and not isinstance(payload[key], bool):
+            raise ValueError(f"'{key}' must be a boolean")
+
+    current = load_app_settings(create=False)
+    save_update_settings(
+        check=payload.get("check", current.update_check),
+        auto_download=payload.get("auto_download", current.update_auto_download),
+        auto_install=payload.get("auto_install", current.auto_install_updates),
+        channel=current.update_channel,
+        skipped_version=current.skipped_update_version,
+    )
+    try:
+        get_manager().settings_changed()
+    except Exception:  # pragma: no cover - the save itself succeeded
+        pass
+    return _updates_payload()
+
+
 def _set_overlay_enabled(payload: Dict[str, Any]) -> Dict[str, Any]:
     from .overlay_launcher import get_manager
 
@@ -245,6 +295,7 @@ def handle_get(path: str, db_path: Optional[Path] = None) -> Optional[Tuple[int,
             "platform": _platform_info(),
             "startup": _startup_payload(),
             "overlay": _overlay_status(),
+            "updates": _updates_payload(),
         }
     except Exception as exc:  # pragma: no cover - defensive surface
         return 500, {"error": f"{type(exc).__name__}: {exc}"}
@@ -262,6 +313,8 @@ def handle_post(path: str, payload: Dict[str, Any]) -> Optional[Tuple[int, Dict[
             return 200, {"startup": _save_startup(payload)}
         if path == "/api/settings/overlay":
             return 200, {"overlay": _set_overlay_enabled(payload)}
+        if path == "/api/settings/updates":
+            return 200, {"updates": _save_updates(payload)}
     except (ValueError, TypeError) as exc:
         return 400, {"error": str(exc)}
     except Exception as exc:  # pragma: no cover - defensive surface

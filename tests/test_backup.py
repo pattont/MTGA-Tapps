@@ -569,3 +569,53 @@ def test_folder_comparison_is_case_insensitive_like_the_desktop_filesystems(tmp_
 
     if _os.path.normcase("A") != "A":
         assert backup._same_folder(folder, tmp_path / "cloud" / "tapps tracker")
+
+
+def test_update_preferences_never_travel_with_a_backup(tmp_path):
+    desktop = _db(tmp_path / "desktop.sqlite3", ["g1"])
+    desktop_settings = _settings(
+        tmp_path / "desktop-settings.json", updates={"check": True, "auto_install": True}
+    )
+    made = backup.export_backup(
+        desktop,
+        tmp_path / "cloud",
+        settings_path=desktop_settings,
+        overlay_path=tmp_path / "none",
+        deckfinder_path=tmp_path / "none",
+    )
+    with zipfile.ZipFile(made["path"]) as archive:
+        exported = json.loads(archive.read(backup.SETTINGS_NAME))
+    assert "updates" not in exported
+
+    laptop = _db(tmp_path / "laptop" / "tracker.sqlite3", ["g1"])
+    laptop_settings = _settings(
+        tmp_path / "laptop" / "settings.json", updates={"check": False, "auto_install": False}
+    )
+    backup.restore_backup(
+        made["path"],
+        laptop,
+        tracker_control=FakeTracker(running=False),
+        settings_path=laptop_settings,
+        overlay_path=tmp_path / "laptop" / "o.json",
+        deckfinder_path=tmp_path / "laptop" / "d.json",
+    )
+    document = json.loads(laptop_settings.read_text())
+    assert document["updates"] == {"check": False, "auto_install": False}
+
+
+def test_pre_update_backups_keep_two_and_leave_pre_restore_alone(tmp_path, monkeypatch):
+    db = _db(tmp_path / "tracker.sqlite3", ["g1"])
+    monkeypatch.setattr(backup, "_settings_path", lambda: tmp_path / "settings.json")
+    folder = tmp_path / backup.SAFETY_DIR_NAME
+    folder.mkdir()
+    restore_copy = folder / "TappsTracker-Desk-20200101-000000-pre-restore.tappsbackup"
+    restore_copy.write_bytes(b"keep me")
+    stamps = iter(datetime(2026, 9, 1, 10, minute) for minute in range(3))
+    monkeypatch.setattr(backup, "_now", lambda: next(stamps))
+    made = [backup.pre_update_backup(db, version) for version in ("0.6.5.1", "0.6.5.2", "0.6.5.3")]
+
+    kept = sorted(p.name for p in folder.glob("*-pre-update*"))
+    assert len(kept) == 2
+    assert kept[-1].endswith("-pre-update-0.6.5.3.tappsbackup")
+    assert restore_copy.is_file()
+    assert backup.read_manifest(Path(made[-1]["path"]))["game_ids"] == ["g1"]

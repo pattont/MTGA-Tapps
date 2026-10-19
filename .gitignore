@@ -61,6 +61,8 @@ data/*.sql
 
 # Live analytics DB artifacts and local backups
 data/backups/
+# In-app updater downloads and runtime state (source runs)
+data/updates/
 *.sqlite3-wal
 *.sqlite3-shm
 

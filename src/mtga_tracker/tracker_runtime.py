@@ -123,7 +123,8 @@ class TrackerRuntimeMixin:
         # After 5 minutes, assume we can start tracking.
         self.waiting_start_time = time.time() if self.waiting_for_next_game else None
 
-        self.running = True
+        # A stop requested while the startup banner printed must still win.
+        self.running = not getattr(self, "_stop_requested_early", False)
 
         try:
             while self.running:
@@ -157,4 +158,5 @@ class TrackerRuntimeMixin:
 
     def request_stop(self) -> None:
         """Ask the polling loop to stop and let its owning thread close resources."""
+        self._stop_requested_early = True
         self.running = False

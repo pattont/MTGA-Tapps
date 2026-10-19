@@ -54,6 +54,14 @@ with Windows**. **Open dashboard on launch** is a separate switch: turn it off
 to start tracking quietly in the menu bar or system tray. Both changes apply
 on the next launch.
 
+**Updates:** the tracker checks GitHub for new releases on its own. When one is
+downloaded and verified, **Restart to update** appears at the bottom left of the
+dashboard and in the tray menu; it waits for your current game to finish. **Tracker
+Settings → Updates** lets you turn off the check or the automatic download, or turn
+on fully automatic installs (only while Arena is closed; your game history is backed
+up first). The portable Windows zip and source checkouts show a download link
+instead.
+
 The macOS build is ad-hoc signed and not notarized by default. If Gatekeeper
 blocks a downloaded release you trust, dismiss the dialog, open **System
 Settings → Privacy & Security**, and use **Open Anyway** for that app.
