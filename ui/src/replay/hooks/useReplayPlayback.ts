@@ -37,7 +37,7 @@ export function useReplayPlayback(
   stream: ReplayStream,
   prefs: ReplayPrefs,
   initialSeq: number | null,
-  tableFit?: { width: number; handScale: number },
+  tableFit?: { width: number; handScale: number; opponentHandScale?: number },
 ): ReplayPlayback {
   const timeline = useMemo(() => buildTimeline(stream), [stream]);
   const [clock] = useState(
@@ -75,9 +75,10 @@ export function useReplayPlayback(
   const commandZone = useMemo(() => usesCommandZone(stream), [stream]);
   const tableWidth = tableFit?.width;
   const handScale = tableFit?.handScale;
+  const opponentHandScale = tableFit?.opponentHandScale;
   const layout = useMemo(
-    () => layoutBoard(state, { mirrorOpponent, hindsight, playerSeat: stream.player_seat, tableWidth, handScale, commandZone }),
-    [state, mirrorOpponent, hindsight, stream.player_seat, tableWidth, handScale, commandZone],
+    () => layoutBoard(state, { mirrorOpponent, hindsight, playerSeat: stream.player_seat, tableWidth, handScale, opponentHandScale, commandZone }),
+    [state, mirrorOpponent, hindsight, stream.player_seat, tableWidth, handScale, opponentHandScale, commandZone],
   );
 
   const [jump, setJump] = useState({ index: snapshot.index, jumped: true });

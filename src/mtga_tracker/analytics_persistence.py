@@ -33,6 +33,16 @@ def persist_managed_deck(
         ).fetchone()
         if binding:
             deck_id = binding[0]
+        else:
+            # Adopt the entry the log capture already made for this Arena deck,
+            # unless it was put in Trash, so one Arena deck keeps one saved entry.
+            from .deck_capture import captured_deck_id
+
+            captured = captured_deck_id(arena_deck_id)
+            if conn.execute(
+                "SELECT 1 FROM managed_decks WHERE id = ? AND trashed_at IS NULL", (captured,)
+            ).fetchone():
+                deck_id = captured
     existing = (
         conn.execute(
             "SELECT current_revision_id, updated_at FROM managed_decks WHERE id = ?", (deck_id,)

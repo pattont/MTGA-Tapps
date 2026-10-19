@@ -114,7 +114,7 @@ export function TablePopover({ prefs, hindsightAvailable, onClose }: TablePopove
         Hindsight: show opponent cards in hand once revealed
       </label>
       <p className="replay-popover-shortcuts">
-        Shortcuts: Space play · ←/→ step · J/K turn · Home/End · [ ] speed · G go to turn · T this panel
+        Shortcuts: Space play · ←/→ step · J/K turn · Home/End · [ ] speed · G go to turn · Wheel or +/− zoom, drag to pan, 0 reset · T this panel
       </p>
     </div>
   );

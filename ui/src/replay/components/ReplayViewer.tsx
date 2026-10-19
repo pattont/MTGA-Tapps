@@ -7,7 +7,7 @@ import { formatDateTime, outcomeLabel, outcomeTone } from '../../format';
 import { REPLAY_ROUTE_HASH, cardRouteHash, parseReplayRoute, replayRouteHash } from '../../routes';
 import { Badge } from '../../components/Badge';
 import { CollapseToggle } from '../../components/CollapseToggle';
-import { DEFAULT_TABLE_WIDTH, HAND_SCALE_MIN } from '../layout';
+import { DEFAULT_TABLE_WIDTH, HAND_SCALE_MIN, OPPONENT_HAND_SCALE } from '../layout';
 import type { TableFit } from '../scene/cameraFit';
 import { savePrefs } from '../prefs';
 import { usePrefs, useReplayPlayback } from '../hooks/useReplayPlayback';
@@ -15,6 +15,7 @@ import { useReplayKeyboard } from '../hooks/useReplayKeyboard';
 import { useTexturePriorities, useTextureStore } from '../hooks/useTextures';
 import { useNarrowViewport } from '../hooks/useViewport';
 import { HoverStore } from '../scene/hoverStore';
+import { KEY_ZOOM_STEP, ViewZoom } from '../scene/viewZoom';
 import type { CardKey, ReplayStream } from '../types';
 import { CardPreview } from './CardPreview';
 import { ReplayControls } from './ReplayControls';
@@ -38,9 +39,15 @@ interface ReplayViewerProps {
 export function ReplayViewer({ stream, gameId, at, returnHash }: ReplayViewerProps) {
   const prefs = usePrefs();
   // The felt's width and the hand scale follow the measured stage (ReplayScene reports them).
-  const [tableFit, setTableFit] = useState<TableFit>(() => ({ width: DEFAULT_TABLE_WIDTH, handScale: HAND_SCALE_MIN }));
+  const [tableFit, setTableFit] = useState<TableFit>(() => ({
+    width: DEFAULT_TABLE_WIDTH,
+    handScale: HAND_SCALE_MIN,
+    opponentHandScale: OPPONENT_HAND_SCALE,
+  }));
   const onTableFit = useCallback((fit: TableFit) => {
-    setTableFit((prev) => (prev.width === fit.width && prev.handScale === fit.handScale ? prev : fit));
+    setTableFit((prev) =>
+      prev.width === fit.width && prev.handScale === fit.handScale && prev.opponentHandScale === fit.opponentHandScale ? prev : fit,
+    );
   }, []);
   const { timeline, clock, snapshot, state, layout, jumped } = useReplayPlayback(stream, prefs, at, tableFit);
   const store = useTextureStore(stream);
@@ -61,6 +68,7 @@ export function ReplayViewer({ stream, gameId, at, returnHash }: ReplayViewerPro
   }, [tableNode]);
   useTexturePriorities(store, timeline, layout, snapshot.turn ?? 0);
   const [hover] = useState(() => new HoverStore());
+  const [zoom] = useState(() => new ViewZoom());
   const narrow = useNarrowViewport();
   const [tableOpen, setTableOpen] = useState(false);
   const goToTurnRef = useRef<HTMLInputElement>(null);
@@ -69,6 +77,10 @@ export function ReplayViewer({ stream, gameId, at, returnHash }: ReplayViewerPro
   useReplayKeyboard(clock, {
     focusGoToTurn: () => goToTurnRef.current?.focus(),
     toggleTable: () => setTableOpen((open) => !open),
+    zoom: (direction) => {
+      if (direction === 'reset') zoom.reset();
+      else zoom.zoomBy(direction === 'in' ? KEY_ZOOM_STEP : 1 / KEY_ZOOM_STEP);
+    },
   });
 
   // Shareable position: rewrite `?at=` while paused (never during playback, never a new entry).
@@ -175,6 +187,7 @@ export function ReplayViewer({ stream, gameId, at, returnHash }: ReplayViewerPro
                 cards={stream.cards}
                 store={store}
                 hover={hover}
+                zoom={zoom}
                 snap={jumped}
                 playing={snapshot.playing}
                 onCardClick={onCardClick}

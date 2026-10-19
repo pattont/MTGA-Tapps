@@ -3,6 +3,7 @@ import { Fragment, memo, useState } from 'react';
 import { describeGameEnd } from '../gameEnd';
 import { formatClock, phaseLabel } from '../logText';
 import type { BoardState } from '../reducer';
+import { seatNumber } from '../scene/labels';
 import type { ReplayStream } from '../types';
 
 function LifeValue({ life }: { life: number }) {
@@ -17,6 +18,18 @@ function LifeValue({ life }: { life: number }) {
     <strong key={shown.pulse} className={className}>
       {life}
     </strong>
+  );
+}
+
+/** This action's life change for a seat ("−3", "+3"), beside its life total while the action lasts. */
+function LifeChange({ state, seat }: { state: BoardState; seat: number }) {
+  const marks = state.effects.seats.get(seat);
+  const number = marks ? seatNumber(marks) : null;
+  if (!number) return null;
+  return (
+    <span key={`${state.effects.seats.size}:${number.text}`} className={`replay-life-change replay-life-change-${number.tone}`}>
+      {number.text}
+    </span>
   );
 }
 
@@ -89,6 +102,7 @@ function ReplayHudImpl({ stream, state, elapsed }: ReplayHudProps) {
                 <span className="replay-life" aria-label={`${mine ? 'Your' : 'Opponent'} life`}>
                   <LifeValue life={state.life[seatId] ?? seat?.starting_life ?? 20} />
                 </span>
+                <LifeChange state={state} seat={seatId} />
                 <span className="replay-hud-counts">
                   Hand {counts?.handSize ?? 0} · Library {counts?.librarySize ?? 0}
                 </span>

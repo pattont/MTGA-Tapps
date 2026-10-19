@@ -16,6 +16,7 @@
  * mapped to the opponent's half by reflecting y, or by a full 180° turn (x and
  * y, plus rotZ + π) when `mirrorOpponent` is on (piles stay in the left lane).
  */
+import type { ObjectMarks, RemovalKind, SeatMarks } from './effects';
 import type { BoardState, ObjectState, StackItem } from './reducer';
 import type { CardKey, ObjId, ReplayCard, ReplayStream, Zone } from './types';
 
@@ -56,12 +57,26 @@ export const HAND_MIN_VISIBLE = 0.55;
 const HAND_STEP_GAP = 0.05;
 /** The fan may use the table's width (it is off the felt, clear of the piles) up to this margin at each side. */
 const HAND_SIDE_MARGIN = 0.5;
-/** The hand leans this far over the rail toward the felt. */
-const HAND_RAIL_OVERLAP = 0.12;
-/** Free apron past the hand's outer edge. */
-const APRON_MARGIN = 0.08;
-/** Hand cards float above the rail. */
-const HAND_Z = 0.12;
+/**
+ * Arena-style framing: each hand reaches this far onto the felt (over the
+ * empty strip past that seat's lands) so the whole card shows, while the frame
+ * past it stays short. The camera frames just past its outer edge.
+ */
+export const HAND_FELT_OVERLAP = 0.3;
+const APRON_MARGIN = 0.04;
+/**
+ * The opponent's hand is drawn smaller than the player's: OPPONENT_HAND_SCALE
+ * on a stage of ordinary resolution, growing to OPPONENT_HAND_SCALE_LARGE on a
+ * tall high-resolution stage (scene/cameraFit `opponentHandBase`) and with the
+ * player's hand on a narrow one. The stage decides it (`opts.opponentHandScale`).
+ */
+export const OPPONENT_HAND_SCALE = 0.75;
+export const OPPONENT_HAND_SCALE_LARGE = 1;
+/** Each card in a pile adds this much height, up to PILE_MAX_CARDS (the scene draws piles as boxes). */
+export const PILE_CARD_DEPTH = 0.004;
+export const PILE_MAX_CARDS = 60;
+/** Hand cards float above the tallest pile, so a hand reaching onto the felt covers the library beside it. */
+export const HAND_Z = PILE_CARD_DEPTH * PILE_MAX_CARDS + 0.02;
 const ROW_GAP = 0.12;
 const LAND_GAP = 0.06;
 /** Space between the lands and the other permanents in the back row. */
@@ -78,19 +93,57 @@ export const ROW_Y = {
   creatures: -(CENTER_GAP + CARD_HEIGHT / 2),
   back: -(CENTER_GAP + CARD_HEIGHT + BACK_ROW_GAP + (CARD_HEIGHT * BACK_ROW_SCALE) / 2),
 } as const;
+export function clampOpponentHandScale(scale: number | undefined): number {
+  if (scale === undefined || !Number.isFinite(scale)) return OPPONENT_HAND_SCALE;
+  return Math.min(HAND_SCALE_MAX, Math.max(OPPONENT_HAND_SCALE, scale));
+}
+
 export function clampHandScale(scale: number | undefined): number {
   if (scale === undefined || !Number.isFinite(scale)) return HAND_SCALE_MIN;
   return Math.min(HAND_SCALE_MAX, Math.max(HAND_SCALE_MIN, scale));
 }
 
-/** Seat-local center y of a hand drawn at `scale`: its inner edge rests just over the rail. */
-export function handY(scale: number): number {
-  return -(TABLE_DEPTH / 2 + RAIL_WIDTH - HAND_RAIL_OVERLAP + (CARD_HEIGHT * scale) / 2);
+/**
+ * Depth stretch the tilted camera's correction puts on the far side (scene/motion
+ * `depthStretch`, which every card gets so it keeps its true proportions): about
+ * 1.3 on the opponent's back row and up to cameraFit `FAR_STRETCH` (1.346) at
+ * the far edge. The opponent's hand is placed and framed by these, so it
+ * clears their land names and stays inside the frame.
+ */
+export const FAR_ROW_STRETCH = 1.3;
+export const OPPONENT_HAND_STRETCH = 1.35;
+/**
+ * Seat-local distance from the table center to the inner edge of the
+ * opponent's (stretched) hand: just past the top of their stretched lands,
+ * the title strip left showing.
+ */
+export const OPPONENT_HAND_INNER = -ROW_Y.back + ((CARD_HEIGHT * BACK_ROW_SCALE) / 2) * FAR_ROW_STRETCH;
+
+/**
+ * Seat-local center y of a hand drawn at `scale`: the player's inner edge
+ * reaches onto the felt (HAND_FELT_OVERLAP); the opponent's stretched inner
+ * edge sits just past their land names (OPPONENT_HAND_INNER).
+ */
+export function handY(scale: number, opponent = false): number {
+  const height = CARD_HEIGHT * scale;
+  if (opponent) return -(OPPONENT_HAND_INNER + (height * OPPONENT_HAND_STRETCH) / 2);
+  return -(TABLE_DEPTH / 2 - HAND_FELT_OVERLAP + height / 2);
 }
 
-/** Apron past each rail that holds a hand drawn at `scale`; the camera frames it with the table. */
+/** Framed apron past the player's rail: the rest of a hand drawn at `scale`, whole. */
 export function apronDepth(scale: number): number {
-  return CARD_HEIGHT * scale - HAND_RAIL_OVERLAP + APRON_MARGIN;
+  return CARD_HEIGHT * scale - HAND_FELT_OVERLAP - RAIL_WIDTH + APRON_MARGIN;
+}
+
+/** Framed apron past the opponent's rail: the rest of their smaller, stretched hand drawn at `scale`. */
+export function opponentApronDepth(scale: number = OPPONENT_HAND_SCALE): number {
+  const height = CARD_HEIGHT * scale * OPPONENT_HAND_STRETCH;
+  return OPPONENT_HAND_INNER + height - TABLE_DEPTH / 2 - RAIL_WIDTH + APRON_MARGIN;
+}
+
+/** Largest scale a seat's hand is drawn at: the stage's hand scale for the player, its smaller one for the opponent. */
+export function seatHandScale(table: TableGeometry, opponent: boolean): number {
+  return opponent ? Math.min(table.opponentHandScale, table.handScale) : table.handScale;
 }
 
 /**
@@ -148,7 +201,20 @@ const PILE_SCALE = { 3: 0.74, 4: 0.54 } as const;
 const LANE_PAD = 0.14;
 const RIGHT_MARGIN = 0.2;
 
-export type PlacementRow = 'lands' | 'creatures' | 'planeswalkers' | 'other' | 'hand' | 'stack' | 'pile';
+export type PlacementRow = 'lands' | 'creatures' | 'planeswalkers' | 'other' | 'hand' | 'castable' | 'stack' | 'pile';
+
+/** Keywords (stream card `keywords`) that cast a card from its owner's graveyard. */
+export const GRAVEYARD_CAST_KEYWORDS: readonly string[] = ['flashback', 'escape', 'disturb', 'harmonize'];
+
+/**
+ * A card its owner may cast from outside the hand, shown just beside the hand
+ * (as Arena does): the keyword that allows it, or `plot` for a plotted card.
+ */
+export type CastableMark = 'flashback' | 'escape' | 'disturb' | 'harmonize' | 'plot';
+
+/** Gap between the hand and its side cards, and how much of each side card the next leaves showing. */
+export const SIDE_GAP = 0.35;
+export const SIDE_STEP = 0.6;
 /** The rows a battlefield host can be placed in. */
 export type BattlefieldRow = 'lands' | 'creatures' | 'planeswalkers' | 'other';
 export type PlacementHighlight = 'attacking' | 'blocking' | 'damaged' | 'targeted' | null;
@@ -164,6 +230,8 @@ export interface LayoutOptions {
   tableWidth?: number;
   /** Hand card scale the stage has room for (clamped to HAND_SCALE_MIN..MAX); the minimum when omitted. */
   handScale?: number;
+  /** The opponent's hand card scale (from OPPONENT_HAND_SCALE up); OPPONENT_HAND_SCALE when omitted. */
+  opponentHandScale?: number;
   /** Reserve a command-zone pile (commander formats, see `usesCommandZone`). */
   commandZone?: boolean;
 }
@@ -189,8 +257,29 @@ export interface CardPlacement {
   counters: Readonly<Record<string, number>>;
   power: string | null;
   toughness: string | null;
+  /** The seat's commander (Brawl/Commander), wherever it is: the scene marks it on the battlefield. */
+  commander: boolean;
+  /** On the battlefield: the basic land type it chose as it entered ("Mountain"), else null. */
+  chosen: string | null;
   /** Cards tucked under this one (auras, equipment, cards it exiled), bottom first; empty for everything else. */
   under: readonly UnderCard[];
+  /** Side cards beside the hand: why the owner may cast it from there; null elsewhere. */
+  castable: CastableMark | null;
+  /** Battlefield: damage dealt to it this moment (the effect window), else null. */
+  damage: number | null;
+  /** What the current action did to it (effects.ts), or null. */
+  marks: ObjectMarks | null;
+  /** Removed this action: held dimmed in its battlefield slot (or, discarded, on the graveyard) with this chip. */
+  removed: RemovalKind | null;
+}
+
+/** A seat's life change, damage taken and cards milled this action, at its table edge. */
+export interface SeatMarkPlacement {
+  seat: number;
+  marks: SeatMarks;
+  /** Where the number sits: the middle of that seat's rail (where attack and damage arrows land). */
+  x: number;
+  y: number;
 }
 
 /** One card tucked under a host, as the hover preview lists it. */
@@ -224,12 +313,16 @@ export interface TableGeometry {
   stackX: number;
   /** Largest hand card scale (a crowded hand may draw smaller); sizes the camera's hand aprons. */
   handScale: number;
+  /** Largest opponent hand card scale; sizes the camera's far apron. */
+  opponentHandScale: number;
 }
 
 export interface Layout {
   cards: CardPlacement[];
   piles: PilePlacement[];
   table: TableGeometry;
+  /** Seats with a life change, damage or a mill this action. */
+  seatMarks: SeatMarkPlacement[];
 }
 
 export function clampTableWidth(width: number): number {
@@ -241,7 +334,12 @@ function pileScale(commandZone: boolean): number {
   return commandZone ? PILE_SCALE[4] : PILE_SCALE[3];
 }
 
-export function tableGeometry(width: number = DEFAULT_TABLE_WIDTH, commandZone = false, handScale?: number): TableGeometry {
+export function tableGeometry(
+  width: number = DEFAULT_TABLE_WIDTH,
+  commandZone = false,
+  handScale?: number,
+  opponentHandScale?: number,
+): TableGeometry {
   const w = clampTableWidth(width);
   const lane = PILE_MARGIN * 2 + CARD_WIDTH * pileScale(commandZone) + LANE_PAD;
   return {
@@ -251,6 +349,7 @@ export function tableGeometry(width: number = DEFAULT_TABLE_WIDTH, commandZone =
     rowRight: w / 2 - RIGHT_MARGIN,
     stackX: w / 2 - STACK_EDGE - (CARD_WIDTH * STACK_SCALE) / 2,
     handScale: clampHandScale(handScale),
+    opponentHandScale: clampOpponentHandScale(opponentHandScale),
   };
 }
 
@@ -304,15 +403,59 @@ interface Context {
   attachments: ReadonlyMap<ObjId, ObjectState[]>;
   /** Exiled cards shown under their host (kept out of the exile pile). */
   tucked: ReadonlySet<ObjId>;
+  /** Graveyard and exile cards shown beside their owner's hand instead of on their pile. */
+  castable: ReadonlyMap<ObjId, CastableMark>;
+  /** Permanents removed this action, still drawn in their battlefield slot (and nowhere else). */
+  held: ReadonlySet<ObjId>;
   out: CardPlacement[];
 }
 
+/** Why `object` shows beside its owner's hand, if it does. */
+export function castableMark(state: BoardState, object: ObjectState): CastableMark | null {
+  const keywords = (object.card ? state.cards[object.card]?.keywords : undefined) ?? [];
+  if (!keywords.length) return null;
+  if (object.zone === 'graveyard') {
+    const keyword = keywords.find((k) => GRAVEYARD_CAST_KEYWORDS.includes(k));
+    return keyword ? (keyword as CastableMark) : null;
+  }
+  if (object.zone === 'exile' && object.fromHand && keywords.includes('plot')) return 'plot';
+  return null;
+}
+
+function collectCastable(state: BoardState, seatIds: readonly number[], tucked: ReadonlySet<ObjId>): Map<ObjId, CastableMark> {
+  const out = new Map<ObjId, CastableMark>();
+  for (const seatId of seatIds) {
+    const zones = state.seats[seatId].zones;
+    for (const obj of [...zones.graveyard, ...zones.exile]) {
+      if (tucked.has(obj) || state.effects.held.has(obj)) continue;
+      const object = state.objects.get(obj);
+      const mark = object ? castableMark(state, object) : null;
+      if (mark) out.set(obj, mark);
+    }
+  }
+  return out;
+}
+
 function highlightOf(ctx: Context, obj: ObjId): PlacementHighlight {
-  if (ctx.damaged === obj) return 'damaged';
+  if (ctx.damaged === obj || (ctx.state.effects.objects.get(obj)?.damage ?? 0) > 0) return 'damaged';
   if (ctx.targeted.has(obj)) return 'targeted';
   if (ctx.state.attackers.has(obj)) return 'attacking';
   if (ctx.blockers.has(obj)) return 'blocking';
   return null;
+}
+
+/**
+ * A seat's commander is the card the stream's seat info names (Brawl decks are
+ * singleton, so the name is enough). Rules-wise it is an ordinary permanent on
+ * the battlefield; Arena puts it in the creature row like any other, so this
+ * only marks it rather than moving it.
+ */
+function isCommander(ctx: Context, object: ObjectState): boolean {
+  if (!object.card) return false;
+  const names = ctx.state.commanders[object.owner];
+  if (!names || names.length === 0) return false;
+  const name = ctx.state.cards[object.card]?.name;
+  return name !== undefined && names.includes(name);
 }
 
 function printedStat(ctx: Context, object: ObjectState, key: 'power' | 'toughness'): string | null {
@@ -334,6 +477,7 @@ function placeObject(
 ): void {
   const { x, y } = toTable(frame, local.x, local.y);
   const faceUp = faceCard !== null && !object.faceDown;
+  const marks = ctx.state.effects.objects.get(object.obj) ?? null;
   ctx.out.push({
     obj: object.obj,
     card: faceCard,
@@ -353,7 +497,13 @@ function placeObject(
     counters: object.counters,
     power: printedStat(ctx, object, 'power'),
     toughness: printedStat(ctx, object, 'toughness'),
+    commander: isCommander(ctx, object),
+    chosen: object.zone === 'battlefield' ? (object.chosen ?? null) : null,
     under,
+    castable: row === 'castable' ? (ctx.castable.get(object.obj) ?? null) : null,
+    damage: object.zone === 'battlefield' ? marks?.damage || null : null,
+    marks,
+    removed: ctx.held.has(object.obj) || (row === 'pile' && marks?.removed === 'discarded') ? (marks?.removed ?? null) : null,
   });
 }
 
@@ -473,6 +623,7 @@ function collectAttachments(state: BoardState, seatIds: number[]): Map<ObjId, Ob
   for (const seatId of seatIds) {
     for (const zone of ['battlefield', 'exile'] as const) {
       for (const obj of state.seats[seatId].zones[zone]) {
+        if (state.effects.held.has(obj)) continue;
         const object = state.objects.get(obj);
         const host = object && attachedHost(state, object);
         if (object && host) {
@@ -589,22 +740,54 @@ function layoutBattlefield(ctx: Context, frame: Frame, objects: ObjectState[]): 
   placeGroup(ctx, frame, hosts.other, otherCenters, otherWidths, 'other', ROW_Y.back, BACK_ROW_SCALE);
 }
 
-function layoutHand(ctx: Context, frame: Frame, objects: ObjectState[], hidden: number): void {
+/** Width of `count` side cards (castable from the graveyard or plotted) at `scale`. */
+function sideWidth(count: number, scale: number): number {
+  return count ? CARD_WIDTH * scale * (1 + SIDE_STEP * (count - 1)) : 0;
+}
+
+function layoutHand(
+  ctx: Context,
+  frame: Frame,
+  objects: ObjectState[],
+  hidden: number,
+  side: readonly ObjectState[] = [],
+): void {
   const n = hidden + objects.length;
-  if (!n) return;
-  // Off the felt, the fan may run nearly the table's width (centered).
-  const maxWidth = Math.max(CARD_WIDTH * HAND_SCALE_FLOOR, ctx.table.width - 2 * HAND_SIDE_MARGIN);
+  if (!n && !side.length) return;
+  // Off the felt, the fan may run nearly the table's width (centered), less
+  // what the side cards beside it need.
+  const base = seatHandScale(ctx.table, frame.opponent);
+  const floor = Math.min(HAND_SCALE_FLOOR, base);
+  const available = ctx.table.width - 2 * HAND_SIDE_MARGIN;
+  const reserve = side.length ? sideWidth(side.length, base) + SIDE_GAP : 0;
+  const maxWidth = Math.max(CARD_WIDTH * floor, available - reserve);
   // Cards overlap down to HAND_MIN_VISIBLE first; a hand too crowded even
   // then shrinks (to the floor), and past that overlaps further.
-  const fitScale = maxWidth / ((HAND_MIN_VISIBLE * (n - 1) + 1) * CARD_WIDTH);
-  const scale = Math.max(HAND_SCALE_FLOOR, Math.min(ctx.table.handScale, fitScale));
+  const fitScale = n ? maxWidth / ((HAND_MIN_VISIBLE * (n - 1) + 1) * CARD_WIDTH) : base;
+  const scale = Math.max(floor, Math.min(base, fitScale));
   const cardWidth = CARD_WIDTH * scale;
   const step = n > 1 ? Math.min(cardWidth + HAND_STEP_GAP, (maxWidth - cardWidth) / (n - 1)) : 0;
-  const y = handY(scale);
+  const y = handY(scale, frame.opponent);
+  // The hand and its side cards are centered together; the side cards sit to its right.
+  const handWidth = n ? cardWidth + step * (n - 1) : 0;
+  const sideSpan = sideWidth(side.length, scale);
+  const total = handWidth + (n && side.length ? SIDE_GAP : 0) + sideSpan;
+  const handCenter = -total / 2 + handWidth / 2;
+  const sideStart = handCenter + handWidth / 2 + (n ? SIDE_GAP : 0);
+  side.forEach((object, i) => {
+    const local = {
+      x: sideStart + cardWidth / 2 + i * cardWidth * SIDE_STEP,
+      y,
+      z: HAND_Z + i * 0.003,
+      rotZ: 0,
+      scale,
+    };
+    placeObject(ctx, frame, object, local, 'castable');
+  });
   const slot = (i: number) => {
     const offset = i - (n - 1) / 2;
     return {
-      x: offset * step,
+      x: handCenter + offset * step,
       y: y - Math.min(0.04, offset * offset * 0.005),
       z: HAND_Z + i * 0.003,
       rotZ: -offset * 0.03,
@@ -624,6 +807,7 @@ function layoutHand(ctx: Context, frame: Frame, objects: ObjectState[], hidden: 
       toughness: null,
       attachedTo: null,
       exiledWith: null,
+      fromHand: false,
       faceDown: false,
       inferred: false,
       revealedAt: null,
@@ -659,11 +843,14 @@ function layoutPiles(ctx: Context, frame: Frame, piles: PilePlacement[]): void {
     const { zone, scale } = slot;
     const objs = zone === 'library' ? [] : zone === 'exile' ? seat.zones.exile.filter((obj) => !ctx.tucked.has(obj)) : seat.zones[zone];
     const count = zone === 'library' ? seat.librarySize : objs.length;
+    // Cards shown beside the hand (or held on the battlefield this action) still
+    // count here, but the pile shows the card under them.
+    const onPile = objs.filter((obj) => !ctx.castable.has(obj) && !ctx.held.has(obj));
     const { x, y } = toTable(pileFrame, slot.x, slot.y);
-    const top = objs.length ? ctx.state.objects.get(objs[objs.length - 1]) : undefined;
+    const top = onPile.length ? ctx.state.objects.get(onPile[onPile.length - 1]) : undefined;
     piles.push({ seat: frame.seat, zone, count, topCard: top?.card ?? null, x, y, scale, rotZ });
     // Visible pile cards: every command-zone card, the top graveyard/exile card.
-    const shown = zone === 'command' ? objs : objs.slice(-1);
+    const shown = zone === 'command' ? onPile : onPile.slice(-1);
     shown.forEach((obj, i) => {
       const object = ctx.state.objects.get(obj);
       if (!object) return;
@@ -745,6 +932,7 @@ function layoutStack(ctx: Context): void {
       toughness: null,
       attachedTo: null,
       exiledWith: null,
+      fromHand: false,
       faceDown: false,
       inferred: false,
       revealedAt: null,
@@ -768,21 +956,52 @@ export function layoutBoard(state: BoardState, opts: LayoutOptions): Layout {
   const seatIds = Object.keys(state.seats).map(Number).sort((a, b) => a - b);
   const attachments = collectAttachments(state, seatIds);
   const tucked = tuckedAway(attachments);
-  const table = tableGeometry(opts.tableWidth, opts.commandZone ?? false, opts.handScale);
-  const ctx: Context = { state, opts, table, targeted, damaged, blockers, attachments, tucked, out: [] };
+  const castable = collectCastable(state, seatIds, tucked);
+  const table = tableGeometry(opts.tableWidth, opts.commandZone ?? false, opts.handScale, opts.opponentHandScale);
+  const held = new Set(state.effects.held.keys());
+  const ctx: Context = { state, opts, table, targeted, damaged, blockers, attachments, tucked, castable, held, out: [] };
   const piles: PilePlacement[] = [];
 
   for (const seatId of seatIds) {
     const frame: Frame = { seat: seatId, opponent: seatId !== opts.playerSeat, mirror: opts.mirrorOpponent };
     const seat = state.seats[seatId];
-    const resolve = (obj: ObjId) => state.objects.get(obj);
-    const battlefield = seat.zones.battlefield.map(resolve).filter((o): o is ObjectState => !!o);
+    const resolve = (obj: ObjId) => (held.has(obj) ? undefined : state.objects.get(obj));
+    const battlefield = withHeld(state, seatId, seat.zones.battlefield.map(resolve).filter((o): o is ObjectState => !!o));
     const hand = seat.zones.hand.map(resolve).filter((o): o is ObjectState => !!o);
+    const side = [...seat.zones.graveyard, ...seat.zones.exile]
+      .filter((obj) => castable.has(obj))
+      .map(resolve)
+      .filter((o): o is ObjectState => !!o);
     layoutBattlefield(ctx, frame, battlefield);
-    layoutHand(ctx, frame, hand, seat.hiddenHand);
+    layoutHand(ctx, frame, hand, seat.hiddenHand, side);
     layoutPiles(ctx, frame, piles);
   }
   layoutStack(ctx);
   ctx.out.sort((a, b) => compareKeys(a.obj, b.obj));
-  return { cards: ctx.out, piles, table };
+  return { cards: ctx.out, piles, table, seatMarks: seatMarkPlacements(state, table, opts.playerSeat) };
+}
+
+/**
+ * A seat's battlefield with the permanents removed this action put back in
+ * their slots, as they last stood there (unattached, so a destroyed aura
+ * shows on its own rather than vanishing under its host).
+ */
+function withHeld(state: BoardState, seatId: number, battlefield: ObjectState[]): ObjectState[] {
+  const held = [...state.effects.held.values()].filter((h) => h.seat === seatId).sort((a, b) => a.index - b.index);
+  if (!held.length) return battlefield;
+  const out = battlefield.slice();
+  for (const h of held) {
+    out.splice(Math.min(h.index, out.length), 0, { ...h.object, attachedTo: null, exiledWith: null });
+  }
+  return out;
+}
+
+function seatMarkPlacements(state: BoardState, table: TableGeometry, playerSeat: number): SeatMarkPlacement[] {
+  const out: SeatMarkPlacement[] = [];
+  for (const [seat, marks] of state.effects.seats) {
+    if (!marks.life && !marks.damage && !marks.milled) continue;
+    const y = table.depth / 2 + RAIL_WIDTH / 2;
+    out.push({ seat, marks, x: 0, y: seat === playerSeat ? -y : y });
+  }
+  return out.sort((a, b) => a.seat - b.seat);
 }

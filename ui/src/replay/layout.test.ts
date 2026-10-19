@@ -12,6 +12,7 @@ import {
   HAND_SCALE_FLOOR,
   HAND_SCALE_MAX,
   HAND_SCALE_MIN,
+  HAND_FELT_OVERLAP,
   MAX_TABLE_WIDTH,
   MIN_TABLE_WIDTH,
   RAIL_WIDTH,
@@ -19,8 +20,13 @@ import {
   STACK_SCALE,
   TABLE_DEPTH,
   TAPPED_ROTATION,
+  OPPONENT_HAND_INNER,
+  OPPONENT_HAND_SCALE,
+  PILE_CARD_DEPTH,
+  PILE_MAX_CARDS,
   apronDepth,
   handY,
+  opponentApronDepth,
   layoutBoard,
   placeRow,
   rowCenters,
@@ -305,7 +311,7 @@ describe('layoutBoard', () => {
     }
   });
 
-  it('keeps the hands off the felt, on the apron past each rail and inside the framed depth', () => {
+  it('keeps the hands off the felt, past each rail, with the framed part inside the framed depth', () => {
     const opening = sampleAt((e) => e.kind === 'game_start');
     for (const handScale of [undefined, HAND_SCALE_MIN, 1.1, HAND_SCALE_MAX]) {
       const { cards, table } = layoutBoard(opening, { ...OPTS, handScale });
@@ -313,14 +319,23 @@ describe('layoutBoard', () => {
       const hands = cards.filter((c) => c.row === 'hand');
       expect(hands.length).toBeGreaterThan(0);
       for (const c of hands) {
-        expect(c.scale).toBeLessThanOrEqual(table.handScale);
-        expect(c.scale).toBeGreaterThanOrEqual(HAND_SCALE_FLOOR);
-        const halfH = (CARD_HEIGHT * c.scale) / 2;
-        expect(Math.abs(c.y)).toBeCloseTo(Math.abs(handY(c.scale)), 1);
-        // Inner edge past the felt (over the rail at most), outer edge inside the apron, above the rail.
-        expect(Math.abs(c.y) - halfH).toBeGreaterThanOrEqual(TABLE_DEPTH / 2);
-        expect(Math.abs(c.y) + halfH).toBeLessThanOrEqual(TABLE_DEPTH / 2 + RAIL_WIDTH + apronDepth(table.handScale));
-        expect(c.z).toBeGreaterThan(0.09);
+        const opponent = c.seat !== PLAYER;
+        expect(c.scale).toBeLessThanOrEqual(opponent ? OPPONENT_HAND_SCALE : table.handScale);
+        expect(c.scale).toBeGreaterThanOrEqual(opponent ? Math.min(HAND_SCALE_FLOOR, OPPONENT_HAND_SCALE) : HAND_SCALE_FLOOR);
+        const height = CARD_HEIGHT * c.scale;
+        const inner = Math.abs(c.y) - height / 2;
+        expect(Math.abs(c.y)).toBeCloseTo(Math.abs(handY(c.scale, opponent)), 1);
+        // Each whole hand is framed: the player's reaches onto its felt strip,
+        // the opponent's sits just past their stretched land names. Both end
+        // inside the framed depth (the fan's curve lowers the outer cards by
+        // up to 0.04).
+        expect(inner).toBeGreaterThanOrEqual(
+          (opponent ? OPPONENT_HAND_INNER : TABLE_DEPTH / 2 - HAND_FELT_OVERLAP) - 0.04 - 1e-9,
+        );
+        const framed = opponent ? opponentApronDepth() : apronDepth(table.handScale);
+        expect(inner + height).toBeLessThanOrEqual(TABLE_DEPTH / 2 + RAIL_WIDTH + framed + 0.04 + 1e-9);
+        // Above the tallest pile, so a hand on the felt covers the library beside it.
+        expect(c.z).toBeGreaterThan(PILE_CARD_DEPTH * PILE_MAX_CARDS);
       }
     }
     // The whole felt belongs to the battlefield and the piles.
@@ -348,7 +363,15 @@ describe('layoutBoard', () => {
     const big = handOf(7, HAND_SCALE_MAX);
     expect(big.mine).toHaveLength(7);
     expect(big.mine[0].scale).toBeGreaterThan(1.6);
-    expect(big.theirs[0].scale).toBe(big.mine[0].scale);
+    // The opponent's hand (card backs) stays small, Arena style, unless the stage gives it a larger scale.
+    expect(big.theirs[0].scale).toBe(OPPONENT_HAND_SCALE);
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 7, 2: 7 }, library_sizes: { 1: 40, 2: 40 } });
+    const state = buildTimeline(b.build({}, { playerSeat: 1 })).final;
+    const large = layoutBoard(state, { ...OPTS, playerSeat: 1, handScale: 1, opponentHandScale: 1, tableWidth: DEFAULT_TABLE_WIDTH });
+    const theirs = large.cards.filter((c) => c.row === 'hand' && c.seat === 2);
+    expect(theirs[0].scale).toBe(1);
+    expect(Math.abs(theirs[0].y)).toBeCloseTo(Math.abs(handY(1, true)), 1);
     const step = big.mine[1].x - big.mine[0].x;
     expect(step).toBeGreaterThanOrEqual(HAND_MIN_VISIBLE * CARD_WIDTH * big.mine[0].scale - 1e-9);
     expect(extent(big.mine).left).toBeGreaterThanOrEqual(-lane(big.table) / 2 - 1e-9);
@@ -587,5 +610,116 @@ describe('layoutBoard', () => {
     }
     console.info(`[replay perf] layoutBoard 60 objects: ${average.toFixed(3)} ms average`);
     expect(average).toBeLessThan(5);
+  });
+});
+
+describe('side cards beside the hand', () => {
+  function sideBoard(extra: (b: StreamBuilder) => void = () => {}) {
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    b.move('h1', 'bear', 'limbo', 'hand', PLAYER, 'draw');
+    b.move('g1', 'looting', 'limbo', 'graveyard', PLAYER, 'put');
+    b.move('g2', 'bear', 'limbo', 'graveyard', PLAYER, 'put');
+    b.move('p1', 'show', 'limbo', 'hand', PLAYER, 'draw');
+    b.move('p1', 'show', 'hand', 'exile', PLAYER, 'exile');
+    b.move('x1', 'show', 'limbo', 'battlefield', PLAYER, 'put');
+    b.move('x1', 'show', 'battlefield', 'exile', PLAYER, 'exile');
+    b.move('o1', 'looting', 'limbo', 'graveyard', OPPONENT, 'put');
+    // The next action ends the exile's effect window (x1 is no longer held on the battlefield).
+    b.phaseTo('Phase_Main1');
+    extra(b);
+    const stream = b.build(
+      {
+        bear: card('Bear', 'Creature', { power: '2', toughness: '2' }),
+        looting: card('Faithless Looting', 'Sorcery', { keywords: ['flashback'] }),
+        show: card('Slickshot Show-Off', 'Creature', { keywords: ['plot'] }),
+      },
+      { playerSeat: PLAYER },
+    );
+    return layoutBoard(buildTimeline(stream).final, OPTS);
+  }
+
+  it('shows flashback and plotted cards to the right of their hand, marked', () => {
+    const layout = sideBoard();
+    const hand = byObj(layout.cards, 'h1');
+    const flashback = byObj(layout.cards, 'g1');
+    const plotted = byObj(layout.cards, 'p1');
+    expect([flashback.row, flashback.castable, flashback.zone]).toEqual(['castable', 'flashback', 'graveyard']);
+    expect([plotted.row, plotted.castable, plotted.zone]).toEqual(['castable', 'plot', 'exile']);
+    expect(flashback.x).toBeGreaterThan(hand.x);
+    expect(plotted.x).toBeGreaterThan(hand.x);
+    expect(flashback.y).toBeCloseTo(hand.y, 1);
+    expect(hand.castable).toBeNull();
+  });
+
+  it('keeps them counted on their piles, which show the card underneath', () => {
+    const layout = sideBoard();
+    const graveyard = layout.piles.find((p) => p.seat === PLAYER && p.zone === 'graveyard');
+    expect(graveyard?.count).toBe(2);
+    expect(graveyard?.topCard).toBe('bear');
+    expect(byObj(layout.cards, 'g2').row).toBe('pile');
+    expect(layout.cards.filter((c) => c.obj === 'g1')).toHaveLength(1);
+  });
+
+  it('leaves a plot card exiled from the battlefield on the exile pile', () => {
+    const exiled = byObj(sideBoard().cards, 'x1');
+    expect([exiled.row, exiled.castable]).toEqual(['pile', null]);
+  });
+
+  it('marks the opponent side too, and drops a card once it is cast', () => {
+    const before = byObj(sideBoard().cards, 'o1');
+    expect(before.castable).toBe('flashback');
+    const after = sideBoard((b) => b.move('g1', 'looting', 'graveyard', 'stack', PLAYER, 'cast'));
+    expect(byObj(after.cards, 'g1').castable).toBeNull();
+  });
+});
+
+describe('damage marks', () => {
+  function burned(extra: (b: StreamBuilder) => void = () => {}) {
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    b.move('c1', 'bear', 'limbo', 'battlefield', OPPONENT, 'put');
+    b.move('c2', 'bear', 'limbo', 'battlefield', OPPONENT, 'put');
+    b.move('c3', 'bear', 'limbo', 'battlefield', PLAYER, 'put');
+    b.move('s1', 'smaug', 'limbo', 'hand', PLAYER, 'draw');
+    b.cast('s1', 'smaug', PLAYER, 'st1');
+    b.resolve('s1', 'smaug', PLAYER, 'st1', 'graveyard');
+    for (const obj of ['c1', 'c2']) {
+      b.add('damage', { source: null, target_obj: obj, target_seat: null, amount: 6, combat: false });
+    }
+    b.add('damage', { source: null, target_obj: 'c1', target_seat: null, amount: 2, combat: false });
+    extra(b);
+    const stream = b.build(
+      { bear: card('Bear', 'Creature', { power: '2', toughness: '2' }), smaug: card('Desolation of Smaug', 'Sorcery') },
+      { playerSeat: PLAYER },
+    );
+    return buildTimeline(stream).final;
+  }
+
+  it('marks every permanent one burst hit, summed, with the damage glow', () => {
+    const state = burned();
+    expect([...state.effects.objects].map(([obj, m]) => [obj, m.damage])).toEqual([
+      ['c1', 8],
+      ['c2', 6],
+    ]);
+    const { cards } = layoutBoard(state, OPTS);
+    expect([byObj(cards, 'c1').damage, byObj(cards, 'c1').highlight]).toEqual([8, 'damaged']);
+    expect([byObj(cards, 'c2').damage, byObj(cards, 'c2').highlight]).toEqual([6, 'damaged']);
+    expect([byObj(cards, 'c3').damage, byObj(cards, 'c3').highlight]).toEqual([null, null]);
+  });
+
+  it('holds a creature that dies of the damage in its slot, dimmed as Died, until the next action', () => {
+    const dying = burned((b) => b.move('c2', 'bear', 'battlefield', 'graveyard', OPPONENT, 'sba'));
+    expect(dying.effects.objects.get('c1')?.damage).toBe(8);
+    expect(dying.seats[OPPONENT].zones.graveyard).toEqual(['c2']);
+    const held = layoutBoard(dying, OPTS).cards.filter((c) => c.obj === 'c2');
+    expect(held.map((c) => [c.zone, c.row, c.damage, c.removed])).toEqual([['battlefield', 'creatures', 6, 'died']]);
+    const next = burned((b) => {
+      b.move('c2', 'bear', 'battlefield', 'graveyard', OPPONENT, 'sba');
+      b.turnStart(2, OPPONENT);
+    });
+    expect(next.effects.objects.size).toBe(0);
+    const gone = layoutBoard(next, OPTS).cards.filter((c) => c.obj === 'c2');
+    expect(gone.map((c) => [c.zone, c.row, c.removed])).toEqual([['graveyard', 'pile', null]]);
   });
 });

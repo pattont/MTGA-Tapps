@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stackCardWidth, stackRows } from './stackView';
+import { compactExits, stackCardWidth, stackRows } from './stackView';
 
 describe('stackRows', () => {
   it('keeps the top card full size and shows only the rows that fit the stage', () => {
@@ -21,5 +21,17 @@ describe('stackRows', () => {
     // Width limits.
     expect(stackCardWidth(300)).toBe(150);
     expect(stackCardWidth(2000)).toBe(240);
+  });
+});
+
+describe('compactExits', () => {
+  it('keeps a countered spell full size when only one card fits', () => {
+    // A counterspell resolved, then the spell it countered: room for one full card.
+    const exits = [{ exit: 'resolved' as const }, { exit: 'countered' as const }];
+    expect(compactExits(exits, 1)).toEqual([true, false]);
+    expect(compactExits(exits, 2)).toEqual([false, false]);
+    // Otherwise the newest keeps its full card.
+    expect(compactExits([{ exit: 'resolved' as const }, { exit: 'resolved' as const }], 1)).toEqual([true, false]);
+    expect(compactExits([{ exit: 'fizzled' as const }, { exit: 'resolved' as const }], 1)).toEqual([false, true]);
   });
 });

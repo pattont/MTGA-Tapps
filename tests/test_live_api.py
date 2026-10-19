@@ -376,6 +376,7 @@ def test_handle_get_routes_and_parses_since(tmp_path):
 
 
 def test_settings_tracker_info_reads_live_status_paths(monkeypatch, tmp_path):
+    import os
     from pathlib import Path
 
     from mtga_tracker import settings, settings_api, startup
@@ -401,8 +402,14 @@ def test_settings_tracker_info_reads_live_status_paths(monkeypatch, tmp_path):
     status, body = settings_api.handle_get("/api/settings", tmp_path / "tracker.sqlite3")
     assert status == 200
     info = body["tracker"]
-    assert info["monitoring"] == "~/Library/Logs/Wizards Of The Coast/MTGA/Player.log"
-    assert info["card_db"] == "~/MTGA/Raw_CardDatabase_abc.mtga"
+    # The redacted form is platform-native: ~/... on macOS/Linux, %USERPROFILE%\... on Windows.
+    from mtga_tracker.rendering import HOME_PLACEHOLDER
+
+    def redacted(relative):
+        return HOME_PLACEHOLDER + os.sep + str(Path(relative))
+
+    assert info["monitoring"] == redacted("Library/Logs/Wizards Of The Coast/MTGA/Player.log")
+    assert info["card_db"] == redacted("MTGA/Raw_CardDatabase_abc.mtga")
     assert info["version"] == "9.9.9"
     assert isinstance(info["deck_ai"], str) and info["deck_ai"]
     # Platform block drives the collection-export section + macOS warning.

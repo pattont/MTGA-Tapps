@@ -2,7 +2,12 @@
 
 import json
 
-from mtga_tracker.replay_builder import attach_image_urls, build_recorded, build_stream
+from mtga_tracker.replay_builder import (
+    attach_card_facts,
+    attach_image_urls,
+    build_recorded,
+    build_stream,
+)
 from mtga_tracker.replay_stream import validate_stream
 
 PLAYER, OPPONENT = 2, 1
@@ -652,6 +657,39 @@ def test_exile_move_carries_the_host_that_exiled_it():
     assert put["with"] is None
 
 
+def test_move_carries_the_source_that_moved_it():
+    r = _Rows()
+    r.turn_row(1, PLAYER)
+    r.move(401, "limbo", "battlefield", "put", OPPONENT, 1001, "Forest")
+    r.move(401, "battlefield", "graveyard", "destroy", OPPONENT, 1001, "Forest", by=400)
+    r.move(402, "limbo", "battlefield", "put", OPPONENT, 1001, "Forest")
+    stream = build_recorded(_game_rows(r.rows))
+    assert validate_stream(stream) == []
+    moves = [(e["obj"], e["reason"], e["by"]) for e in stream["events"] if e["kind"] == "move"]
+    assert ("401", "destroy", "400") in moves
+    assert ("402", "put", None) in moves
+
+
+def test_land_play_carries_the_chosen_land_type():
+    r = _Rows()
+    r.turn_row(1, PLAYER)
+    r.move(
+        403,
+        "hand",
+        "battlefield",
+        "play_land",
+        PLAYER,
+        97998,
+        "Multiversal Passage",
+        chosen="Mountain",
+    )
+    r.move(404, "hand", "battlefield", "play_land", PLAYER, 1001, "Forest")
+    stream = build_recorded(_game_rows(r.rows))
+    assert validate_stream(stream) == []
+    chosen = {e["obj"]: e["chosen"] for e in stream["events"] if e["kind"] == "move"}
+    assert chosen["403"] == "Mountain" and chosen["404"] is None
+
+
 def test_stack_push_payload_accepts_stack_kind_and_legacy_kind():
     stream = _build()
     pushes = {e["stack_id"]: e["stack_kind"] for e in stream["events"] if e["kind"] == "stack_push"}
@@ -729,3 +767,46 @@ def test_creature_stats_on_a_move_seed_the_cards_printed_stats():
     assert validate_stream(stream) == []
     card = stream["cards"]["a9005"]
     assert (card["power"], card["toughness"]) == ("0", "2")
+
+
+def test_card_facts_mark_keywords_and_back_faces_and_back_images():
+    stream = {
+        "cards": {
+            "a:1": {
+                "name": "Esper Origins",
+                "arena_id": 1,
+                "image_url": None,
+                "keywords": [],
+                "back_face": False,
+            },
+            "a:2": {
+                "name": "Summon: Esper Maduin",
+                "arena_id": 2,
+                "image_url": None,
+                "keywords": [],
+                "back_face": False,
+            },
+            "n:Bear": {
+                "name": "Bear",
+                "arena_id": None,
+                "image_url": None,
+                "keywords": [],
+                "back_face": False,
+            },
+        }
+    }
+    facts = {
+        "esper origins": {"keywords": ["flashback"], "back_face": False, "front": None},
+        "summon: esper maduin": {"keywords": [], "back_face": True, "front": "Esper Origins"},
+    }
+    attach_card_facts(stream, facts)
+    attach_image_urls(
+        stream,
+        resolver=lambda arena_id: f"https://cards.scryfall.io/normal/front/a/b/{arena_id}.jpg",
+    )
+    cards = stream["cards"]
+    assert cards["a:1"]["keywords"] == ["flashback"]
+    assert cards["a:1"]["image_url"].endswith("/front/a/b/1.jpg")
+    assert cards["a:2"]["back_face"] is True
+    assert cards["a:2"]["image_url"] == "https://cards.scryfall.io/normal/back/a/b/2.jpg"
+    assert cards["n:Bear"]["keywords"] == [] and cards["n:Bear"]["back_face"] is False

@@ -6,7 +6,7 @@ import {
   type LiveNow,
   type LivePayload,
 } from '../api';
-import { formatDuration, outcomeLabel, outcomeTone, shortFormatLabel } from '../format';
+import { formatDuration, outcomeLabel, outcomeShortLabel, outcomeTone, shortFormatLabel } from '../format';
 import { Badge } from './Badge';
 import { CardLink } from './CardLink';
 import { ColorPips } from './ColorPips';
@@ -338,7 +338,10 @@ function GamesList({ games }: { games: LiveGameRow[] }) {
       {games.map((game) => (
         <li key={game.id} className="live-game-item">
           <a className="live-game-row" href={gameRouteHash(game.id, '#/live')}>
-            <Badge tone={outcomeTone(game.outcome)}>{outcomeLabel(game.outcome)}</Badge>
+            <Badge tone={outcomeTone(game.outcome)} className="live-game-outcome" title={outcomeLabel(game.outcome)}>
+              <span aria-hidden="true">{outcomeShortLabel(game.outcome)}</span>
+              <span className="visually-hidden">{outcomeLabel(game.outcome)}</span>
+            </Badge>
             <span className="live-game-main">
               <span className="live-game-deck">{game.deck_name ?? '(unknown deck)'}</span>
               <span className="live-game-meta">

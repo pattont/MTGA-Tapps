@@ -16,11 +16,11 @@ import type { ReplayPrefs } from '../prefs';
 import type { BoardState } from '../reducer';
 import { sceneArrows, seatAnchor, sleeveNeon } from '../scene/arrows';
 import type { ArrowEnd } from '../scene/arrows';
-import { sceneLabels } from '../scene/labels';
+import { sceneLabels, seatNumber } from '../scene/labels';
 import type { MotionRegistry } from '../scene/motionRegistry';
 import { projectToScreen } from '../scene/projection';
 import type { ScreenPoint } from '../scene/projection';
-import { STACK_KIND_LABELS, stackView } from '../scene/stackView';
+import { STACK_KIND_LABELS, effectExits, stackView } from '../scene/stackView';
 import type { TextureStore } from '../scene/textureStore';
 import type { CardKey, ReplayCard, ReplayStream } from '../types';
 import type { FrameArrow, FrameArrowEnd, FrameInput, FrameLabel, FrameLayout, FrameSeat, FrameStackItem } from './frameComposer';
@@ -77,7 +77,7 @@ export function buildFrameInput(
     labels.push({ x: p.x, y: p.y, text: label.text, tone: label.tone, emphasis: label.emphasis });
   }
 
-  const stack: FrameStackItem[] = stackView(state).map((item) => ({
+  const stackItem = (item: ReturnType<typeof stackView>[number]): FrameStackItem => ({
     stackId: item.stackId,
     image: imageOf(store.face(item.card)),
     name: formatCardName(item.name),
@@ -85,7 +85,12 @@ export function buildFrameInput(
     kind: STACK_KIND_LABELS[item.kind],
     top: item.top,
     mine: item.controller === playerSeat,
-  }));
+  });
+  // The live stack, then the items kept for the current action (stamped).
+  const stack: FrameStackItem[] = [
+    ...stackView(state).map(stackItem),
+    ...effectExits(state).map((item) => ({ ...stackItem(item), exit: item.exit })),
+  ];
 
   const neon = { player: sleeveNeon(prefs.playerSleeve), opponent: sleeveNeon(prefs.opponentSleeve) };
   const endOf = (end: ArrowEnd): FrameArrowEnd | null => {
@@ -122,6 +127,11 @@ export function buildFrameInput(
       hand: state.seats[seat]?.handSize ?? 0,
       library: state.seats[seat]?.librarySize ?? 0,
       active: state.activeSeat === seat,
+      change: (() => {
+        const marks = state.effects.seats.get(seat);
+        const number = marks ? seatNumber(marks) : null;
+        return number ? { text: number.text, loss: number.tone === 'life-loss' } : null;
+      })(),
     };
   };
   const opponentSeat = Object.keys(stream.seats)

@@ -3,6 +3,7 @@
  * reducer.ts, which adds the keyframed timeline.
  */
 import { BoardDraft, emptySeat, removeFrom, zoneSeatOf } from './boardState';
+import { EMPTY_EFFECTS, clearsEffects, isEmptyEffects, noteEffects } from './effects';
 import type { BoardState, ObjectState, SeatState } from './boardState';
 import type {
   CardKey,
@@ -23,10 +24,12 @@ export function createInitialState(
 ): BoardState {
   const seats: Record<number, SeatState> = {};
   const life: Record<number, number> = {};
+  const commanders: Record<number, readonly string[]> = {};
   for (const [key, seat] of Object.entries(stream.seats)) {
     const seatId = Number(key);
     seats[seatId] = emptySeat();
     life[seatId] = seat.starting_life;
+    commanders[seatId] = seat.commanders ?? [];
   }
   return {
     seq: -1,
@@ -40,12 +43,14 @@ export function createInitialState(
     step: null,
     life,
     attackers: new Set(),
+    effects: EMPTY_EFFECTS,
     blocks: new Map(),
     lastEvent: null,
     winnerSeat: null,
     ended: false,
     cards: stream.cards,
     hindsight,
+    commanders,
   };
 }
 
@@ -103,6 +108,7 @@ function applyMove(draft: BoardDraft, event: MoveEvent): void {
     if (index >= 0) draft.stack().splice(index, 1);
   }
   const card = event.card ?? prev?.card ?? null;
+  const chosen = event.to === 'battlefield' ? (event.chosen ?? (stays ? prev.chosen : undefined)) : undefined;
   const next: ObjectState = {
     obj: event.obj,
     card,
@@ -115,9 +121,11 @@ function applyMove(draft: BoardDraft, event: MoveEvent): void {
     toughness: stays ? prev.toughness : null,
     attachedTo: stays ? prev.attachedTo : null,
     exiledWith: event.to === 'exile' ? (event.with ?? null) : null,
+    fromHand: event.to === 'exile' && event.from === 'hand',
     faceDown: stays ? prev.faceDown : false,
     inferred: event.inferred || (prev?.inferred ?? false),
     revealedAt: prev?.revealedAt ?? (card ? event.seq : null),
+    ...(chosen ? { chosen } : {}),
   };
   draft.set(next);
   const list = draft.zone(zoneSeatOf(next), event.to);
@@ -195,6 +203,7 @@ function applyScry(draft: BoardDraft, event: ScryEvent): void {
       toughness: null,
       attachedTo: null,
       exiledWith: null,
+      fromHand: false,
       faceDown: false,
       inferred: false,
       revealedAt: null,
@@ -220,6 +229,8 @@ function removeStackItem(draft: BoardDraft, stackId: string): void {
 
 export function applyEvent(state: BoardState, event: ReplayEvent): BoardState {
   const draft = new BoardDraft(state);
+  if (!isEmptyEffects(state.effects) && clearsEffects(event)) draft.patch.effects = EMPTY_EFFECTS;
+  noteEffects(draft, event);
   if (event.phase !== null && event.phase !== undefined) draft.patch.phase = event.phase;
   if (event.step !== null && event.step !== undefined) draft.patch.step = event.step;
   switch (event.kind) {
@@ -327,8 +338,9 @@ export function applyEvent(state: BoardState, event: ReplayEvent): BoardState {
       draft.patch.ended = true;
       break;
     case 'damage':
+      // Damage never changes life (life events carry totals); noteEffects marked what it hit.
+      break;
     case 'note':
-      // Damage never changes life (life events carry totals); highlights read lastEvent.
       break;
     default: {
       const unhandled: never = event;

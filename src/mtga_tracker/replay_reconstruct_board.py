@@ -12,6 +12,7 @@ from collections import Counter
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from .replay_reconstruct_grammar import (
+    GRAVEYARD_CAST_KEYWORDS,
     _ARTIFACT_TOKENS,
     _BRACKET_RE,
     _PLAYER_TARGETS,
@@ -53,7 +54,7 @@ class _Obj:
 
 
 class _StackItem:
-    __slots__ = ("sid", "oid", "name", "ability", "types", "seat", "open")
+    __slots__ = ("sid", "oid", "name", "ability", "types", "seat", "open", "creates")
 
     def __init__(self, sid, oid, name, ability, types, seat) -> None:
         self.sid = sid
@@ -63,6 +64,8 @@ class _StackItem:
         self.types = types
         self.seat = seat
         self.open = True
+        #: Tokens the ability's text creates on resolution (grammar.created_tokens).
+        self.creates: List[Tuple[str, int, Optional[str], Optional[str], List[str]]] = []
 
 
 class ReconstructionBoard:
@@ -99,6 +102,8 @@ class ReconstructionBoard:
         self._pending_close: Optional[_StackItem] = None
         self.participants = {str(row.get("role")): row for row in rows.get("participants") or []}
         self._index_cards()
+        #: Arena card facts by casefolded name (CardDatabase.replay_card_facts).
+        self.card_facts: Dict[str, Dict[str, Any]] = rows.get("card_facts") or {}
 
     # -- card metadata ---------------------------------------------------
 
@@ -134,27 +139,66 @@ class ReconstructionBoard:
             return self.cards.add(None)
         row = self.card_rows.get(str(name)) or {}
         deck = self.deck_info.get(str(name)) or {}
+        # Arena's card DB describes a real card the game's rows never did.
+        fact = {} if token else self._fact(name)
         arena_id = row.get("arena_id") or deck.get("arena_id")
         bracket_type = ", ".join(types) if types else None
         return self.cards.add(
             name,
             arena_id,
-            type_line=row.get("type_line"),
+            type_line=row.get("type_line") or fact.get("type_line"),
             primary_type=row.get("primary_type")
             or (deck.get("type_category") if deck.get("type_category") != "Other" else None)
+            or primary_type_from_text(fact.get("type_line"))
             or primary_type_from_text(bracket_type),
-            power=row.get("power") if row.get("power") not in (None, "") else power,
-            toughness=row.get("toughness") if row.get("toughness") not in (None, "") else toughness,
+            power=next(
+                (v for v in (row.get("power"), fact.get("power"), power) if v not in (None, "")),
+                None,
+            ),
+            toughness=next(
+                (
+                    v
+                    for v in (row.get("toughness"), fact.get("toughness"), toughness)
+                    if v not in (None, "")
+                ),
+                None,
+            ),
             mana_cost=row.get("mana_cost"),
             color_identity=row.get("color_identity"),
             is_token=token,
         )
 
+    def _fact(self, name: Optional[str]) -> Dict[str, Any]:
+        return self.card_facts.get(str(name or "").casefold()) or {}
+
+    def _alternate_source(self, seat: int, name: str) -> Optional[_Obj]:
+        """A card cast from where its own keyword allows, before the hidden hand:
+        the graveyard for flashback and kin, exile once plotted. A copy known
+        to be in the hand still wins."""
+        keywords = set(self._fact(name).get("keywords") or ())
+        zones = []
+        if keywords & GRAVEYARD_CAST_KEYWORDS:
+            zones.append("graveyard")
+        if "plot" in keywords:
+            zones.append("exile")
+        if not zones or self._find(name, [seat], ["hand"]) is not None:
+            return None
+        return self._find(name, [seat], zones)
+
+    def _transform_source(self, seat: int, name: str) -> Optional[_Obj]:
+        """The front face a back face named ``name`` came from (Esper Origins
+        exiled, then put onto the battlefield as Summon: Esper Maduin)."""
+        front = self._fact(name).get("front")
+        if not front:
+            return None
+        return self._find(front, [seat], ["exile", "stack", "graveyard", "battlefield", "hand"])
+
     def _known_card_name(self, seat: int, name: str) -> bool:
         """True when ``name`` is a real card (not a token) for this seat, as far as we know."""
         if seat == self.player_seat and self.deck_names[seat]:
             return name in self.deck_names[seat]
-        return name in self.card_rows or name in self.deck_info
+        # Arena's card DB lists every real (non-token) card name.
+        return name in self.card_rows or name in self.deck_info or bool(self._fact(name))
 
     # -- object helpers --------------------------------------------------
 
@@ -215,6 +259,7 @@ class ReconstructionBoard:
         reason: str,
         inferred: bool = False,
         seat: Optional[int] = None,
+        chosen: Optional[str] = None,
     ) -> Dict[str, Any]:
         source = obj.zone
         holder = obj.controller
@@ -242,6 +287,7 @@ class ReconstructionBoard:
             reason=reason,
             inferred=inferred,
             index=None,
+            chosen=chosen,
         )
         if obj.token and dest in ("graveyard", "exile", "hand", "library"):
             self._move(obj, "limbo", "token_cease")
@@ -376,6 +422,14 @@ class ReconstructionBoard:
             self.open_items.remove(item)
         event = self.log.emit(kind, stack_id=item.sid)
         obj = self.objs.get(item.oid) if item.oid else None
+        if item.ability and kind == "stack_resolve":
+            for name, count, power, toughness, types in item.creates:
+                if not types:
+                    types = ["Artifact"] if name in _ARTIFACT_TOKENS else ["Creature"]
+                for _ in range(count):
+                    token = self._limbo(item.seat, name, token=True)
+                    token.card = self._card(name, types, power, toughness, token=True)
+                    self._move(token, "battlefield", "token_create", seat=item.seat)
         if item.ability or obj is None or obj.zone != "stack":
             return event
         if kind == "stack_resolve":

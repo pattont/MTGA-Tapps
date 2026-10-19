@@ -5,7 +5,11 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 from mtga_deck_downloader.models import DeckEntry
-from mtga_deck_downloader.scrapers.common import ScrapeError, decode_response_text
+from mtga_deck_downloader.scrapers.common import (
+    CloudflareSession,
+    ScrapeError,
+    decode_response_text,
+)
 
 
 class MoxfieldScraper:
@@ -17,16 +21,13 @@ class MoxfieldScraper:
 
     def __init__(self) -> None:
         try:
-            import cloudscraper
+            import cloudscraper  # noqa: F401  (CloudflareSession uses it)
         except ImportError as exc:
             raise ScrapeError(
                 "Moxfield scraping requires cloudscraper. Install dependencies from requirements.txt."
             ) from exc
 
-        self._session = cloudscraper.create_scraper(
-            browser={"browser": "chrome", "platform": "darwin", "mobile": False}
-        )
-        self._session.headers.update(
+        self._session = CloudflareSession(
             {
                 "User-Agent": (
                     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) "

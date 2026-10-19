@@ -5,7 +5,7 @@
 import { useFrame, useThree } from '@react-three/fiber';
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import type { RefObject } from 'react';
-import { CARD_HEIGHT, CARD_WIDTH } from '../layout';
+import { CARD_HEIGHT, CARD_WIDTH, PILE_CARD_DEPTH, PILE_MAX_CARDS } from '../layout';
 import type { CardPlacement, Layout, PilePlacement, TableGeometry } from '../layout';
 import type { ReplayPrefs, SleeveColor } from '../prefs';
 import type { BoardState } from '../reducer';
@@ -21,12 +21,12 @@ import { positionArrows, positionLabels } from '../scene/projection';
 import type { ScreenPoint } from '../scene/projection';
 import type { TextureStore } from '../scene/textureStore';
 import type { CardKey, ReplayCard } from '../types';
+import type { ViewZoom } from '../scene/viewZoom';
 import { CameraRig } from './CameraRig';
 import { CardMesh } from './CardMesh';
 import type { CardHandlers } from './CardMesh';
 
 const DAMAGE_FLASH_MS = 700;
-const PILE_UNIT = 0.004;
 
 export interface SceneContentsProps {
   layout: Layout;
@@ -45,6 +45,8 @@ export interface SceneContentsProps {
   stackNodes: ReadonlyMap<string, HTMLElement>;
   handlers: CardHandlers;
   snap: boolean;
+  /** Wheel zoom and drag pan of the fitted view. */
+  zoom: ViewZoom;
 }
 
 /** Felt, wooden base and rails, scaled to the stage-dependent felt size. */
@@ -75,8 +77,8 @@ function Table({ store, felt, kit, table }: { store: TextureStore; felt: ReplayP
 
 function Pile({ pile, sleeve, store, kit }: { pile: PilePlacement; sleeve: SleeveColor; store: TextureStore; kit: SceneKit }) {
   if (pile.count === 0) {
-    // Command zones exist only in commander formats; an empty one is not drawn.
-    if (pile.zone === 'command') return null;
+    // Command zones exist only in commander formats (see usesCommandZone); an
+    // empty one keeps its slot so the viewer sees the commander is out.
     return (
       <mesh
         geometry={kit.unitPlane}
@@ -86,7 +88,7 @@ function Pile({ pile, sleeve, store, kit }: { pile: PilePlacement; sleeve: Sleev
       />
     );
   }
-  const height = Math.max(PILE_UNIT, Math.min(pile.count, 60) * PILE_UNIT);
+  const height = Math.max(PILE_CARD_DEPTH, Math.min(pile.count, PILE_MAX_CARDS) * PILE_CARD_DEPTH);
   const library = pile.zone === 'library';
   const faceTop = library ? store.pileTopMaterial(sleeve) : kit.edgeMaterial;
   const materials = [kit.edgeMaterial, kit.edgeMaterial, kit.edgeMaterial, kit.edgeMaterial, faceTop, kit.edgeMaterial];
@@ -242,7 +244,7 @@ export function SceneContents(props: SceneContentsProps) {
       <SnapMode registry={registry} snap={snap} />
       <ambientLight intensity={1.1} />
       <directionalLight position={[-5, -7, 14]} intensity={2.2} />
-      <CameraRig preset={prefs.camera} table={layout.table} />
+      <CameraRig preset={prefs.camera} table={layout.table} zoom={props.zoom} />
       <Anisotropy store={store} />
       <Table store={store} felt={prefs.felt} kit={kit} table={layout.table} />
       {layout.piles.map((pile) => (

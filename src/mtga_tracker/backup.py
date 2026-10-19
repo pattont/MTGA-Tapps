@@ -8,12 +8,13 @@ that history to another computer — export at home into a folder a sync client
 mirrors (Google Drive, iCloud Drive, Dropbox, OneDrive), restore on the
 laptop, play, export there, restore at home.
 
-Restore replaces the database (this pass has no merge). It refuses a snapshot
-whose schema is newer than this build, shows what would be lost before doing
-anything, writes a safety backup of the current state first, and swaps the
-migrated snapshot in only while the tracker is stopped.
+Restore makes local history match the backup; Merge adds missing game history
+without dropping local games. Restore refuses a snapshot whose schema is newer
+than this build, shows what would be lost before doing anything, writes a safety
+backup of the current state first, and swaps the migrated snapshot in only
+while the tracker is stopped.
 
-The plan: docs/plans/BACKUP_AND_SYNC.md.
+Remaining backup and sync work: docs/plans/INDEX.md.
 """
 
 from __future__ import annotations

@@ -56,6 +56,12 @@ export function outcomeLabel(outcome: string | null | undefined): string {
   return outcome ? outcome[0].toUpperCase() + outcome.slice(1) : 'Unknown';
 }
 
+/** One letter for tight lists: "W", "L", "D", "?" for unknown. */
+export function outcomeShortLabel(outcome: string | null | undefined): string {
+  const label = outcomeLabel(outcome);
+  return label === 'Unknown' ? '?' : label[0];
+}
+
 /** "Standard Best-of-1 (Ranked)" -> "Standard BO1 (Ranked)" (full label kept). */
 export function boFormatLabel(label: string | null | undefined): string {
   return String(label ?? '').replace('Best-of-1', 'BO1').replace('Best-of-3', 'BO3');

@@ -78,6 +78,14 @@ describe('cardImageCandidates', () => {
     expect(cardImageCandidates(dfc, 'large')[0]).toBe(CDN.replace('/normal/', '/large/'));
   });
 
+  it('asks for the back image of a back face', () => {
+    const back = card('Summon: Esper Maduin', 'Creature', { arena_id: 96052, back_face: true });
+    expect(cardImageCandidates(back, 'normal')).toEqual([
+      `${API}/arena/96052?format=image&version=normal&face=back`,
+      `${API}/named?exact=Summon%3A%20Esper%20Maduin&format=image&version=normal&face=back`,
+    ]);
+  });
+
   it('searches the token sets for tokens, never the named lookup, and nothing for unknown cards', () => {
     const treasure = cardImageCandidates(card('Treasure', 'Artifact', { is_token: true }), 'normal');
     expect(treasure).toEqual([

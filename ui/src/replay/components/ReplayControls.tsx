@@ -114,7 +114,7 @@ export function ReplayControls({ stream, clock, snapshot, goToTurnRef }: ReplayC
           <span>
             {formatClock(current?.t ?? 0)} / {formatClock(duration)}
           </span>
-          <span className="replay-shortcuts">Space play · ←/→ step · J/K turn · [ ] speed · T options</span>
+          <span className="replay-shortcuts">Space play · ←/→ step · J/K turn · [ ] speed · Wheel zoom · T options</span>
         </div>
       </div>
     </div>

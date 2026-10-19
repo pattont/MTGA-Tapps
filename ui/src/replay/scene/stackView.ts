@@ -1,5 +1,6 @@
 /** What the DOM stack preview shows for a board state (pure). */
-import type { BoardState } from '../reducer';
+import { shownExits } from '../effects';
+import type { BoardState, StackItem } from '../reducer';
 import type { CardKey, StackItemKind } from '../types';
 
 export interface StackViewItem {
@@ -26,6 +27,36 @@ export const STACK_KIND_LABELS: Record<StackItemKind, string> = {
   activated: 'Activated ability',
 };
 
+function viewOf(state: BoardState, item: StackItem, top: boolean, targeted: boolean): StackViewItem {
+  const source = item.obj ? state.objects.get(item.obj) : undefined;
+  const card = item.card ?? (source && !source.faceDown ? source.card : null);
+  return {
+    stackId: item.stackId,
+    card,
+    name: (card && state.cards[card]?.name) || 'Unknown card',
+    kind: item.kind,
+    text: item.kind === 'spell' ? null : item.text,
+    controller: item.controller,
+    top,
+    targets: item.targets.length,
+    targeted,
+  };
+}
+
+export interface EffectExitView extends StackViewItem {
+  exit: StackExit;
+}
+
+/**
+ * Items that left the stack in the current action and stay in the preview
+ * while it lasts (effects.shownExits): a spell or ability that resolved with
+ * an effect shown on the table (the arrows start from it), or one that was
+ * countered or fizzled. Oldest first.
+ */
+export function effectExits(state: BoardState): EffectExitView[] {
+  return shownExits(state.effects).map(({ item, exit }) => ({ ...viewOf(state, item, false, false), exit }));
+}
+
 /** Stack items, top of the stack first. */
 export function stackView(state: BoardState): StackViewItem[] {
   const items: StackViewItem[] = [];
@@ -34,19 +65,7 @@ export function stackView(state: BoardState): StackViewItem[] {
   for (const item of state.stack) item.targets.forEach((obj) => targeted.add(obj));
   for (let i = n - 1; i >= 0; i -= 1) {
     const item = state.stack[i];
-    const source = item.obj ? state.objects.get(item.obj) : undefined;
-    const card = item.card ?? (source && !source.faceDown ? source.card : null);
-    items.push({
-      stackId: item.stackId,
-      card,
-      name: (card && state.cards[card]?.name) || 'Unknown card',
-      kind: item.kind,
-      text: item.kind === 'spell' ? null : item.text,
-      controller: item.controller,
-      top: i === n - 1,
-      targets: item.targets.length,
-      targeted: item.kind === 'spell' && item.obj !== null && targeted.has(item.obj),
-    });
+    items.push(viewOf(state, item, i === n - 1, item.kind === 'spell' && item.obj !== null && targeted.has(item.obj)));
   }
   return items;
 }
@@ -98,4 +117,17 @@ export function stackRows(count: number, height: number | null): { full: number;
   const left = available - full * cardH - (full - 1) * ROW_GAP;
   const chips = Math.max(0, Math.min(count - full, MAX_CHIPS, Math.floor((left - ROW_GAP) / (CHIP_ROW + ROW_GAP))));
   return { full, chips };
+}
+
+/**
+ * Which cards that left the stack show as compact rows: when fewer than all
+ * fit full size, a countered or fizzled spell keeps its full card first (it is
+ * what the viewer needs to see), then the newest.
+ */
+export function compactExits(exits: readonly { exit: StackExit }[], full: number): boolean[] {
+  const order = exits
+    .map((item, i) => ({ i, rank: item.exit === 'resolved' ? 1 : 0 }))
+    .sort((a, b) => a.rank - b.rank || b.i - a.i);
+  const shown = new Set(order.slice(0, full).map((o) => o.i));
+  return exits.map((_, i) => !shown.has(i));
 }

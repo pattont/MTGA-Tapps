@@ -13,12 +13,16 @@ from .paths import native_deck_platform_supported
 
 def availability():
     if not native_deck_platform_supported():
-        return False, "Direct transfers currently support Apple Silicon Arena on macOS."
+        return False, "Direct transfers support Arena on Apple Silicon Macs and 64-bit Windows."
     try:
         import frida  # noqa: F401
     except ImportError:
         return False, "The native deck adapter is missing from this installation."
     return True, "Open Arena’s Decks screen, then load its decks."
+
+
+# Arena's process: "MTGA" on macOS, "MTGA.exe" on Windows.
+ARENA_PROCESS_NAMES = ("MTGA", "MTGA.exe")
 
 
 def account_key(account_id):
@@ -33,6 +37,10 @@ class ArenaBridge:
         self.info = exports.open()
         self.account_id = self.info["account_id"]
         self.account_key = account_key(self.account_id)
+        # Set once a create/delete is sent, so the Decks screen is redrawn on close.
+        self.wrote = False
+        # The last deck this attachment created, selected by that redraw.
+        self.created = None
 
     def roster(self):
         report = self.exports.roster(self.account_id)
@@ -50,7 +58,10 @@ class ArenaBridge:
         return self.exports.fetchdeck(self.account_id, arena_id)
 
     def create(self, archive, arena_id):
-        return self.exports.create(self.account_id, archive, arena_id)
+        self.wrote = True
+        result = self.exports.create(self.account_id, archive, arena_id)
+        self.created = arena_id
+        return result
 
     def prepare_create(self, archive, arena_id):
         try:
@@ -61,13 +72,26 @@ class ArenaBridge:
             ) from exc
 
     def create_prepared(self, arena_id):
-        return self.exports.createprepared(self.account_id, arena_id)
+        self.wrote = True
+        result = self.exports.createprepared(self.account_id, arena_id)
+        self.created = arena_id
+        return result
 
     def prepare_import(self, text, name, arena_id):
         return self.exports.prepareimport(self.account_id, text, name, arena_id)
 
     def remove(self, snapshot):
+        self.wrote = True
         return self.exports.remove(self.account_id, snapshot)
+
+    def refresh_screen(self):
+        """Redraw Arena's open Decks screen. Best effort: the write is already verified."""
+        if not self.wrote:
+            return False
+        try:
+            return bool(self.exports.refreshscreen(self.account_id, self.created))
+        except Exception:
+            return False
 
 
 @contextmanager
@@ -78,7 +102,7 @@ def attach():
     import frida
 
     device = frida.get_local_device()
-    processes = [p for p in device.enumerate_processes() if p.name == "MTGA"]
+    processes = [p for p in device.enumerate_processes() if p.name in ARENA_PROCESS_NAMES]
     if len(processes) != 1:
         raise DeckManagerError("Open Arena and return to Decks outside a match.")
     session = device.attach(processes[0].pid)
@@ -86,15 +110,19 @@ def attach():
     timer = Timer(600, session.detach)
     timer.daemon = True
     script = None
+    bridge = None
     try:
         timer.start()
         script = session.create_script(
-            (Path(__file__).parent / "assets" / "arena_decks.js").read_text()
+            (Path(__file__).parent / "assets" / "arena_decks.js").read_text(encoding="utf-8")
         )
         script.load()
         bridge = ArenaBridge(script.exports_sync)
         yield bridge
     finally:
+        # Also after a failed or stopped batch: earlier decks may have changed.
+        if bridge:
+            bridge.refresh_screen()
         if script:
             try:
                 script.exports_sync.close()

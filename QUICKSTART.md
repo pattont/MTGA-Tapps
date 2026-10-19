@@ -42,7 +42,8 @@ scripts/build_macos_installer.sh
 The app lives in the menu bar: it starts tracking, serves the dashboard locally,
 and opens it in your browser. The tracker's status line at the top of the menu
 shows a green dot while it's running and red when it's stopped. The menu
-has **Live Scoreboard**, **Dashboard**, **Deck Finder**, **Open Data Folder**,
+has **Live Scoreboard**, **Dashboard**, **Replays**, **Deck Finder**,
+**Deck Manager (Beta)**, **Open Data Folder**,
 **Start/Stop Overlay**, **Overlay Settings**, **Start/Stop Tracking**,
 **Tracker Settings**, and **Quit Tapps Tracker**. The overlay starts enabled
 when included in the build. Installed builds keep their database under

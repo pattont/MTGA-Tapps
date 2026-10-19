@@ -23,6 +23,7 @@ from .replay_reconstruct_grammar import (
     _ARROW_RE,
     _ATTACK_RE,
     _BECAME_RE,
+    _BRACKET_RE,
     _bracket_names,
     _CAST_RE,
     _close_status,
@@ -38,6 +39,8 @@ from .replay_reconstruct_grammar import (
     _PLAYER_TARGETS,
     _PUT_BATTLEFIELD_RE,
     _PUT_HAND_RE,
+    _RETURN_TO_BATTLEFIELD_TEXT_RE,
+    _RETURNED_BATTLEFIELD_RE,
     _RETURNED_RE,
     _SACRIFICED_RE,
     _SBA_RE,
@@ -51,6 +54,7 @@ from .replay_reconstruct_grammar import (
     _to_int,
     _TS_RE,
     _TURN_RE,
+    created_tokens,
     pair_stack_rows,
     parse_bracket,
 )
@@ -73,6 +77,11 @@ class Reconstructor(ReconstructionBoard):
             if row.get("visible", 1) not in (0, "0", False)
         ]
         events.sort(key=lambda row: (str(row.get("event_time") or ""), row.get("id") or 0))
+        #: Names an ability is returning to the battlefield this turn (see _RETURNED_RE).
+        self._returning_to_battlefield: Set[str] = set()
+        self._row_elapsed: Any = None
+        self._row_stamp: Optional[str] = None
+        self._damage_moment: Tuple[Any, Set[str]] = (None, set())
         pairs = pair_stack_rows(events)
         self.closed_by: Dict[int, int] = pairs
         self.paired_pushes = set(pairs.values())
@@ -91,6 +100,9 @@ class Reconstructor(ReconstructionBoard):
             self.log.emit("phase", phase=phase, step=None)
             self._phase_seen = phase
         text = str(row.get("text") or "")
+        self._row_elapsed = row.get("elapsed_seconds")
+        stamp = _TS_RE.match(text)
+        self._row_stamp = stamp.group(0).strip() if stamp else None
         handler = getattr(self, f"_on_{event_type}", None)
         primary = handler(index, row, text) if handler is not None else None
         if primary is None:
@@ -127,6 +139,7 @@ class Reconstructor(ReconstructionBoard):
         self.attacking.clear()
         self.blocks.clear()
         self.log.turn = turn
+        self._returning_to_battlefield.clear()
         return self.log.emit("turn", turn=turn, active_seat=active)
 
     def _on_draw(self, index: int, row: Dict[str, Any], text: str) -> Optional[Dict[str, Any]]:
@@ -173,7 +186,9 @@ class Reconstructor(ReconstructionBoard):
         obj, inferred = self._from_hand_or_elsewhere(
             seat, name, types or ["Land"], ["graveyard", "exile"]
         )
-        return self._move(obj, "battlefield", "play_land", inferred=inferred, seat=seat)
+        return self._move(
+            obj, "battlefield", "play_land", inferred=inferred, seat=seat, chosen=match.group(2)
+        )
 
     def _on_cast(self, index: int, row: Dict[str, Any], text: str) -> Optional[Dict[str, Any]]:
         actor, body = _split_actor(text)
@@ -184,9 +199,15 @@ class Reconstructor(ReconstructionBoard):
         name, types, power, toughness = parse_bracket(match.group(1))
         rest = match.group(2)
         targets = self._targets(rest.split("->", 1)[1], seat) if "->" in rest else []
-        obj, inferred = self._from_hand_or_elsewhere(
-            seat, name, types, ["command", "graveyard", "exile"]
-        )
+        obj = self._alternate_source(seat, name)
+        inferred = False
+        if obj is not None:
+            if types:
+                obj.card = self._card(obj.name, types, token=obj.token)
+        else:
+            obj, inferred = self._from_hand_or_elsewhere(
+                seat, name, types, ["command", "graveyard", "exile"]
+            )
         self._move(obj, "stack", "cast", inferred=inferred, seat=seat)
         event = self._push(index, seat, obj, name, False, types, "", targets)
         if index not in self.paired_pushes:
@@ -224,6 +245,11 @@ class Reconstructor(ReconstructionBoard):
             ["battlefield", "stack", "graveyard", "exile", "hand", "command"],
         ) or self._find(name, [self._other(seat)], ["battlefield"])
         event = self._push(index, seat, source, name, True, (), ability_text.strip(), targets)
+        self.items[index].creates = created_tokens(ability_text)
+        if " -> [" in match.group(2) and _RETURN_TO_BATTLEFIELD_TEXT_RE.search(ability_text):
+            target_text = match.group(2).split(" -> [", 1)[1]
+            for content in _BRACKET_RE.findall("[" + target_text):
+                self._returning_to_battlefield.add(parse_bracket(content)[0])
         if index not in self.paired_pushes:
             self._pending_close = self.items[index]
         return event
@@ -322,7 +348,10 @@ class Reconstructor(ReconstructionBoard):
                 order = ["battlefield", "stack", "hand", "graveyard"]
             obj = self._find(name, both, order)
             inferred = False
-            if obj is None and match.group(2):
+            if obj is None and (
+                match.group(2) or "plot" in (self._fact(name).get("keywords") or ())
+            ):
+                # Plotting exiles the card from its owner's hand.
                 obj = self._from_hand(seat, name)
             if obj is None:
                 obj, inferred = self._limbo(seat, name), True
@@ -348,7 +377,13 @@ class Reconstructor(ReconstructionBoard):
                 obj.card = self._card(name, token=obj.token)
             return self._move(obj, "graveyard", "mill", inferred=inferred)
 
+        match = _RETURNED_BATTLEFIELD_RE.match(body)
+        if match:
+            return self._return_to_battlefield(seat, parse_bracket(match.group(2))[0])
+
         match = _RETURNED_RE.match(body)
+        if match and parse_bracket(match.group(1))[0] in self._returning_to_battlefield:
+            return self._return_to_battlefield(seat, parse_bracket(match.group(1))[0])
         if match:
             name = parse_bracket(match.group(1))[0]
             obj = self._find(name, both, ["battlefield", "graveyard", "exile", "stack"])
@@ -357,6 +392,8 @@ class Reconstructor(ReconstructionBoard):
             return self._move(obj, "hand", "bounce")
 
         match = _SOURCE_RETURNED_RE.match(body)
+        if match and parse_bracket(match.group(2))[0] in self._returning_to_battlefield:
+            return self._return_to_battlefield(seat, parse_bracket(match.group(2))[0])
         if match:
             name = parse_bracket(match.group(2))[0]
             owner = self.player_seat if match.group(3) == "your" else self.opponent_seat
@@ -395,6 +432,10 @@ class Reconstructor(ReconstructionBoard):
         ramp far outnumber land recursion), other cards from the graveyard
         (reanimation) or the hand before the library.
         """
+        front = self._transform_source(seat, name)
+        if front is not None:
+            self._transform(front, name, types)
+            return self._move(front, "battlefield", "put", seat=seat)
         known = self._known_card_name(seat, name)
         is_land = "Land" in types or self._primary_type(name) == "Land"
         obj = self._find(name, [seat], ["exile", "command"])
@@ -413,6 +454,28 @@ class Reconstructor(ReconstructionBoard):
         if types:
             obj.card = self._card(name, types, token=obj.token)
         return self._move(obj, "battlefield", reason, inferred=inferred, seat=seat)
+
+    def _return_to_battlefield(self, seat: int, name: str) -> Dict[str, Any]:
+        """A card returned to the battlefield (from the graveyard, usually). The
+        text shows it arriving, so it is not inferred even when the replay never
+        saw it reach the graveyard (an unlogged surveil or mill)."""
+        self._returning_to_battlefield.discard(name)
+        both = [seat, self._other(seat)]
+        obj = self._find(name, both, ["graveyard", "exile", "hand", "stack", "command"])
+        if obj is None:
+            obj = self._find(name, both, ["battlefield"])
+            if obj is not None:
+                return self.log.emit("note")
+            obj = self._limbo(seat, name, token=not self._known_card_name(seat, name))
+            obj.card = self._card(name, token=obj.token)
+        return self._move(obj, "battlefield", "put", seat=obj.owner)
+
+    def _transform(self, obj: _Obj, name: str, types: Sequence[str] = ()) -> None:
+        """Turns ``obj`` to its other face ``name`` (the same card, never a token)."""
+        obj.add_alias(name)
+        obj.name = name
+        obj.card = self._card(name, types, token=obj.token)
+        self.log.emit("identity", obj=obj.oid, card=obj.card, face_down=False)
 
     def _primary_type(self, name: str) -> Optional[str]:
         row = self.card_rows.get(name) or {}
@@ -539,7 +602,15 @@ class Reconstructor(ReconstructionBoard):
             return None
         seat = self.player_seat if match.group(2) == "your" else self.opponent_seat
         name, _types, power, toughness = parse_bracket(match.group(1))
-        target = self._ensure_battlefield(seat, name, search_other=False)
+        # Several same-named permanents hit at once (three Knight tokens) take one line each.
+        moment = (self.log.turn, self._row_stamp or self._row_elapsed)
+        if self._damage_moment[0] != moment:
+            self._damage_moment = (moment, set())
+        hit = self._damage_moment[1]
+        target = self._find(name, [seat], ["battlefield"], exclude=hit)
+        if target is None:
+            target = self._ensure_battlefield(seat, name, search_other=False)
+        hit.add(target.oid)
         self._update_pt(target, power, toughness)
         return self.log.emit(
             "damage",

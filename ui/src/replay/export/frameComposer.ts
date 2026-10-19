@@ -34,6 +34,8 @@ export interface FrameSeat {
   hand: number;
   library: number;
   active: boolean;
+  /** This action's life change ("−3"), shown beside the total; null when none. */
+  change?: { text: string; loss: boolean } | null;
 }
 
 export interface FrameHud {
@@ -63,6 +65,8 @@ export interface FrameStackItem {
   kind: string;
   top: boolean;
   mine: boolean;
+  /** Kept for the current action after leaving the stack: stamped and dimmed. */
+  exit?: 'resolved' | 'countered' | 'fizzled';
 }
 
 export type FrameArrowEnd = { x: number; y: number } | { stackId: string };
@@ -147,6 +151,12 @@ const COLORS = {
 } as const;
 
 const FONT = '"Inter", "Segoe UI", system-ui, -apple-system, sans-serif';
+
+const EXIT_STAMPS = {
+  resolved: { text: 'RESOLVED', color: '#2bb3a3' },
+  countered: { text: 'COUNTERED', color: '#e5484d' },
+  fizzled: { text: 'FIZZLED', color: '#f0c674' },
+} as const;
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
   const radius = Math.min(r, w / 2, h / 2);
@@ -243,6 +253,15 @@ function drawHud(ctx: CanvasRenderingContext2D, layout: FrameLayout, hud: FrameH
     ctx.fillStyle = COLORS.muted;
     ctx.fillText(counts, rx, cy);
     rx -= ctx.measureText(counts).width + 10 * scale;
+    if (seat.change) {
+      const changePx = px * 0.9;
+      ctx.font = `800 ${changePx}px ${FONT}`;
+      const w = ctx.measureText(seat.change.text).width + changePx * 1.2;
+      drawPill(ctx, rx - w / 2, cy, seat.change.text, changePx, 800, seat.change.loss ? '#c4221c' : '#24843e', 'rgba(255,255,255,0.25)', '#ffffff', 999);
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      rx -= w + 6 * scale;
+    }
     ctx.font = `800 ${px * 1.35}px ${FONT}`;
     ctx.fillStyle = COLORS.text;
     const life = String(seat.life);
@@ -263,6 +282,15 @@ function drawHud(ctx: CanvasRenderingContext2D, layout: FrameLayout, hud: FrameH
   });
 }
 
+/** A chosen basic land type's chip (labels.ts LandTypeTone): fill, border, text, as in replay.css. */
+const LAND_TYPE_PILLS: Record<string, [string, string, string]> = {
+  'land-plains': ['rgba(214,196,140,0.96)', 'rgba(255,246,214,0.8)', '#2a2414'],
+  'land-island': ['rgba(26,110,196,0.96)', 'rgba(168,214,255,0.75)', '#ffffff'],
+  'land-swamp': ['rgba(52,40,62,0.96)', 'rgba(196,176,214,0.65)', '#ffffff'],
+  'land-mountain': ['rgba(196,58,40,0.96)', 'rgba(255,180,160,0.75)', '#ffffff'],
+  'land-forest': ['rgba(36,120,58,0.96)', 'rgba(170,230,170,0.7)', '#ffffff'],
+};
+
 function drawLabels(ctx: CanvasRenderingContext2D, layout: FrameLayout, labels: readonly FrameLabel[]): void {
   const s = layout.scale;
   for (const label of labels) {
@@ -272,6 +300,25 @@ function drawLabels(ctx: CanvasRenderingContext2D, layout: FrameLayout, labels: 
       drawPill(ctx, cx, cy, label.text, 10.5 * s, 600, 'rgba(8,12,16,0.62)', 'rgba(255,255,255,0.1)', COLORS.pileText, 999);
     } else if (label.tone === 'counters') {
       drawPill(ctx, cx, cy, label.text, 10 * s, 600, 'rgba(8,12,16,0.84)', 'rgba(240,198,108,0.4)', COLORS.gold, 999);
+    } else if (label.tone === 'damage') {
+      drawPill(ctx, cx, cy, label.text, 17 * s, 800, 'rgba(176,24,20,0.96)', 'rgba(255,168,158,0.75)', '#ffffff', 999);
+    } else if (label.tone in LAND_TYPE_PILLS) {
+      const [fill, border, ink] = LAND_TYPE_PILLS[label.tone];
+      drawPill(ctx, cx, cy, label.text.toUpperCase(), 10 * s, 800, fill, border, ink, 999);
+    } else if (label.tone === 'castable') {
+      const plot = label.emphasis === true;
+      const text = label.text.toUpperCase();
+      drawPill(ctx, cx, cy, text, 9.5 * s, 600, 'rgba(8,12,16,0.86)', plot ? COLORS.goldBorder : 'rgba(159,208,255,0.55)', plot ? COLORS.gold : '#d8ecff', 999);
+    } else if (label.tone === 'life-loss' || label.tone === 'life-gain') {
+      const loss = label.tone === 'life-loss';
+      drawPill(ctx, cx, cy, label.text, 38 * s, 900, loss ? 'rgba(176,24,20,0.96)' : 'rgba(30,120,56,0.96)', loss ? 'rgba(255,168,158,0.75)' : 'rgba(160,240,170,0.75)', '#ffffff', 999);
+    } else if (label.tone === 'buff' || label.tone === 'debuff') {
+      const buff = label.tone === 'buff';
+      drawPill(ctx, cx, cy, label.text, 13.5 * s, 800, buff ? 'rgba(34,124,58,0.96)' : 'rgba(104,48,164,0.96)', buff ? 'rgba(160,240,170,0.7)' : 'rgba(214,176,255,0.7)', '#ffffff', 999);
+    } else if (label.tone === 'removed') {
+      drawPill(ctx, cx, cy, label.text.toUpperCase(), 10.5 * s, 700, 'rgba(18,20,24,0.92)', 'rgba(255,255,255,0.3)', '#f4f6f8', 999);
+    } else if (label.tone === 'effect') {
+      drawPill(ctx, cx, cy, label.text.toUpperCase(), 10 * s, 700, 'rgba(8,12,16,0.88)', 'rgba(242,153,74,0.65)', '#ffd9b3', 999);
     } else if (label.tone === 'loyalty') {
       drawPill(ctx, cx, cy, label.text, 14.5 * s, 700, COLORS.pill, COLORS.violetBorder, COLORS.violet, 7 * s);
     } else {
@@ -383,6 +430,18 @@ function drawStack(ctx: CanvasRenderingContext2D, layout: FrameLayout, items: re
       ctx.font = `500 ${10 * s}px ${FONT}`;
       ctx.fillStyle = COLORS.muted;
       ctx.fillText(ellipsize(ctx, `${item.who} · ${item.kind}`, maxW), tx, y + pad + 24 * s);
+    }
+    if (item.exit) {
+      // Kept for the current action: dimmed under an exit stamp, as in the stack preview.
+      roundRect(ctx, x, y, w, h, 10 * s);
+      ctx.fillStyle = 'rgba(8,12,16,0.28)';
+      ctx.fill();
+      const stamp = EXIT_STAMPS[item.exit];
+      ctx.save();
+      ctx.translate(x + w / 2, y + Math.min(h * 0.34, h / 2));
+      ctx.rotate((-8 * Math.PI) / 180);
+      drawPill(ctx, 0, 0, stamp.text, 12 * s, 800, 'rgba(8,12,16,0.78)', stamp.color, stamp.color, 6 * s);
+      ctx.restore();
     }
   });
   const hidden = items.length - rects.length;

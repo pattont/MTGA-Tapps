@@ -340,13 +340,14 @@ def test_overlay_status_in_settings_get(tmp_path, monkeypatch):
 def test_binary_candidates_follow_the_platform(monkeypatch, platform):
     monkeypatch.setattr(overlay_launcher.sys, "platform", platform)
     monkeypatch.delenv(overlay_launcher.BINARY_ENV, raising=False)
-    names = [str(c) for c in overlay_launcher.overlay_binary_candidates()]
+    # as_posix(): the host's separator is not what's under test here.
+    names = [c.as_posix() for c in overlay_launcher.overlay_binary_candidates()]
     if platform == "darwin":
         assert any(name.endswith("Tapps Overlay.app/Contents/MacOS/tapps-overlay") for name in names)
     else:
         assert any(name.endswith("tapps-overlay.exe") for name in names)
     monkeypatch.setenv(overlay_launcher.BINARY_ENV, "/tmp/custom-overlay")
-    assert str(overlay_launcher.overlay_binary_candidates()[0]) == "/tmp/custom-overlay"
+    assert overlay_launcher.overlay_binary_candidates()[0] == Path("/tmp/custom-overlay")
 
 
 def test_frozen_mac_build_looks_in_contents_helpers_first(monkeypatch, tmp_path):

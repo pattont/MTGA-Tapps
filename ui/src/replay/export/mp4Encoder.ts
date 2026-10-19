@@ -65,6 +65,90 @@ const STALL_MS = 20_000;
 /** One key frame every two seconds, so seeking in the result is quick. */
 const KEYFRAME_SECONDS = 2;
 
+/** Colour space assumed when the encoder reports none (canvas frames are sRGB, tagged BT.709 by every browser). */
+const BT709: VideoColorSpaceInit = { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false };
+/** How long the one-frame probe may take before that codec is skipped. */
+const PROBE_MS = 10_000;
+
+/**
+ * The metadata to hand the muxer with one encoded chunk. The MP4 header needs
+ * the stream setup (`decoderConfig`) the encoder reports with its first key
+ * frame; some browsers omit it, which mp4-muxer only notices when it finalizes.
+ * VP9 needs no codec-private data, so a missing config is filled in from what
+ * we asked for; H.264 cannot be, so it passes through unchanged.
+ */
+export function chunkMetadata(
+  container: 'avc' | 'vp9',
+  config: Pick<VideoEncoderConfig, 'codec' | 'width' | 'height'>,
+  meta: EncodedVideoChunkMetadata | undefined,
+  haveConfig: boolean,
+): EncodedVideoChunkMetadata | undefined {
+  if (container !== 'vp9') return meta;
+  const reported = meta?.decoderConfig;
+  if (reported) return reported.colorSpace ? meta : { ...meta, decoderConfig: { ...reported, colorSpace: BT709 } };
+  if (haveConfig) return meta;
+  return {
+    ...meta,
+    decoderConfig: { codec: config.codec, codedWidth: config.width, codedHeight: config.height, colorSpace: BT709 },
+  };
+}
+
+/** A frame-sized canvas with something drawn on it, for the probe. */
+function probeCanvas(width: number, height: number): CanvasImageSource {
+  const canvas: OffscreenCanvas | HTMLCanvasElement =
+    typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(width, height) : Object.assign(document.createElement('canvas'), { width, height });
+  const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+  if (ctx) {
+    ctx.fillStyle = '#123';
+    ctx.fillRect(0, 0, width, height);
+  }
+  return canvas;
+}
+
+/**
+ * Encodes one frame with `config` and reports whether the result can be muxed:
+ * a browser can call a codec supported and then produce nothing, or (H.264)
+ * no stream description, which only surfaces after the whole export.
+ */
+async function probeEncoder(container: 'avc' | 'vp9', config: VideoEncoderConfig): Promise<boolean> {
+  let chunks = 0;
+  let described = false;
+  let failed = false;
+  const encoder = new VideoEncoder({
+    output: (_chunk, meta) => {
+      chunks += 1;
+      if (meta?.decoderConfig?.description) described = true;
+    },
+    error: () => {
+      failed = true;
+    },
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    encoder.configure(config);
+    const frame = new VideoFrame(probeCanvas(config.width, config.height), { timestamp: 0 });
+    try {
+      encoder.encode(frame, { keyFrame: true });
+    } finally {
+      frame.close();
+    }
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('probe timed out')), PROBE_MS);
+    });
+    await Promise.race([encoder.flush(), timeout]);
+  } catch {
+    failed = true;
+  } finally {
+    clearTimeout(timer);
+    try {
+      encoder.close();
+    } catch {
+      // Already closed by an error.
+    }
+  }
+  return !failed && chunks > 0 && (container === 'vp9' || described);
+}
+
 async function pickConfig(opts: Mp4EncoderOptions): Promise<{ container: 'avc' | 'vp9'; config: VideoEncoderConfig }> {
   const bitrate = bitrateFor(opts.width, opts.height, opts.fps, opts.quality ?? 'balanced');
   for (const candidate of CANDIDATES) {
@@ -82,7 +166,9 @@ async function pickConfig(opts: Mp4EncoderOptions): Promise<{ container: 'avc' |
     };
     try {
       const support = await VideoEncoder.isConfigSupported(config);
-      if (support.supported) return { container: candidate.container, config: support.config ?? config };
+      if (!support.supported) continue;
+      const chosen = support.config ?? config;
+      if (await probeEncoder(candidate.container, chosen)) return { container: candidate.container, config: chosen };
     } catch {
       // Try the next codec.
     }
@@ -101,8 +187,19 @@ export async function createMp4Encoder(opts: Mp4EncoderOptions): Promise<Mp4Enco
     fastStart: 'in-memory',
   });
   let failure: Error | null = null;
+  let chunks = 0;
+  let haveConfig = false;
   const encoder = new VideoEncoder({
-    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    output: (chunk, meta) => {
+      const muxMeta = chunkMetadata(container, config, meta, haveConfig);
+      if (muxMeta?.decoderConfig) haveConfig = true;
+      chunks += 1;
+      try {
+        muxer.addVideoChunk(chunk, muxMeta);
+      } catch (error) {
+        failure ??= error instanceof Error ? error : new Error(String(error));
+      }
+    },
     error: (error) => {
       failure = error instanceof Error ? error : new Error(String(error));
     },
@@ -146,6 +243,10 @@ export async function createMp4Encoder(opts: Mp4EncoderOptions): Promise<Mp4Enco
       if (failure) throw failure;
       closed = true;
       encoder.close();
+      // Checked here because mp4-muxer would otherwise fail with a bare
+      // "decoderConfig is null" when it writes the header.
+      if (chunks === 0) throw new Error('The video encoder produced no video.');
+      if (!haveConfig) throw new Error("The browser's video encoder did not describe its stream, so the MP4 cannot be written.");
       muxer.finalize();
       return new Blob([target.buffer], { type: 'video/mp4' });
     },

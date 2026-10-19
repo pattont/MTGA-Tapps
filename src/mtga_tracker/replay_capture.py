@@ -100,6 +100,10 @@ _REASON_BY_CATEGORY = {
     "Countered": "counter",
 }
 
+# Moves that are a card's own action, or a state-based death the viewer
+# attributes from the damage that caused it: no ``by`` source is recorded.
+_UNSOURCED_MOVES = frozenset({"draw", "play_land", "cast", "resolve", "sba"})
+
 # Printed styles a zone-transfer line may carry for each move reason. The move
 # fact attaches to the first matching printed row its handler wrote; turn
 # headers or flushed cast lines written inside the same handler never match.
@@ -707,6 +711,14 @@ class ReplayCaptureMixin:
             host = self._replay_exile_host(annotation, instance_id, game_objects_by_id, zones_by_id)
             if host is not None:
                 payload["with"] = host
+        if zone_to == "battlefield":
+            chosen = self._chosen_land_type(card_obj)
+            if chosen:
+                payload["chosen"] = chosen
+        if reason not in _UNSOURCED_MOVES:
+            by = self._replay_move_source(annotation, instance_id, game_objects_by_id)
+            if by is not None:
+                payload["by"] = by
         return ReplayFact(
             "move",
             object_id=root,
@@ -717,6 +729,37 @@ class ReplayCaptureMixin:
             zone_to=zone_to,
             payload=payload,
         )
+
+    def _replay_move_source(
+        self,
+        annotation: Dict[str, Any],
+        instance_id: int,
+        game_objects_by_id: Dict[int, Dict[str, Any]],
+    ) -> Optional[int]:
+        """Root id of the object whose effect moved the card, if Arena named one.
+
+        Arena's ``affectorId`` is the resolving spell, or an ability object
+        whose ``parentId`` is its source permanent. The viewer draws the
+        removal (destroy, exile, bounce, an edict, a forced discard) from that
+        source instead of inferring it from the item that resolved last. A card
+        moving itself (a cost it paid) gives None.
+        """
+        try:
+            affector = int(annotation.get("affectorId"))
+        except (TypeError, ValueError):
+            return None
+        snapshots = getattr(self.game_state, "object_snapshots", {}) or {}
+        obj = game_objects_by_id.get(affector) or snapshots.get(affector) or {}
+        source_id = affector
+        if obj.get("type") == "GameObjectType_Ability" or obj.get("parentId") is not None:
+            try:
+                source_id = int(obj.get("parentId"))
+            except (TypeError, ValueError):
+                return None
+        root = self._replay_root(source_id)
+        if root is None or root == self._replay_root(instance_id):
+            return None
+        return root
 
     def _replay_exile_host(
         self,

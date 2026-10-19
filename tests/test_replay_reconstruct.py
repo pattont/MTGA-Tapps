@@ -231,6 +231,13 @@ def test_land_play_moves_the_opening_hand_object():
     assert (play["from"], play["to"], play["obj"]) == ("hand", "battlefield", opening_forest["obj"])
 
 
+def test_land_play_reads_the_chosen_land_type():
+    stream = _stream([T1, ("land", "[0:05] You: played [Multiversal Passage (Land)] as an Island")])
+    play = _logged(stream, "played [Multiversal Passage")
+    assert play["reason"] == "play_land" and play["to"] == "battlefield"
+    assert play["chosen"] == "Island" and play["card"] == "n:Multiversal Passage"
+
+
 def test_cast_without_printed_resolution_resolves_right_after_its_line():
     stream = _stream([T1, ("cast", "[0:05] You: cast [Grizzly Bears (Creature 2/2)]")])
     push = _logged(stream, "cast [Grizzly Bears")
@@ -690,3 +697,202 @@ def test_events_carry_their_row_id_and_silent_rows_are_ignored():
     assert stream["events"][0]["row_id"] is None  # game_start is synthesized
     assert _logged(stream, "played [Forest")["row_id"] == 2
     assert stream["events"][-1]["kind"] == "game_end" and stream["events"][-1]["row_id"] is None
+
+
+# --- Arena card facts: flashback, transform, plot -------------------------
+
+ESPER_FACTS = {
+    "esper origins": {"keywords": ["flashback"], "back_face": False, "front": None},
+    "summon: esper maduin": {"keywords": [], "back_face": True, "front": "Esper Origins"},
+    "slickshot show-off": {"keywords": ["plot"], "back_face": False, "front": None},
+}
+
+
+def _with_facts(events, facts=ESPER_FACTS, **kwargs):
+    rows = _rows(events, **kwargs)
+    rows["card_facts"] = facts
+    stream = reconstruct(rows)
+    assert validate_stream(stream) == []
+    return stream
+
+
+ESPER_GAME = [
+    T1,
+    ("turn", "Turn 2 - OPPONENT'S TURN"),
+    ("draw", "[0:05] Opponent: drew a card"),
+    ("cast", "[0:06] Opponent: cast [Esper Origins (Sorcery)]"),
+    ("life_gain", "[0:08] Opponent: gained 2 life (now 22)", None, (20, 22)),
+    ("turn", "Turn 3 - YOUR TURN"),
+    ("turn", "Turn 4 - OPPONENT'S TURN"),
+    ("draw", "[0:20] Opponent: drew a card"),
+    ("cast", "[0:21] Opponent: cast [Esper Origins (Sorcery)]"),
+    ("life_gain", "[0:24] Opponent: gained 2 life (now 24)", None, (20, 24)),
+    ("zone", "[0:24] Opponent: [Esper Origins] was exiled"),
+    ("zone", "[0:24] Opponent: put [Summon: Esper Maduin] onto battlefield"),
+    ("turn", "Turn 5 - YOUR TURN"),
+    ("turn", "Turn 6 - OPPONENT'S TURN"),
+    ("attack", "[0:40] Opponent attacking [you] with [Summon: Esper Maduin (4/4)]"),
+]
+
+
+def _moves(stream, obj):
+    return [e for e in stream["events"] if e["kind"] == "move" and e["obj"] == obj]
+
+
+def test_flashback_casts_from_the_graveyard_and_the_back_face_is_the_same_card():
+    stream = _with_facts(ESPER_GAME)
+    casts = [e for e in stream["events"] if e["kind"] == "move" and e["reason"] == "cast"]
+    first, second = casts[-2:]
+    assert first["from"] == "hand"
+    assert second["obj"] == first["obj"]
+    assert second["from"] == "graveyard"
+    esper = first["obj"]
+    put = _logged(stream, "put [Summon: Esper Maduin] onto battlefield")
+    assert (put["obj"], put["from"], put["to"], put["inferred"]) == (
+        esper,
+        "exile",
+        "battlefield",
+        False,
+    )
+    identity = next(e for e in stream["events"] if e["kind"] == "identity" and e["obj"] == esper)
+    card = stream["cards"][identity["card"]]
+    assert card["name"] == "Summon: Esper Maduin"
+    assert card["is_token"] is False
+    assert _logged(stream, "attacking [you]")["objs"] == [esper]
+    assert not any(c["is_token"] for c in stream["cards"].values())
+
+
+def test_without_card_facts_the_old_inference_still_runs():
+    rows = _rows(ESPER_GAME)
+    stream = reconstruct(rows)
+    assert validate_stream(stream) == []
+    put = _logged(stream, "put [Summon: Esper Maduin] onto battlefield")
+    assert put["inferred"] is True
+
+
+def test_plotted_card_leaves_the_hand_and_is_cast_from_exile():
+    stream = _with_facts(
+        [
+            T1,
+            ("turn", "Turn 2 - OPPONENT'S TURN"),
+            ("draw", "[0:05] Opponent: drew a card"),
+            ("zone", "[0:06] Opponent: [Slickshot Show-Off] was exiled"),
+            ("turn", "Turn 3 - YOUR TURN"),
+            ("turn", "Turn 4 - OPPONENT'S TURN"),
+            ("cast", "[0:21] Opponent: cast [Slickshot Show-Off (Creature 1/2)]"),
+        ]
+    )
+    plotted = _logged(stream, "[Slickshot Show-Off] was exiled")
+    assert (plotted["from"], plotted["to"], plotted["inferred"]) == ("hand", "exile", False)
+    cast = _logged(stream, "cast [Slickshot Show-Off")
+    move = next(e for e in _moves(stream, plotted["obj"]) if e["reason"] == "cast")
+    assert move["from"] == "exile"
+    assert cast is not None
+
+
+KNIGHTS_FACTS = {
+    "summon: knights of round": {
+        "keywords": [],
+        "back_face": False,
+        "front": None,
+        "type_line": "Enchantment Creature",
+        "power": "3",
+        "toughness": "3",
+    },
+    "yuna, hope of spira": {
+        "keywords": [],
+        "back_face": False,
+        "front": None,
+        "type_line": "Creature",
+        "power": "3",
+        "toughness": "5",
+    },
+}
+
+YUNA_TRIGGER = (
+    "ability",
+    "[0:10] Opponent: [Yuna, Hope of Spira] - At the beginning of your end step, return up to"
+    " one target enchantment card from your graveyard to the battlefield with a finality"
+    " counter on it. -> [Summon: Knights of Round (3/3)]",
+)
+KNIGHT_TOKENS = (
+    "ability",
+    "[0:10] Opponent: [Summon: Knights of Round] - Create three 2/2 white Knight creature tokens.",
+)
+
+
+def _knights_game(return_line):
+    return _with_facts(
+        [
+            T1,
+            ("turn", "Turn 2 - OPPONENT'S TURN"),
+            ("cast", "[0:05] Opponent: cast [Yuna, Hope of Spira (Creature 3/5)]"),
+            KNIGHT_TOKENS,
+            YUNA_TRIGGER,
+            ("zone", return_line),
+            ("turn", "Turn 3 - YOUR TURN"),
+            ("damage", "[0:20] [Summon: Knights of Round] (opponent's) took 6 damage"),
+            ("damage", "[0:20] [Knight] (opponent's) took 6 damage"),
+            ("damage", "[0:20] [Knight] (opponent's) took 6 damage"),
+            ("damage", "[0:20] [Knight] (opponent's) took 6 damage"),
+            ("zone", "[0:21] Opponent: [Knight] was put into graveyard (lethal damage)"),
+        ],
+        facts=KNIGHTS_FACTS,
+    )
+
+
+@pytest.mark.parametrize(
+    "return_line",
+    [
+        # Older tracker text printed the recursion as a return to hand.
+        "[0:10] Opponent: returned [Summon: Knights of Round] to hand",
+        "[0:10] Opponent: [Yuna, Hope of Spira] returned [Summon: Knights of Round] to battlefield",
+    ],
+)
+def test_returned_enchantment_creature_is_a_real_card_on_the_battlefield(return_line):
+    stream = _knights_game(return_line)
+    back = _logged(stream, "[Summon: Knights of Round] to")
+    assert (back["kind"], back["to"], back["inferred"]) == ("move", "battlefield", False)
+    card = stream["cards"][back["card"]]
+    assert card["is_token"] is False
+    assert (card["type_line"], card["primary_type"], card["power"]) == (
+        "Enchantment Creature",
+        "Creature",
+        "3",
+    )
+    damaged = _logged(stream, "[Summon: Knights of Round] (opponent's) took 6 damage")
+    assert damaged["target_obj"] == back["obj"]
+
+
+def test_create_tokens_ability_makes_each_token_and_damage_spreads_over_them():
+    stream = _knights_game("[0:10] Opponent: returned [Summon: Knights of Round] to hand")
+    created = [
+        e
+        for e in stream["events"]
+        if e["kind"] == "move"
+        and e["reason"] == "token_create"
+        and stream["cards"][e["card"]]["name"] == "Knight"
+    ]
+    assert len(created) == 3
+    knight = stream["cards"][created[0]["card"]]
+    assert (knight["is_token"], knight["power"], knight["toughness"]) == (True, "2", "2")
+    hits = [
+        e["target_obj"]
+        for e in stream["events"]
+        if e["kind"] == "damage" and e["log"] and "[Knight]" in e["log"]["text"]
+    ]
+    assert sorted(hits) == sorted(e["obj"] for e in created)
+    died = _logged(stream, "[Knight] was put into graveyard")
+    assert died["obj"] in hits
+
+
+def test_conditional_and_counted_token_sentences_are_not_created():
+    from mtga_tracker.replay_reconstruct_grammar import created_tokens
+
+    text = (
+        "Create a Treasure token. Then if you control four or more Treasures, sacrifice this"
+        " Saga. If you do, create a 6/6 red Dragon creature token with flying."
+    )
+    assert created_tokens(text) == [("Treasure", 1, None, None, [])]
+    assert created_tokens("Create a 1/1 white Soldier creature token for each creature.") == []
+    assert created_tokens("Create a token that's a copy of target creature.") == []

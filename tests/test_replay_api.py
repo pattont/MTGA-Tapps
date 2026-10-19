@@ -29,6 +29,7 @@ SILENT_TEXT = "untap 2"
 def _no_arena_lookups(monkeypatch):
     """Image URLs resolve from local data only; keep tests off the real Arena DB."""
     monkeypatch.setattr(replay_builder, "image_resolver_override", lambda arena_id: None)
+    monkeypatch.setattr(replay_builder, "card_facts_override", lambda: {})
     clear_response_cache()
     yield
     clear_response_cache()

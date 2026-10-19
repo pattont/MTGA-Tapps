@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import sqlite3
 import sys
 import threading
@@ -161,6 +162,15 @@ def _resolve_names():
         return None
 
 
+def _interchangeable_names():
+    from .card_database import CardDatabase
+
+    try:
+        return CardDatabase().interchangeable_name_index()
+    except Exception:
+        return {}
+
+
 def execute(db_path, action, selections, request_id, progress, cancelled=lambda: False):
     """Every job uses a fresh native/account connection and this selected DB.
 
@@ -180,7 +190,7 @@ def execute(db_path, action, selections, request_id, progress, cancelled=lambda:
         )
     conn = dm.library_connection(db_path)
     try:
-        if action == "add":
+        if action in ("add", "store") and selections:
             from .deck_collections import validate_destination
 
             validate_destination(conn, selections[0].get("collection_id"))
@@ -212,6 +222,7 @@ def execute(db_path, action, selections, request_id, progress, cancelled=lambda:
                         {"detail": detail, "completed": step, "total": 3}
                     ),
                     _card_types(),
+                    _interchangeable_names(),
                 )
             elif action == "backup":
                 if report.get("deck_screen_open") is not True:
@@ -348,6 +359,12 @@ def execute(db_path, action, selections, request_id, progress, cancelled=lambda:
         print(f"Deck Manager {action} timings (cumulative): " + ", ".join(timings), file=sys.stderr)
 
 
+def _adapter_reason(text):
+    """Frida reports "Error: <reason>" plus a script stack; keep only the reason."""
+    reason = re.split(r"\n|\s+at\s+\S+\s+\(", text, maxsplit=1)[0].strip()
+    return reason[len("Error:") :].strip() if reason.startswith("Error:") else reason
+
+
 def _failure_message(exc, action):
     """The user-facing reason a job failed.
 
@@ -357,8 +374,8 @@ def _failure_message(exc, action):
     """
     if isinstance(exc, (dm.DeckManagerError, ValueError, KeyError)):
         return str(exc).strip("'\"")
-    if type(exc).__name__ == "RPCException" and str(exc):
-        return str(exc)
+    if type(exc).__name__ == "RPCException" and _adapter_reason(str(exc)):
+        return _adapter_reason(str(exc))
     if action in ("store", "restore", "add"):
         return (
             "Arena could not complete this operation. "
@@ -416,10 +433,16 @@ def start(db_path, payload):
                 ),
             }
         )
+    destination = {}
+    if action == "store" and "collection_id" in payload:
+        # One destination for the whole move; None means Unsorted.
+        if payload["collection_id"] is not None and not isinstance(payload["collection_id"], str):
+            raise dm.DeckManagerError("Choose an existing collection or Unsorted.")
+        destination = {"collection_id": payload["collection_id"] or None}
     for item in selections:
         if not isinstance(item, dict):
             raise dm.DeckManagerError("Invalid selected deck.")
-        row = {"id": str(uuid.UUID(item.get("id", "")))}
+        row = {"id": str(uuid.UUID(item.get("id", ""))), **destination}
         if item.get("revision"):
             row["revision"] = str(uuid.UUID(item["revision"]))
         clean.append(row)

@@ -4,7 +4,7 @@
  * appearing card should fly in from.
  */
 import type { BoardState } from '../reducer';
-import { STACK_SCALE, STACK_ANCHOR_Y, handY } from '../layout';
+import { STACK_SCALE, STACK_ANCHOR_Y, handY, seatHandScale } from '../layout';
 import type { CardPlacement, Layout, PilePlacement, PileZone } from '../layout';
 
 export interface Pose {
@@ -145,8 +145,10 @@ export function spawnPose(
         const pose = pilePoint(piles, owner, event.from);
         return pose ? { ...pose, rotY: target.rotY } : drop;
       }
-      case 'hand':
-        return { x: 0, y: -playerSide * handY(table.handScale), z: 0.4, rotZ: target.rotZ, rotY: target.rotY, scale: table.handScale };
+      case 'hand': {
+        const scale = seatHandScale(table, playerSide > 0);
+        return { x: 0, y: -playerSide * handY(scale, playerSide > 0), z: 0.4, rotZ: target.rotZ, rotY: target.rotY, scale };
+      }
       case 'stack':
         return { x: table.stackX, y: STACK_ANCHOR_Y, z: 0.9, rotZ: target.rotZ, rotY: target.rotY, scale: STACK_SCALE };
       default:

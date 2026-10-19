@@ -5,7 +5,12 @@ from __future__ import annotations
 import sqlite3
 from typing import Any, Dict, List, Optional, Set
 
+from .annotations import _first_int
 from .replay_capture import ReplayFact, replay_safe, stat_value
+
+#: ``ChoiceResult`` domain for "choose a basic land type" (seen live on Multiversal Passage).
+CHOICE_DOMAIN_LAND_TYPE = 9
+BASIC_LAND_TYPES = ("Plains", "Island", "Swamp", "Mountain", "Forest")
 
 
 class TrackerStateLookupMixin:
@@ -611,6 +616,38 @@ class TrackerStateLookupMixin:
         if annotation is not None:
             return self._annotation_actor_seat(annotation, game_objects_by_id or {})
         return None
+
+    def _note_choice_result(
+        self, affector_id: Optional[int], details: List[Dict[str, Any]]
+    ) -> None:
+        """Remember an object that chose a basic land type (Multiversal Passage).
+
+        Arena logs ``ChoiceResult`` from the choosing object with
+        ``Choice_Domain`` 9 for basic land types, before the land enters; the
+        entering object then carries the chosen type in its ``subtypes``.
+        """
+        if not isinstance(affector_id, int):
+            return
+        for detail in details or []:
+            if (
+                detail.get("key") == "Choice_Domain"
+                and _first_int(detail) == CHOICE_DOMAIN_LAND_TYPE
+            ):
+                self.game_state.land_type_choosers.add(affector_id)
+                return
+
+    def _chosen_land_type(self, card_obj: Optional[Dict[str, Any]]) -> Optional[str]:
+        """The basic land type an object chose as it entered ("Mountain"), or None."""
+        if not isinstance(card_obj, dict):
+            return None
+        if card_obj.get("instanceId") not in self.game_state.land_type_choosers:
+            return None
+        chosen = [
+            name
+            for name in (str(t).replace("SubType_", "") for t in card_obj.get("subtypes") or [])
+            if name in BASIC_LAND_TYPES
+        ]
+        return " ".join(chosen) or None
 
     def _format_card_type(self, card_types: List[str]) -> str:
         """Format card types for display."""

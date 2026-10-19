@@ -100,8 +100,13 @@ using Arena's original `Player.log` or the tracker's archived payloads.
 
 Scry annotations list card IDs in `affectedIds`; they do not put the seat
 there. Resolve the ability controller from current/retained snapshots.
-Counts are available for both seats; record player card names only when
-visible. See [Scry tracking](SCRY_TRACKING.md) for details and persistence.
+Counts are available for both seats: scries, cards looked at, and cards placed
+on top or bottom. `game_library_events` retains each event's source, seat and
+destinations; player card names are recorded only when visible, and opponent
+hidden cards stay unnamed. Migration 29 backfills counts from historical
+events without inventing missing top/bottom choices. Surveil columns remain
+NULL until a handler exists. The overlay's draw odds use library composition,
+not the order of cards placed by a scry.
 
 Arena's local `Raw_CardDatabase_*.mtga` resolves card names/types, colors,
 rules text and mana costs. `grpId` is not automatically interchangeable with

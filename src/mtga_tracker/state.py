@@ -202,6 +202,10 @@ class GameState:
         #: which the seat must drop a land for the destruction to count as
         #: "replaced" (victim's next turn ≈ destruction turn + 2).
         self.pending_land_replacements: Dict[int, List[int]] = {1: [], 2: []}
+        #: Instance ids that chose a basic land type as they entered (Multiversal
+        #: Passage): Arena's ChoiceResult in the basic-land-type domain, logged
+        #: just before the land play. The chosen type is the object's subtype.
+        self.land_type_choosers: Set[int] = set()
         #: Battlefield instance ids already counted as lost to removal /
         #: bounced to hand (dedupe across repeated annotations for one leave).
         self.counted_removal_losses: Set[int] = set()

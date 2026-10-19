@@ -13,10 +13,56 @@ from . import native_deck_archive as na
 TERMINAL = ("complete", "cancelled")
 
 
+def _card_key(card, aliases=None):
+    """(section, name) for comparing an import with Arena's result. Names in export
+    text may omit the back face, and Arena accepts either of a card's interchangeable
+    names (a Universes Beyond card and its Omenpath name), returning the printing the
+    player has; `aliases` maps both names to one key."""
+    name = card["name"].split(" // ")[0].strip().casefold()
+    return (card["section"], (aliases or {}).get(name, name))
+
+
+def _quantities(cards, aliases=None):
+    # Quantities/piles must still agree exactly; never silently import
+    # inventory-clamped lists.
+    result = Counter()
+    for card in cards:
+        result[_card_key(card, aliases)] += card["quantity"]
+    return result
+
+
+def _import_differences(expected_cards, actual_cards, wanted, returned, aliases=None, limit=5):
+    """Name the cards whose quantities differ, e.g. "Deck: 4 Forest in the list, 2 from Arena"."""
+    names = {}
+    for card in list(actual_cards) + list(expected_cards):
+        names[_card_key(card, aliases)] = card["name"]
+    keys = sorted(set(wanted) | set(returned), key=lambda key: (key[0], key[1]))
+    changed = [key for key in keys if wanted.get(key, 0) != returned.get(key, 0)]
+    parts = [
+        f"{section}: {wanted.get(key, 0)} {names[key]} in the list, "
+        f"{returned.get(key, 0)} from Arena"
+        for key in changed[:limit]
+        for section in [key[0]]
+    ]
+    more = f"; and {len(changed) - limit} more" if len(changed) > limit else ""
+    return "Differences: " + "; ".join(parts) + more + "."
+
+
 def add_import(
-    conn, bridge, selection, request_id, report, resolve_name, progress=None, card_type=None
+    conn,
+    bridge,
+    selection,
+    request_id,
+    report,
+    resolve_name,
+    progress=None,
+    card_type=None,
+    aliases=None,
 ):
-    """Prepare text with Arena's parser, reject dropped cards, then use journaled restore."""
+    """Prepare text with Arena's parser, reject dropped cards, then use journaled restore.
+
+    `aliases` maps casefolded interchangeable card names to one shared key
+    (`CardDatabase.interchangeable_name_index`)."""
     source_id = str(uuid.uuid5(uuid.UUID(request_id), "text-import-source"))
     bindings = conn.execute(
         "SELECT deck_id FROM managed_deck_bindings WHERE account_key=? AND arena_deck_id=?",
@@ -52,19 +98,14 @@ def add_import(
         raise dm.DeckManagerError("Arena returned a different prepared deck. No deck was created.")
 
     def quantities(cards):
-        # Names in export text may omit the back face. Quantities/piles must
-        # still agree exactly; never silently import inventory-clamped lists.
-        result = Counter()
-        for card in cards:
-            result[(card["section"], card["name"].split(" // ")[0].strip().casefold())] += card[
-                "quantity"
-            ]
-        return result
+        return _quantities(cards, aliases)
 
-    if quantities(expected["cards"]) != quantities(actual["cards"]):
+    wanted, returned = quantities(expected["cards"]), quantities(actual["cards"])
+    if wanted != returned:
         raise dm.DeckManagerError(
             "Arena’s importer changed the card list, possibly because cards are missing. "
-            "No deck was created. Use Arena’s text import to review missing cards."
+            "No deck was created. Use Arena’s text import to review missing cards. "
+            + _import_differences(expected["cards"], actual["cards"], wanted, returned, aliases)
         )
     saved_id = selection.get("saved_deck_id")
     if saved_id:
@@ -136,7 +177,15 @@ def check_remaining(before, after, removed=None):
 
 
 def persist_archive(
-    conn, archive, account, resolve_name=None, *, metadata=None, deck_id=None, collection_id=None
+    conn,
+    archive,
+    account,
+    resolve_name=None,
+    *,
+    metadata=None,
+    deck_id=None,
+    collection_id=None,
+    assign_collection=False,
 ):
     deck = na.document(archive, resolve_name)
     deck["metadata"]["native_account_key"] = account
@@ -147,6 +196,7 @@ def persist_archive(
         deck,
         deck_id=deck_id,
         collection_id=collection_id,
+        assign_collection=assign_collection,
         account_key=account,
         arena_deck_id=archive["source_snapshot"]["arena_id"],
         observed_at=dm.now(),
@@ -262,7 +312,9 @@ def transfer(conn, bridge, action, selection, request_id, report, resolve_name=N
         )
     baseline = roster_ids(report)
     if report.get("deck_screen_open") is not True:
-        raise dm.DeckManagerError("Open Arena’s Decks screen outside a match to transfer decks.")
+        raise dm.DeckManagerError(
+            "Arena isn’t on its Decks screen. Go to Decks in Arena, outside a match, then try again."
+        )
     if action == "store":
         arena_id = str(uuid.UUID(selection["id"]))
         if arena_id not in baseline:
@@ -271,7 +323,15 @@ def transfer(conn, bridge, action, selection, request_id, report, resolve_name=N
         if len(archives) != 1 or archives[0]["source_snapshot"]["arena_id"] != arena_id:
             raise dm.DeckManagerError("Arena returned a different backup identity.")
         archive = na.validate_archive(archives[0])
-        saved = persist_archive(conn, archive, account, resolve_name)
+        # A chosen destination also moves a deck that was backed up earlier.
+        saved = persist_archive(
+            conn,
+            archive,
+            account,
+            resolve_name,
+            collection_id=selection.get("collection_id"),
+            assign_collection="collection_id" in selection,
+        )
         # Fetch again after disk commit: an external edit must prevent deletion.
         if not na.equivalent(bridge.fetch(arena_id), archive["source_snapshot"]):
             raise dm.DeckManagerError(

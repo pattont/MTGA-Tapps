@@ -1,6 +1,9 @@
 'use strict';
 
 // Native deck adapter. Checked IL2CPP helpers carried forward from the live POC.
+// macOS Arena is an IL2CPP build; Windows Arena embeds Mono. Both run the same
+// managed code with the same 64-bit object layouts (object header, arrays,
+// strings, structs), so only the runtime API below differs between them.
 const targets = new Set([
   'DecksManager', 'WrapperController', 'DeckManagerController', 'DeckViewSelector',
   'DeckFolderView', 'Client_Deck', 'Client_DeckSummary', 'WrapperDeckUtilities',
@@ -10,57 +13,188 @@ const targets = new Set([
   'Client_DeckCard', 'Client_CardSkin', 'EDeckPile',
   'TMP_Text', 'Application', 'GameObject',
   'Guid',
-  'JsonConvert', 'DeckInfo', 'Languages', 'MTGALocalizedString',
+  'JsonConvert', 'DeckInfo', 'Languages', 'MTGALocalizedString', 'ScrollRect',
 ]);
 const game = Process.findModuleByName('GameAssembly.dylib')
   ?? Process.findModuleByName('GameAssembly.dll');
-if (!game) throw new Error('An IL2CPP GameAssembly module is required.');
-function api(name, returns, args) {
-  return new NativeFunction(game.getExportByName(`il2cpp_${name}`), returns, args);
+const mono = game ? null : Process.findModuleByName('mono-2.0-bdwgc.dll');
+if (!game && !mono) throw new Error('Arena’s scripting runtime (IL2CPP or Mono) was not found.');
+const RUNTIME = game ? 'IL2CPP' : 'Mono';
+const {
+  isAttached, domainGet, threadAttach, threadDetach, images, imageCount, imageClass,
+  className, classFromName, classNamespace, classMethods, classFields, fieldName, fieldType,
+  fieldOffset, methodName, methodCount, methodParam, methodCode, typeName, free, objectClass,
+  classParent, staticValue, fieldFlags, arrayLength, arrayElementSize, elementClass, stringLength,
+  stringChars, runtimeInvoke, objectUnbox, classType, classValueSize, classIsValueType, typeObject,
+  stringNew, fieldSet, fieldSetObject, handleNew, handleTarget, handleFree, nullableGuidArgument,
+} = game ? il2cppRuntime() : monoRuntime();
+
+function il2cppRuntime() {
+  const api = (name, returns, args) =>
+    new NativeFunction(game.getExportByName(`il2cpp_${name}`), returns, args);
+  const domainGet = api('domain_get', 'pointer', []);
+  const threadCurrent = api('thread_current', 'pointer', []);
+  const assembliesGet = api('domain_get_assemblies', 'pointer', ['pointer', 'pointer']);
+  const assemblyImage = api('assembly_get_image', 'pointer', ['pointer']);
+  return {
+    isAttached: () => !threadCurrent().isNull(),
+    domainGet,
+    threadAttach: api('thread_attach', 'pointer', ['pointer']),
+    threadDetach: api('thread_detach', 'void', ['pointer']),
+    images() {
+      const count = Memory.alloc(Process.pointerSize);
+      const assemblies = assembliesGet(domainGet(), count);
+      const length = Process.pointerSize === 8 ? number(count.readU64()) : count.readU32();
+      if (length > 1000) throw new Error('Unexpected assembly count.');
+      return Array.from({length}, (_, i) => assemblyImage(assemblies.add(i * Process.pointerSize).readPointer()));
+    },
+    imageCount: api('image_get_class_count', 'size_t', ['pointer']),
+    imageClass: api('image_get_class', 'pointer', ['pointer', 'size_t']),
+    className: api('class_get_name', 'pointer', ['pointer']),
+    classFromName: api('class_from_name', 'pointer', ['pointer', 'pointer', 'pointer']),
+    classNamespace: api('class_get_namespace', 'pointer', ['pointer']),
+    classMethods: api('class_get_methods', 'pointer', ['pointer', 'pointer']),
+    classFields: api('class_get_fields', 'pointer', ['pointer', 'pointer']),
+    fieldName: api('field_get_name', 'pointer', ['pointer']),
+    fieldType: api('field_get_type', 'pointer', ['pointer']),
+    fieldOffset: api('field_get_offset', 'size_t', ['pointer']),
+    methodName: api('method_get_name', 'pointer', ['pointer']),
+    methodCount: api('method_get_param_count', 'uint', ['pointer']),
+    methodParam: api('method_get_param', 'pointer', ['pointer', 'uint']),
+    // MethodInfo starts with its compiled code pointer.
+    methodCode: method => method.readPointer(),
+    typeName: api('type_get_name', 'pointer', ['pointer']),
+    free: api('free', 'void', ['pointer']),
+    objectClass: api('object_get_class', 'pointer', ['pointer']),
+    classParent: api('class_get_parent', 'pointer', ['pointer']),
+    staticValue: api('field_static_get_value', 'void', ['pointer', 'pointer']),
+    fieldFlags: api('field_get_flags', 'int', ['pointer']),
+    arrayLength: api('array_length', 'uint', ['pointer']),
+    arrayElementSize: api('array_element_size', 'int', ['pointer']),
+    elementClass: api('class_get_element_class', 'pointer', ['pointer']),
+    stringLength: api('string_length', 'int', ['pointer']),
+    stringChars: api('string_chars', 'pointer', ['pointer']),
+    runtimeInvoke: api('runtime_invoke', 'pointer', ['pointer', 'pointer', 'pointer', 'pointer']),
+    objectUnbox: api('object_unbox', 'pointer', ['pointer']),
+    classType: api('class_get_type', 'pointer', ['pointer']),
+    classValueSize: api('class_value_size', 'int', ['pointer', 'pointer']),
+    classIsValueType: api('class_is_valuetype', 'bool', ['pointer']),
+    typeObject: api('type_get_object', 'pointer', ['pointer']),
+    stringNew: api('string_new', 'pointer', ['pointer']),
+    fieldSet: api('field_set_value', 'void', ['pointer', 'pointer', 'pointer']),
+    fieldSetObject: api('field_set_value_object', 'void', ['pointer', 'pointer', 'pointer']),
+    // Unity 6 uses Il2CppGCHandle = void*, not the older uint32_t ABI.
+    handleNew: api('gchandle_new', 'pointer', ['pointer', 'bool']),
+    handleTarget: api('gchandle_get_target', 'pointer', ['pointer']),
+    handleFree: api('gchandle_free', 'void', ['pointer']),
+    // A Nullable<Guid> argument is the struct itself: HasValue byte, then the
+    // Guid at +4 (Arena's 20-byte layout).
+    nullableGuidArgument(boxedGuid) {
+      const value = Memory.alloc(32);
+      if (boxedGuid) { value.writeU8(1); Memory.copy(value.add(4), objectUnbox(boxedGuid), 16); }
+      return value;
+    },
+  };
 }
-const domainGet = api('domain_get', 'pointer', []);
-const threadAttach = api('thread_attach', 'pointer', ['pointer']);
-const threadDetach = api('thread_detach', 'void', ['pointer']);
-const threadCurrent = api('thread_current', 'pointer', []);
-const assembliesGet = api('domain_get_assemblies', 'pointer', ['pointer', 'pointer']);
-const assemblyImage = api('assembly_get_image', 'pointer', ['pointer']);
-const imageCount = api('image_get_class_count', 'size_t', ['pointer']);
-const imageClass = api('image_get_class', 'pointer', ['pointer', 'size_t']);
-const className = api('class_get_name', 'pointer', ['pointer']);
-const classFromName = api('class_from_name', 'pointer', ['pointer', 'pointer', 'pointer']);
-const classNamespace = api('class_get_namespace', 'pointer', ['pointer']);
-const classMethods = api('class_get_methods', 'pointer', ['pointer', 'pointer']);
-const classFields = api('class_get_fields', 'pointer', ['pointer', 'pointer']);
-const fieldName = api('field_get_name', 'pointer', ['pointer']);
-const fieldType = api('field_get_type', 'pointer', ['pointer']);
-const fieldOffset = api('field_get_offset', 'size_t', ['pointer']);
-const methodName = api('method_get_name', 'pointer', ['pointer']);
-const methodCount = api('method_get_param_count', 'uint', ['pointer']);
-const methodParam = api('method_get_param', 'pointer', ['pointer', 'uint']);
-const typeName = api('type_get_name', 'pointer', ['pointer']);
-const free = api('free', 'void', ['pointer']);
-const objectClass = api('object_get_class', 'pointer', ['pointer']);
-const classParent = api('class_get_parent', 'pointer', ['pointer']);
-const staticValue = api('field_static_get_value', 'void', ['pointer', 'pointer']);
-const fieldFlags = api('field_get_flags', 'int', ['pointer']);
-const arrayLength = api('array_length', 'uint', ['pointer']);
-const arrayElementSize = api('array_element_size', 'int', ['pointer']);
-const elementClass = api('class_get_element_class', 'pointer', ['pointer']);
-const stringLength = api('string_length', 'int', ['pointer']);
-const stringChars = api('string_chars', 'pointer', ['pointer']);
-const runtimeInvoke = api('runtime_invoke', 'pointer', ['pointer', 'pointer', 'pointer', 'pointer']);
-const objectUnbox = api('object_unbox', 'pointer', ['pointer']);
-const classType = api('class_get_type', 'pointer', ['pointer']);
-const classValueSize = api('class_value_size', 'int', ['pointer', 'pointer']);
-const classIsValueType = api('class_is_valuetype', 'bool', ['pointer']);
-const typeObject = api('type_get_object', 'pointer', ['pointer']);
-const stringNew = api('string_new', 'pointer', ['pointer']);
-const fieldSet = api('field_set_value', 'void', ['pointer', 'pointer', 'pointer']);
-const fieldSetObject = api('field_set_value_object', 'void', ['pointer', 'pointer', 'pointer']);
-// Unity 6 uses Il2CppGCHandle = void*, not the older uint32_t ABI.
-const handleNew = api('gchandle_new', 'pointer', ['pointer', 'bool']);
-const handleTarget = api('gchandle_get_target', 'pointer', ['pointer']);
-const handleFree = api('gchandle_free', 'void', ['pointer']);
+
+// The same helpers over Mono's embedding API. Mono takes an explicit domain
+// where IL2CPP has one global domain, and reads method parameters through the
+// method signature.
+function monoRuntime() {
+  const api = (name, returns, args, options) =>
+    new NativeFunction(mono.getExportByName(`mono_${name}`), returns, args, options);
+  const rootDomain = api('get_root_domain', 'pointer', []);
+  // The calling thread's domain; null on a thread Mono has never attached.
+  const currentDomain = api('domain_get', 'pointer', []);
+  const domain = () => { const value = currentDomain(); return value.isNull() ? rootDomain() : value; };
+  const assemblyForeach = api('assembly_foreach', 'void', ['pointer', 'pointer']);
+  const assemblyImage = api('assembly_get_image', 'pointer', ['pointer']);
+  const tableRows = api('image_get_table_rows', 'int', ['pointer', 'int']);
+  const classGet = api('class_get', 'pointer', ['pointer', 'uint32']);
+  const signature = api('method_signature', 'pointer', ['pointer']);
+  const paramCount = api('signature_get_param_count', 'uint32', ['pointer']);
+  const params = api('signature_get_params', 'pointer', ['pointer', 'pointer']);
+  const fieldParent = api('field_get_parent', 'pointer', ['pointer']);
+  const classVtable = api('class_vtable', 'pointer', ['pointer', 'pointer']);
+  const staticGet = api('field_static_get_value', 'void', ['pointer', 'pointer', 'pointer']);
+  const length = api('array_length', 'size_t', ['pointer']);
+  const valueType = api('class_is_valuetype', 'int', ['pointer']);
+  const typeObject = api('type_get_object', 'pointer', ['pointer', 'pointer']);
+  const stringNew = api('string_new', 'pointer', ['pointer', 'pointer']);
+  const fieldSet = api('field_set_value', 'void', ['pointer', 'pointer', 'pointer']);
+  // Unity's Mono exposes pointer-sized GC handles through the _v2 calls.
+  const handleNew = api('gchandle_new_v2', 'pointer', ['pointer', 'int']);
+  return {
+    isAttached: () => !currentDomain().isNull(),
+    domainGet: domain,
+    threadAttach: api('thread_attach', 'pointer', ['pointer']),
+    threadDetach: api('thread_detach', 'void', ['pointer']),
+    images() {
+      const assemblies = [];
+      const visit = new NativeCallback(assembly => { assemblies.push(assembly); }, 'void', ['pointer', 'pointer']);
+      assemblyForeach(visit, NULL);
+      if (assemblies.length > 1000) throw new Error('Unexpected assembly count.');
+      // Mono lists the newest assembly first; scan in load order, as IL2CPP does.
+      return assemblies.reverse().map(assembly => assemblyImage(assembly));
+    },
+    imageCount: image => tableRows(image, 2), // MONO_TABLE_TYPEDEF
+    imageClass: (image, index) => classGet(image, 0x02000000 + index + 1), // TypeDef token
+    className: api('class_get_name', 'pointer', ['pointer']),
+    classFromName: api('class_from_name', 'pointer', ['pointer', 'pointer', 'pointer']),
+    classNamespace: api('class_get_namespace', 'pointer', ['pointer']),
+    classMethods: api('class_get_methods', 'pointer', ['pointer', 'pointer']),
+    classFields: api('class_get_fields', 'pointer', ['pointer', 'pointer']),
+    fieldName: api('field_get_name', 'pointer', ['pointer']),
+    fieldType: api('field_get_type', 'pointer', ['pointer']),
+    fieldOffset: api('field_get_offset', 'uint32', ['pointer']),
+    methodName: api('method_get_name', 'pointer', ['pointer']),
+    methodCount: method => paramCount(signature(method)),
+    methodParam(method, index) {
+      const iterator = Memory.alloc(Process.pointerSize);
+      iterator.writePointer(NULL);
+      const sig = signature(method);
+      let type = NULL;
+      for (let i = 0; i <= index; i++) type = params(sig, iterator);
+      return type;
+    },
+    // Mono compiles on first use; this returns the existing code once compiled.
+    methodCode: api('compile_method', 'pointer', ['pointer']),
+    typeName: api('type_get_name', 'pointer', ['pointer']),
+    free: api('free', 'void', ['pointer']),
+    objectClass: api('object_get_class', 'pointer', ['pointer']),
+    classParent: api('class_get_parent', 'pointer', ['pointer']),
+    // Reads constants (enum members) too.
+    staticValue: (field, out) => staticGet(classVtable(domain(), fieldParent(field)), field, out),
+    fieldFlags: api('field_get_flags', 'uint32', ['pointer']),
+    arrayLength: array => number(length(array)),
+    arrayElementSize: api('array_element_size', 'int', ['pointer']),
+    elementClass: api('class_get_element_class', 'pointer', ['pointer']),
+    stringLength: api('string_length', 'int', ['pointer']),
+    stringChars: api('string_chars', 'pointer', ['pointer']),
+    // Mono's JIT code finds null references through hardware faults that Mono
+    // turns into NullReferenceException, which Arena's own code often catches.
+    // Frida's default 'steal' would take those faults and abort the call
+    // midway ("access violation accessing 0x0"), so let Mono see them.
+    runtimeInvoke: api('runtime_invoke', 'pointer', ['pointer', 'pointer', 'pointer', 'pointer'],
+      {exceptions: 'propagate'}),
+    objectUnbox: api('object_unbox', 'pointer', ['pointer']),
+    classType: api('class_get_type', 'pointer', ['pointer']),
+    classValueSize: api('class_value_size', 'int', ['pointer', 'pointer']),
+    classIsValueType: klass => valueType(klass) !== 0,
+    typeObject: type => typeObject(domain(), type),
+    stringNew: text => stringNew(domain(), text),
+    // Value-type fields take a pointer to the value; reference fields take the
+    // reference itself (mono_copy_value dereferences only MONO_TYPE_PTR fields).
+    fieldSet,
+    fieldSetObject: fieldSet,
+    handleNew: (object, pinned) => handleNew(object, pinned ? 1 : 0),
+    handleTarget: api('gchandle_get_target_v2', 'pointer', ['pointer']),
+    handleFree: api('gchandle_free_v2', 'void', ['pointer']),
+    // Mono's invoke wrapper unboxes Nullable<T> arguments: it takes a boxed T,
+    // or null for no value, never the raw struct.
+    nullableGuidArgument: boxedGuid => boxedGuid || NULL,
+  };
+}
 const classes = new Map();
 const fieldCache = new Map();
 let connection = null;
@@ -84,9 +218,9 @@ function iterate(fn, owner) {
 function attached(run) {
   // Promise continuations can execute on Unity's already-attached main thread.
   // Never detach a thread owned by Arena; only detach our own fresh attachment.
-  if (!threadCurrent().isNull()) return run();
+  if (isAttached()) return run();
   const thread = threadAttach(domainGet());
-  if (thread.isNull()) throw new Error('Could not attach the probe thread to IL2CPP.');
+  if (thread.isNull()) throw new Error(`Could not attach the probe thread to ${RUNTIME}.`);
   try { return run(); } finally { threadDetach(thread); }
 }
 // Every class key the adapter reads. Discovery looks these up by name; the
@@ -98,15 +232,8 @@ const required = [
   'Wizards.Mtga.Decks.DeckServiceWrapperHelpers', 'Wizards.Mtga.Decks.Client_DeckSummary',
   'Wizards.Mtga.FrontDoorModels.DeckInfo', 'UnityEngine.UnitySynchronizationContext',
   'UnityEngine.Object', 'UnityEngine.Application', 'System.Guid', 'Newtonsoft.Json.JsonConvert',
-  'Wotc.Mtga.Loc.Languages',
+  'Wotc.Mtga.Loc.Languages', 'UnityEngine.UI.ScrollRect',
 ];
-function images() {
-  const count = Memory.alloc(Process.pointerSize);
-  const assemblies = assembliesGet(domainGet(), count);
-  const length = Process.pointerSize === 8 ? number(count.readU64()) : count.readU32();
-  if (length > 1000) throw new Error('Unexpected assembly count.');
-  return Array.from({length}, (_, i) => assemblyImage(assemblies.add(i * Process.pointerSize).readPointer()));
-}
 function discover() {
   if (required.every(key => classes.has(key))) return;
   const all = images();
@@ -124,6 +251,7 @@ function discover() {
     if (classCount > 100000) throw new Error('Unexpected class count.');
     for (let j = 0; j < classCount; j++) {
       const klass = imageClass(image, j);
+      if (klass.isNull()) continue;
       const name = className(klass).readUtf8String();
       if (!targets.has(name)) continue;
       classes.set(`${classNamespace(klass).readUtf8String()}.${name}`, klass);
@@ -242,7 +370,9 @@ function pileNames() {
   checkCardLayouts();
   const names = {};
   for (const [name,field] of fields(classes.get('Wizards.Mtga.Decks.EDeckPile'))) {
-    if (!(meta(field).flags & 0x40)) continue;
+    // Only the enum's own members: Mono's System.Enum also declares a string
+    // constant (enumSeperator), which fields() reaches through the parent class.
+    if (!(meta(field).flags & 0x40) || meta(field).type !== 'Wizards.Mtga.Decks.EDeckPile') continue;
     const value=Memory.alloc(4); staticValue(field,value); names[value.readS32()]=name;
   }
   return names;
@@ -319,7 +449,12 @@ function invoke(method, object = NULL, arguments_ = []) {
   const error = Memory.alloc(Process.pointerSize);
   error.writePointer(NULL);
   const result = runtimeInvoke(method, object, params, error);
-  if (!error.readPointer().isNull()) throw new Error('Arena rejected the managed call; no further calls made.');
+  const exception = error.readPointer();
+  if (!exception.isNull()) {
+    let kind = '';
+    try { kind = ` (${classNamespace(objectClass(exception)).readUtf8String()}.${className(objectClass(exception)).readUtf8String()})`; } catch (_) { /* name is diagnostic only */ }
+    throw new Error(`Arena rejected the managed call${kind}; no further calls made.`);
+  }
   return result;
 }
 function selectorObjects() {
@@ -403,13 +538,16 @@ function sameSourceSnapshot(left,right) {
 let execAddress = null;
 function unityExec() {
   if (execAddress) return execAddress;
-  const klass = classes.get('UnityEngine.UnitySynchronizationContext');
-  const exec = klass && iterate(classMethods, klass).find(m => methodName(m).readUtf8String() === 'Exec' && methodCount(m) === 0);
-  if (!exec) throw new Error('Unity main-thread dispatcher is unavailable.');
-  const address = exec.readPointer();
-  if (!Process.findRangeByAddress(address)?.protection.includes('x')) throw new Error('Invalid Unity method address.');
-  execAddress = address;
-  return address;
+  // Mono only answers metadata and compile calls on an attached thread.
+  return attached(() => {
+    const klass = classes.get('UnityEngine.UnitySynchronizationContext');
+    const exec = klass && iterate(classMethods, klass).find(m => methodName(m).readUtf8String() === 'Exec' && methodCount(m) === 0);
+    if (!exec) throw new Error('Unity main-thread dispatcher is unavailable.');
+    const address = methodCode(exec);
+    if (address.isNull() || !Process.findRangeByAddress(address)?.protection.includes('x')) throw new Error('Invalid Unity method address.');
+    execAddress = address;
+    return address;
+  });
 }
 // Each call waits for Arena's next frame, which can be 30-100 ms while Arena is
 // in the background, so callers do as much as they can per frame.
@@ -429,11 +567,13 @@ function onUnityThread(run) {
   });
 }
 
+// Shown as-is wherever a job needs Arena on Decks (Deck Manager and Deck Finder).
+const DECKS_SCREEN='Arena isn’t on its Decks screen. Go to Decks in Arena, outside a match, then try again.';
 function wrapperObject() {
   const field=fields(classes.get('.WrapperController')).get('<Instance>k__BackingField');
   const value=Memory.alloc(Process.pointerSize); staticValue(field,value);
   const wrapper=value.readPointer();
-  if (wrapper.isNull()) throw new Error('Return to Arena’s Decks screen outside a match.');
+  if (wrapper.isNull()) throw new Error(DECKS_SCREEN);
   return wrapper;
 }
 function accountId() {
@@ -459,7 +599,7 @@ function deckScreenOpen() {
 function guard(expectedAccount, requireDecks=false) {
   if (!connection || accountId()!==expectedAccount || connection.account!==expectedAccount
     || !root().equals(handleTarget(connection.managerHandle))) throw new Error('Arena account or session changed. Reconnect Deck Manager.');
-  if (requireDecks && !deckScreenOpen()) throw new Error('Open Arena’s Decks screen outside a match to transfer decks.');
+  if (requireDecks && !deckScreenOpen()) throw new Error(DECKS_SCREEN);
   return root();
 }
 function releaseConnection() {
@@ -469,14 +609,18 @@ function releaseConnection() {
   connection=null;
   return true;
 }
+// The 64-bit Arena build each platform ships.
+const ARENA_ARCH={darwin:'arm64',windows:'x64'};
 async function openConnection() {
   attached(discover);
   return onUnityThread(()=>{
     if (connection) throw new Error('Deck Manager is already connected.');
     checkedHandleABI();
     const version=text(invoke(findMethod('UnityEngine.Application','get_unityVersion',[])));
-    if (Process.arch!=='arm64' || version!=='6000.3.14f1') throw new Error('This Arena build is not supported by the native deck adapter yet.');
-    if (!deckScreenOpen()) throw new Error('Open Arena’s Decks screen outside a match before connecting Deck Manager.');
+    if (ARENA_ARCH[Process.platform]!==Process.arch || version!=='6000.3.14f1') {
+      throw new Error(`This Arena build is not supported by the native deck adapter yet (Unity ${version}, ${Process.platform} ${Process.arch}).`);
+    }
+    if (!deckScreenOpen()) throw new Error(DECKS_SCREEN);
     const account=accountId(), manager=root();
     connection={account,managerHandle:handleNew(manager,0)};
     return {account_id:account,unity_version:version,deck_screen_open:deckScreenOpen()};
@@ -568,7 +712,7 @@ function cachedArchive(id,names,strict) {
   const handle=handleNew(model,0);
   try { return {schema:1,archive_kind:'arena_typed_model_poc',model_json:serializeModel(model),
     summary_json:physicalSummaryJson(serializeModel(ref(deck,'_summary')),source.summary),source_snapshot:source,
-    pile_names:names,runtime:'IL2CPP',unity_thread_observed:true,unity_version:'6000.3.14f1'}; }
+    pile_names:names,runtime:RUNTIME,unity_thread_observed:true,unity_version:'6000.3.14f1'}; }
   finally { handleFree(handle); }
 }
 async function archiveDecks(account,ids) {
@@ -745,5 +889,76 @@ async function removeDeck(account,snapshot) {
     return true;
   },true);
 }
+// Arena's Decks screen draws its grid once when it opens, so a deck created or
+// removed through the service stays hidden until the screen is reopened. This
+// starts the screen's own load routine, as Arena does after its own delete: it
+// reads the refreshed cache and rebuilds the grid, selecting `selectId` when
+// given (a deck this job created). Display only; no deck write.
+function reloadDecksScreen(selectId) {
+  const flag=Memory.alloc(1); flag.writeU8(0);
+  const found=array(invoke(findMethod('UnityEngine.Object','FindObjectsOfType',['System.Type','System.Boolean']),NULL,
+    [typeObject(classType(classes.get('.DeckManagerController'))),flag]));
+  if (found.length!==1 || selectorObjects().length!==1) return false;
+  const controller=found.data.readPointer();
+  // Arena is already loading the list, and that load shows the change.
+  if (!ref(controller,'_loadDecksCoroutine').isNull()) return true;
+  const bucket=Memory.alloc(4); bucket.writeS32(fieldAt(controller,'_selectedBucket').readS32());
+  const guid=selectId ? parseGuid(selectId) : null, held=guid && handleNew(guid,0);
+  let routine;
+  try {
+    routine=invoke(findMethod('.DeckManagerController','Coroutine_LoadDecks',['System.Int32','System.Nullable<System.Guid>']),
+      controller,[bucket,nullableGuidArgument(guid)]);
+  } finally {if (held) handleFree(held);}
+  if (routine.isNull()) return false;
+  const started=invoke(objectMethod(controller,'StartCoroutine',['System.Collections.IEnumerator']),controller,[routine]);
+  // Null when the cached list loaded at once; otherwise hold it as Arena does.
+  if (!started.isNull()) fieldSetObject(controller,fields(objectClass(controller)).get('_loadDecksCoroutine'),started);
+  return true;
+}
+// Arena's selection does not scroll, so center the selected tile in the grid's
+// ScrollRect (on the selector itself). True once handled, including when the
+// tile is in a closed folder; false while the rebuilt tile is not there yet.
+function scrollToSelectedDeck(selectId) {
+  const selectors=selectorObjects();
+  if (selectors.length!==1) return false;
+  const selector=selectors[0], view=ref(selector,'_selectedDeckView');
+  if (view.isNull() || guidText(fieldAt(ref(view,'_deckViewInfo'),'deckId'))!==selectId) return false;
+  const tile=invoke(objectMethod(view,'get_gameObject',[]),view);
+  if (!objectUnbox(invoke(objectMethod(tile,'get_activeInHierarchy',[]),tile)).readU8()) return true;
+  const scroll=invoke(objectMethod(selector,'GetComponent',['System.Type']),selector,
+    [typeObject(classType(classes.get('UnityEngine.UI.ScrollRect')))]);
+  if (scroll.isNull() || !fieldAt(scroll,'m_Vertical').readU8()) return true;
+  const content=invoke(objectMethod(scroll,'get_content',[]),scroll), viewport=invoke(objectMethod(scroll,'get_viewport',[]),scroll);
+  if (content.isNull() || viewport.isNull()) return true;
+  const rect=transform=>objectUnbox(invoke(objectMethod(transform,'get_rect',[]),transform));
+  const area=rect(content), height=area.add(12).readFloat(), top=area.add(4).readFloat()+height;
+  const visible=rect(viewport).add(12).readFloat();
+  const where=invoke(objectMethod(view,'get_transform',[]),view);
+  const position=objectUnbox(invoke(objectMethod(where,'get_position',[]),where));
+  const local=objectUnbox(invoke(objectMethod(content,'InverseTransformPoint',['UnityEngine.Vector3']),content,[position]));
+  if (height<=visible) return true;
+  const offset=Math.max(0,Math.min(height-visible,top-local.add(4).readFloat()-visible/2));
+  const current=objectUnbox(invoke(objectMethod(scroll,'get_normalizedPosition',[]),scroll));
+  const target=Memory.alloc(8); target.writeFloat(current.readFloat()); target.add(4).writeFloat(1-offset/(height-visible));
+  invoke(objectMethod(scroll,'StopMovement',[]),scroll);
+  invoke(objectMethod(scroll,'set_normalizedPosition',['UnityEngine.Vector2']),scroll,[target]);
+  return true;
+}
+async function refreshScreen(account,selectId=null) {
+  if (selectId!==null && !/^[0-9a-f-]{36}$/.test(selectId)) throw new Error('Invalid deck to select.');
+  // A cache refresh can briefly rebuild the Decks selector; wait it out.
+  let reloaded=false;
+  for (let i=0;i<25 && !reloaded;i++) {
+    reloaded=await onUnityThread(()=>{guard(account); return !pending && reloadDecksScreen(selectId);});
+    if (!reloaded) await sleep(80);
+  }
+  if (!reloaded || !selectId) return reloaded;
+  // New tiles are laid out on a later frame; scroll once they are in place.
+  for (let i=0;i<20;i++) {
+    await sleep(100);
+    if (await onUnityThread(()=>{guard(account); return scrollToSelectedDeck(selectId);})) break;
+  }
+  return true;
+}
 rpc.exports={open:openConnection,roster,archive:archiveDecks,fetchdeck:fullDeck,create:createDeck,remove:removeDeck,prepareimport:prepareImport,preparecreate:prepareCreate,createprepared:createPrepared,
-  close(){return onUnityThread(releaseConnection);}};
+  refreshscreen:refreshScreen,close(){return onUnityThread(releaseConnection);}};

@@ -60,7 +60,9 @@ class UISourceTests(unittest.TestCase):
             description = "Example decks"
 
         output = io.StringIO()
-        console = Console(file=output, force_terminal=False, width=100)
+        # Rich swaps heavy box glyphs for square ones when the host console is a legacy
+        # Windows console; pin modern rendering so the box assertions are deterministic.
+        console = Console(file=output, force_terminal=False, width=100, legacy_windows=False)
         original_ask = ui_module.Prompt.ask
 
         def fake_ask(prompt: str, **kwargs: object) -> str:

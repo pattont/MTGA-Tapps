@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import replace
 
 from mtga_deck_downloader.models import DeckEntry, DeckSource, MatchFormat

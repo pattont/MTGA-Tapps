@@ -658,7 +658,7 @@ def _played(tmp_path: Path):
 def test_console_and_printed_rows_match_the_pre_replay_baseline(tmp_path, capsys):
     """Byte-identical console; printed rows identical except seat_id, which a
     fact may fill only where the old text-based inference found no actor."""
-    baseline = json.loads(BASELINE_PATH.read_text())
+    baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
     tracker, db = _played(tmp_path)
     console = capsys.readouterr().out.splitlines()
     # The analytics store's own VACUUM notice goes to stdout, not the tracker.
@@ -1182,6 +1182,63 @@ def test_exile_by_a_permanents_ability_records_the_host(tmp_path):
     ]
 
 
+def test_removal_records_the_source_that_moved_it(tmp_path):
+    """A removal carries ``by``: the root of the spell or of the ability's source
+    permanent (Arena's affector), so the viewer draws it from there. A card that
+    moves itself (a cost it paid) and a state-based death record none."""
+    tracker = started_tracker(tmp_path)
+    murder = obj(400, 2004, O, STACK)
+    victim = obj(401, 1001, P, GY[P])
+    tracker._handle_event(message(zt(401, BF, GY[P], "Destroy", 400), objects=[murder, victim]))
+    bat = obj(318, 2003, O, BF)
+    trigger = {
+        "instanceId": 322,
+        "grpId": 9001,
+        "type": "GameObjectType_Ability",
+        "ownerSeatId": O,
+        "controllerSeatId": O,
+        "zoneId": STACK,
+        "parentId": 318,
+    }
+    taken = obj(323, 1008, P, GY[P])
+    tracker._handle_event(
+        message(zt(323, HAND[P], GY[P], "Discard", 322), objects=[bat, trigger, taken])
+    )
+    food = obj(500, 1002, P, GY[P])
+    tracker._handle_event(message(zt(500, BF, GY[P], "Sacrifice", 500), objects=[food]))
+    dead = obj(501, 1003, P, GY[P])
+    tracker._handle_event(message(zt(501, BF, GY[P], "SBA_Damage", 400), objects=[murder, dead]))
+    rows = event_rows(
+        tmp_path / "analytics.sqlite3", "event_subtype = 'move' AND zone_to = 'graveyard'"
+    )
+    assert [(r["object_id"], r["payload"]["reason"], r["payload"].get("by")) for r in rows] == [
+        (401, "destroy", 400),
+        (323, "discard", 318),
+        (500, "sacrifice", None),
+        (501, "sba", None),
+    ]
+
+
+def test_land_that_chose_a_basic_land_type_names_it(tmp_path):
+    """Multiversal Passage (shape from a live log): Arena logs ChoiceResult from
+    the entering land in the basic-land-type domain (9), then the land play,
+    with the chosen type as the object's subtype. A land that made no choice
+    (a printed Forest) gets no suffix."""
+    tracker = started_tracker(tmp_path)
+    tracker._handle_event(message(ann("ChoiceResult", [P], 291, Choice_Value=49, Choice_Domain=9)))
+    passage = obj(291, 1008, P, BF, subtypes=["SubType_Mountain"], isTapped=True)
+    tracker._handle_event(
+        message(oic(169, 291), zt(291, HAND[P], BF, "PlayLand"), objects=[passage])
+    )
+    forest = obj(292, 1001, P, BF, subtypes=["SubType_Forest"])
+    tracker._handle_event(message(zt(292, HAND[P], BF, "PlayLand"), objects=[forest]))
+    lands = event_rows(tmp_path / "analytics.sqlite3", "event_type = 'land'")
+    assert lands[0]["text"].endswith("(Land)] as a Mountain")
+    assert lands[0]["payload"]["chosen"] == "Mountain"
+    assert lands[1]["text"].endswith("(Land)]")
+    assert "chosen" not in lands[1]["payload"]
+
+
 def test_one_message_is_one_transaction(tmp_path):
     tracker = started_tracker(tmp_path)
     tracker._handle_event(message())  # create the schema
@@ -1443,3 +1500,40 @@ def test_creature_rows_carry_current_stats_including_zero_power(tmp_path):
     assert (landed["payload"]["power"], landed["payload"]["toughness"]) == (0, 2)
     drawn = next(r for r in rows if r["object_id"] == 501)
     assert not {"name", "type", "power", "toughness"} & set(drawn["payload"])
+
+
+def test_commander_cast_from_and_returned_to_the_command_zone(tmp_path):
+    """Brawl: the commander is cast out of the command zone (zone 26) like a spell
+    from hand, resolves to the battlefield, and after dying goes back to the
+    command zone. Every leg is an ordinary zone transfer the capture names."""
+    tracker = started_tracker(tmp_path)
+    COMMAND = 26
+    zone = {"zoneId": COMMAND, "type": "ZoneType_Command", "ownerSeatId": P}
+
+    def msg(*annotations, objects):
+        out = message(*annotations, objects=objects)
+        out["data"]["zones"].append(zone)
+        return out
+
+    tracker._handle_event(msg(objects=[obj(600, 1004, P, COMMAND)]))
+    tracker._handle_event(
+        msg(oic(600, 601), zt(601, COMMAND, STACK, "CastSpell"), objects=[obj(601, 1004, P, STACK)])
+    )
+    tracker._handle_event(msg(zt(601, STACK, BF, "Resolve"), objects=[obj(601, 1004, P, BF)]))
+    tracker._handle_event(msg(zt(601, BF, GY[P], "SBA_Damage"), objects=[obj(601, 1004, P, GY[P])]))
+    tracker._handle_event(
+        msg(zt(601, GY[P], COMMAND, "Return"), objects=[obj(601, 1004, P, COMMAND)])
+    )
+    rows = event_rows(tmp_path / "analytics.sqlite3", "object_id = 600")
+    push = next(r for r in rows if r["event_subtype"] == "stack_push")
+    assert push["zone_from"] == "command" and push["payload"]["name"] == "Grizzly Bears"
+    moves = [
+        (r["zone_from"], r["zone_to"], r["payload"]["reason"])
+        for r in rows
+        if r["event_subtype"] == "move"
+    ]
+    assert moves == [
+        ("stack", "battlefield", "resolve"),
+        ("battlefield", "graveyard", "sba"),
+        ("graveyard", "command", "put"),
+    ]

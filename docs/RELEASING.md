@@ -181,7 +181,19 @@ venv/bin/python -m pytest tests -q --ignore=tests/test_menu_app.py \
   disabled. Check a completed game, correct deck/opponent attribution,
   dashboard pages, and the displayed version against the release tag.
 - Open Deck Finder from the menu and verify all providers appear. Exercise
-  the bundled `--deck-finder` terminal mode too.
+  the bundled `--deck-finder` terminal mode too. Verify that the seven provider
+  icons load from the bundled `ui/dist/providers/` folder, including an
+  AetherHub image and the Magic.gg vector, with no network logo requests.
+- Open a recorded and a reconstructed replay, check the fidelity badge,
+  navigation and card art, and export a short local video on the browsers
+  offered for this release.
+- Check Deck Manager's local import, collections, revisions, Trash and backup
+  round trip on both platforms. Validate any advertised native Arena transfer
+  using the actual installed Mac artifact and a disposable deck; confirm that
+  unsupported builds and Windows keep the local/manual path available.
+- Review client compatibility and distribution of the optional native Deck
+  Manager adapter before including it in release artifacts. The development
+  proof of concept alone does not establish release readiness.
 - Verify the overlay is inside the artifact, launches, follows Arena, and
   responds to settings/hotkeys. On macOS inspect
   `Contents/Helpers/Tapps Overlay.app/Contents/MacOS/tapps-overlay`.

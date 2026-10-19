@@ -24,12 +24,15 @@ def persist(path, value):
         handle.write(encoded)
         handle.flush()
         os.fsync(handle.fileno())
-    directory_fd = os.open(Path(path).parent, os.O_RDONLY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
-    restored = json.loads(Path(path).read_text())
+    if os.name != "nt":
+        # Windows cannot open a directory as a file descriptor; NTFS journals the new
+        # directory entry itself, so only POSIX needs the explicit directory fsync.
+        directory_fd = os.open(Path(path).parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    restored = json.loads(Path(path).read_text(encoding="utf-8"))
     if restored != value:
         raise ValueError("Snapshot read-back differs; stop before further native calls.")
     return restored
@@ -110,7 +113,9 @@ def main():
         timer = Timer(120, session.detach)
         timer.daemon = True
         timer.start()
-        script = session.create_script(Path(__file__).with_name("probe.js").read_text())
+        script = session.create_script(
+            Path(__file__).with_name("probe.js").read_text(encoding="utf-8")
+        )
         script.load()
         result = experiment(
             script.exports_sync,

@@ -1,4 +1,6 @@
-Deck Finder provider icons (bundled; no runtime requests to provider sites)
+Final Deck Finder provider icons. Vite copies this folder into ui/dist/providers/;
+the dashboard makes no runtime logo requests to provider sites. Old preview
+icons in docs/plans were removed after the picker was implemented.
 
 AetherHub: https://aetherhub.b-cdn.net/images/icons/favicon-228.png
 Magic.gg: vector Planeswalker symbol from the bundled mana-font package,
@@ -7,6 +9,6 @@ Moxfield: https://moxfield.com/favicon.ico
 MTGO: https://www.mtgo.com/favicon.ico
 TCGplayer: https://www.tcgplayer.com/favicon.ico
 Untapped: https://static.mtga.untapped.gg/_next/static/media/favicon.a361f0ee.ico
-YouTube: inline vector play mark.
+YouTube: bundled vector play mark (youtube.svg).
 
 Downloaded/assembled 2026-10-06. Provider marks remain their owners' marks.

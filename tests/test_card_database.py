@@ -297,3 +297,47 @@ def test_stats_index_by_name_reads_printed_power_and_toughness(tmp_path, monkeyp
     index = CardDatabase().stats_index_by_name()
 
     assert index == {"Exhibition Tidecaller": ("0", "2"), "Tarmogoyf": ("*", "*")}
+
+
+def test_interchangeable_name_index_links_both_names_of_one_card(tmp_path, monkeypatch):
+    """Arena links a Universes Beyond name and its Omenpath name through
+    InterchangeableTitleId; both map to one key, markup is stripped, and cards
+    without a partner (or with a dangling partner id) stay out."""
+    raw_dir = tmp_path / "Raw"
+    raw_dir.mkdir()
+    conn = sqlite3.connect(raw_dir / "Raw_CardDatabase_test.mtga")
+    conn.execute(
+        'CREATE TABLE "Cards" ("GrpId" INTEGER, "TitleId" INTEGER, "InterchangeableTitleId" INTEGER)'
+    )
+    conn.execute('CREATE TABLE "Localizations_enUS" ("LocId" INTEGER, "Loc" TEXT)')
+    conn.executemany(
+        'INSERT INTO "Cards" VALUES (?, ?, ?)',
+        [(97973, 10, 20), (104806, 20, 10), (5, 30, 0), (6, 40, 999), (7, 50, 60), (8, 60, 50)],
+    )
+    conn.executemany(
+        'INSERT INTO "Localizations_enUS" VALUES (?, ?)',
+        [
+            (10, "Superior Spider-Man"),
+            (20, "Kavaero, Mind-Bitten"),
+            (30, "Forest"),
+            (40, "Lonely Card"),
+            (50, "<nobr>Anti-Venom</nobr>, Horrifying Healer"),
+            (60, "Omenpath Healer"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(
+        card_database,
+        "get_mtga_raw_card_db_folders",
+        lambda mtga_data_dir=None, log_path=None: [raw_dir],
+    )
+
+    index = CardDatabase().interchangeable_name_index()
+
+    assert index == {
+        "superior spider-man": "kavaero, mind-bitten",
+        "kavaero, mind-bitten": "kavaero, mind-bitten",
+        "anti-venom, horrifying healer": "anti-venom, horrifying healer",
+        "omenpath healer": "anti-venom, horrifying healer",
+    }

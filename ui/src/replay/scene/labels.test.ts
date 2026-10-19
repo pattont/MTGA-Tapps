@@ -79,3 +79,128 @@ describe('scene labels', () => {
     expect(quiet.some((l) => l.id === 'stat:pw1')).toBe(false);
   });
 });
+
+describe('commanders', () => {
+  const cards = {
+    cmd: card('Belladonna Took', 'Creature', { power: '2', toughness: '2' }),
+    bear: card('Grizzly Bears', 'Creature', { power: '2', toughness: '2' }),
+  };
+  const opts = { mirrorOpponent: false, hindsight: true, playerSeat: PLAYER, commandZone: true };
+
+  function brawl() {
+    const b = new StreamBuilder();
+    b.move('c1', 'cmd', 'limbo', 'command', PLAYER, 'put');
+    b.turnStart(1, PLAYER);
+    b.move('c1', 'cmd', 'command', 'stack', PLAYER, 'cast');
+    b.add('stack_push', { stack_id: 's1', obj: 'c1', card: 'cmd', stack_kind: 'spell', controller: PLAYER, text: null, targets: [] });
+    b.resolve('c1', 'cmd', PLAYER, 's1', 'battlefield');
+    b.move('b1', 'bear', 'limbo', 'battlefield', PLAYER, 'put');
+    b.add('counter', { obj: 'c1', type: '+1/+1', delta: 1, total: 1 });
+    const stream = b.build(cards, { playerSeat: PLAYER });
+    stream.seats[String(PLAYER)].commanders = ['Belladonna Took'];
+    return stream;
+  }
+
+  it('marks the commander on the battlefield and keeps its empty command zone labelled', () => {
+    const stream = brawl();
+    const timeline = buildTimeline(stream);
+    const resolved = stream.events.findIndex((e) => e.kind === 'move' && e.to === 'battlefield' && e.obj === 'c1');
+    const state = stateAt(timeline, stream.events[resolved].seq);
+    const layout = layoutBoard(state, opts);
+    expect(layout.cards.find((c) => c.obj === 'c1')?.commander).toBe(true);
+    const labels = sceneLabels(layout, cards);
+    const chip = labels.find((l) => l.id === 'counters:c1')!;
+    expect(chip.text).toBe('Commander');
+    expect(chip.tone).toBe('commander');
+    expect(labels.find((l) => l.id === `pile:${PLAYER}:command`)?.text).toBe('Command');
+  });
+
+  it('is not marked before it is cast, and ordinary creatures never are', () => {
+    const stream = brawl();
+    const timeline = buildTimeline(stream);
+    const start = stateAt(timeline, stream.turns[0].first_seq);
+    const first = layoutBoard(start, opts);
+    expect(first.cards.find((c) => c.obj === 'c1')?.zone).toBe('command');
+    expect(sceneLabels(first, cards).find((l) => l.id === `pile:${PLAYER}:command`)?.text).toBe('Command 1');
+    expect(sceneLabels(first, cards).some((l) => l.tone === 'commander')).toBe(false);
+    const end = layoutBoard(stateAt(timeline, stream.events[stream.events.length - 1].seq), opts);
+    expect(end.cards.find((c) => c.obj === 'b1')?.commander).toBe(false);
+    const chip = sceneLabels(end, cards).find((l) => l.id === 'counters:c1')!;
+    expect(chip.text).toBe('Commander · +1/+1');
+    expect(chip.tone).toBe('commander');
+  });
+});
+
+describe('side card chips', () => {
+  it('names why a card sits beside the hand, gold when plotted', () => {
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    b.move('g1', 'looting', 'limbo', 'graveyard', PLAYER, 'put');
+    b.move('p1', 'show', 'limbo', 'hand', PLAYER, 'draw');
+    b.move('p1', 'show', 'hand', 'exile', PLAYER, 'exile');
+    const cards = {
+      looting: card('Faithless Looting', 'Sorcery', { keywords: ['flashback'] }),
+      show: card('Slickshot Show-Off', 'Creature', { keywords: ['plot'] }),
+    };
+    const stream = b.build(cards, { playerSeat: PLAYER });
+    const layout = layoutBoard(buildTimeline(stream).final, { mirrorOpponent: false, hindsight: false, playerSeat: PLAYER });
+    const labels = sceneLabels(layout, cards);
+    const flashback = labels.find((l) => l.id === 'castable:g1');
+    const plotted = labels.find((l) => l.id === 'castable:p1');
+    expect([flashback?.text, flashback?.tone, flashback?.emphasis]).toEqual(['Flashback', 'castable', false]);
+    expect([plotted?.text, plotted?.emphasis]).toEqual(['Plotted', true]);
+    expect(labels.some((l) => l.id === 'stat:p1')).toBe(false);
+  });
+});
+
+describe('damage badges', () => {
+  it('shows a red minus badge on each damaged permanent', () => {
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    b.move('c1', 'bear', 'limbo', 'battlefield', PLAYER, 'put');
+    b.add('damage', { source: null, target_obj: 'c1', target_seat: null, amount: 6, combat: false });
+    const cards = { bear: card('Bear', 'Creature', { power: '2', toughness: '2' }) };
+    const stream = b.build(cards, { playerSeat: PLAYER });
+    const layout = layoutBoard(buildTimeline(stream).final, { mirrorOpponent: false, hindsight: false, playerSeat: PLAYER });
+    const badge = sceneLabels(layout, cards).find((l) => l.id === 'damage:c1');
+    expect([badge?.text, badge?.tone]).toEqual(['−6', 'damage']);
+  });
+});
+
+describe('chosen land type', () => {
+  const cards = { passage: card('Multiversal Passage', 'Land') };
+  const opts = { mirrorOpponent: false, hindsight: true, playerSeat: PLAYER };
+
+  it('chips a land with the basic land type it chose, in that color, until it leaves', () => {
+    const b = new StreamBuilder();
+    b.move('p1', 'passage', 'limbo', 'hand', PLAYER, 'put');
+    b.turnStart(1, PLAYER);
+    b.add('move', {
+      obj: 'p1',
+      card: 'passage',
+      from: 'hand',
+      to: 'battlefield',
+      owner: PLAYER,
+      controller: PLAYER,
+      reason: 'play_land',
+      inferred: false,
+      index: null,
+      with: null,
+      chosen: 'Mountain',
+    });
+    b.add('tap', { objs: ['p1'] });
+    b.move('p1', 'passage', 'battlefield', 'graveyard', PLAYER, 'destroy');
+    b.phaseTo('Phase_Main2');
+    const stream = b.build(cards, { playerSeat: PLAYER });
+    const timeline = buildTimeline(stream);
+    const at = (kind: string, to?: string) => {
+      const event = stream.events.findLast((e) => e.kind === kind && (!to || (e.kind === 'move' && e.to === to)))!;
+      return sceneLabels(layoutBoard(stateAt(timeline, event.seq), opts), cards);
+    };
+    expect(at('move', 'battlefield').find((l) => l.id === 'counters:p1')).toMatchObject({ text: 'Mountain', tone: 'land-mountain' });
+    // Tapping keeps the choice; once it has left the battlefield (after the
+    // destroy's own action, where it is held in its slot) the choice is gone.
+    expect(at('tap').find((l) => l.id === 'counters:p1')?.text).toBe('Mountain');
+    expect(at('phase').some((l) => l.id === 'counters:p1')).toBe(false);
+  });
+});

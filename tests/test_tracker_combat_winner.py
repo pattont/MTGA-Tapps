@@ -3775,7 +3775,15 @@ def test_short_hand_snapshot_finalize_records_bottomed_card():
     """Keeping via a 6-card hand snapshot still records the bottomed card."""
     tracker = make_tracker()
     g = tracker.game_state
-    full = ["Fomori Vault", "Swamp", "Swamp", "Requiting Hex", "Firdoch Core", "Arc Reactor", "Ancient Vendetta"]
+    full = [
+        "Fomori Vault",
+        "Swamp",
+        "Swamp",
+        "Requiting Hex",
+        "Firdoch Core",
+        "Arc Reactor",
+        "Ancient Vendetta",
+    ]
     g._hand_before_mulligan = list(full)
     g._hand_before_mulligan_ids = [1, 2, 3, 4, 5, 6, 7]
     g._hand_before_mulligan_events = [CardEvent(card, "player") for card in full]
@@ -6125,6 +6133,7 @@ def test_capture_opening_hand_ignores_post_action_hand_six_without_mulligan_prom
     assert tracker.game_state.mulligan_count == 0
     assert tracker.game_state.opening_hand_capture_closed is True
 
+
 def _bo3_game_state_line(match_id: str, game_number: int, turn_number: int = 1) -> str:
     """Build a GRE line whose gameStateMessage carries Arena gameInfo + turn 1."""
     return json.dumps(
@@ -6174,9 +6183,7 @@ def test_capture_arena_game_info_frozen_after_match_complete():
     tracker.game_state.arena_match_id = "arena-uuid-1"
     tracker.game_state.game_number = 1
 
-    tracker._capture_arena_game_info(
-        {"gameInfo": {"matchID": "arena-uuid-2", "gameNumber": 2}}
-    )
+    tracker._capture_arena_game_info({"gameInfo": {"matchID": "arena-uuid-2", "gameNumber": 2}})
 
     assert tracker.game_state.arena_match_id == "arena-uuid-1"
     assert tracker.game_state.game_number == 1
@@ -6423,9 +6430,7 @@ def test_completed_game_tail_packet_does_not_start_next_bo3_game(tmp_path):
                                 "matchState": "MatchState_GameComplete",
                             },
                             "turnInfo": {"turnNumber": 9},
-                            "zones": [
-                                {"type": "ZoneType_Hand", "objectInstanceIds": [1, 2, 3]}
-                            ],
+                            "zones": [{"type": "ZoneType_Hand", "objectInstanceIds": [1, 2, 3]}],
                         },
                     }
                 ]
@@ -6607,12 +6612,10 @@ def test_windows_console_command_line_survives_spaced_paths():
         'cmd /S /C "mode con: cols=140 lines=42 & '
         '"C:\\Program Files\\MTGA Tracker\\MTGA Deck Downloader.exe""'
     )
-    assert "\\\"" not in line  # no backslash-escaped quotes for cmd to choke on
+    assert '\\"' not in line  # no backslash-escaped quotes for cmd to choke on
 
     # Source runs: only the interpreter path needs quoting.
-    line = _windows_console_command_line(
-        [r"C:\Python 3\python.exe", "-m", "mtga_deck_downloader"]
-    )
+    line = _windows_console_command_line([r"C:\Python 3\python.exe", "-m", "mtga_deck_downloader"])
     assert '"C:\\Python 3\\python.exe" -m mtga_deck_downloader"' in line
 
 
@@ -6869,9 +6872,7 @@ def test_backfill_resolves_card_labels_recorded_without_card_db(tmp_path):
     tracker._backfill_unresolved_card_labels()
 
     conn = sqlite3.connect(tracker._console_db_path)
-    summary = sorted(
-        row[0] for row in conn.execute("SELECT display_name FROM game_card_summary")
-    )
+    summary = sorted(row[0] for row in conn.execute("SELECT display_name FROM game_card_summary"))
     mulligan = [row[0] for row in conn.execute("SELECT display_name FROM game_mulligan_hands")]
     card_row = conn.execute(
         "SELECT name, arena_id FROM cards WHERE name = 'Llanowar Elves'"
@@ -6899,9 +6900,7 @@ def test_backfill_converges_and_stops_reporting_duplicates(tmp_path):
             "INSERT INTO cards (name, arena_id, first_seen_at) "
             "VALUES ('Card #72301', NULL, '2026-08-02T00:00:00')"
         )
-        stale_id = conn.execute(
-            "SELECT id FROM cards WHERE name = 'Card #72301'"
-        ).fetchone()[0]
+        stale_id = conn.execute("SELECT id FROM cards WHERE name = 'Card #72301'").fetchone()[0]
         conn.execute(
             "INSERT INTO game_card_summary (game_id, participant_id, card_id, display_name) "
             "VALUES ('g1', 'p1', ?, 'Card #72301')",
@@ -6964,10 +6963,20 @@ def test_double_block_reports_both_blockers(capsys):
     tracker.game_state.turn_number = 5
 
     game_objects = [
-        {"instanceId": 30, "grpId": 303, "ownerSeatId": 1,
-         "power": {"value": 2}, "toughness": {"value": 2}},
-        {"instanceId": 31, "grpId": 305, "ownerSeatId": 1,
-         "power": {"value": 1}, "toughness": {"value": 1}},
+        {
+            "instanceId": 30,
+            "grpId": 303,
+            "ownerSeatId": 1,
+            "power": {"value": 2},
+            "toughness": {"value": 2},
+        },
+        {
+            "instanceId": 31,
+            "grpId": 305,
+            "ownerSeatId": 1,
+            "power": {"value": 1},
+            "toughness": {"value": 1},
+        },
         {"instanceId": 40, "grpId": 404, "ownerSeatId": 2},
     ]
     annotation = {"details": [{"key": "attacker_id", "valueInt32": [40]}]}
@@ -7079,8 +7088,13 @@ def test_pregame_concede_is_a_real_game_not_a_ghost(tmp_path, capsys):
     tracker.game_state.game_start_time = datetime(2026, 8, 13, 12, 0, 0)
     tracker.game_state.opening_mulligan_prompt_seen = True
     tracker.game_state._hand_before_mulligan = [
-        "Mountain", "Mountain", "Mountain", "Lightning Bolt",
-        "Monastery Swiftspear", "Play with Fire", "Kumano Faces Kakkazan",
+        "Mountain",
+        "Mountain",
+        "Mountain",
+        "Lightning Bolt",
+        "Monastery Swiftspear",
+        "Play with Fire",
+        "Kumano Faces Kakkazan",
     ]
     tracker.game_state._hand_before_mulligan_ids = [1, 1, 1, 2, 3, 4, 5]
     tracker.game_state._hand_before_mulligan_events = []
@@ -7940,11 +7954,17 @@ def test_live_color_index_partial_build_keeps_retrying_arena_layers():
     colors — and that partial index used to be cached for the whole session."""
     tracker = make_tracker()
     tracker.card_db.color_identity_index_by_name = lambda: {}
-    tracker._live_color_index_cache = {"Llanowar Elves": "G", **__import__("mtga_tracker.colors", fromlist=["x"]).BASIC_LAND_COLORS}
+    tracker._live_color_index_cache = {
+        "Llanowar Elves": "G",
+        **__import__("mtga_tracker.colors", fromlist=["x"]).BASIC_LAND_COLORS,
+    }
     tracker._live_color_index_complete = False
     tracker._live_color_index_attempt = 0.0
     # Arena comes back with the new set's card -> the rebuild picks it up.
-    tracker.card_db.color_identity_index_by_name = lambda: {"Edge Rover": "G", "Glimpse the Core": "R"}
+    tracker.card_db.color_identity_index_by_name = lambda: {
+        "Edge Rover": "G",
+        "Glimpse the Core": "R",
+    }
     index = tracker._live_color_index()
     assert index["Edge Rover"] == "G" and index["Mountain"] == "R"
     assert tracker._live_color_index_complete is True
@@ -7973,7 +7993,10 @@ def test_live_colors_basic_lands_and_on_demand_lookup():
     assert tracker._live_colors_for([CardEvent("Edge Rover", "opp")]) == "G"
     assert tracker._live_color_lookup_cache == {"Edge Rover": "G"}
     # A land with no identity contributes nothing (not "C").
-    assert tracker._live_colors_for([CardEvent("Restless Fortress", "opp", card_type_category="Land")]) == ""
+    assert (
+        tracker._live_colors_for([CardEvent("Restless Fortress", "opp", card_type_category="Land")])
+        == ""
+    )
     # Unknown card, Arena has no answer: nothing, and nothing cached.
     assert tracker._live_colors_for([CardEvent("Mystery", "opp")]) == ""
     assert "Mystery" not in tracker._live_color_lookup_cache
@@ -7990,12 +8013,19 @@ def test_live_colors_see_through_the_display_name_suffix():
     tracker._live_color_index_complete = True
     tracker.card_db.color_identity_for_name = lambda name: {"Edge Rover": "G"}.get(name)
 
-    assert tracker._live_colors_for([CardEvent("Mountain (Land)", "player", card_type_category="Land")]) == "R"
+    assert (
+        tracker._live_colors_for(
+            [CardEvent("Mountain (Land)", "player", card_type_category="Land")]
+        )
+        == "R"
+    )
     assert (
         tracker._live_colors_for(
             [
                 CardEvent("Plains (Land)", "opp", card_type_category="Land"),
-                CardEvent("Smaug the Magnificent (Creature 6/6)", "opp", card_type_category="Creature"),
+                CardEvent(
+                    "Smaug the Magnificent (Creature 6/6)", "opp", card_type_category="Creature"
+                ),
                 CardEvent("Edge Rover (Creature 2/2)", "opp", card_type_category="Creature"),
             ]
         )
@@ -8003,9 +8033,17 @@ def test_live_colors_see_through_the_display_name_suffix():
     )
     # The on-demand Arena lookup is asked for the bare name too.
     assert tracker._live_color_lookup_cache == {"Edge Rover": "G"}
-    assert tracker._live_colors_for([CardEvent("Restless Fortress (Land)", "opp", card_type_category="Land")]) == ""
+    assert (
+        tracker._live_colors_for(
+            [CardEvent("Restless Fortress (Land)", "opp", card_type_category="Land")]
+        )
+        == ""
+    )
     # Commander seeds go through the same cleaning.
-    assert tracker._live_colors_with_commanders([], ["Smaug the Magnificent (Legendary Creature 6/6)"]) == "R"
+    assert (
+        tracker._live_colors_with_commanders([], ["Smaug the Magnificent (Legendary Creature 6/6)"])
+        == "R"
+    )
 
 
 def test_live_colors_seed_from_commander_identity():
@@ -8074,15 +8112,29 @@ def test_draw_of_a_non_card_object_is_counted_but_not_recorded_as_a_card():
     tracker._append_diagnostic_log = lambda message, annotation: logged.append(message)
     zones = {10: {"type": "ZoneType_Library"}, 11: {"type": "ZoneType_Hand"}}
 
-    ability_obj = {"grpId": 188982, "instanceId": 1156, "ownerSeatId": 1, "type": "GameObjectType_Ability", "objectSourceGrpId": 96000}
+    ability_obj = {
+        "grpId": 188982,
+        "instanceId": 1156,
+        "ownerSeatId": 1,
+        "type": "GameObjectType_Ability",
+        "objectSourceGrpId": 96000,
+    }
     tracker._handle_draw_zone_transfer(ability_obj, {}, {1156: ability_obj}, zones, 10, 11)
     assert tracker.game_state.drawn_card_events.get(1, []) == []
     assert tracker._seat_stats(1)["cards_drawn"] == 1
     assert logged and "non-card object" in logged[0] and "grpId=188982" in logged[0]
 
-    unknown_card = {"grpId": 120001, "instanceId": 701, "ownerSeatId": 1, "type": "GameObjectType_Card", "cardTypes": ["CardType_Creature"]}
+    unknown_card = {
+        "grpId": 120001,
+        "instanceId": 701,
+        "ownerSeatId": 1,
+        "type": "GameObjectType_Card",
+        "cardTypes": ["CardType_Creature"],
+    }
     tracker._handle_draw_zone_transfer(unknown_card, {}, {701: unknown_card}, zones, 10, 11)
-    assert [event.card_name for event in tracker.game_state.drawn_card_events.get(1, [])] == ["Card #120001"]
+    assert [event.card_name for event in tracker.game_state.drawn_card_events.get(1, [])] == [
+        "Card #120001"
+    ]
 
 
 def test_zero_power_creature_labels_as_zero_not_unknown():
@@ -8102,3 +8154,58 @@ def test_zero_power_creature_labels_as_zero_not_unknown():
         "toughness": {"value": 2},
     }
     assert tracker._object_display_label(creature, 7).endswith(" (0/2)")
+
+
+def test_return_to_the_battlefield_is_not_logged_as_a_return_to_hand(capsys):
+    """Arena files graveyard recursion (Yuna, Hope of Spira) under Return too."""
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.turn_number = 9
+    tracker.game_state.last_player_turn_number = 8
+    tracker.game_state.last_opponent_turn_number = 9
+    tracker.card_db.names[95100] = "Yuna, Hope of Spira"
+    tracker.card_db.names[95200] = "Summon: Knights of Round"
+    tracker.game_state.object_snapshots[500] = {
+        "instanceId": 500,
+        "grpId": 95100,
+        "ownerSeatId": 2,
+        "controllerSeatId": 2,
+    }
+    tracker.game_state.object_snapshots[510] = {
+        "instanceId": 510,
+        "grpId": 95200,
+        "ownerSeatId": 2,
+        "controllerSeatId": 2,
+    }
+
+    tracker._handle_event(
+        {
+            "type": "game_state",
+            "data": {
+                "zones": [
+                    {"zoneId": 37, "type": "ZoneType_Graveyard", "ownerSeatId": 2},
+                    {"zoneId": 28, "type": "ZoneType_Battlefield"},
+                ],
+                "annotations": [
+                    {
+                        "affectorId": 500,
+                        "affectedIds": [510],
+                        "type": ["AnnotationType_ZoneTransfer"],
+                        "details": [
+                            {"key": "zone_src", "valueInt32": [37]},
+                            {"key": "zone_dest", "valueInt32": [28]},
+                            {"key": "category", "valueString": ["Return"]},
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+    out = capsys.readouterr().out
+
+    assert (
+        "Opponent: [Yuna, Hope of Spira] returned [Summon: Knights of Round] to battlefield" in out
+    )
+    assert "to hand" not in out

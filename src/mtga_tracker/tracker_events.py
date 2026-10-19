@@ -48,7 +48,6 @@ class TrackerEventsMixin(
         from the objects' ``isTapped`` state.
         """
         ignored_types = {
-            "AnnotationType_ChoiceResult",
             "AnnotationType_GainDesignation",
             "AnnotationType_LayeredEffectCreated",
             "AnnotationType_LayeredEffectDestroyed",

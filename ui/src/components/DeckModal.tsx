@@ -1,11 +1,20 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type MouseEvent, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 
+function onBackdrop(event: MouseEvent<HTMLDialogElement>) {
+  if (event.target !== event.currentTarget) return false;
+  const rect = event.currentTarget.getBoundingClientRect();
+  return event.clientX < rect.left || event.clientX > rect.right
+    || event.clientY < rect.top || event.clientY > rect.bottom;
+}
+
 /** Native modal dialog shared by Deck Manager and Deck Finder. */
-export function DeckModal({ title, busy, onClose, returnFocus, headerActions, wide = false, children }: {
-  title: string; busy: boolean; onClose: () => void; returnFocus: HTMLElement | null; headerActions?: ReactNode; wide?: boolean; children: ReactNode;
+/** `closeOnBackdrop={false}` keeps forms with typed work open until the close button is used. */
+export function DeckModal({ title, busy, onClose, returnFocus, headerActions, wide = false, closeOnBackdrop = true, children }: {
+  title: string; busy: boolean; onClose: () => void; returnFocus: HTMLElement | null; headerActions?: ReactNode; wide?: boolean; closeOnBackdrop?: boolean; children: ReactNode;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const pressedBackdrop = useRef(false);
   useEffect(() => {
     const dialog = dialogRef.current;
     const opener = returnFocus ?? document.activeElement;
@@ -32,11 +41,13 @@ export function DeckModal({ title, busy, onClose, returnFocus, headerActions, wi
       aria-modal="true"
       aria-labelledby="deck-manager-modal-title"
       onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}
+      // Only a press and release both on the backdrop closes; a text selection
+      // dragged out of the dialog ends with a click there too.
+      onMouseDown={(event) => { pressedBackdrop.current = onBackdrop(event); }}
       onClick={(event) => {
-        if (event.target !== event.currentTarget || busy) return;
-        const rect = event.currentTarget.getBoundingClientRect();
-        if (event.clientX < rect.left || event.clientX > rect.right
-          || event.clientY < rect.top || event.clientY > rect.bottom) onClose();
+        const pressed = pressedBackdrop.current;
+        pressedBackdrop.current = false;
+        if (closeOnBackdrop && !busy && pressed && onBackdrop(event)) onClose();
       }}
     >
       <div className="deck-manager-modal-heading">

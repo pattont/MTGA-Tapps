@@ -114,7 +114,7 @@ def test_unity_data_dirs_parse_subsystems_and_mono_lines():
         "GfxDevice: creating device client; threaded=1; jobified=0\n"
     )
     dirs = paths_mod._unity_data_dirs_from_log_head(head)
-    assert [str(d) for d in dirs] == [
+    assert [d.as_posix() for d in dirs] == [
         "/Users/someone/Library/Application Support/Steam/steamapps/common/MTGA/"
         "MTGA.app/Contents/Resources/Data",
         "G:/MTGA/MTGA_Data",

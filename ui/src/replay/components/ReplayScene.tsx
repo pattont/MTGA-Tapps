@@ -4,7 +4,7 @@
  * Measures the stage so the table's width can follow its aspect.
  */
 import { Canvas } from '@react-three/fiber';
-import { Component, memo, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type { CardPlacement, Layout } from '../layout';
 import type { ReplayPrefs } from '../prefs';
@@ -16,7 +16,10 @@ import type { HoverStore } from '../scene/hoverStore';
 import { createSceneKit } from '../scene/kit';
 import { sceneLabels } from '../scene/labels';
 import { MotionRegistry } from '../scene/motionRegistry';
+import { isSupersampled, scenePixelRatio } from '../scene/pixelRatio';
 import { isUnknownCard } from '../scene/textureStore';
+import { WHEEL_ZOOM_RATE } from '../scene/viewZoom';
+import type { ViewZoom } from '../scene/viewZoom';
 import { supportsWebGL } from '../scene/webgl';
 import type { TextureStore } from '../scene/textureStore';
 import type { CardKey, ReplayCard } from '../types';
@@ -33,6 +36,8 @@ export interface ReplaySceneProps {
   cards: Readonly<Record<CardKey, ReplayCard>>;
   store: TextureStore;
   hover: HoverStore;
+  /** Wheel zoom and drag pan of the table (keyboard zoom is in useReplayKeyboard). */
+  zoom: ViewZoom;
   /** True after a seek jump: cards move instantly instead of animating. */
   snap: boolean;
   /** Playback is running (paused: a resolved stack item is held on screen). */
@@ -68,8 +73,129 @@ class SceneErrorBoundary extends Component<{ children: ReactNode }, { message: s
   }
 }
 
-const GL_OPTIONS = { antialias: true, powerPreference: 'high-performance' } as const;
-const DPR: [number, number] = [1, 2];
+/** Pointer travel (CSS px) before a press on a zoomed table becomes a pan instead of a click. */
+const PAN_THRESHOLD_PX = 4;
+
+/**
+ * Wheel zoom toward the pointer and drag to pan while zoomed (the keyboard
+ * zoom lives in useReplayKeyboard). A drag swallows the click that ends it, so panning never opens a
+ * card. The stack preview and the zoom pill keep their own wheel and clicks.
+ */
+function useTableZoom(
+  wrap: { current: HTMLDivElement | null },
+  zoom: ViewZoom,
+  hover: HoverStore,
+  enabled: boolean,
+): void {
+  useEffect(() => {
+    const node = wrap.current;
+    if (!node || !enabled) return;
+    const outside = (target: EventTarget | null) =>
+      target instanceof Element && target.closest('.replay-stack-layer, .replay-zoom-pill') !== null;
+    const size = () => node.getBoundingClientRect();
+
+    const onWheel = (event: WheelEvent) => {
+      if (outside(event.target) || event.ctrlKey) return;
+      event.preventDefault();
+      const rect = size();
+      const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+      zoom.zoomAt(Math.exp(-delta * WHEEL_ZOOM_RATE), event.clientX - rect.left, event.clientY - rect.top, rect.width, rect.height);
+    };
+
+    let press: { id: number; x: number; y: number; panning: boolean } | null = null;
+    let swallowClick = false;
+    const onDown = (event: PointerEvent) => {
+      swallowClick = false;
+      if (event.button !== 0 || !zoom.zoomed || outside(event.target)) return;
+      press = { id: event.pointerId, x: event.clientX, y: event.clientY, panning: false };
+    };
+    const onMove = (event: PointerEvent) => {
+      if (!press || event.pointerId !== press.id) return;
+      const dx = event.clientX - press.x;
+      const dy = event.clientY - press.y;
+      if (!press.panning) {
+        if (Math.hypot(dx, dy) < PAN_THRESHOLD_PX) return;
+        press.panning = true;
+        node.setPointerCapture(event.pointerId);
+        node.classList.add('is-panning');
+        if (hover.get()?.source === 'scene') hover.set(null);
+      }
+      const rect = size();
+      zoom.panBy(dx, dy, rect.width, rect.height);
+      press.x = event.clientX;
+      press.y = event.clientY;
+    };
+    const onUp = (event: PointerEvent) => {
+      if (!press || event.pointerId !== press.id) return;
+      if (press.panning) {
+        swallowClick = true;
+        node.classList.remove('is-panning');
+        if (node.hasPointerCapture(event.pointerId)) node.releasePointerCapture(event.pointerId);
+      }
+      press = null;
+    };
+    const onClick = (event: MouseEvent) => {
+      if (!swallowClick) return;
+      swallowClick = false;
+      event.stopPropagation();
+      event.preventDefault();
+    };
+
+    node.addEventListener('wheel', onWheel, { passive: false });
+    node.addEventListener('pointerdown', onDown);
+    node.addEventListener('pointermove', onMove);
+    node.addEventListener('pointerup', onUp);
+    node.addEventListener('pointercancel', onUp);
+    node.addEventListener('click', onClick, true);
+    return () => {
+      node.removeEventListener('wheel', onWheel);
+      node.removeEventListener('pointerdown', onDown);
+      node.removeEventListener('pointermove', onMove);
+      node.removeEventListener('pointerup', onUp);
+      node.removeEventListener('pointercancel', onUp);
+      node.removeEventListener('click', onClick, true);
+      node.classList.remove('is-panning');
+    };
+  }, [wrap, zoom, hover, enabled]);
+}
+
+function useZoomLevel(zoom: ViewZoom): number {
+  return useSyncExternalStore(zoom.subscribe, () => zoom.zoom, () => 1);
+}
+
+function deviceRatio(): number {
+  return typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1;
+}
+
+/** WebGL fixes MSAA at context creation: skip it when the table will be supersampled. */
+function glOptions() {
+  const width = typeof window === 'undefined' ? 0 : window.innerWidth;
+  const height = typeof window === 'undefined' ? 0 : window.innerHeight;
+  return { antialias: !isSupersampled(deviceRatio(), width, height), powerPreference: 'high-performance' } as const;
+}
+
+/** The table's pixel ratio, following the canvas size and the screen it is on (see pixelRatio.ts). */
+function useScenePixelRatio(wrap: { current: HTMLDivElement | null }): number {
+  const [ratio, setRatio] = useState(() => scenePixelRatio(deviceRatio(), 0, 0));
+  useEffect(() => {
+    const node = wrap.current;
+    if (!node) return;
+    const measure = () => {
+      const { width, height } = node.getBoundingClientRect();
+      setRatio(scenePixelRatio(deviceRatio(), width, height));
+    };
+    measure();
+    // A move to another monitor changes devicePixelRatio and fires a window resize.
+    window.addEventListener('resize', measure);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(node);
+    return () => {
+      window.removeEventListener('resize', measure);
+      observer?.disconnect();
+    };
+  }, [wrap]);
+  return ratio;
+}
 
 function sceneKey(placement: CardPlacement): string {
   return `scene:${placement.obj}`;
@@ -82,6 +208,7 @@ function ReplaySceneImpl({
   cards,
   store,
   hover,
+  zoom,
   snap,
   playing,
   onCardClick,
@@ -99,6 +226,15 @@ function ReplaySceneImpl({
   const arrowRoot = useRef<SVGGElement>(null);
   const stackRoot = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
+  const [gl] = useState(glOptions);
+  const dpr = useScenePixelRatio(wrap);
+  const zoomLevel = useZoomLevel(zoom);
+  const exporting = exportHandle !== null;
+  useTableZoom(wrap, zoom, hover, webgl && !exporting);
+  // A video always shows the whole table.
+  useEffect(() => {
+    if (exporting) zoom.reset();
+  }, [exporting, zoom]);
   const click = useRef(onCardClick);
   useEffect(() => {
     click.current = onCardClick;
@@ -112,7 +248,7 @@ function ReplaySceneImpl({
     if (!node || !onTableFit || typeof ResizeObserver === 'undefined') return;
     const measure = () => {
       const { width, height } = node.getBoundingClientRect();
-      if (width > 0 && height > 0) onTableFit(fitTableForView({ width, height }, DEFAULT_MARGINS, preset));
+      if (width > 0 && height > 0) onTableFit(fitTableForView({ width, height }, DEFAULT_MARGINS, preset, undefined, window.devicePixelRatio));
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -157,7 +293,7 @@ function ReplaySceneImpl({
 
   return (
     <div
-      className="replay-canvas-wrap"
+      className={`replay-canvas-wrap${zoomLevel > 1 ? ' is-zoomed' : ''}`}
       ref={wrap}
       onPointerLeave={() => {
         if (hover.get()?.source === 'scene') hover.set(null);
@@ -168,8 +304,8 @@ function ReplaySceneImpl({
           <Canvas
             className="replay-canvas"
             frameloop="demand"
-            dpr={DPR}
-            gl={GL_OPTIONS}
+            dpr={dpr}
+            gl={gl}
             flat
             onPointerMissed={() => hover.set(null)}
           >
@@ -189,6 +325,7 @@ function ReplaySceneImpl({
               stackNodes={stackNodes}
               handlers={handlers}
               snap={snap}
+              zoom={zoom}
             />
             {exportHandle ? (
               <ExportDriver
@@ -241,6 +378,11 @@ function ReplaySceneImpl({
           })}
         </g>
       </svg>
+      {zoomLevel > 1 ? (
+        <button type="button" className="replay-zoom-pill" onClick={() => zoom.reset()} title="Show the whole table (0)">
+          {zoomLevel.toFixed(1)}× · Reset zoom
+        </button>
+      ) : null}
       <div className="replay-stack-layer" ref={stackRoot}>
         <StackPreview
           state={state}

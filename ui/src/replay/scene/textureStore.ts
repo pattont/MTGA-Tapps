@@ -13,6 +13,7 @@ import {
   NoColorSpace,
   RepeatWrapping,
   SRGBColorSpace,
+  ShaderChunk,
   Texture,
 } from 'three';
 import { cardPreviewImageUrl } from '../../cardPreview';
@@ -31,6 +32,7 @@ import type { FeltColor, SleeveColor } from '../prefs';
 import type { CardKey, ReplayCard } from '../types';
 import {
   createCardAlphaCanvas,
+  createCastableCanvas,
   createInferredCanvas,
   createRingCanvas,
   createShadowCanvas,
@@ -81,6 +83,17 @@ export function loadDecodedImage(url: string): Promise<HTMLImageElement> {
     image.src = url;
   });
 }
+
+/**
+ * LOD bias for card faces. A card is small on screen, so the GPU picks a
+ * heavily reduced mipmap; one level sharper keeps names and art crisper. The
+ * supersampled frame (pixelRatio.ts) absorbs the shimmer this would add.
+ */
+export const CARD_MIP_BIAS = -1;
+const BIASED_MAP_FRAGMENT = ShaderChunk.map_fragment.replace(
+  'texture2D( map, vMapUv )',
+  `texture2D( map, vMapUv, ${CARD_MIP_BIAS.toFixed(1)} )`,
+);
 
 export function isUnknownCard(key: CardKey | null, card: ReplayCard | undefined): boolean {
   return key === UNKNOWN_CARD || (!!card && card.name === 'Unknown card' && !card.arena_id);
@@ -338,12 +351,13 @@ export class TextureStore {
   }
 
   /** Linear-space helper masks (alpha, shadow, rings). */
-  helper(name: 'alpha' | 'shadow' | 'ring' | 'inferred' | 'slot'): Texture {
+  helper(name: 'alpha' | 'shadow' | 'ring' | 'inferred' | 'slot' | 'castable'): Texture {
     const makers = {
       alpha: createCardAlphaCanvas,
       shadow: createShadowCanvas,
       ring: createRingCanvas,
       inferred: createInferredCanvas,
+      castable: createCastableCanvas,
       slot: createSlotCanvas,
     };
     const texture = this.cached(`helper:${name}`, () => new CanvasTexture(makers[name]()));
@@ -356,6 +370,10 @@ export class TextureStore {
     let material = this.materials.get(texture);
     if (!material) {
       material = new MeshBasicMaterial({ map: texture, alphaMap: this.helper('alpha'), alphaTest: 0.5 });
+      material.onBeforeCompile = (shader) => {
+        shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', BIASED_MAP_FRAGMENT);
+      };
+      material.customProgramCacheKey = () => 'card-mip-bias';
       this.materials.set(texture, material);
     }
     return material;

@@ -1,6 +1,7 @@
 /**
  * Page-wide replay shortcuts: Space play/pause, ←/→ step, J/K turn,
- * Home/End, [ ] speed, G go-to-turn, T Replay Options popover. Ignored while typing
+ * Home/End, [ ] speed, G go-to-turn, T Replay Options popover, +/- and 0
+ * table zoom. Ignored while typing
  * and when a modifier key is held.
  */
 import { useEffect, useRef } from 'react';
@@ -11,6 +12,8 @@ import { savePrefs } from '../prefs';
 export interface KeyboardActions {
   focusGoToTurn: () => void;
   toggleTable: () => void;
+  /** Table zoom; the zoom keys are not handled without it. */
+  zoom?: (direction: 'in' | 'out' | 'reset') => void;
 }
 
 export function isTypingTarget(target: EventTarget | null): boolean {
@@ -68,6 +71,17 @@ export function handleReplayKey(key: string, clock: PlaybackClock, actions: Keyb
     case 'T':
       actions.toggleTable();
       return true;
+    case '+':
+    case '=':
+      actions.zoom?.('in');
+      return actions.zoom !== undefined;
+    case '-':
+    case '_':
+      actions.zoom?.('out');
+      return actions.zoom !== undefined;
+    case '0':
+      actions.zoom?.('reset');
+      return actions.zoom !== undefined;
     default:
       return false;
   }

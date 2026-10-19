@@ -35,6 +35,7 @@ from .replay_stream import (
     build_turns,
     finalize_logs,
     is_unknown_card_name,
+    primary_type_from_text,
     seat_colors,
     stream_header,
 )
@@ -301,6 +302,8 @@ class RecordedBuilder:
         inferred: bool = False,
         index: Optional[int] = None,
         exiled_with: Optional[str] = None,
+        moved_by: Optional[str] = None,
+        chosen: Optional[str] = None,
     ) -> Dict[str, Any]:
         if card is not None:
             self.card_of[obj] = card
@@ -310,7 +313,8 @@ class RecordedBuilder:
             "move",
             obj=obj,
             card=card if card is not None else self.card_of.get(obj),
-            **{"from": source, "to": dest, "with": exiled_with},
+            **{"from": source, "to": dest, "with": exiled_with, "by": moved_by},
+            chosen=chosen,
             owner=owner,
             controller=controller if controller is not None else owner,
             reason=reason if reason in MOVE_REASONS else "unknown",
@@ -643,6 +647,8 @@ class RecordedBuilder:
             str(payload.get("reason") or "unknown"),
             index=_int(payload.get("index")),
             exiled_with=_obj(payload.get("with")) if dest == "exile" else None,
+            moved_by=_obj(payload.get("by")),
+            chosen=payload.get("chosen") if isinstance(payload.get("chosen"), str) else None,
         )
 
     def _on_tap(self, row, payload, kind="tap"):
@@ -980,9 +986,60 @@ def attach_image_urls(stream: Dict[str, Any], resolver: Optional[ImageResolver] 
         if not arena_id or entry.get("image_url"):
             continue
         try:
-            entry["image_url"] = resolve(int(arena_id))
+            url = resolve(int(arena_id))
         except Exception:  # noqa: BLE001 - images are best effort
-            entry["image_url"] = None
+            url = None
+        # A back face shares its front's set and number; Scryfall serves it under /back/.
+        if url and entry.get("back_face"):
+            url = url.replace("/front/", "/back/")
+        entry["image_url"] = url
+
+
+CardFactsLoader = Callable[[], Dict[str, Dict[str, Any]]]
+#: Tests (or callers without an Arena install) may replace this.
+card_facts_override: Optional[CardFactsLoader] = None
+_facts_lock = threading.Lock()
+_facts_state: Dict[str, Any] = {"facts": None}
+
+
+def default_card_facts() -> Dict[str, Dict[str, Any]]:
+    """CardDatabase.replay_card_facts, loaded once per process."""
+    with _facts_lock:
+        if _facts_state["facts"] is None:
+            try:
+                from .card_database import CardDatabase
+
+                _facts_state["facts"] = CardDatabase().replay_card_facts() or {}
+            except Exception:  # noqa: BLE001 - a missing Arena install is normal
+                _facts_state["facts"] = {}
+        return _facts_state["facts"]
+
+
+def load_card_facts() -> Dict[str, Dict[str, Any]]:
+    try:
+        return (card_facts_override or default_card_facts)() or {}
+    except Exception:  # noqa: BLE001 - facts only refine the replay
+        return {}
+
+
+def attach_card_facts(stream: Dict[str, Any], facts: Dict[str, Dict[str, Any]]) -> None:
+    """Sets each card entry's ``keywords`` and ``back_face`` from Arena's card DB."""
+    for entry in (stream.get("cards") or {}).values():
+        fact = facts.get(str(entry.get("name") or "").casefold())
+        if not fact:
+            continue
+        entry["keywords"] = list(fact.get("keywords") or [])
+        entry["back_face"] = bool(fact.get("back_face"))
+        if entry.get("is_token"):
+            continue
+        # Fill what the game's rows never said (an opponent card seen only by name).
+        if not entry.get("type_line") and fact.get("type_line"):
+            entry["type_line"] = fact["type_line"]
+            if not entry.get("primary_type"):
+                entry["primary_type"] = primary_type_from_text(fact["type_line"])
+        for field in ("power", "toughness"):
+            if entry.get(field) in (None, "") and fact.get(field) not in (None, ""):
+                entry[field] = str(fact[field])
 
 
 def replay_for_game(db_path: Path, game_id: str) -> Dict[str, Any]:
@@ -1003,6 +1060,9 @@ def replay_for_game(db_path: Path, game_id: str) -> Dict[str, Any]:
         conn.close()
     if rows is None:
         raise LookupError(f"No recorded game for id: {game_id}")
+    facts = load_card_facts()
+    rows["card_facts"] = facts
     stream = build_stream(rows)
+    attach_card_facts(stream, facts)
     attach_image_urls(stream)
     return stream

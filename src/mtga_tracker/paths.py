@@ -12,8 +12,11 @@ from typing import List, Optional
 
 
 def native_deck_platform_supported() -> bool:
-    """The native adapter has been validated only on macOS Apple Silicon."""
-    return platform.system() == "Darwin" and platform.machine() == "arm64"
+    """Arena builds the native deck adapter targets: Apple Silicon macOS and x64 Windows."""
+    system, machine = platform.system(), platform.machine().lower()
+    if system == "Darwin":
+        return machine == "arm64"
+    return system == "Windows" and machine in ("amd64", "x86_64")
 
 
 #: Relative path from a game install root to Arena's raw card database folder.

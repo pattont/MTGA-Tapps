@@ -63,6 +63,22 @@ def test_missing_marker_and_marker_in_prose_are_not_lists():
     assert parse_description("Deckbuilding tutorial\n60 Forest") is None
 
 
+def test_complete_headerless_hgg_description_is_imported():
+    description = (FIXTURES / "hgg_headerless.txt").read_text()
+    parsed = parse_description(description, "Standard")
+    assert parsed is not None
+    assert parsed.main_count == 60
+    assert parsed.text.startswith("Deck\n4 Null Summoner\n")
+    assert parsed.text.endswith("2 Restless Reef")
+    assert len(parsed.text.splitlines()) == 19
+
+
+def test_headerless_prose_and_incomplete_lists_are_skipped():
+    assert parse_description("Top 10 cards\n10 Forest\n10 Island\n10 Swamp") is None
+    description = (FIXTURES / "hgg_headerless.txt").read_text()
+    assert parse_description(description.replace("2 Restless Reef", "1 Restless Reef"), "Standard") is None
+
+
 @pytest.mark.parametrize(
     "body",
     ["Deck\n59 Forest", "Deck\n0 Forest", "Deck\n60 Forest\n2", "Deck\n60 Forest\nDeck\n60 Island"],
@@ -367,6 +383,36 @@ def test_fetch_orders_results_and_reports_failures_without_caching(monkeypatch):
     assert len(decks) == 1 and decks[0].name == ids[0]
     assert decks[0].deck_text == f"About\nName {ids[0]} (HGG)\n\nDeck\n60 Forest"
     assert decks.warnings and not decks.cacheable
+
+
+def test_headerless_hgg_video_reaches_creator_results(monkeypatch):
+    scraper = YouTubeScraper()
+    video_id = "UJ5JW2tq0zI"
+    monkeypatch.setattr(
+        scraper,
+        "_listing",
+        lambda *args: ChannelListing([video_id], CHANNEL_ID, "Hello Good Game", {}),
+    )
+    monkeypatch.setattr(
+        scraper,
+        "_metadata",
+        lambda *args: {
+            "videoDetails": {
+                "videoId": video_id,
+                "channelId": CHANNEL_ID,
+                "title": "This NEW Dimir Deck Has a 95% Win Rate! | MTG Arena Standard",
+                "shortDescription": (FIXTURES / "hgg_headerless.txt").read_text(),
+            },
+            "microformat": {"playerMicroformatRenderer": {"publishDate": "2026-10-16"}},
+        },
+    )
+    decks = scraper.fetch_creator_decks(DEFAULT_YOUTUBE_CREATORS[0])
+    assert len(decks) == 1
+    assert decks[0].name == "This NEW Dimir Deck Has a 95% Win Rate!"
+    assert decks[0].deck_text.startswith(
+        "About\nName This NEW Dimir Deck Has a 95% Win Rate! (HGG)\n\nDeck\n4 Null Summoner"
+    )
+    assert decks[0].event_date == "2026-10-16"
 
 
 def test_failed_creator_identity_is_never_imported(monkeypatch):

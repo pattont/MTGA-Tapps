@@ -20,7 +20,8 @@ _PT_RE = re.compile(r"(-?\d+|\?|\*)/(-?\d+|\?|\*)$")
 
 _TURN_RE = re.compile(r"^Turn (\d+) - (YOUR TURN|OPPONENT'S TURN)")
 _DRAW_RE = re.compile(r"^drew (?:a card|\[([^\]]+)\])$")
-_LAND_RE = re.compile(r"^played \[([^\]]+)\]$")
+# A land that chose a basic land type ends "as a Mountain".
+_LAND_RE = re.compile(r"^played \[([^\]]+)\](?: as an? ([A-Za-z ]+))?$")
 _CAST_RE = re.compile(r"^cast \[([^\]]+)\](.*)$", re.S)
 _BECAME_RE = re.compile(r"^\[([^\]]+)\] became \[([^\]]+)\](?: \(([^()]*)\))?\s*$")
 _TAPPED_RE = re.compile(r"^\[([^\]]+)\] tapped \[([^\]]+)\]$")
@@ -40,6 +41,10 @@ _LIFE_RE = re.compile(r"^(gained|lost) (\d+) life(?: \[([^\]]+)\])? \(now (-?\d+
 _SCRY_RE = re.compile(r"^scried (\d+)(?: — (.*))?$", re.S)
 
 _DESTROYED_RE = re.compile(r"^\[([^\]]+)\] was destroyed$")
+#: Keywords (CardDatabase.REPLAY_KEYWORD_BASE_IDS) that cast a card from its
+#: owner's graveyard.
+GRAVEYARD_CAST_KEYWORDS = frozenset({"flashback", "escape", "disturb", "harmonize"})
+
 _EXILED_RE = re.compile(r"^\[([^\]]+)\] was exiled( as cost)?$")
 _SACRIFICED_RE = re.compile(r"^\[([^\]]+)\] was sacrificed( as cost)?$")
 _DISCARDED_RE = re.compile(r"^\[([^\]]+)\] was discarded( as cost)?$")
@@ -47,6 +52,76 @@ _SBA_RE = re.compile(r"^\[([^\]]+)\] was put into graveyard \(([^()]+)\)$")
 _MILLED_RE = re.compile(r"^milled (?:a card|\[([^\]]+)\])$")
 _RETURNED_RE = re.compile(r"^returned \[([^\]]+)\] to hand(?: as cost for \[([^\]]+)\])?$")
 _SOURCE_RETURNED_RE = re.compile(r"^\[([^\]]+)\] returned \[([^\]]+)\] to (your|opponent's) hand$")
+_RETURNED_BATTLEFIELD_RE = re.compile(r"^(?:\[([^\]]+)\] )?returned \[([^\]]+)\] to battlefield$")
+#: An ability that returns its target to the battlefield ("return up to one
+#: target enchantment card from your graveyard to the battlefield"). Before the
+#: tracker printed "returned [X] to battlefield", such a return was printed as
+#: "returned [X] to hand".
+_RETURN_TO_BATTLEFIELD_TEXT_RE = re.compile(r"\breturn\b.*\bto the battlefield\b", re.IGNORECASE)
+#: One unconditional token-making sentence of an ability ("Create three 2/2
+#: white Knight creature tokens."). Sentences that do not start with Create
+#: ("If you do, create ...") and counts that depend on the board are skipped.
+_CREATE_TOKENS_RE = re.compile(
+    r"^Create (a|an|one|two|three|four|five|six|seven|eight|nine|ten|\d+) "
+    r"(?:tapped )?(?:(\d+)/(\d+) )?(.+?) tokens?\b(.*)$"
+)
+_COUNT_WORDS = {
+    "a": 1,
+    "an": 1,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+_TOKEN_DESCRIPTORS = {
+    "white",
+    "blue",
+    "black",
+    "red",
+    "green",
+    "colorless",
+    "and",
+    "legendary",
+    "snow",
+    "creature",
+    "artifact",
+    "enchantment",
+}
+
+
+def created_tokens(text: str):
+    """(name, count, power, toughness, types) for each unconditional "Create ..."
+    sentence of an ability's text; empty when there is none."""
+    out = []
+    for sentence in re.split(r"(?<=\.)\s+", text.strip()):
+        match = _CREATE_TOKENS_RE.match(sentence.strip())
+        if not match:
+            continue
+        count_text, power, toughness, words, rest = match.groups()
+        if "for each" in rest or "equal to" in rest:
+            continue
+        count = _COUNT_WORDS.get(count_text.lower()) or (
+            int(count_text) if count_text.isdigit() else 0
+        )
+        parts = words.split()
+        types = [
+            w.capitalize() for w in parts if w.lower() in ("creature", "artifact", "enchantment")
+        ]
+        name = " ".join(w for w in parts if w.lower() not in _TOKEN_DESCRIPTORS)
+        if not count or not name or count > 20:
+            continue
+        if power is not None and "Creature" not in types:
+            types.append("Creature")
+        out.append((name, count, power, toughness, types))
+    return out
+
+
 _PUT_BATTLEFIELD_RE = re.compile(r"^put \[([^\]]+)\] onto battlefield( attacking)?$")
 _PUT_HAND_RE = re.compile(r"^(?:\[([^\]]+)\] )?put \[([^\]]+)\] into (your|opponent's) hand$")
 

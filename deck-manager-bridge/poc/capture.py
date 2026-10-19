@@ -117,7 +117,7 @@ def write_library(report, destination, resolve_name=None):
             raise ValueError("Experiment database unexpectedly contains game history.")
         conn.close()
         conn = None
-        with staging.open("rb") as handle:
+        with staging.open("r+b") as handle:  # Windows fsync needs write access
             os.fsync(handle.fileno())
         # Same-directory hard link publishes a complete file atomically and
         # refuses overwrite even if another process created the destination.
@@ -137,7 +137,9 @@ def main():
     parser.add_argument("destination", type=Path)
     args = parser.parse_args()
     try:
-        count = write_library(json.loads(args.snapshot.read_text()), args.destination)
+        count = write_library(
+            json.loads(args.snapshot.read_text(encoding="utf-8")), args.destination
+        )
     except (ValueError, KeyError, OSError, sqlite3.Error) as exc:
         parser.exit(1, f"Capture failed: {exc}\n")
     print(

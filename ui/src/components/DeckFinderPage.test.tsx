@@ -215,6 +215,21 @@ it('adds the chosen list directly to Arena once and monitors the result without 
   expect(importManagedDeck).not.toHaveBeenCalled();
 });
 
+it('tells the user to return to Arena’s Decks screen instead of opening Deck Manager', async () => {
+  const reason = 'Arena isn’t on its Decks screen. Go to Decks in Arena, outside a match, then try again.';
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ available: true, connected: false, busy: false, decks: [], limit: 100, limit_reached: false, deck_screen_open: false, message: '' });
+  vi.mocked(addDeckToArena).mockResolvedValue({ job_id: 'not-on-decks' });
+  vi.mocked(fetchNativeDeckJob).mockResolvedValue({ state: 'error', detail: reason });
+  render(<DeckFinderPage />);
+  await chooseCreator();
+  fireEvent.click(await screen.findByRole('button', { name: deck.name }));
+  expect(screen.getByText('Arena must be on its Decks screen')).not.toHaveClass('deckfinder-manager-hint-alert');
+  fireEvent.click(await screen.findByRole('button', { name: 'Add to Arena' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(reason);
+  expect(screen.queryByRole('link', { name: 'Open Deck Manager' })).not.toBeInTheDocument();
+  expect(screen.getByText('Arena must be on its Decks screen')).toHaveClass('deckfinder-manager-hint-alert');
+});
+
 it.each([{ in_game: true }, { limit_reached: true }])('blocks direct adds while a game is active or slots are full', async (guard) => {
   vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ available: true, connected: true, busy: false, decks: [], limit: 100, limit_reached: false, deck_screen_open: true, message: '', ...guard });
   render(<DeckFinderPage />);

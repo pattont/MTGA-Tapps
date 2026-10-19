@@ -125,6 +125,64 @@ def test_submitted_lists_capture_without_game_persistence_and_deduplicate(conn, 
     assert conn.execute("SELECT COUNT(*) FROM managed_deck_bindings").fetchone()[0] == 0
 
 
+def native_copy(quantity=4):
+    card = {"section": "Deck", "quantity": quantity, "arena_id": 123, "name": "Forest"}
+    card.update(set_code=None, collector_number=None)
+    return {"name": "Any deck", "format_name": "Standard", "cards": [card], "metadata": {}}
+
+
+def test_arena_saving_a_deck_manager_transfer_keeps_one_entry(conn):
+    saved = dm.save_deck(conn, native_copy())
+    # Arena logs its save while the transfer is in flight, before the deck is bound.
+    conn.execute(
+        "INSERT INTO managed_deck_transfers VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "t",
+            "account",
+            saved["id"],
+            saved["revision_id"],
+            "original-deck",
+            "restore",
+            "write_started",
+            "[]",
+            None,
+            dm.now(),
+            dm.now(),
+        ),
+    )
+    capture = DeckCapture(conn, lambda _: "Forest")
+    assert capture.consume(entry()) == saved["id"]
+    assert [d["id"] for d in dm.list_decks(conn)] == [saved["id"]]
+    assert len(dm.deck_detail(conn, saved["id"])["revisions"]) == 1
+    # A later edit in Arena becomes a revision of the same entry.
+    assert capture.consume(entry(quantity=5)) == saved["id"]
+    assert len(dm.list_decks(conn)) == 1
+    assert len(dm.deck_detail(conn, saved["id"])["revisions"]) == 2
+    # Rescanning the older save adds nothing and keeps the newer list current.
+    edited = dm.deck_detail(conn, saved["id"])["revision_id"]
+    assert capture.consume(entry()) == saved["id"]
+    assert dm.deck_detail(conn, saved["id"])["revision_id"] == edited
+    assert len(dm.deck_detail(conn, saved["id"])["revisions"]) == 2
+
+
+def test_arena_saving_a_bound_deck_adds_nothing(conn):
+    saved = dm.save_deck(conn, native_copy(), account_key="account", arena_deck_id="original-deck")
+    assert DeckCapture(conn, lambda _: "Forest").consume(entry()) == saved["id"]
+    assert len(dm.list_decks(conn)) == 1
+
+
+def test_native_backup_adopts_the_logged_entry_for_that_arena_deck(conn):
+    logged = DeckCapture(conn, lambda _: "Forest").consume(entry())
+    saved = dm.save_deck(conn, native_copy(), account_key="account", arena_deck_id="original-deck")
+    assert saved["id"] == logged
+    assert len(dm.list_decks(conn)) == 1
+    # A logged copy in Trash stays there; the backup gets its own entry.
+    dm.update_metadata(conn, logged, {"trashed": True})
+    conn.execute("DELETE FROM managed_deck_bindings")
+    other = dm.save_deck(conn, native_copy(), account_key="account", arena_deck_id="original-deck")
+    assert other["id"] != logged
+
+
 def test_capture_rejects_malformed_quantities_and_summary_only(conn):
     capture = DeckCapture(conn)
     with pytest.raises(dm.DeckManagerError):

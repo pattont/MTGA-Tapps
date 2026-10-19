@@ -7,6 +7,11 @@ from typing import Any, Dict, List, Optional, Set
 from .state import CardEvent
 
 
+def chosen_article(word: str) -> str:
+    """'a' or 'an' before a land type ('an Island')."""
+    return "an" if word[:1].lower() in "aeiou" else "a"
+
+
 class TrackerZoneTransferMixin:
     """Zone-transfer helpers used by CardTracker."""
 
@@ -368,9 +373,7 @@ class TrackerZoneTransferMixin:
                 source_zone = (
                     (zones_by_id or {}).get(int(zone_src)) if zone_src is not None else None
                 )
-                source_type = (
-                    source_zone.get("type") if isinstance(source_zone, dict) else None
-                )
+                source_type = source_zone.get("type") if isinstance(source_zone, dict) else None
                 if source_type == "ZoneType_Battlefield":
                     self._count_permanent_removed(instance_id, card_types, owner_seat)
             elif category == "Sacrifice":
@@ -379,9 +382,7 @@ class TrackerZoneTransferMixin:
                     if candidate_id is None:
                         continue
                     candidate = self._lookup_object(candidate_id, game_objects_by_id)
-                    forcer_seat = candidate.get("controllerSeatId") or candidate.get(
-                        "ownerSeatId"
-                    )
+                    forcer_seat = candidate.get("controllerSeatId") or candidate.get("ownerSeatId")
                     if forcer_seat is not None:
                         break
                 if (
@@ -634,10 +635,9 @@ class TrackerZoneTransferMixin:
                 return_src_zone.get("type") if isinstance(return_src_zone, dict) else None
             )
             bounce_is_cost = False
-            if (
-                source_obj
-                and source_seat
-                in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
+            if source_obj and source_seat in (
+                self.game_state.player_seat_id,
+                self.game_state.opponent_seat_id,
             ):
                 cost_stack_key = self._stack_key(source_obj.get("instanceId") or affector_id)
                 bounce_is_cost = source_seat == determining_seat and isinstance(
@@ -649,6 +649,35 @@ class TrackerZoneTransferMixin:
                     card_obj.get("cardTypes") or [],
                     determining_seat,
                 )
+            # Arena also files recursion to the battlefield (Yuna, Hope of Spira
+            # returning an enchantment from the graveyard) under Return.
+            return_dest_zone = (
+                (zones_by_id or {}).get(int(zone_dest)) if zone_dest is not None else None
+            )
+            if (
+                isinstance(return_dest_zone, dict)
+                and return_dest_zone.get("type") == "ZoneType_Battlefield"
+            ):
+                named_source = bool(
+                    source_obj
+                    and source_name
+                    and source_seat
+                    in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
+                )
+                self._print_event(
+                    self._format_actor_event(
+                        "↩️",
+                        source_seat if named_source else determining_seat,
+                        (
+                            f"[{source_name}] returned [{card_name}] to battlefield"
+                            if named_source
+                            else f"returned [{card_name}] to battlefield"
+                        ),
+                        turn_override=turn_for_display,
+                    ),
+                    "zone",
+                )
+                return
             if (
                 source_obj
                 and source_name
@@ -741,16 +770,10 @@ class TrackerZoneTransferMixin:
             # Any card that leaves the library for a hand is a draw for
             # analytics purposes (explore, discover, impulse-to-hand, ...):
             # it must count toward drawn cards and flood/screw detection.
-            source_zone = (
-                (zones_by_id or {}).get(int(zone_src)) if zone_src is not None else None
-            )
-            source_type = (
-                source_zone.get("type") if isinstance(source_zone, dict) else None
-            )
+            source_zone = (zones_by_id or {}).get(int(zone_src)) if zone_src is not None else None
+            source_type = source_zone.get("type") if isinstance(source_zone, dict) else None
             if source_type == "ZoneType_Library":
-                self._record_library_card_access(
-                    card_obj, determining_seat, turn_for_display
-                )
+                self._record_library_card_access(card_obj, determining_seat, turn_for_display)
             return
 
         # "Put" is a generic Arena category used for several destinations, including
@@ -799,9 +822,7 @@ class TrackerZoneTransferMixin:
         # exactly like a draw, so it must count toward cards/lands seen and
         # the draw-quality math. This mirrors the library → hand rule above;
         # without it, lands ramped into play vanish from every land count.
-        source_zone = (
-            (zones_by_id or {}).get(int(zone_src)) if zone_src is not None else None
-        )
+        source_zone = (zones_by_id or {}).get(int(zone_src)) if zone_src is not None else None
         source_type = source_zone.get("type") if isinstance(source_zone, dict) else None
         if source_type == "ZoneType_Library" and self._is_tracked_seat(determining_seat):
             self._record_library_card_access(
@@ -1047,11 +1068,13 @@ class TrackerZoneTransferMixin:
 
         if category == "PlayLand":
             self._check_land_replacement(determining_seat)
+            chosen = self._chosen_land_type(card_obj)
+            chosen_suffix = f" as {chosen_article(chosen)} {chosen}" if chosen else ""
             self._print_event(
                 self._format_actor_event(
                     "⛰️",
                     determining_seat,
-                    f"{late_marker}played [{card_name} ({type_str})]",
+                    f"{late_marker}played [{card_name} ({type_str})]{chosen_suffix}",
                     turn_override=turn_for_display,
                 ),
                 "land",
@@ -1160,6 +1183,9 @@ class TrackerZoneTransferMixin:
             self._handle_triggered_ability(affected_ids, annotation, game_objects)
             return True
         if "AnnotationType_PhaseOrStepModified" in ann_type:
+            return True
+        if "AnnotationType_ChoiceResult" in ann_type:
+            self._note_choice_result(affector_id, details)
             return True
         if "AnnotationType_ModifiedLife" in ann_type:
             self._handle_modified_life(

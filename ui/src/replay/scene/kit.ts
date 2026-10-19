@@ -4,6 +4,7 @@
  * caches, so switching colors never rebuilds meshes.
  */
 import {
+  AdditiveBlending,
   BoxGeometry,
   CanvasTexture,
   Color,
@@ -31,6 +32,9 @@ export const HIGHLIGHT_COLORS: Record<Exclude<PlacementHighlight, null>, string>
   damaged: '#ff5a4f',
 };
 
+/** Side cards beside the hand: a dashed outline for graveyard casts, a gold glow for plotted cards. */
+export const CASTABLE_COLORS = { graveyard: '#9fd0ff', plot: '#f2c14e' } as const;
+
 export interface SceneKit {
   card: PlaneGeometry;
   shadow: PlaneGeometry;
@@ -44,6 +48,10 @@ export interface SceneKit {
   shadowMaterial: MeshBasicMaterial;
   ringMaterials: Record<Exclude<PlacementHighlight, null>, MeshBasicMaterial>;
   inferredMaterial: MeshBasicMaterial;
+  /** Dims a card the current action removed (held in its slot until the action ends). */
+  removedMaterial: MeshBasicMaterial;
+  castableMaterial: MeshBasicMaterial;
+  plotMaterial: MeshBasicMaterial;
   slotMaterial: MeshBasicMaterial;
   blankMaterial: MeshBasicMaterial;
   edgeMaterial: MeshLambertMaterial;
@@ -73,13 +81,28 @@ export function createSceneKit(store: TextureStore): SceneKit {
 
   const overlay = (color: string, map = store.helper('ring')) =>
     new MeshBasicMaterial({ map, color: new Color(color), transparent: true, depthWrite: false, side: DoubleSide });
+  // Rings are light: added to the felt under them, never painted over it.
+  const glow = (color: string) => {
+    const material = overlay(color);
+    material.blending = AdditiveBlending;
+    return material;
+  };
   const ringMaterials = {
-    attacking: overlay(HIGHLIGHT_COLORS.attacking),
-    blocking: overlay(HIGHLIGHT_COLORS.blocking),
-    targeted: overlay(HIGHLIGHT_COLORS.targeted),
-    damaged: overlay(HIGHLIGHT_COLORS.damaged),
+    attacking: glow(HIGHLIGHT_COLORS.attacking),
+    blocking: glow(HIGHLIGHT_COLORS.blocking),
+    targeted: glow(HIGHLIGHT_COLORS.targeted),
+    damaged: glow(HIGHLIGHT_COLORS.damaged),
   };
   const inferredMaterial = overlay('#ffffff', store.helper('inferred'));
+  const removedMaterial = new MeshBasicMaterial({
+    color: new Color('#05080c'),
+    alphaMap: store.helper('alpha'),
+    transparent: true,
+    opacity: 0.55,
+    depthWrite: false,
+  });
+  const castableMaterial = overlay(CASTABLE_COLORS.graveyard, store.helper('castable'));
+  const plotMaterial = glow(CASTABLE_COLORS.plot);
   const slotMaterial = new MeshBasicMaterial({ map: store.helper('slot'), transparent: true, depthWrite: false });
   const shadowMaterial = new MeshBasicMaterial({
     map: store.helper('shadow'),
@@ -98,6 +121,9 @@ export function createSceneKit(store: TextureStore): SceneKit {
   const materials: Material[] = [
     ...Object.values(ringMaterials),
     inferredMaterial,
+    removedMaterial,
+    castableMaterial,
+    plotMaterial,
     slotMaterial,
     shadowMaterial,
     blankMaterial,
@@ -117,6 +143,9 @@ export function createSceneKit(store: TextureStore): SceneKit {
     shadowMaterial,
     ringMaterials,
     inferredMaterial,
+    removedMaterial,
+    castableMaterial,
+    plotMaterial,
     slotMaterial,
     blankMaterial,
     edgeMaterial,

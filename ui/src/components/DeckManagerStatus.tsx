@@ -64,7 +64,7 @@ export function DeckManagerStatus({ native, jobAction, jobDetail, progress, erro
     <section className={`deck-manager-status deck-manager-status-${state.tone}`} aria-label="Arena status">
       <div className="deck-manager-status-main">
         <span className="deck-manager-status-dot" aria-hidden="true" />
-        <div className="deck-manager-status-text">
+        <div className="deck-manager-status-copy">
           <strong>{state.title}</strong>
           {state.detail ? <span>{state.detail}</span> : null}
         </div>

@@ -48,7 +48,9 @@ def main():
         timer = Timer(duration, session.detach)
         timer.daemon = True
         timer.start()
-        script = session.create_script(Path(__file__).with_name("probe.js").read_text())
+        script = session.create_script(
+            Path(__file__).with_name("probe.js").read_text(encoding="utf-8")
+        )
         script.load()
         if args.mode == "folder":
             folder_cleanup_needed = True

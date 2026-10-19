@@ -50,20 +50,22 @@ describe('scene arrows', () => {
     ]);
   });
 
-  it('shows the last non-combat damage from a permanent to a player, and nothing once the board is quiet', () => {
+  it('shows non-combat damage from a permanent to a player for the action, and nothing after the next one', () => {
     const b = new StreamBuilder();
     b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
     b.move('p1', 'a1', 'limbo', 'battlefield', 1, 'put');
     b.add('damage', { source: 'p1', target_obj: null, target_seat: 2, amount: 1, combat: false });
     b.add('note', {}, { text: 'later' });
+    b.phaseTo('Phase_Combat');
     const built = b.build({ a1: card('Pinger', 'Creature', { power: '1', toughness: '1' }) }, { playerSeat: 1 });
     const tl = buildTimeline(built);
     const damage = built.events.find((e) => e.kind === 'damage')!;
+    const expected = [{ id: 'effect-seat:2', from: { kind: 'obj', obj: 'p1' }, to: { kind: 'seat', seat: 2 }, seat: 1, tone: 'damage' }];
     const state = stateAt(tl, damage.seq);
-    const arrows = sceneArrows(state, layoutBoard(state, { ...OPTS, playerSeat: 1 }));
-    expect(arrows).toEqual([
-      { id: `damage:${damage.seq}`, from: { kind: 'obj', obj: 'p1' }, to: { kind: 'seat', seat: 2 }, seat: 1, tone: 'damage' },
-    ]);
+    expect(sceneArrows(state, layoutBoard(state, { ...OPTS, playerSeat: 1 }))).toEqual(expected);
+    // A note is not an action: the damage stays shown.
+    const noted = stateAt(tl, damage.seq + 1);
+    expect(sceneArrows(noted, layoutBoard(noted, { ...OPTS, playerSeat: 1 }))).toEqual(expected);
     const quiet = tl.final;
     expect(sceneArrows(quiet, layoutBoard(quiet, { ...OPTS, playerSeat: 1 }))).toEqual([]);
   });

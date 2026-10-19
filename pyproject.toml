@@ -25,7 +25,7 @@ dependencies = [
     "packaging>=23",
     "rich>=13.7,<14.0",
     "emoji>=2.14,<3.0",  # Unicode-aware creator deck-title cleanup (offline)
-    "frida==17.9.0; platform_system == 'Darwin'", # Native Arena deck adapter
+    "frida==17.9.0; platform_system == 'Darwin' or platform_system == 'Windows'", # Native Arena deck adapter
 ]
 
 [project.optional-dependencies]

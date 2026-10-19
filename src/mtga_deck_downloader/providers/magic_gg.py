@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from mtga_deck_downloader.models import DeckEntry, DeckSource, MatchFormat
 from mtga_deck_downloader.providers.base import DeckProvider
 

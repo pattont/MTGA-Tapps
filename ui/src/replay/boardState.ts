@@ -3,6 +3,7 @@
  * event. A draft copies only the seat records, zone arrays and object entries
  * an event touches, so untouched substructures stay shared between states.
  */
+import type { EffectWindow } from './effects';
 import type { CardKey, ObjId, ReplayCard, ReplayEvent, StackItemKind, Zone } from './types';
 import { ZONES } from './types';
 
@@ -36,10 +37,14 @@ export interface ObjectState {
   attachedTo: ObjId | null;
   /** In exile: the permanent that exiled it (shown tucked under that host while it is on the battlefield). */
   exiledWith: ObjId | null;
+  /** In exile: it came straight from the hand (a plotted card shows beside the hand). */
+  fromHand: boolean;
   faceDown: boolean;
   inferred: boolean;
   /** seq at which the card identity became known; null while hidden. */
   revealedAt: number | null;
+  /** On the battlefield: the basic land type it chose as it entered (Multiversal Passage). */
+  chosen?: string;
 }
 
 export interface StackItem {
@@ -67,6 +72,11 @@ export interface BoardState {
   step: string | null;
   life: Readonly<Record<number, number>>;
   attackers: ReadonlySet<ObjId>;
+  /**
+   * What the current action did (effects.ts): damage, life, removal, counters
+   * and P/T changes with their sources, shown on the table until the next action.
+   */
+  effects: EffectWindow;
   /** blocker -> attacker */
   blocks: ReadonlyMap<ObjId, ObjId>;
   lastEvent: ReplayEvent | null;
@@ -76,6 +86,8 @@ export interface BoardState {
   cards: Readonly<Record<CardKey, ReplayCard>>;
   /** Recorded streams: obj -> card it is later revealed as. Shared, see buildTimeline. */
   hindsight: ReadonlyMap<ObjId, CardKey>;
+  /** Commander card names per seat (Brawl/Commander), from the stream's seat info. Shared. */
+  commanders: Readonly<Record<number, readonly string[]>>;
 }
 
 interface MutableSeat {

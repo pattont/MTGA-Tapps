@@ -4,6 +4,7 @@ import type { DeckCollection, ManagedCard, ManagedDeckDetail } from '../deckMana
 import { formatDateTime } from '../format';
 import { CardLink } from './CardLink';
 import { ColorPips } from './ColorPips';
+import { deckFormatLabel } from '../deckFormatLabel';
 
 // The main deck gets the wide column; everything else stacks beside it.
 const SIDE_SECTIONS = ['Commander', 'Companion', 'Sideboard', 'Maybeboard'];
@@ -57,7 +58,7 @@ export function DeckDetail({
   const sideboard = side.find((group) => group.section === 'Sideboard');
   const revision = detail.revisions.find((r) => r.id === detail.revision_id);
   const summary = [
-    detail.deck.format_name || 'Any format',
+    deckFormatLabel(detail.deck.format_name) || 'Any format',
     `${count(main)} cards`,
     sideboard ? `${count(sideboard.cards)} sideboard` : null,
     detail.deck.completeness === 'main_only' ? 'Available piles only' : null,

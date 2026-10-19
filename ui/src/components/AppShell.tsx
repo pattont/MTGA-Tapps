@@ -183,6 +183,11 @@ export function AppShell({
   const [version, setVersion] = useState<string | null>(null);
   // Tracker-side update status, shared with Settings → Updates.
   const update = useUpdateStatus();
+  const screenshotVersionParam = new URLSearchParams(window.location.search).get('screenshotVersion');
+  const screenshotVersion = screenshotVersionParam && /^\d+\.\d+(?:\.\d+)?$/.test(screenshotVersionParam)
+    ? screenshotVersionParam
+    : null;
+  const footerVersion = screenshotVersion ?? version;
   // Green when the tracker is running (live or idle), red when it is not.
   const [trackerState, setTrackerState] = useState<'live' | 'idle' | 'offline' | null>(null);
 
@@ -472,9 +477,12 @@ export function AppShell({
               <span className="sidebar-nav-label">Deck Manager <span className="sidebar-beta">Beta</span></span>
             </a>
             <UpdateNotices controller={update} />
-            {version ? (
-              <span aria-label={`Tracker version ${version}`} className="sidebar-version">
-                v{version}
+            {footerVersion ? (
+              <span
+                aria-label={screenshotVersion ? `Screenshot version ${footerVersion}` : `Tracker version ${footerVersion}`}
+                className="sidebar-version"
+              >
+                v{footerVersion}
               </span>
             ) : null}
           </div>

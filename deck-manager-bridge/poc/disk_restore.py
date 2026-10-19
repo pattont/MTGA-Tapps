@@ -128,12 +128,15 @@ def verify_and_cleanup(exports, archive, prepared, output, execute=True):
 def resume_experiment(exports, original, output, execute=False):
     """Recover only the known created identity; there is no create path here."""
     archive, digest = load_archive(original / "02-disk-archive.json")
-    if digest != json.loads((original / "03-loaded-archive.json").read_text())["sha256"]:
+    if (
+        digest
+        != json.loads((original / "03-loaded-archive.json").read_text(encoding="utf-8"))["sha256"]
+    ):
         raise ValueError("Original archive changed; recovery stopped.")
-    before = json.loads((original / "01-before.json").read_text())
+    before = json.loads((original / "01-before.json").read_text(encoding="utf-8"))
     documents(before)
-    prepared = json.loads((original / "04-reconstructed.json").read_text())
-    created_report = json.loads((original / "06-created.json").read_text())
+    prepared = json.loads((original / "04-reconstructed.json").read_text(encoding="utf-8"))
+    created_report = json.loads((original / "06-created.json").read_text(encoding="utf-8"))
     if len(documents(created_report)) != 1 or len(created_report["decks"]) != 1:
         raise ValueError("Recovery requires the recorded single created copy.")
     created = created_report["decks"][0]
@@ -145,7 +148,9 @@ def resume_experiment(exports, original, output, execute=False):
         raise ValueError("Recovery cannot target an original deck.")
     if (
         prepared["operation_id"]
-        != json.loads((original / "05-create-intent.json").read_text())["operation_id"]
+        != json.loads((original / "05-create-intent.json").read_text(encoding="utf-8"))[
+            "operation_id"
+        ]
     ):
         raise ValueError("Recovery operation identity differs.")
     owned = exports.adoptrestoredcopy(archive, prepared, created, before_ids)
@@ -161,7 +166,9 @@ def attached_probe(device, pid):
     script = None
     try:
         timer.start()
-        script = session.create_script(Path(__file__).with_name("probe.js").read_text())
+        script = session.create_script(
+            Path(__file__).with_name("probe.js").read_text(encoding="utf-8")
+        )
         script.load()
         yield script.exports_sync
     finally:

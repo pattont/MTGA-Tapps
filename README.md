@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="../../releases"><img src="https://img.shields.io/badge/download-latest%20release-2ea44f" alt="Download the latest release"></a>
+  <a href="https://github.com/pattont/MTGA-Tapps/releases"><img src="https://img.shields.io/badge/download-latest%20release-2ea44f" alt="Download the latest release"></a>
   <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows-lightgrey" alt="Platforms">
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License: AGPL-3.0">
   <a href="https://discord.gg/ExfW3HaZgb"><img src="https://img.shields.io/badge/discord-join%20the%20community-5865F2" alt="Join the Discord"></a>
@@ -67,6 +67,15 @@ generic ratio), a life-total chart, per-seat combat summaries, and the
 complete event timeline. Scry totals for both seats show how many cards were
 kept on top or bottomed, with the choices recorded in the timeline.
 
+**Replay (beta).** Watch a completed game on a 3D table with card art, both
+players' zones, the stack, life totals, an action log and turn controls.
+New games tracked with replay capture show **Recorded** detail; older saved
+games can play as **Reconstructed** replays with approximate board details.
+Export a video locally from the browser. Replay links appear beside games in
+the Live Scoreboard, Recent Games, All Games, deck and opponent histories,
+and Game Detail; its sidebar page lists recent replays. See [Replay](#replay-beta)
+below.
+
 **Interaction analytics.** Every game records what both players did with their
 interaction: removal and board wipes played (and how many you drew), creatures
 lost to removal, counter magic — including how many counters actually landed
@@ -99,16 +108,20 @@ the Live Scoreboard shows your lifetime record against the commander across
 the table. Starting life and command-zone recasts are handled; Brawl is
 recognized from Arena's match format, never from deck size.
 
-**Deck Finder.** Browse current decklists from creators and sites (Moxfield,
-AetherHub, TCGplayer, magic.gg, MTGO, Untapped, YouTube) right inside the dashboard and
-copy any list to your clipboard in Arena import format.
+**Deck Finder.** Browse current decklists from seven sites and creators,
+including keyless YouTube descriptions, in a site-colored dashboard view.
+Inspect the full deck beside the results, open its source, copy Arena import
+text, save it to a Deck Manager collection, or use **Add to Arena** where the
+native deck integration is supported.
 
-**Deck Manager.** Save any deck beyond Arena's active-deck limit in a local
-library, with revisions, tags, notes and recoverable Trash. Save from Deck Finder
-or played-deck history, import a decklist, or capture lists available in Arena's
-log. Restore with **Copy deck list** and Arena's Import button, or, on Apple Silicon
-Macs, back up, move and restore decks directly. See the
-[Deck Manager guide](docs/DECK_MANAGER.md).
+**Deck Manager (beta).** Keep decks beyond Arena's active-deck limit in a
+local library separate from your played-deck statistics. Organize them with
+named collections, revisions, tags, notes, search and recoverable Trash. Save
+from Deck Finder or played-deck history, import a decklist, or capture lists
+available in Arena's log. Copy a saved list into Arena on either platform.
+The guarded native integration can also back up, move and restore decks
+directly: tested on Apple Silicon Macs, newly enabled on 64-bit Windows. See [Deck Manager](#deck-manager-beta)
+below.
 
 **Backup & restore.** Everything the tracker knows — games, settings, Deck
 Finder creators, saved deck library, overlay preferences — in one `.tappsbackup` file, written
@@ -131,6 +144,17 @@ stats beside the rank chart, session habits and fatigue splits, format
 breakdowns, and a database health audit that can repair its own
 inconsistencies. Historical backfills recover stats where the recorded
 events contain enough evidence; unavailable values remain blank.
+
+## Startup and overlay settings
+
+In **Settings → Startup**, choose whether Tapps Tracker starts when you sign in
+and whether it opens the dashboard on launch. These are independent: tracking
+can start quietly in the menu bar or system tray while the dashboard remains
+available there. The **In-game overlay** card has a **Turn off** button that
+stops the overlay and keeps it disabled across tracker launches; **Turn on**
+enables it again. You can use the tracker and dashboard without the overlay.
+
+![Startup and in-game overlay settings, including the overlay Turn off button](docs/images/startup-gameoverlay.png)
 
 ## In-game overlay
 
@@ -220,6 +244,34 @@ name opening a page with your full history against them:
 
 ![All Opponents page](docs/images/opponents.png)
 
+## Replay (beta)
+
+Replay is built into the game pages, so you do not have to hunt for a recording.
+Open **Replay** in the sidebar to browse recent games, use **Watch replay** on
+the Live Scoreboard after a match, or use the play icon in Today's Games,
+Recent Games, All Games, and deck or opponent histories. Game Detail has a
+**Watch replay** button and links in its event timeline that jump to that
+moment in the replay.
+
+![Replay list with game results and Recorded badges](docs/images/replay-list.png)
+
+Scrub by turn, step through actions, inspect cards on the table, and choose
+table and sleeve colors in Replay Options. **Recorded** games use structured
+events captured during play; older **Reconstructed** games use the saved
+timeline and may have approximate board details. Replay runs in a desktop
+browser; some games without enough saved events have no replay.
+
+![Recorded replay on the table with action log and playback controls](docs/images/replay-player.png)
+
+**Export video** renders an MP4 locally in the browser. Choose the range,
+speed, pacing, size and quality, and include the action log beside the table
+if you want it. The game is not uploaded.
+
+![Replay video export options](docs/images/replay-export.png)
+
+Card artwork loads from Scryfall when needed, and video export depends on the
+desktop browser's graphics and encoder support.
+
 ## Deck Finder
 
 The Deck Finder lives **right inside the dashboard** — open it from the
@@ -229,7 +281,11 @@ MTGO, TCGplayer, untapped.gg, or youtube.com) and a format or creator, and it li
 table tuned to each site — win rates and matches for untapped.gg archetypes,
 event placings for tournament sites, and so on. Open any deck to see its list,
 then **Export to Arena** copies it in Arena's import format (or **Source**
-opens the original page). "Surprise Me" pulls a random importable deck. Your
+opens the original page). The selected deck appears beside the results with
+its main deck and any sideboard, commander or companion section. The
+**Deck Manager** actions below its title can save it to a named collection or
+add it directly to Arena on a supported client when Arena is ready on Decks.
+"Surprise Me" pulls a random importable deck. Your
 own featured creators for AetherHub, Moxfield, TCGplayer, and YouTube are managed on the
 **Settings** page (or in `deckfinder_config.json` at the top level of the
 project folder). Everything it needs installs with the tracker; no separate
@@ -238,10 +294,43 @@ setup.
 YouTube's **Creators** picker starts with **Hello Good Game** and **Sloth**.
 It reads decklists from the latest 15 video descriptions without an API key,
 cleans title emojis and set/platform suffixes, and adds `(HGG)` or `(Sloth)`
-to the imported deck name. Add another channel URL or `@handle` in Settings.
-See the [YouTube creator guide](docs/DECK_FINDER_YOUTUBE.md).
+to the imported deck name. Add another channel URL or `@handle` in Settings,
+one creator per line.
 
 ![Deck Finder in the dashboard](docs/images/deck-finder.png)
+
+## Deck Manager (beta)
+
+Deck Manager is a local library independent of Arena's active roster and the
+dashboard's played-deck statistics. Keep decks even after removing them from
+Arena, with no library deck-count limit. Open it from the sidebar to organize
+decks in collections, search by name or tag, browse revisions, add notes, and
+recover decks from Trash. Add a list yourself, save one from Deck Finder or a
+played deck's detail page, or capture lists available in Arena's log. The
+library works while Arena is closed and is included in tracker backups.
+
+![Deck Manager Saved tab with collections and deck status badges](docs/images/deck-manager.png)
+
+Open a saved deck to inspect its list and revisions. **Copy deck list** works
+with Arena's normal Import button on macOS and Windows; a full native backup
+can also be downloaded for later restoration.
+
+![Saved deck detail with revision and Arena actions](docs/images/deck-manager-detail.png)
+
+On Apple Silicon Macs and 64-bit Windows, explicit Deck Manager jobs can read
+Arena's current roster, back up selected or all decks, move a deck into the
+local collection, restore a full backup, and add an importable list. The
+dashboard shows transfer progress and asks for confirmation before removing
+a deck from Arena; interrupted transfers have a reconciliation step. This
+direct Arena integration is beta: it is tested on Apple Silicon Macs and
+64-bit Windows, and other Arena client builds are refused until they are
+checked.
+
+![Deck Manager Arena tab with the current roster and backup controls](docs/images/deck-manager-arena.png)
+
+The local library and **Copy deck list** remain available without direct Arena
+access. Native jobs require a supported client on the Decks screen outside a
+match.
 
 ## Export your collection
 
@@ -337,7 +426,7 @@ ever sent to the provider you chose. Without a key the feature simply stays off.
 
 **Install the app:** grab the installer for your OS from
 [tappstracker.com](https://tappstracker.com) or the
-[Releases page](../../releases) — on Windows, `MTGA-Tracker-<version>-setup.exe`
+[Releases page](https://github.com/pattont/MTGA-Tapps/releases) — on Windows, `MTGA-Tracker-<version>-setup.exe`
 gives you a Start Menu entry, an Apps & Features uninstaller, and in-place
 upgrades (a portable `-windows.zip` is also published); on macOS, a
 drag-to-Applications DMG. One install gets you everything: the tracker, the
@@ -422,8 +511,9 @@ passed for that run.
 | `#/card/<name>` | Card drill-down: by-deck performance, repeat draws, opener impact |
 | `#/games` | Every tracked game with deck picker, format pills, and period filter |
 | `#/opponents` | Everyone you've been paired against; `#/opponent/<name>` for one opponent |
-| `#/deckfinder` | Deck Finder: browse and export decklists from creators and sites |
-| `#/deck-manager` | Deck Manager: local deck backups, revisions, tags, notes and clipboard export |
+| `#/replay` | Replay (beta) list; `#/replay/<id>` plays a completed game and can export video |
+| `#/deckfinder` | Deck Finder: browse, export or save decklists from creators and sites |
+| `#/deck-manager` | Deck Manager (beta): saved collections, revisions, Trash and supported Arena transfers |
 | `#/settings` | Startup, in-game overlay, backup/restore, Deck AI, Deck Finder creators, collection export, tracker status |
 | `#/audit` | Database health findings |
 
@@ -529,7 +619,7 @@ guidance lives.
 - [Overlay guide](overlay/README.md) — behavior, development, and packaging
 - [Log-format reference](docs/MTGA_LOG_FORMAT.md) — Arena events and parser behavior
 - [Card database discovery](docs/MTGA_INSTALL_DISCOVERY.md) — resolution and troubleshooting
-- [Scry tracking](docs/SCRY_TRACKING.md) — events, stored stats, and dashboard behavior
+- [Replay data contract](docs/REPLAY_FORMAT.md) — capture, stream and playback fields
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release
 
 ## License

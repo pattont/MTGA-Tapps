@@ -105,6 +105,14 @@ export interface ReplayCard {
   is_token: boolean;
   image_url: string | null;
   faces: ReplayCardFace[];
+  /**
+   * Replay-relevant keywords from Arena's card DB: `flashback`, `escape`,
+   * `disturb`, `harmonize` (cast from the graveyard) and `plot`. Absent in
+   * streams built before they existed.
+   */
+  keywords?: string[];
+  /** The back face of a double-faced card: Scryfall's image is the back image. */
+  back_face?: boolean;
 }
 
 export interface ReplayTurn {
@@ -168,6 +176,10 @@ export interface MoveEvent extends ReplayEventBase {
   index: number | null;
   /** Exile only: the battlefield permanent whose ability exiled the card (recorded games). */
   with?: ObjId | null;
+  /** The object whose effect moved it (Arena's affector, recorded games), when logged. */
+  by?: ObjId | null;
+  /** Onto the battlefield: the basic land type it chose as it entered ("Mountain", Multiversal Passage). */
+  chosen?: string | null;
 }
 export interface TapEvent extends ReplayEventBase {
   kind: 'tap';

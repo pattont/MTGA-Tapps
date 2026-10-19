@@ -1,37 +1,39 @@
-# Active implementation plans
+# Open work and research
 
-Reviewed against the source on 2026-09-10. This folder contains unfinished
-work; the root README describes delivered behavior and links to reference
-or operational documentation only.
+Current features are documented in the [README](../../README.md) and technical
+references. This folder holds only unfinished work, research that needs fresh
+validation, and native Deck Manager test evidence. Completed mockups and
+implementation walkthroughs have been removed.
 
-| Plan | Current status | Remaining work |
-| --- | --- | --- |
-| [Replay](REPLAY.md) | Built 2026-10-07: one enriched `game_events` stream (capture + builder), text reconstructor for older games, `GET /api/replay`, three.js replay page with turn scrubber, action log, felt/sleeve colors, and entry points (sidebar tile, list, Game Detail, row icons, Live, console link, menu). Contract: `docs/REPLAY_FORMAT.md` Phase 4 built 2026-10-10: in-browser MP4 export (WebCodecs + mp4-muxer), cards exiled by a permanent tucked under it, hover list and pictures of a stack, printed stats from Arena's card DB; validated on live recorded games. | Overlay "Watch replay" button, optional local image cache |
-| [Deck Manager](DECK_MANAGER.md) | Researched 2026-10-06; proposal only. Windows native local-deck precedent found; current local Mac Arena is IL2CPP | Current-build/platform feasibility, durable deck library, exact capture, verified store/restore, full-slot swaps, and an optional native collection section |
-| [Backups and carrying history between computers](BACKUP_AND_SYNC.md) | Phases 1–2 shipped: `.tappsbackup` export/restore/merge, synced-folder picks, previews with confirmation, undo, delete and open-location (Settings → Backup & restore) | Automatic post-session backups; Google Drive by API only if the folder route proves insufficient |
-| [Deck Manager](DECK_MANAGER.md) | Local library plus native dashboard bulk backup/move/restore, account guards, transfer progress, collapsible collections and migrations 33–34 implemented on `deck-manager`; integrated live roster refresh and 94-deck backup passed; [Mac POC](deck-manager/NATIVE_POC.md) proves disk restoration | Integrated move/restore validation through isolated live dashboard, persistent native collection/tiles, installed-bundle permissions and Windows support |
-| [In-app auto-update](AUTO_UPDATE.md) | Built 2026-10-18 on `auto-update`: signed `latest.json` + `manifest` CI job, `ditto` macOS zip, Inno `/WAITPID`/`/RELAUNCH` hand-off, `UpdateManager` with `GET/POST /api/update*`, sidebar pill, tray item, Settings → Updates (check / auto-download / opt-in auto-install), pre-update `.tappsbackup`, per-migration transactions; research in [`auto-update/`](auto-update/) | Real-machine validation on the Mac Studio and the Windows 11 machine (first release candidate), Linux hand-off, beta channel |
-| [Linux support](linux_implementation.md) | Not implemented as a supported distribution | Prefix discovery/rotation, tray-free controller, overlay, packaging and desktop validation |
-| [Install discovery](MTGA_INSTALL_DISCOVERY.md) | Unity-header discovery and Settings path display implemented | Editable overrides/validation; evidence-driven platform fallbacks |
-| [Surveil and scry validation](SCRY_TRACKING.md) | Scry implemented, migration 29 present | Surveil log capture/handler/UI and real opponent-scry validation |
-| [Opponent deck matching](opponent_deck_research.md) | Proposal; no corpus/matcher tables or modules | Evidence-aware matching against cached decklists; review observed-copy assumptions first |
-| [Format legality](valid_cards_per_format.md) | Proposal; no legality cache/filter | Revalidate data source and historical legality semantics before implementation |
+| Detailed plan | Remaining work |
+| --- | --- |
+| [Linux support](linux_implementation.md) | Discovery, controller, overlay, packaging and desktop validation. |
+| [Install discovery](MTGA_INSTALL_DISCOVERY.md) | Editable overrides and evidence-driven platform fallbacks; [current behavior](../MTGA_INSTALL_DISCOVERY.md) is documented separately. |
+| [In-app auto-update](AUTO_UPDATE.md) | Built on `auto-update` (signed manifest, silent Inno / macOS swap hand-off, sidebar pill, Settings → Updates). Remaining: real-machine validation on the Mac Studio and Windows 11 per [the checklist](auto-update/VALIDATION.md), then the Linux hand-off and a beta channel. Research reports live in [`auto-update/`](auto-update/). |
+| [Opponent deck matching](opponent_deck_research.md) | Evidence-aware matching against cached decklists. The proposed thresholds and timings still need validation. |
 
-The completed release plan was replaced by [the release guide](../RELEASING.md).
-The completed YouTube creator plan was replaced by the
-[YouTube creator guide](../DECK_FINDER_YOUTUBE.md).
-The completed overlay plan was removed; [the overlay guide](../../overlay/README.md)
-and changelog describe the actual implementation. The old plan included
-superseded choices (off by default, its own tray, no card art, known-top
-odds) and unverified performance targets; those are not outstanding promises.
-Original `overlay-mockup.html` and `overlay-mockup.png` remain as historical
-visual assets, not implementation specifications.
-The approved Deck Finder previews in `deck-finder-style/` also remain as
-historical visual assets; the implemented layout is described in the
-[Deck Finder guide](../DECK_FINDER_YOUTUBE.md#browsing-and-deck-details).
+## Smaller follow-ups
 
-When a plan is completed, move durable behavioral information into the
-appropriate reference, record the delivered feature in the changelog, remove
-the obsolete plan, and update this index and its incoming links. Partially
-completed plans should describe only the remaining work and link to the
-current behavior for context.
+- **Replay:** Consider an overlay entry point after a game and a bounded local
+  cache of card-image bytes for offline playback. [Current behavior](../../README.md#replay-beta)
+  and the [data contract](../REPLAY_FORMAT.md) are documented separately.
+- **Deck Manager:** A persistent collection inside Arena, a guarded full-slot
+  swap and automatic backups remain future work.
+  Native removal must follow a verified local archive; interrupted operations
+  must reconcile without repeating a write. Keep the [native proof of concept](deck-manager/NATIVE_POC.md)
+  as evidence, not a release support claim. [Current behavior](../../README.md#deck-manager-beta) is in the README.
+- **Backup and sync:** An opt-in automatic backup after completed sessions
+  should reuse the existing online SQLite snapshot and `.tappsbackup` format,
+  with bounded retention and visible failure status. Direct cloud APIs need a
+  separate design only if sync-client folders prove insufficient.
+- **Surveil:** Capture and display surveil choices with the same seat,
+  visibility and destination rules as scry. Validate opponent scry attribution
+  against more real logs. Until then, surveil columns remain NULL.
+- **Format legality:** No legality cache or filter is implemented. Before
+  building one, recheck the source and historical legality rules, avoid
+  rewriting historical games from current banlists, and treat unknown Alchemy
+  legality as unknown. The old bulk-data sizes and format assumptions were
+  time-sensitive research, so they are not a current implementation spec.
+
+The [release guide](../RELEASING.md) covers builds and publishing. The
+[overlay guide](../../overlay/README.md) documents the shipped overlay.

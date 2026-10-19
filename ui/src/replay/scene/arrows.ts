@@ -7,7 +7,10 @@ import type { Layout } from '../layout';
 import { parseHex } from '../materials';
 import { SLEEVE_COLORS } from '../prefs';
 import type { SleeveColor } from '../prefs';
+import { shownExits } from '../effects';
+import type { EffectSource, ObjectMarks } from '../effects';
 import type { BoardState } from '../reducer';
+import { seatNumber } from './labels';
 import { RAIL_WIDTH } from './cameraFit';
 
 /** Where an arrow starts or ends. */
@@ -30,9 +33,73 @@ export interface SceneArrow {
   tone: ArrowTone;
 }
 
+/** Combat damage (and a death from it) already has its attack and block arrows. */
+function combatOnly(marks: ObjectMarks): boolean {
+  return marks.damage > 0 && marks.combat && (marks.removed === null || marks.removed === 'died') && !marks.pt && !Object.keys(marks.counters).length;
+}
+
+/**
+ * The current action's effects (effects.ts): from each source to what it hit —
+ * a permanent it damaged, removed or changed, a card it made its owner
+ * discard, a player who lost life, a spell it countered. A source is drawn
+ * from its permanent when that is on the table, else from its card in the
+ * stack preview (live, or kept there as resolved/countered for the action).
+ */
+function effectArrows(state: BoardState, layout: Layout, placed: ReadonlySet<string>, arrows: SceneArrow[]): void {
+  const effects = state.effects;
+  const exits = new Set(shownExits(effects).map((exit) => exit.item.stackId));
+  const live = new Set(state.stack.map((item) => item.stackId));
+  const fromOf = (source: EffectSource | null): ArrowEnd | null => {
+    if (!source) return null;
+    if (source.obj && placed.has(source.obj)) return { kind: 'obj', obj: source.obj };
+    if (source.stackId && (exits.has(source.stackId) || live.has(source.stackId))) return { kind: 'stack', stackId: source.stackId };
+    // A spell acting while it is still on the stack: its card in the stack
+    // preview, or (cast but not yet pushed, a cast trigger) its card in the
+    // table's stack column.
+    const spell = source.obj ? state.stack.find((item) => item.kind === 'spell' && item.obj === source.obj) : undefined;
+    if (spell) return { kind: 'stack', stackId: spell.stackId };
+    return source.obj && onStack.has(source.obj) ? { kind: 'obj', obj: source.obj } : null;
+  };
+  const onStack = new Set(layout.cards.filter((c) => c.row === 'stack').map((c) => c.obj));
+  const discarded = new Set(layout.cards.filter((c) => c.removed === 'discarded').map((c) => c.obj));
+  for (const [obj, marks] of effects.objects) {
+    if (combatOnly(marks)) continue;
+    if (!placed.has(obj) && !discarded.has(obj)) continue;
+    const from = fromOf(marks.source);
+    if (!from || (from.kind === 'obj' && from.obj === obj)) continue;
+    const harmful = marks.removed !== null || marks.damage > 0 || (marks.pt !== null && marks.pt.power + marks.pt.toughness < 0);
+    arrows.push({
+      id: `effect:${obj}`,
+      from,
+      to: { kind: 'obj', obj },
+      seat: marks.source?.controller ?? state.playerSeat,
+      tone: harmful ? 'damage' : 'target',
+    });
+  }
+  for (const [seat, marks] of effects.seats) {
+    if (marks.damage > 0 && marks.combat) continue;
+    if (seatNumber(marks)?.tone !== 'life-loss') continue;
+    const from = fromOf(marks.source);
+    if (!from) continue;
+    arrows.push({ id: `effect-seat:${seat}`, from, to: { kind: 'seat', seat }, seat: marks.source?.controller ?? state.playerSeat, tone: 'damage' });
+  }
+  for (const exit of effects.exits) {
+    if (exit.exit !== 'countered' || !exits.has(exit.item.stackId)) continue;
+    const from = fromOf(exit.source);
+    if (!from) continue;
+    arrows.push({
+      id: `countered:${exit.item.stackId}`,
+      from,
+      to: { kind: 'stack', stackId: exit.item.stackId },
+      seat: exit.source?.controller ?? state.playerSeat,
+      tone: 'damage',
+    });
+  }
+}
+
 /**
  * Arrows for one board state: every stack item to each of its targets
- * (bright, animated), the last non-combat damage from its source, and during
+ * (bright, animated), the current action's effects from their sources, and during
  * combat attackers toward the defending player and blockers toward the
  * attacker they block (dimmer). Only ends the scene can place are kept.
  */
@@ -55,31 +122,7 @@ export function sceneArrows(state: BoardState, layout: Layout): SceneArrow[] {
       });
     });
   }
-  const last = state.lastEvent;
-  if (last?.kind === 'damage' && !last.combat && last.source) {
-    const source = state.objects.get(last.source);
-    const onStack = state.stack.find((item) => item.obj === last.source);
-    const from: ArrowEnd | null = placed.has(last.source)
-      ? { kind: 'obj', obj: last.source }
-      : onStack
-        ? { kind: 'stack', stackId: onStack.stackId }
-        : null;
-    const to: ArrowEnd | null =
-      last.target_obj && placed.has(last.target_obj)
-        ? { kind: 'obj', obj: last.target_obj }
-        : last.target_seat !== null && last.target_obj === null
-          ? { kind: 'seat', seat: last.target_seat }
-          : null;
-    if (from && to) {
-      arrows.push({
-        id: `damage:${last.seq}`,
-        from,
-        to,
-        seat: onStack?.controller ?? source?.controller ?? state.playerSeat,
-        tone: 'damage',
-      });
-    }
-  }
+  effectArrows(state, layout, placed, arrows);
   if (state.attackers.size) {
     const blocked = new Set(state.blocks.values());
     const seats = Object.keys(state.seats).map(Number);

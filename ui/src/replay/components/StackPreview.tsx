@@ -18,7 +18,7 @@ import { memo, useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { formatCardName } from '../../format';
 import type { BoardState } from '../reducer';
-import { STACK_KIND_LABELS, stackExit, stackRows, stackView } from '../scene/stackView';
+import { STACK_KIND_LABELS, compactExits, effectExits, stackExit, stackRows, stackView } from '../scene/stackView';
 import type { StackExit, StackViewItem } from '../scene/stackView';
 import type { TextureStore } from '../scene/textureStore';
 import type { CardKey } from '../types';
@@ -67,6 +67,7 @@ function StackCard({
   nodes,
   onCardClick,
   exit,
+  effect = false,
 }: {
   item: StackViewItem;
   compact: boolean;
@@ -75,6 +76,8 @@ function StackCard({
   nodes: Map<string, HTMLElement> | null;
   onCardClick: (card: CardKey) => void;
   exit?: StackExit;
+  /** Kept for the current action (its effects' arrows start here), not leaving. */
+  effect?: boolean;
 }) {
   const mine = item.controller === playerSeat;
   const name = formatCardName(item.name);
@@ -84,7 +87,7 @@ function StackCard({
     mine ? 'replay-stack-you' : 'replay-stack-opp',
     item.top && !exit ? 'replay-stack-top' : '',
     item.targeted && !exit ? 'replay-stack-targeted' : '',
-    exit ? `replay-stack-leaving replay-stack-${exit}` : '',
+    exit ? `${effect ? 'replay-stack-effect' : 'replay-stack-leaving'} replay-stack-${exit}` : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -125,6 +128,7 @@ function StackCard({
 
 function StackPreviewImpl({ state, playerSeat, store, snap, playing, nodes, onCardClick }: StackPreviewProps) {
   const items = useMemo(() => stackView(state), [state]);
+  const effectItems = useMemo(() => effectExits(state), [state]);
   // Derived state: items that just left the stack keep animating for a moment.
   const [tracked, setTracked] = useState<{ items: StackViewItem[]; leaving: Leaving[] }>({ items, leaving: [] });
   if (tracked.items !== items) {
@@ -139,26 +143,40 @@ function StackPreviewImpl({ state, playerSeat, store, snap, playing, nodes, onCa
     const kept = playing ? tracked.leaving.filter((l) => !live.has(l.stackId)) : [];
     setTracked({ items, leaving: snap ? [] : [...kept, ...gone].slice(-2) });
   }
-  const { leaving } = tracked;
+  // An item kept for the current action is drawn from the board state, not as a leaving card.
+  const effectIds = new Set(effectItems.map((item) => item.stackId));
+  const leaving = tracked.leaving.filter((item) => !effectIds.has(item.stackId));
   const held = !playing && leaving.length > 0;
+  const anyLeaving = tracked.leaving.length > 0;
   useEffect(() => {
     // Paused: hold the leaving items (no timer); resuming play starts it.
-    if (!leaving.length || !playing) return;
+    if (!anyLeaving || !playing) return;
     // A timer, not animationend: reduced motion turns the animation off.
     const timer = setTimeout(() => setTracked((t) => ({ ...t, leaving: [] })), STACK_EXIT_MS);
     return () => clearTimeout(timer);
-  }, [leaving, playing]);
+  }, [tracked.leaving, anyLeaving, playing]);
 
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
   const height = useLayerHeight(root);
-  if (!items.length && !leaving.length) return null;
+  if (!items.length && !leaving.length && !effectItems.length) return null;
   const { full, chips } = stackRows(items.length, height);
   const hidden = items.length - full - chips;
+  const exits: Leaving[] = [...effectItems, ...leaving];
+  const exitCompact = compactExits(exits, stackRows(exits.length, height).full);
   const style = { '--stack-full': Math.max(1, full), '--stack-chips': chips } as CSSProperties;
   return (
     <div
       ref={setRoot}
-      className={`replay-stack-preview${snap ? ' replay-stack-snap' : ''}${held ? ' replay-stack-held' : ''}`}
+      className={[
+        'replay-stack-preview',
+        snap ? 'replay-stack-snap' : '',
+        items.length ? '' : 'replay-stack-empty',
+        held ? 'replay-stack-held' : '',
+        effectItems.length ? 'replay-stack-kept' : '',
+        effectItems.length && items.length ? 'replay-stack-beside' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       style={style}
     >
       <ol className="replay-stack-list" aria-label="Stack">
@@ -175,13 +193,26 @@ function StackPreviewImpl({ state, playerSeat, store, snap, playing, nodes, onCa
         ))}
         {hidden > 0 ? <li className="replay-stack-more">+{hidden} more on the stack</li> : null}
       </ol>
-      {leaving.length ? (
+      {leaving.length || effectItems.length ? (
         <ol className="replay-stack-exits" aria-hidden="true">
-          {leaving.map((item) => (
+          {effectItems.map((item, i) => (
+            <StackCard
+              key={`effect:${item.stackId}`}
+              item={item}
+              compact={exitCompact[i]}
+              playerSeat={playerSeat}
+              store={store}
+              nodes={nodes}
+              onCardClick={onCardClick}
+              exit={item.exit}
+              effect
+            />
+          ))}
+          {leaving.map((item, i) => (
             <StackCard
               key={`exit:${item.stackId}`}
               item={item}
-              compact={false}
+              compact={exitCompact[effectItems.length + i]}
               playerSeat={playerSeat}
               store={store}
               nodes={null}

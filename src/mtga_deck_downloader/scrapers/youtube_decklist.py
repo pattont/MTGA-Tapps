@@ -34,6 +34,41 @@ class ParsedDeck:
     commander_count: int
 
 
+def _parse_headerless_list(lines: list[str], format_label: str) -> ParsedDeck | None:
+    """Accept a complete 60/40-card block when a creator omits the Deck heading."""
+    # A headerless Brawl list cannot reliably identify its commander.
+    if "Brawl" in format_label:
+        return None
+    expected_count = 40 if format_label in {"Draft", "Sealed"} else 60
+    candidates: dict[str, ParsedDeck] = {}
+    rows: list[str] = []
+    blank_lines = 0
+
+    def finish_block() -> None:
+        if len(rows) < 10:
+            return
+        count = sum(int(row.split()[0]) for row in rows)
+        if count == expected_count:
+            text = "Deck\n" + "\n".join(rows)
+            candidates[text] = ParsedDeck(text, count, 0)
+
+    for line in [*lines, "[end of description]"]:
+        match = _CARD_ROW.fullmatch(line)
+        if match and int(match[1]) <= expected_count and "http" not in match[2].lower():
+            rows.append(line)
+            blank_lines = 0
+        elif not line and rows and blank_lines < 2:
+            blank_lines += 1
+        else:
+            finish_block()
+            rows = []
+            blank_lines = 0
+
+    if len(candidates) > 1:
+        raise ValueError("The description contains multiple different decklists.")
+    return next(iter(candidates.values()), None)
+
+
 def format_from_video(title: str, description: str) -> str:
     for text in (title, description):
         for label in _FORMATS:
@@ -69,13 +104,15 @@ def import_deck_name(title: str, creator_label: str) -> str:
 
 
 def parse_description(description: str, format_label: str = "Unknown") -> ParsedDeck | None:
-    """Return one complete list, or None when no standalone deck heading exists."""
+    """Return one complete Arena list, with or without a Deck heading."""
     lines = [line.strip() for line in description.splitlines()]
     candidates: dict[str, ParsedDeck] = {}
     invalid = False
+    has_heading = False
     for index, line in enumerate(lines):
         if not _MAIN_HEADER.fullmatch(line):
             continue
+        has_heading = True
         # Arena exports can put Commander/Companion before Deck.
         start = index
         for previous in range(index - 1, -1, -1):
@@ -133,4 +170,6 @@ def parse_description(description: str, format_label: str = "Unknown") -> Parsed
         raise ValueError("The description contains multiple different decklists.")
     if not candidates and invalid:
         raise ValueError("The description's decklist is incomplete or malformed.")
-    return next(iter(candidates.values()), None)
+    if candidates or has_heading:
+        return next(iter(candidates.values()), None)
+    return _parse_headerless_list(lines, format_label)

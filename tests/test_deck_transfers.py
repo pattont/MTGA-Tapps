@@ -376,6 +376,60 @@ def test_native_move_endpoint_requires_confirmation_before_starting_job(tmp_path
     assert status == 400
 
 
+def test_native_move_endpoint_rejects_an_invalid_destination_before_starting_job(tmp_path):
+    status, _ = api.handle_post(
+        "/api/deck-manager/native/run",
+        {
+            "action": "store",
+            "decks": [{"id": str(uuid.uuid4())}],
+            "request_id": str(uuid.uuid4()),
+            "confirm": "MOVE",
+            "collection_id": 7,
+        },
+        tmp_path / "db",
+    )
+    assert status == 400
+
+
+def test_store_saves_into_the_chosen_collection_including_an_earlier_backup(conn):
+    from mtga_tracker.deck_collections import save_collection
+
+    arena = Arena()
+    store(conn, arena)
+    deck_id = saved(conn)["id"]
+    assert saved(conn)["collection_id"] is None
+    restore(conn, arena)
+    target = save_collection(conn, "Retired")["id"]
+    dt.transfer(
+        conn,
+        arena,
+        "store",
+        {"id": next(iter(arena.decks)), "collection_id": target},
+        str(uuid.uuid4()),
+        arena.roster(),
+        lambda _: "Forest",
+    )
+    assert arena.decks == {}
+    assert saved(conn)["id"] == deck_id
+    assert saved(conn)["collection_id"] == target
+
+
+def test_store_refuses_a_missing_collection_before_removing_from_arena(conn):
+    arena = Arena()
+    with pytest.raises(dm.DeckManagerError, match="existing collection"):
+        dt.transfer(
+            conn,
+            arena,
+            "store",
+            {"id": arena.source["arena_id"], "collection_id": str(uuid.uuid4())},
+            str(uuid.uuid4()),
+            arena.roster(),
+            lambda _: "Forest",
+        )
+    assert arena.source["arena_id"] in arena.decks
+    assert "remove" not in arena.calls
+
+
 @pytest.mark.parametrize("payload", [{"$type": "Arbitrary"}, {"nested": [{"$type": "Arbitrary"}]}])
 def test_native_archive_refuses_arbitrary_deserialization_types(payload):
     value = archive(deck())
@@ -471,7 +525,10 @@ def test_native_text_import_uses_journaled_creation_and_never_repeats_request(co
 
 def test_native_text_import_rejects_inventory_clamping_without_create_or_backup(conn):
     arena = imported_arena(quantity=3)
-    with pytest.raises(dm.DeckManagerError, match="changed the card list"):
+    with pytest.raises(
+        dm.DeckManagerError,
+        match=r"changed the card list.*Differences: Deck: 4 Forest in the list, 3 from Arena\.$",
+    ):
         dt.add_import(
             conn,
             arena,
@@ -482,6 +539,75 @@ def test_native_text_import_rejects_inventory_clamping_without_create_or_backup(
         )
     assert "create" not in arena.calls
     assert dm.list_decks(conn) == []
+
+
+def test_native_text_import_accepts_a_cards_interchangeable_name(conn):
+    # The list says the Omenpath name; Arena's importer returns the Universes Beyond
+    # printing the player owns, which the card DB names "Superior Spider-Man".
+    selection = {
+        "text": "Deck\n4 Kavaero, Mind-Bitten",
+        "name": "Finder deck",
+        "format_name": "Standard",
+    }
+    arena = imported_arena()
+    with pytest.raises(
+        dm.DeckManagerError,
+        match=r"Deck: 4 Kavaero, Mind-Bitten in the list, 0 from Arena; "
+        r"Deck: 0 Superior Spider-Man in the list, 4 from Arena\.$",
+    ):
+        dt.add_import(
+            conn,
+            arena,
+            selection,
+            str(uuid.uuid4()),
+            arena.roster(),
+            lambda _: "Superior Spider-Man",
+        )
+    assert "create" not in arena.calls
+
+    aliases = {
+        "superior spider-man": "kavaero, mind-bitten",
+        "kavaero, mind-bitten": "kavaero, mind-bitten",
+    }
+    arena = imported_arena()
+    report = dt.add_import(
+        conn,
+        arena,
+        selection,
+        str(uuid.uuid4()),
+        arena.roster(),
+        lambda _: "Superior Spider-Man",
+        aliases=aliases,
+    )
+    assert arena.calls.count("create") == 1
+    assert len(report["decks"]) == 2
+    assert dt.pending(conn) == []
+
+
+def test_interchangeable_names_never_hide_a_quantity_change(conn):
+    aliases = {
+        "superior spider-man": "kavaero, mind-bitten",
+        "kavaero, mind-bitten": "kavaero, mind-bitten",
+    }
+    arena = imported_arena(quantity=3)
+    with pytest.raises(
+        dm.DeckManagerError,
+        match=r"Deck: 4 Kavaero, Mind-Bitten in the list, 3 from Arena\.$",
+    ):
+        dt.add_import(
+            conn,
+            arena,
+            {
+                "text": "Deck\n4 Kavaero, Mind-Bitten",
+                "name": "Finder deck",
+                "format_name": "Standard",
+            },
+            str(uuid.uuid4()),
+            arena.roster(),
+            lambda _: "Superior Spider-Man",
+            aliases=aliases,
+        )
+    assert "create" not in arena.calls
 
 
 def test_native_text_import_rejects_full_slots_before_parser_call(conn):
@@ -846,8 +972,16 @@ def test_job_failures_show_the_adapters_reason_and_fit_the_action():
     class RPCException(Exception):
         pass
 
-    reason = "Open Arena’s Decks screen outside a match before connecting Deck Manager."
+    reason = (
+        "Arena isn’t on its Decks screen. Go to Decks in Arena, outside a match, then try again."
+    )
     assert api._failure_message(RPCException(reason), "connect") == reason
+    # Frida's "Error:" prefix and script stack never reach the user.
+    raw = f"Error: {reason} at <anonymous> (/script1.js:479) at onEnter (/script1.js:427)"
+    assert api._failure_message(RPCException(raw), "add") == reason
+    assert (
+        api._failure_message(RPCException(f"Error: {reason}\n    at x (/s.js:1)"), "add") == reason
+    )
     assert "Refresh Arena" in api._failure_message(OSError("gone"), "connect")
     assert "reconcile" in api._failure_message(OSError("gone"), "store")
     assert api._failure_message(KeyError("Saved deck not found."), "restore") == (

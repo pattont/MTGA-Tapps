@@ -125,11 +125,23 @@ describe('Deck Manager', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Add deck' }));
     expect(screen.getByRole('dialog', { name: 'Add a deck' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Deck name'), { target: { value: 'Another deck' } });
-    fireEvent.change(screen.getByLabelText('Format'), { target: { value: 'Historic Brawl' } });
+    const format = screen.getByRole('combobox', { name: 'Format' });
+    expect(format).toHaveValue('');
+    expect(within(format).getByRole('option', { name: 'Traditional Standard' })).toHaveValue('TraditionalStandard');
+    fireEvent.change(format, { target: { value: 'HistoricBrawl' } });
     const text = 'Commander\n1 Atraxa\n\nDeck\n4 Forest (DMU) 281';
     fireEvent.change(screen.getByLabelText('Decklist or backup'), { target: { value: text } });
     fireEvent.click(screen.getByRole('button', { name: 'Save deck' }));
-    await waitFor(() => expect(importManagedDeck).toHaveBeenCalledWith(text, 'Another deck', 'Historic Brawl', undefined, null));
+    await waitFor(() => expect(importManagedDeck).toHaveBeenCalledWith(text, 'Another deck', 'HistoricBrawl', undefined, null));
+  });
+
+  it('keeps a revision format that is not in the format list', async () => {
+    vi.mocked(fetchManagedDeck).mockResolvedValue({ ...detail, format_name: 'Historic Pauper' });
+    render(<DeckManagerPage />);
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
+    const dialog = await screen.findByRole('dialog', { name: saved.name });
+    fireEvent.click(await within(dialog).findByRole('button', { name: /new revision/i }));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Format' })).toHaveValue('Historic Pauper'));
   });
 
   it('copies the selected historical revision with its sections and printings', async () => {
@@ -307,6 +319,30 @@ it('closes on Escape and restores focus and scrolling to the collection', async 
   expect(document.documentElement.style.scrollbarGutter).not.toBe('stable');
 });
 
+it('closes deck details from the backdrop, but not after a drag that ends there', async () => {
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
+  const dialog = await screen.findByRole('dialog', { name: saved.name });
+  // jsdom gives the dialog an empty rect, so any positive point is outside it.
+  fireEvent.mouseDown(within(dialog).getByRole('heading', { name: saved.name }), { clientX: 5, clientY: 5 });
+  fireEvent.click(dialog, { clientX: 50, clientY: 50 });
+  expect(screen.getByRole('dialog', { name: saved.name })).toBeInTheDocument();
+  fireEvent.mouseDown(dialog, { clientX: 50, clientY: 50 });
+  fireEvent.click(dialog, { clientX: 50, clientY: 50 });
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+it('keeps Add deck open until its close button is used', async () => {
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Add deck' }));
+  const dialog = screen.getByRole('dialog', { name: 'Add a deck' });
+  fireEvent.mouseDown(dialog, { clientX: 50, clientY: 50 });
+  fireEvent.click(dialog, { clientX: 50, clientY: 50 });
+  expect(screen.getByRole('dialog', { name: 'Add a deck' })).toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Close dialog' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
 it('shows deck colors on saved and Arena tiles and in the deck dialog', async () => {
   vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [{ ...saved, colors: 'WR' }], capabilities });
   vi.mocked(fetchManagedDeck).mockResolvedValue({ ...detail, colors: 'WR' });
@@ -358,8 +394,9 @@ it('requires confirmation for bulk moves and cancellation never starts a job', a
   fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
   fireEvent.click(screen.getByRole('checkbox', { name: 'Select all visible Arena decks' }));
   fireEvent.click(screen.getByRole('button', { name: 'Move to collection' }));
-  const dialog = screen.getByRole('dialog', { name: 'Move 2 decks to your collection?' });
-  expect(dialog).toHaveTextContent('backed up and checked before');
+  const dialog = screen.getByRole('dialog', { name: 'Move 2 decks out of Arena?' });
+  expect(dialog).toHaveTextContent('deleted from Arena');
+  expect(dialog).toHaveTextContent('Arena may keep showing these decks until you leave its Decks screen and open it again.');
   expect(dialog).toHaveTextContent('Arena fixture A');
   expect(dialog).toHaveTextContent('Arena fixture B');
   expect(startNativeDeckJob).not.toHaveBeenCalled();
@@ -376,10 +413,46 @@ it('moves only the confirmed selected Arena decks and monitors the job', async (
   fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
   fireEvent.click(screen.getByRole('checkbox', { name: 'Select Arena fixture A' }));
   fireEvent.click(screen.getByRole('button', { name: 'Move to collection' }));
-  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Move to collection' }));
-  await waitFor(() => expect(startNativeDeckJob).toHaveBeenCalledExactlyOnceWith('store', [{ id: 'arena-a' }]));
-  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Moved 1 deck'));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Move out of Arena' }));
+  await waitFor(() => expect(startNativeDeckJob).toHaveBeenCalledExactlyOnceWith('store', [{ id: 'arena-a' }], null));
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Moved 1 deck to Unsorted and removed it from Arena. If Arena still shows it'));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+it('moves Arena decks straight into the chosen collection', async () => {
+  const collection = { id: 'group-a', name: 'Control' };
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [], collections: [collection], capabilities });
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+  vi.mocked(startNativeDeckJob).mockResolvedValue({ job_id: 'move-job' });
+  vi.mocked(fetchNativeDeckJob).mockResolvedValue({ state: 'done', detail: 'Completed.', result: { action: 'store', count: 1 } });
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Arena fixture A' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Move to collection' }));
+  const dialog = screen.getByRole('dialog');
+  fireEvent.change(within(dialog).getByRole('combobox', { name: 'Save to collection' }), { target: { value: collection.id } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Move out of Arena' }));
+  await waitFor(() => expect(startNativeDeckJob).toHaveBeenCalledExactlyOnceWith('store', [{ id: 'arena-a' }], collection.id));
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(`Moved 1 deck to ${collection.name}`));
+});
+
+it('creates a new collection for Arena decks before moving them', async () => {
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+  vi.mocked(saveDeckCollection).mockResolvedValue({ id: 'group-new', name: 'Retired' });
+  vi.mocked(startNativeDeckJob).mockResolvedValue({ job_id: 'move-job' });
+  vi.mocked(fetchNativeDeckJob).mockResolvedValue({ state: 'running', detail: 'Moving…' });
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Arena fixture A' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Move to collection' }));
+  const dialog = screen.getByRole('dialog');
+  fireEvent.change(within(dialog).getByRole('combobox', { name: 'Save to collection' }), { target: { value: '__new__' } });
+  const move = within(dialog).getByRole('button', { name: 'Move out of Arena' });
+  expect(move).toBeDisabled();
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'New collection name' }), { target: { value: 'Retired' } });
+  fireEvent.click(move);
+  await waitFor(() => expect(startNativeDeckJob).toHaveBeenCalledExactlyOnceWith('store', [{ id: 'arena-a' }], 'group-new'));
+  expect(saveDeckCollection).toHaveBeenCalledExactlyOnceWith('Retired');
 });
 
 it('restores the selected native revision directly without copying', async () => {
@@ -442,10 +515,11 @@ it('creates collections, collapses their decks and moves a selection to another 
   render(<DeckManagerPage />);
   const group = await screen.findByRole('region', { name: 'Control collection' });
   const toggle = within(group).getByRole('button', { name: 'Control (1)' });
-  fireEvent.click(toggle);
+  // Named collections start collapsed; Unsorted starts open.
   expect(toggle).toHaveAttribute('aria-expanded', 'false');
   expect(screen.queryByRole('checkbox', { name: `Select ${saved.name}` })).not.toBeInTheDocument();
   fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-expanded', 'true');
   fireEvent.click(screen.getByRole('checkbox', { name: `Select ${saved.name}` }));
   fireEvent.click(screen.getByRole('button', { name: 'Move decks' }));
   await waitFor(() => expect(moveDecksToCollection).toHaveBeenCalledExactlyOnceWith([saved.id], null));
@@ -453,6 +527,19 @@ it('creates collections, collapses their decks and moves a selection to another 
   fireEvent.change(screen.getByLabelText('Collection name'), { target: { value: 'Brawl' } });
   fireEvent.click(screen.getByRole('button', { name: 'Create collection' }));
   await waitFor(() => expect(saveDeckCollection).toHaveBeenCalledExactlyOnceWith('Brawl', undefined));
+});
+
+it('opens Unsorted and expands every collection while searching', async () => {
+  const collection = { id: 'group-a', name: 'Control' };
+  const second = { ...saved, id: 'second', name: 'Unsorted deck' };
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [{ ...saved, collection_id: collection.id }, second], collections: [collection], capabilities });
+  render(<DeckManagerPage />);
+  const unsorted = await screen.findByRole('region', { name: 'Unsorted collection' });
+  expect(within(unsorted).getByRole('button', { name: 'Unsorted (1)' })).toHaveAttribute('aria-expanded', 'true');
+  expect(screen.getByRole('checkbox', { name: `Select ${second.name}` })).toBeInTheDocument();
+  expect(screen.queryByRole('checkbox', { name: `Select ${saved.name}` })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Search saved decks' }), { target: { value: saved.name } });
+  expect(screen.getByRole('checkbox', { name: `Select ${saved.name}` })).toBeInTheDocument();
 });
 
 it('requires confirmation to remove a collection and explains that decks are retained', async () => {

@@ -3,6 +3,7 @@ restore, machine-local settings, and synced-folder detection."""
 
 import json
 import sqlite3
+import sys
 import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -310,6 +311,19 @@ def test_list_backups_newest_first_and_names_unreadable_files(tmp_path):
     assert backup.list_backups(None) == [] and backup.list_backups(tmp_path / "missing") == []
 
 
+def _link_directory(link, target):
+    """A directory symlink, or a junction where Windows withholds the symlink privilege."""
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        if sys.platform != "win32":
+            raise
+        # Junctions need no Developer Mode/admin rights and realpath() follows them too.
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+
+
 def test_detect_sync_folders_per_platform(tmp_path):
     mac = tmp_path / "mac"
     (mac / "Library" / "CloudStorage" / "GoogleDrive-travis@gmail.com" / "My Drive").mkdir(parents=True)
@@ -318,7 +332,7 @@ def test_detect_sync_folders_per_platform(tmp_path):
     (mac / "Dropbox").mkdir()
     # macOS OneDrive also drops a ~/OneDrive symlink to the CloudStorage
     # folder: it must not show up as a second OneDrive.
-    (mac / "OneDrive").symlink_to(mac / "Library" / "CloudStorage" / "OneDrive-Personal", target_is_directory=True)
+    _link_directory(mac / "OneDrive", mac / "Library" / "CloudStorage" / "OneDrive-Personal")
     found = backup.detect_sync_folders(home=mac, env={}, system="Darwin")
     assert [f["name"] for f in found] == ["Google Drive", "OneDrive", "iCloud Drive", "Dropbox"]
     assert not any(f["path"].startswith(str(mac / "OneDrive")) for f in found)

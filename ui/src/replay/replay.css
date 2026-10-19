@@ -215,6 +215,35 @@
   inset: 0;
 }
 
+/* Zoomed table: drag pans (a card under the pointer still shows the pointer cursor). */
+.replay-canvas-wrap.is-zoomed {
+  cursor: grab;
+}
+
+.replay-canvas-wrap.is-panning {
+  cursor: grabbing !important;
+}
+
+.replay-zoom-pill {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 3;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--replay, #2bb3a3) 55%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-strong) 88%, transparent);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.replay-zoom-pill:hover {
+  border-color: var(--replay, #2bb3a3);
+}
+
 .replay-labels {
   position: absolute;
   inset: 0;
@@ -283,6 +312,196 @@
   color: #f6e2b0;
   font-size: 0.62rem;
   font-variant-numeric: tabular-nums;
+}
+
+/* The basic land type a land chose as it entered (Multiversal Passage), in its mana color. */
+.replay-label-land-plains,
+.replay-label-land-island,
+.replay-label-land-swamp,
+.replay-label-land-mountain,
+.replay-label-land-forest {
+  padding: 1px 9px;
+  border-width: 1px;
+  color: #fff;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 1px rgb(0 0 0 / 45%);
+}
+
+.replay-label-land-plains {
+  border-color: rgb(255 246 214 / 80%);
+  background: rgb(214 196 140 / 96%);
+  color: #2a2414;
+  text-shadow: none;
+}
+
+.replay-label-land-island {
+  border-color: rgb(168 214 255 / 75%);
+  background: rgb(26 110 196 / 96%);
+}
+
+.replay-label-land-swamp {
+  border-color: rgb(196 176 214 / 65%);
+  background: rgb(52 40 62 / 96%);
+}
+
+.replay-label-land-mountain {
+  border-color: rgb(255 180 160 / 75%);
+  background: rgb(196 58 40 / 96%);
+}
+
+.replay-label-land-forest {
+  border-color: rgb(170 230 170 / 70%);
+  background: rgb(36 120 58 / 96%);
+}
+
+/* Damage dealt this moment ("−6"): pops in over the card's art. `scale` animates
+   separately from the transform the label projector writes every frame. */
+.replay-label-damage {
+  padding: 0 10px;
+  border-color: rgb(255 168 158 / 75%);
+  background: linear-gradient(180deg, rgb(214 40 34 / 96%), rgb(140 14 12 / 96%));
+  box-shadow:
+    0 0 14px rgb(255 64 52 / 65%),
+    0 2px 6px rgb(0 0 0 / 55%);
+  color: #fff;
+  font-size: 1.12rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 55%);
+  animation: replay-damage-pop 420ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+@keyframes replay-damage-pop {
+  0% {
+    scale: 1.9;
+  }
+  100% {
+    scale: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .replay-label-damage {
+    animation: none;
+  }
+}
+
+/* What the current action did, while it lasts (effects.ts). A removed card is
+   dimmed in its slot under this chip; counter and P/T changes sit above the art. */
+.replay-label-removed {
+  padding: 1px 9px;
+  border-color: rgb(255 255 255 / 30%);
+  background: rgb(18 20 24 / 92%);
+  color: #f4f6f8;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  animation: replay-damage-pop 420ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+.replay-label-buff,
+.replay-label-debuff {
+  padding: 0 9px;
+  color: #fff;
+  font-size: 0.86rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 55%);
+  animation: replay-damage-pop 420ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+.replay-label-buff {
+  border-color: rgb(160 240 170 / 70%);
+  background: linear-gradient(180deg, rgb(46 150 72 / 96%), rgb(22 96 42 / 96%));
+  box-shadow: 0 0 12px rgb(80 220 120 / 50%);
+}
+
+.replay-label-debuff {
+  border-color: rgb(214 176 255 / 70%);
+  background: linear-gradient(180deg, rgb(128 64 196 / 96%), rgb(78 32 132 / 96%));
+  box-shadow: 0 0 12px rgb(170 100 255 / 50%);
+}
+
+.replay-label-effect {
+  border-color: rgb(242 153 74 / 65%);
+  background: rgb(8 12 16 / 88%);
+  color: #ffd9b3;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* A player's life change at their table edge ("−3", "+3"). */
+/* Big enough to read over the hand cards it sits on. */
+.replay-label-life-loss,
+.replay-label-life-gain {
+  max-width: none;
+  padding: 0 22px;
+  border-width: 2px;
+  color: #fff;
+  font-size: 2.6rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  text-shadow: 0 2px 4px rgb(0 0 0 / 60%);
+  animation: replay-damage-pop 420ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+.replay-label-life-loss {
+  border-color: rgb(255 168 158 / 75%);
+  background: linear-gradient(180deg, rgb(214 40 34 / 98%), rgb(140 14 12 / 98%));
+  box-shadow:
+    0 0 0 3px rgb(8 12 16 / 85%),
+    0 0 28px rgb(255 64 52 / 75%),
+    0 4px 10px rgb(0 0 0 / 60%);
+}
+
+.replay-label-life-gain {
+  border-color: rgb(160 240 170 / 75%);
+  background: linear-gradient(180deg, rgb(46 150 72 / 98%), rgb(22 96 42 / 98%));
+  box-shadow:
+    0 0 0 3px rgb(8 12 16 / 85%),
+    0 0 28px rgb(80 220 120 / 65%),
+    0 4px 10px rgb(0 0 0 / 60%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .replay-label-removed,
+  .replay-label-buff,
+  .replay-label-debuff,
+  .replay-label-life-loss,
+  .replay-label-life-gain {
+    animation: none;
+  }
+}
+
+/* A card beside the hand its owner may cast from the graveyard (gold when plotted, via emphasis). */
+.replay-label-castable {
+  border-color: rgb(159 208 255 / 55%);
+  background: rgb(8 12 16 / 86%);
+  color: #d8ecff;
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* The seat's commander on the battlefield (Brawl/Commander): a gold chip across its upper edge. */
+.replay-label-commander {
+  border-color: rgb(240 198 108 / 75%);
+  background: rgb(52 38 10 / 90%);
+  color: #ffe9b3;
+  font-size: 0.6rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .replay-narrow-notice {
@@ -370,6 +589,34 @@
 
 .replay-hud-seat-opp .replay-hud-name {
   color: var(--danger);
+}
+
+/* This action's life change beside the total ("−3", "+3"). */
+.replay-life-change {
+  display: inline-block;
+  margin-left: -2px;
+  padding: 0 6px;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  animation: replay-damage-pop 420ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+.replay-life-change-life-loss {
+  background: rgb(196 34 28);
+}
+
+.replay-life-change-life-gain {
+  background: rgb(36 132 62);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .replay-life-change {
+    animation: none;
+  }
 }
 
 .replay-life-value {
@@ -1070,14 +1317,42 @@
   box-shadow: 0 0 0 2px var(--stack-flash), var(--preview-shadow);
 }
 
+/* With nothing left on the stack, the cards that just left it are the column
+   itself, centered on the stage, instead of hanging from its middle. */
+.replay-stack-empty .replay-stack-exits {
+  position: static;
+}
+
+/* A compact row that left the stack: its stamp sits at the row's right end. */
+.replay-stack-chip .replay-stack-stamp {
+  top: 50%;
+  right: 6px;
+  left: auto;
+  padding: 1px 6px;
+  font-size: 0.62rem;
+  transform: translateY(-50%) rotate(-6deg);
+}
+
 /* Held while paused, the leaving card stands beside the stack instead of over its top card. */
-.replay-stack-held .replay-stack-exits {
+.replay-stack-held .replay-stack-exits,
+.replay-stack-beside .replay-stack-exits {
+  top: 50%;
   right: calc(100% + 10px);
+  translate: 0 -50%;
+}
+
+/* Kept for the current action: the source of the effects shown on the table
+   (their arrows start here), or a countered/fizzled spell. Static and dimmed. */
+.replay-stack-effect {
+  animation: none;
+  opacity: 0.9;
+  box-shadow: 0 0 0 2px var(--stack-flash), var(--preview-shadow);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* Held items are static, so they show even with reduced motion. */
-  .replay-stack-held .replay-stack-exits {
+  /* Held and kept items are static, so they show even with reduced motion. */
+  .replay-stack-held .replay-stack-exits,
+  .replay-stack-kept .replay-stack-exits {
     display: flex;
   }
 }

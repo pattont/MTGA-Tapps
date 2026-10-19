@@ -57,15 +57,17 @@ export function cardImageCandidates(card: ReplayCard, size: ImageSize): string[]
   if (card.image_url) {
     urls.push(size === 'large' ? card.image_url.replace('/normal/', '/large/') : card.image_url);
   }
+  // A back face shares its card with the front; Scryfall serves its picture with face=back.
+  const face = card.back_face ? '&face=back' : '';
   if (card.arena_id) {
-    urls.push(`${API_BASE}/arena/${card.arena_id}?format=image&version=${size}`);
+    urls.push(`${API_BASE}/arena/${card.arena_id}?format=image&version=${size}${face}`);
   }
   if (card.is_token) {
     // Token names ("Treasure", "Goblin") rarely name a real card: search the token sets instead.
     urls.push(...tokenSearchCandidates(card, size));
   } else if (card.name && card.name !== 'Unknown card') {
     const name = encodeURIComponent(frontFaceName(card.name));
-    urls.push(`${API_BASE}/named?exact=${name}&format=image&version=${size}`);
+    urls.push(`${API_BASE}/named?exact=${name}&format=image&version=${size}${face}`);
   }
   return urls;
 }

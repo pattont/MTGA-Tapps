@@ -22,14 +22,16 @@ Repo layout:
 - `tests/`: pytest suite, including `tests/deck_downloader/`. `tests/deprecated/` holds
   non-test debug scripts and is not part of the suite.
 - `packaging/` + `scripts/`: PyInstaller specs, entry points, and OS build scripts.
-- `docs/`: log-format reference, research notes, and the removal ledger; `docs/plans/` holds
-  unfinished implementation plans together with their mockups (mockup images live there, not in
-  `docs/images/`, which is for README screenshots). `docs/plans/INDEX.md` records plan status;
+- `docs/`: reference guides, research notes and the removal ledger; `docs/plans/` holds
+  only unfinished implementation plans and related validation notes. README and
+  release screenshots live in `docs/images/`. `docs/plans/INDEX.md` records plan status;
   completed behavior belongs in reference docs, and the README links only to current
   features and reference guides. `docs/RELEASING.md` covers releases. `CHANGELOG.md` tracks releases.
   The version comes from the git tag (setuptools-scm writes `_version.py`); there is no
   hand-edited version string anywhere, and a release is cut by pushing a `v*` tag. Never
-  bump or invent a version in code.
+  bump or invent a version in code. For pre-tag screenshots, the dashboard accepts
+  `?screenshotVersion=<version>` before its hash route; this changes only the sidebar
+  footer label, not the actual package version or update check.
 
 ### Entry points
 
@@ -136,16 +138,21 @@ Primary code paths:
   binding contract for rows, stream and UI module APIs; change it first. Fixtures in
   `tests/fixtures/replay/` are exported read-only and anonymized by
   `scripts/export_replay_fixture.py`. `python -m mtga_tracker.replay_dump <game_id>` prints a
-  stream.
+  stream. `ui/src/replay/effects.ts` keeps the current action's effect window
+  (damage, life, removal, counters, P/T, discards, mills, each with its source)
+  until the next action; removed permanents stay dimmed in their slot meanwhile,
+  and moves carry `by` (Arena's affector root) for recorded games.
 - `ui/src/replay/`: the Replay page — pure reducer/layout/playback-clock/image-queue/prefs
   modules with tests, `export/` (pure video plan, Canvas 2D frame composer, WebCodecs +
-  mp4-muxer encoder for the in-browser MP4 export), and `components/` holding the `@react-three/fiber` scene (lazy-loaded
+  mp4-muxer encoder for the in-browser MP4 export; each codec is probed with one frame and
+  H.264 without a reported `decoderConfig` is skipped for VP9, whose config is filled in), and `components/` holding the `@react-three/fiber` scene (lazy-loaded
   route `#/replay/<id>`, list at `#/replay`). Teal `--replay` is reserved for replay
   affordances; everything replay-related carries `replay-wide-only` and is hidden below
   900 px.
   On Live Scoreboard, the header replay link matches the other pills, the
   between-game waiting status sits beside the format on the right, and Today's
-  Games uses compact 20 px replay icons to preserve space for deck names.
+  Games uses compact 20 px replay icons and one-letter W/L/D result pills
+  (full word on hover and for screen readers) to preserve space for deck names.
 - `src/mtga_tracker/settings.py`: shared `settings.json` — top level of the repo next to
   `config.py` for source runs, per-user data dir for frozen builds (legacy `data/settings.json`
   migrates automatically). Startup preferences are stored in its `startup` section.
@@ -194,25 +201,45 @@ Primary code paths:
   list. Import request IDs retain text/name/format provenance and must not replay as
   different lists. The localization provider is the verified static field
   `Wotc.Mtga.Loc.Languages.ActiveLocProvider`, not a getter; CurrentLanguage is a getter.
-  A live four-Forest parsing check passed without any create/delete call. Full
-  direct-add create/verification still needs user-selected live validation.
   Do not attach or restart Arena/tracker while the user plays. Wait for the user to explicitly report
   being out of a match on Decks before any live validation; app restarts still
   require explicit approval.
-  Initial runtime support is Apple Silicon macOS IL2CPP Unity `6000.3.14f1`, gated
-  by `paths.native_deck_platform_supported`. Frida is pinned for Mac and lazily
-  imported; the asset and extension are included in Mac packaging configuration.
+  Runtime support is Unity `6000.3.14f1` on Apple Silicon macOS (IL2CPP, validated)
+  and x64 Windows (Mono, validated), gated by `paths.native_deck_platform_supported`
+  and the adapter's `ARENA_ARCH` build check. Windows Arena ships no `GameAssembly.dll`;
+  it embeds `mono-2.0-bdwgc.dll`. `arena_decks.js` picks `il2cppRuntime()` or
+  `monoRuntime()`, which expose the same helper names; keep deck logic runtime-neutral
+  and put any new runtime call in both. Object/array/string/struct layouts match on
+  64-bit, so the layout checks are shared. Mono pitfalls (both seen live): its JIT
+  uses hardware faults for null checks, so `mono_runtime_invoke` must keep Frida's
+  `exceptions: 'propagate'`; `mono_field_set_value` takes a reference value
+  itself but a value type by pointer; and Mono's invoke takes a `Nullable<T>`
+  argument as a boxed `T` or null, where IL2CPP takes the raw struct. The bridge attaches to `MTGA` or `MTGA.exe`. Frida is pinned for Mac and Windows and lazily imported; the asset and
+  extension are included in both platforms' packaging configuration.
   Check the active-game row before attachment and between transfers, and check the
   live Decks controller, same native service and authenticated account for writes.
   Only AccountInformation.AccountID is read/hashed; never read credentials.
   Migration 35 adds `managed_deck_collections` and nullable `managed_decks.collection_id`.
-  Saved decks belong to one named collection or Unsorted. Collection removal moves
+  Named collections render collapsed and Unsorted open; search/status filters expand
+  all, and creating or moving decks into a collection expands it.
+  Saved decks belong to one named collection or Unsorted. Store jobs take one optional
+  top-level `collection_id` (null = Unsorted) that also reassigns an earlier backup. Collection removal moves
   all members (including Trash) to Unsorted; it never deletes decks/revisions.
   `deck_collections.py` owns atomic moves and collection merge mapping; backup merge
   combines equal collection names and gameplay reset preserves memberships.
   Deck Finder passes the saved entry ID to native add so its full native revision
   upgrades the same entry, retaining notes, collection and earlier text revisions.
   Jobs expose verified step counts for progress bars; connecting stays indeterminate.
+  After a job that sent a create/delete, closing the attachment calls `refreshscreen`:
+  it starts Arena's own `DeckManagerController.Coroutine_LoadDecks(_selectedBucket,
+  deckId)` on the open Decks screen, selecting the last created deck (`Guid?` is a
+  HasValue byte plus the Guid at +4); skipped while Arena is loading or a request is
+  pending. Selection does not scroll, so `scrollToSelectedDeck` then centers that tile
+  via the `ScrollRect` on the `DeckViewSelector` (content pinned at the top) once the
+  rebuilt tile exists, skipping a collapsed folder. It is display only and best effort,
+  and never fails a verified transfer.
+  Not-on-Decks failures use the bridge's single `DECKS_SCREEN` message; the job API
+  strips Frida's `Error:` prefix and script stack before showing adapter reasons.
   Migration 34 adds `managed_deck_transfers` with one pending intent per account.
   Commit/read back exact native archives before any removal; write intents commit
   before single native calls. Interrupted outcomes stop; reconciliation is read-only,
@@ -239,9 +266,13 @@ Primary code paths:
 - `src/mtga_tracker/deck_capture.py`: the existing log-entry pipeline archives available
   `DeckUpsertDeckV3` / `EventSetDeckV3` outgoing lists for any format before game-exclusion
   gates. They are unconfirmed observations, not a complete roster or successful save.
+  A capture for an Arena deck tied to an entry by a binding or transfer row (the row
+  commits before Arena logs its create) goes to that entry, and adds nothing when any of
+  its revisions has the same name and list; a native backup adopts the log-captured
+  `captured_deck_id` entry unless it is trashed. One Arena deck keeps one saved entry.
   Replay must not move the current revision backward; unresolved IDs remain intact in
   full backups. Do not infer slot usage/account/presence or enable native writes from logs.
-  See `docs/DECK_MANAGER.md`, `docs/plans/DECK_MANAGER.md`, `tests/test_deck_manager.py`
+  See the README's Deck Manager section, `docs/plans/INDEX.md`, `tests/test_deck_manager.py`
   and `ui/src/components/DeckManagerPage.test.tsx`.
 - `deck-manager-bridge/poc/`: explicit development-only Frida/IL2CPP experiment,
   never auto-loaded or packaged. Mac Unity 6 native folder and bulk cache capture
@@ -284,7 +315,9 @@ Primary code paths:
   provider's selection color. Deck names and titles share that provider hue,
   with a subtle matching selected-row tint and darker text in the light theme.
   Source and Export to Arena sit together at the far right of the deck-name
-  row. The heading wraps on narrow screens.
+  row. Add to Arena and Save to collection sit below the description in a
+  fieldset whose legend links to Deck Manager, styled in its orange accent; a
+  right-aligned accent pill notes that Arena must be on Decks, filled in after that failure. The heading wraps on narrow screens.
   Stale hydration responses cannot replace a newer selection or clear its
   loading state. `ui/src/deckFinderImport.ts` parses import text for display,
   retaining separate Deck/Sideboard/Commander/Companion sections; clipboard
@@ -296,10 +329,13 @@ Primary code paths:
   sessions, and a watch-page fallback; never download media or require cookies
   from a signed-in browser. HGG/Sloth are defaults in `YouTubeCreators`; preserve
   these entries when old settings payloads omit `youtube`. Normalize Deck/Decklist
-  headings to `Deck` and strip title emoji with the bundled `emoji` dependency.
+  headings to `Deck`; a complete 60-card list without a heading can also be
+  imported when it contains at least ten card rows. Headerless Brawl lists are
+  skipped because the commander cannot be identified. Strip title emoji with
+  the bundled `emoji` dependency.
   Reuse the existing 10-minute dashboard memory cache; failed/partial fetches
   show warnings and are not cached. UI uses a simple loading message, no progress
-  bar. See `docs/DECK_FINDER_YOUTUBE.md`; regression fixtures live in
+  bar. The README covers creator setup; regression fixtures live in
   `tests/deck_downloader/fixtures/youtube/`.
 - `src/mtga_tracker/collection_api.py` / `collection_export.py` / `inventory.py`: explicit
   collection-export jobs, macOS/Windows process-memory readers, and local card metadata.
@@ -657,6 +693,12 @@ Arena logs are not a simple chronological event stream. Be careful with inferred
   submitted 60 must never win (a tracker launched mid-queue after a deck switch once
   stamped games with the previous deck's name). Leaving the deck unresolved beats
   guessing wrong.
+- A land that chooses a basic land type as it enters (Multiversal Passage) logs
+  `AnnotationType_ChoiceResult` from the land (`Choice_Domain` 9, `Choice_Value` an
+  Arena SubType enum) one message before its PlayLand; the land object then carries
+  the choice in `subtypes` (`SubType_Mountain`) and has no `color`. The tracker
+  remembers the chooser (`GameState.land_type_choosers`) and reads the type from
+  `subtypes`, so printed land types (Sacred Foundry) are never shown as a choice.
 - Arena's SBA death annotations reference instance ids that do NOT match declared
   attacker/blocker ids (verified against real logs) — combat deaths cannot be told apart
   from burn kills at SBA time, which is why lethal-damage deaths are excluded from
@@ -677,7 +719,7 @@ Important tables:
 - `game_deck_cards`: authoritative per-game submitted main-deck and sideboard quantities from Arena.
 - `game_card_summary`: cards played by each participant.
 - `game_library_events`: per-seat scry choices, destination counts, source card, and
-  visible player card-name lists; see `docs/SCRY_TRACKING.md`.
+  visible player card-name lists; see `docs/MTGA_LOG_FORMAT.md`.
 - `game_participant_stats`: combat, damage/life, cards drawn/discarded/milled/exiled, stack
   stats, plus nullable interaction columns added over time — removal/wipes/bounce/counters
   played+drawn, creatures/non-creatures removed and bounced, spells_countered, lands

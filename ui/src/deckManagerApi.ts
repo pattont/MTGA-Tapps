@@ -98,8 +98,9 @@ export interface NativeDeckJob {
   result?: { count: number; action: NativeDeckAction; cancelled?: boolean };
 }
 export const fetchNativeDeckStatus = (signal?: AbortSignal) => request<NativeDeckStatus>('/native', undefined, signal);
-export const startNativeDeckJob = (action: NativeDeckAction, decks: { id: string; revision?: string }[] = []) =>
-  request<{ job_id: string }>('/native/run', { action, decks, request_id: crypto.randomUUID(), ...(action === 'store' ? { confirm: 'MOVE' } : {}) });
+/** `collection_id` is where a store (move out of Arena) saves the decks; null is Unsorted. */
+export const startNativeDeckJob = (action: NativeDeckAction, decks: { id: string; revision?: string }[] = [], collection_id?: string | null) =>
+  request<{ job_id: string }>('/native/run', { action, decks, request_id: crypto.randomUUID(), ...(action === 'store' ? { confirm: 'MOVE' } : {}), ...(action === 'store' && collection_id !== undefined ? { collection_id } : {}) });
 export const cancelNativeDeckJob = (job_id: string) => request<{ state: string; cancel: boolean }>('/native/cancel', { job_id });
 export const fetchNativeDeckJob = (id: string, signal?: AbortSignal) => request<NativeDeckJob>(`/native/job?${new URLSearchParams({ id })}`, undefined, signal);
 export const addDeckToArena = (text: string, name: string, format_name: string, saved_deck_id?: string, collection_id?: string) =>

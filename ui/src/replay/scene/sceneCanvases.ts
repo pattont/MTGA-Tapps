@@ -54,17 +54,34 @@ export function createShadowCanvas(): HTMLCanvasElement {
   return canvas;
 }
 
-/** White rounded outline used for highlight rings (tinted by the material color). */
+/**
+ * White glow used for highlight rings (tinted by the material color, blended
+ * additively so it lights the felt). Drawn at 3x so it stays smooth when a
+ * zoomed card is large: a wide faint halo, a softer band, then a thin bright
+ * core hugging the card edge. Same proportions as before (160×214 units,
+ * outline at 14 inset), which the ring geometry is sized for.
+ */
 export function createRingCanvas(): HTMLCanvasElement {
-  const { canvas, ctx } = canvas2d(160, 214);
+  const S = 3;
+  const { canvas, ctx } = canvas2d(160 * S, 214 * S);
   if (!ctx) return canvas;
-  ctx.shadowColor = '#fff';
-  ctx.shadowBlur = 14;
+  ctx.scale(S, S);
   ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 11;
-  roundRectPath(ctx, 14, 14, 132, 186, 12);
-  ctx.stroke();
-  ctx.stroke();
+  ctx.shadowColor = '#fff';
+  // shadowBlur ignores the transform, so it is given in canvas pixels.
+  const layers = [
+    { width: 9, blur: 18, alpha: 0.22 },
+    { width: 5, blur: 8, alpha: 0.45 },
+    { width: 2.2, blur: 2, alpha: 1 },
+  ];
+  for (const layer of layers) {
+    ctx.globalAlpha = layer.alpha;
+    ctx.lineWidth = layer.width;
+    ctx.shadowBlur = layer.blur * S;
+    roundRectPath(ctx, 14, 14, 132, 186, 11);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
   return canvas;
 }
 
@@ -86,6 +103,18 @@ export function createInferredCanvas(): HTMLCanvasElement {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('inferred', 80, 229);
+  return canvas;
+}
+
+/** Dashed outline (no tag) for a card castable from the graveyard; sized like the ring. */
+export function createCastableCanvas(): HTMLCanvasElement {
+  const { canvas, ctx } = canvas2d(160, 214);
+  if (!ctx) return canvas;
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 5;
+  ctx.setLineDash([13, 8]);
+  roundRectPath(ctx, 14, 14, 132, 186, 12);
+  ctx.stroke();
   return canvas;
 }
 
