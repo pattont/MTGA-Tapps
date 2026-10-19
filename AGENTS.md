@@ -357,8 +357,11 @@ Primary code paths:
   thread at most daily. It stream-parses with ijson, keeps the cheapest in-stock
   copy per name and face, and caches the result in `<data dir>/paper_prices/`;
   `GET /api/paper-prices` answers ready/loading/error and never blocks. The
-  dialog loads both lists when it opens, for Compare stores. SCG/CSI show the
-  TCGplayer estimate. Tests (`tests/test_paper_prices.py`) never download.
+  dialog loads both lists when it opens, for Compare stores. A store shows only
+  its own prices, never another store's as a stand-in: unlisted cards, SCG/CSI
+  (no list, `priceSource: null`) and a list that failed to load show a dash and
+  stay out of totals. Stores are listed alphabetically; TCGplayer is the default.
+  Tests (`tests/test_paper_prices.py`) never download.
   Settings → Buy on Paper (after In-game overlay; `settings.json`
   `buy_on_paper.enabled`, default on) is the off switch. Off hides every button
   (`BuyPaperButton` reads `ui/src/buyOnPaperSetting.ts`), cancels downloads

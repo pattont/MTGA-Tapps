@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { PaperCardInfo, PaperPriceMap } from './cardPrices';
-import { buildCart, isBasicLand, managedDeckSections, paperDeckFromSections, type BoardId } from './paperDeck';
+import {
+  applyStorePrices, buildCart, isBasicLand, managedDeckSections, paperDeckFromSections, withoutPrices, type BoardId,
+} from './paperDeck';
 
 const paper = (name: string, usd: number | null, set = 'FDN'): PaperCardInfo => ({
   status: 'paper', name, rebalanced: false, cheapest: true,
@@ -73,6 +75,43 @@ describe('buildCart', () => {
     });
     expect(cart.total).toBe(0.2);
     expect(cart.lines.map((line) => [line.name, line.quantity])).toEqual([['Negate', 2], ['Mystery Card', 1]]);
+  });
+});
+
+describe('store prices', () => {
+  const rows = paperDeckFromSections([{ name: 'Deck', cards: [
+    { quantity: 4, name: 'Opt' }, { quantity: 2, name: 'Negate' }, { quantity: 2, name: 'Alchemy Only' },
+  ] }]);
+  const scryfall: PaperPriceMap = new Map<string, PaperCardInfo | null>([
+    ['Opt', paper('Opt', 0.25)],
+    ['Negate', paper('Negate', 0.5)],
+    ['Alchemy Only', { status: 'digital_only', name: 'Alchemy Only', printing: null, rebalanced: false, cheapest: true }],
+  ]);
+  const names = ['Opt', 'Negate', 'Alchemy Only'];
+  const options = { boards: allBoards, excluded: new Set<string>(), skipBasics: false };
+
+  it('never fills a card the store doesn’t list with another store’s price', () => {
+    const store = new Map([['Opt', {
+      name: 'Opt', usd: 0.1, set: 'DOM', set_name: 'Dominaria', collector_number: '60',
+      finish: 'nonfoil' as const, in_stock: true, url: null,
+    }]]);
+    const prices = applyStorePrices(names, scryfall, store);
+    expect(prices.get('Negate')).toMatchObject({ status: 'paper', printing: null, not_listed: true });
+    const cart = buildCart(rows, prices, options);
+    expect(cart.total).toBe(0.4);
+    expect(cart.pricedCount).toBe(4);
+    expect(cart.notListedCount).toBe(2);
+    expect(cart.unpricedCount).toBe(2);
+    expect(cart.unavailableCount).toBe(2);
+    expect(cart.lines.map((line) => line.name)).toEqual(['Opt', 'Negate']);
+  });
+
+  it('has no prices at all for a store without a price list', () => {
+    const cart = buildCart(rows, withoutPrices(names, scryfall), options);
+    expect(cart.total).toBe(0);
+    expect(cart.pricedCount).toBe(0);
+    expect(cart.cardCount).toBe(6);
+    expect(cart.unavailableCount).toBe(2);
   });
 });
 

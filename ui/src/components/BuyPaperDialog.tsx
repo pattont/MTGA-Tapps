@@ -4,9 +4,11 @@ import type { ImportSection } from '../deckFinderImport';
 import { lookupPaperPrices, type PaperPriceMap } from '../cardPrices';
 import {
   BOARD_LABELS, BOARD_ORDER, DEFAULT_BOARDS, applyStorePrices, buildCart, formatUsd, isBasicLand, isBuyable,
-  paperDeckFromSections, rowSelected, storeLookupName, type BoardId,
+  paperDeckFromSections, rowSelected, storeLookupName, withoutPrices, type BoardId, type CartSummary,
 } from '../paperDeck';
-import { PAPER_VENDORS, affiliateActive, openVendorRequest, vendorById, type PaperVendor } from '../paperVendors';
+import {
+  DEFAULT_VENDOR_ID, PAPER_VENDORS, affiliateActive, openVendorRequest, vendorById, type PaperVendor,
+} from '../paperVendors';
 import { fetchStorePrices, type StorePriceResult, type StorePriceSource } from '../storePrices';
 import { DeckModal } from './DeckModal';
 import { useBuyOnPaperEnabled } from '../buyOnPaperSetting';
@@ -20,7 +22,7 @@ interface Prefs {
 }
 
 function loadPrefs(): Prefs {
-  const fallback: Prefs = { vendor: PAPER_VENDORS[0].id, setCodes: false, skipBasics: false };
+  const fallback: Prefs = { vendor: DEFAULT_VENDOR_ID, setCodes: false, skipBasics: false };
   try {
     const parsed = JSON.parse(localStorage.getItem(PREFS_KEY) ?? 'null') as Partial<Prefs> | null;
     if (!parsed) return fallback;
@@ -174,6 +176,14 @@ function AnimatedAmount({ value, busy = false }: { value: number; busy?: boolean
   );
 }
 
+/** A cart total, or a dash when none of the selected cards has a price. */
+function CartTotal({ cart, busy = false }: { cart: CartSummary; busy?: boolean }) {
+  if (!busy && cart.cardCount > 0 && cart.pricedCount === 0) {
+    return <span className="buy-paper-amount buy-paper-no-price">—<span className="visually-hidden"> No price</span></span>;
+  }
+  return <AnimatedAmount value={cart.total} busy={busy} />;
+}
+
 type StoreState =
   | { status: 'downloading' }
   | { status: 'error'; error: string }
@@ -198,7 +208,7 @@ export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialo
   const [storeAttempt, setStoreAttempt] = useState(0);
   const [opened, setOpened] = useState<string | null>(null);
 
-  const vendor = vendorById(prefs.vendor) ?? PAPER_VENDORS[0];
+  const vendor = vendorById(prefs.vendor) ?? vendorById(DEFAULT_VENDOR_ID)!;
   const updatePrefs = (patch: Partial<Prefs>) => setPrefs((current) => {
     const next = { ...current, ...patch };
     savePrefs(next);
@@ -243,32 +253,46 @@ export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialo
   }, [names, storeAttempt]);
 
   const options = { boards, excluded, skipBasics: prefs.skipBasics };
+  // A store only ever shows its own prices. One without a list, or whose list
+  // couldn't load, shows no prices rather than another store's.
+  const storeFailed = (priceSource: PaperVendor['priceSource']) =>
+    priceSource !== null && priceSource !== 'tcgplayer' && storeState[priceSource]?.status === 'error';
   const pricesFor = (priceSource: PaperVendor['priceSource']): PaperPriceMap | null => {
     if (priceSource === 'tcgplayer') return scryfall;
+    if (priceSource === null || storeFailed(priceSource)) return withoutPrices(names, scryfall);
     const result = storeData[priceSource];
-    if (result) return applyStorePrices(names, scryfall, result.prices);
-    return storeState[priceSource]?.status === 'error' ? scryfall : null;
+    return result ? applyStorePrices(names, scryfall, result.prices) : null;
   };
 
   const source = vendor.priceSource;
-  const storeResult = source === 'tcgplayer' ? null : storeData[source] ?? null;
-  const sourceState = source === 'tcgplayer' ? undefined : storeState[source];
+  const storeSource = source === 'tcgplayer' || source === null ? null : source;
+  const storeResult = storeSource ? storeData[storeSource] ?? null : null;
+  const sourceState = storeSource ? storeState[storeSource] : undefined;
   const storeError = sourceState?.status === 'error' ? sourceState.error : null;
   const storeDownloading = sourceState?.status === 'downloading';
-  const storeLoading = source !== 'tcgplayer' && !storeResult && !storeError;
-  const prices = pricesFor(source) ?? scryfall;
+  const storeLoading = storeSource !== null && !storeResult && !storeError;
+  const noPrices = source === null || storeError !== null;
+  const prices = pricesFor(source) ?? withoutPrices(names, scryfall);
   const cart = buildCart(rows, prices, options);
   const setCodes = prefs.setCodes && vendor.supportsSetCodes;
 
   // Compare stores: the same selection priced at each store.
   const comparison = PAPER_VENDORS.map((entry) => {
-    const map = pricesFor(entry.priceSource);
-    const ownPrices = entry.priceSource === 'tcgplayer' ? entry.id === 'tcgplayer' : Boolean(storeData[entry.priceSource]);
-    return { vendor: entry, total: map ? buildCart(rows, map, options).total : null, ownPrices };
+    const failed = storeFailed(entry.priceSource);
+    const map = entry.priceSource === null || failed ? null : pricesFor(entry.priceSource);
+    return {
+      vendor: entry,
+      cart: map ? buildCart(rows, map, options) : null,
+      loading: entry.priceSource !== null && !failed && (!map || pending > 0),
+      noPriceReason: entry.priceSource === null
+        ? `${entry.name} publishes no price list. It prices your cart at checkout.`
+        : failed ? `Couldn’t load ${entry.name}’s price list.` : `${entry.name} has no price for these cards.`,
+    };
   });
-  const comparable = comparison.filter((entry) => entry.ownPrices && entry.total !== null && entry.total > 0);
-  const lowest = pending === 0 && comparable.length > 1 && comparison.every((entry) => entry.total !== null)
-    ? comparable.reduce((best, entry) => (entry.total! < best.total! ? entry : best)).vendor.id
+  // Only a store that prices every selected card can be called the lowest.
+  const complete = comparison.filter((entry) => entry.cart && entry.cart.pricedCount > 0 && entry.cart.unpricedCount === 0);
+  const lowest = complete.length > 1 && comparison.every((entry) => !entry.loading)
+    ? complete.reduce((best, entry) => (entry.cart!.total < best.cart!.total ? entry : best)).vendor.id
     : null;
 
   function toggleRow(key: string) {
@@ -303,15 +327,16 @@ export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialo
 
   let status: ReactNode;
   if (opened) status = opened;
+  else if (source === null) status = `${vendor.name} publishes no price list, so no prices are shown. It prices your cart at checkout.`;
   else if (pending > 0) status = `Finding the cheapest printings… ${pending} card${pending === 1 ? '' : 's'} left`;
   else if (storeDownloading) status = `Downloading ${vendor.name}’s price list. This happens once a day and takes a few seconds.`;
   else if (storeLoading) status = `Loading ${vendor.name} prices…`;
   else if (storeError) {
     status = <>
-      Couldn’t load {vendor.name}’s prices, so these are TCGplayer estimates.{' '}
+      Couldn’t load {vendor.name}’s price list, so no prices are shown.{' '}
       <button type="button" className="buy-paper-retry" onClick={() => { setStoreState({}); setStoreAttempt((value) => value + 1); }}>Try again</button>
     </>;
-  } else if (interrupted) {
+  } else if (interrupted && source === 'tcgplayer') {
     status = <>
       {Array.from(scryfall.values()).some(Boolean)
         ? 'Scryfall is busy, so some prices come from a default printing.'
@@ -368,18 +393,24 @@ export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialo
                     {lowest === entry.vendor.id ? <em className="buy-paper-tag buy-paper-tag-best">Lowest</em> : null}
                   </span>
                   <span className="buy-paper-compare-total">
-                    {entry.total === null || pending > 0
+                    {entry.loading
                       ? <span className="buy-paper-skeleton" />
-                      : <>
-                        {entry.ownPrices ? null : <small title={`${entry.vendor.name} publishes no price list; this is the TCGplayer estimate.`}>est.</small>}
-                        <AnimatedAmount value={entry.total} />
-                      </>}
+                      : !entry.cart || (entry.cart.cardCount > 0 && entry.cart.pricedCount === 0)
+                        ? <span className="buy-paper-no-price" title={entry.noPriceReason}>—<span className="visually-hidden"> {entry.noPriceReason}</span></span>
+                        : <>
+                          {entry.cart.unpricedCount ? (
+                            <small title={`${entry.cart.unpricedCount} of your cards have no ${entry.vendor.name} price, so they aren’t in this total.`}>
+                              {entry.cart.unpricedCount} missing
+                            </small>
+                          ) : null}
+                          <AnimatedAmount value={entry.cart.total} />
+                        </>}
                   </span>
                 </button>
               </li>
             ))}
           </ul>
-          <p className="buy-paper-compare-note">Your selection at each store’s cheapest in-stock prices. StarCityGames and CoolStuffInc publish no price list, so they show the TCGplayer estimate.</p>
+          <p className="buy-paper-compare-note">Your selection at each store’s cheapest in-stock prices. A dash means the store has no price to show: StarCityGames and CoolStuffInc publish no price list.</p>
         </div>
 
         <div className="buy-paper-cards">
@@ -436,16 +467,22 @@ export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialo
                               {!buyable
                                 ? info?.status === 'not_found' ? 'No paper card found' : 'Arena only — not sold in paper'
                                 : storeLoading ? <span className="buy-paper-skeleton buy-paper-skeleton-wide" style={stagger} />
-                                  : <span key={`${source}:${where}`} className="buy-paper-fade-in" style={stagger}>
-                                    {where ?? (lookingUp ? 'Finding printings…' : 'Printing unknown')}
-                                    {printing?.in_stock === false ? <em className="buy-paper-tag buy-paper-tag-warn">Sold out</em> : null}
-                                    {printing?.estimate ? <em className="buy-paper-tag">Not listed · TCGplayer est.</em> : null}
-                                  </span>}
-                              {info?.rebalanced && buyable && !storeLoading ? ` · paper original of Arena’s rebalanced ${row.name}` : ''}
+                                  : info?.not_listed ? (
+                                    <span key={`${source}:not-listed`} className="buy-paper-fade-in" style={stagger}>
+                                      <em className="buy-paper-tag buy-paper-tag-warn">Not listed at {vendor.name}</em>
+                                    </span>
+                                  ) : noPrices ? null
+                                    : <span key={`${source}:${where}`} className="buy-paper-fade-in" style={stagger}>
+                                      {where ?? (lookingUp ? 'Finding printings…' : 'Printing unknown')}
+                                      {printing?.in_stock === false ? <em className="buy-paper-tag buy-paper-tag-warn">Sold out</em> : null}
+                                    </span>}
+                              {info?.rebalanced && buyable && !storeLoading
+                                ? `${noPrices ? 'Paper' : ' · paper'} original of Arena’s rebalanced ${row.name}` : ''}
                             </small>
                           </span>
-                          <span className={`buy-paper-price${lookingUp ? ' buy-paper-price-pending' : ''}`}>
+                          <span className={`buy-paper-price${lookingUp && !noPrices ? ' buy-paper-price-pending' : ''}`}>
                             {!buyable ? '—' : storeLoading ? <span className="buy-paper-skeleton" style={stagger} />
+                              : noPrices || info?.not_listed ? <span className="buy-paper-no-price">—</span>
                               : printing?.usd != null ? (
                                 <span key={`${source}:${printing.usd}`} className="buy-paper-fade-in" style={stagger}>
                                   {formatUsd(printing.usd * row.quantity)}
@@ -463,18 +500,18 @@ export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialo
           </div>
 
           <dl className="buy-paper-summary">
-            <div><dt>Estimated price of cards</dt><dd><AnimatedAmount value={cart.total} busy={storeLoading} /></dd></div>
+            <div><dt>Estimated price of cards</dt><dd><CartTotal cart={cart} busy={storeLoading} /></dd></div>
             {cart.outOfStockCount && !storeLoading ? (
               <div className="buy-paper-summary-note"><dt>Sold out at {vendor.name}</dt><dd>{cart.outOfStockCount}</dd></div>
             ) : null}
-            {cart.estimateCount && !storeLoading ? (
-              <div className="buy-paper-summary-note"><dt>Not listed at {vendor.name} (TCGplayer estimate)</dt><dd>{cart.estimateCount}</dd></div>
+            {cart.notListedCount && !storeLoading ? (
+              <div className="buy-paper-summary-note"><dt>Not listed at {vendor.name} (not in total)</dt><dd>{cart.notListedCount}</dd></div>
             ) : null}
             {cart.unavailableCount ? (
               <div className="buy-paper-summary-note"><dt>Arena-only cards left out</dt><dd>{cart.unavailableCount}</dd></div>
             ) : null}
-            {cart.unpricedCount && !pending && !storeLoading ? (
-              <div className="buy-paper-summary-note"><dt>Cards without a listed price</dt><dd>{cart.unpricedCount}</dd></div>
+            {cart.unpricedCount - cart.notListedCount && !noPrices && !pending && !storeLoading ? (
+              <div className="buy-paper-summary-note"><dt>Cards without a price (not in total)</dt><dd>{cart.unpricedCount - cart.notListedCount}</dd></div>
             ) : null}
             <div className="buy-paper-total">
               <dt>
@@ -484,15 +521,19 @@ export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialo
                     <CircleHelp aria-hidden="true" />
                   </button>
                   <span id="buy-paper-estimate-tip" role="tooltip" className="buy-paper-tooltip">
-                    {source === 'tcgplayer'
-                      ? 'Prices are TCGplayer market prices, updated once a day, and may differ at checkout.'
-                      : `Prices come from ${vendor.name}’s price list, updated once a day, and may differ at checkout.`}
-                    {' '}Prices also vary based on the condition of the card selected at checkout.
-                    {source === 'tcgplayer' ? null : ` Cards ${vendor.name} doesn’t list use the TCGplayer estimate.`}
+                    {source === null
+                      ? `${vendor.name} publishes no price list, so there’s no estimate here. It prices your cart at checkout.`
+                      : <>
+                        {source === 'tcgplayer'
+                          ? 'Prices are TCGplayer market prices, updated once a day, and may differ at checkout.'
+                          : `Prices come from ${vendor.name}’s price list, updated once a day, and may differ at checkout.`}
+                        {' '}Prices also vary based on the condition of the card selected at checkout.
+                        {' '}Cards without a {vendor.name} price show a dash and aren’t in the total.
+                      </>}
                   </span>
                 </span>
               </dt>
-              <dd><AnimatedAmount value={cart.total} busy={storeLoading} /></dd>
+              <dd><CartTotal cart={cart} busy={storeLoading} /></dd>
             </div>
           </dl>
         </div>

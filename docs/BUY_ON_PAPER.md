@@ -12,18 +12,21 @@ The dialog works like Moxfield's Buy dialog, without selling or a paper
 collection. Pick a store, untick any card or board you already own, and the
 total updates as you go. The tracker doesn't record what you own or buy.
 
-Each store prices the cart from its own list where one exists. **Compare
-stores** shows every store's total for the current selection; clicking a row
-switches stores. When the store changes, each card's new price fades in one
-row after another and the total counts to its new value. While a list loads,
-prices shimmer.
+A store only ever shows its own prices. Where a store has no price for a card,
+the dialog shows a dash rather than another store's price, which would be
+wrong for that store. **Compare stores** lists the stores alphabetically with
+each one's total for the current selection; clicking a row switches stores.
+TCGplayer is the default. When the store changes, each card's new price fades
+in one row after another and the total counts to its new value. While a list
+loads, prices shimmer.
 
 | Store | Prices |
 | --- | --- |
-| TCGplayer | Scryfall's TCGplayer market price |
 | Card Kingdom | Card Kingdom's published price list |
+| CoolStuffInc | None published: dashes; the store prices the cart at checkout |
 | Mana Pool | Mana Pool's published price list |
-| StarCityGames, CoolStuffInc | No public list: the TCGplayer estimate, marked "est." |
+| StarCityGames | None published: dashes; the store prices the cart at checkout |
+| TCGplayer | Scryfall's TCGplayer market price |
 
 ## Store price lists
 
@@ -79,10 +82,15 @@ takes.
 
 ## Dialog details
 
-In the dialog, a card the chosen store doesn't list keeps its TCGplayer
-estimate, tagged "Not listed · TCGplayer est.". A card the store lists but has
-sold out is tagged "Sold out" and priced at its listing. The summary counts
-both.
+In the dialog, a card the chosen store doesn't list is tagged "Not listed at
+<store>", shows a dash, and is left out of the total; the summary counts it.
+A card the store lists but has sold out is tagged "Sold out" and priced at its
+listing. If a store's list can't be loaded, the dialog shows dashes and offers
+**Try again**.
+
+In Compare stores, a total that leaves cards out says how many ("3 missing").
+"Lowest" goes only to a store that prices every selected card, so a partial
+total never wins on missing cards.
 
 ## TCGplayer prices (Scryfall)
 

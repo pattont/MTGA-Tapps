@@ -105,27 +105,62 @@ describe('BuyPaperDialog', () => {
         asOf: '2026-10-18 19:08:27',
       });
     });
-    // 4 × 0.35 + 20 × 0.10 + 3 × 0.50 (Negate isn't listed: TCGplayer estimate)
-    expect(total()).toBe('$4.90');
+    // 4 × 0.35 + 20 × 0.10. Negate isn't listed, so it has no price and isn't
+    // in the total: no other store's price stands in for it.
+    expect(total()).toBe('$3.40');
     expect(screen.getByText('Sold out')).toBeInTheDocument();
-    expect(screen.getByText('Not listed · TCGplayer est.')).toBeInTheDocument();
+    expect(screen.getByText('Not listed at Card Kingdom')).toBeInTheDocument();
+    expect(screen.queryByText('$1.50')).not.toBeInTheDocument();
     expect(screen.getByText('Sold out at Card Kingdom')).toBeInTheDocument();
+    expect(screen.getByText('Not listed at Card Kingdom (not in total)')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('Card Kingdom prices as of 2026-10-18');
     expect(screen.getAllByText('Dominaria (DOM) #60')).toHaveLength(2);
 
-    // Compare stores: each store's total for the same selection, lowest marked.
+    // Compare stores: alphabetical, each store's own total, lowest marked only
+    // among stores that price every card.
     const compare = screen.getByRole('list', { name: 'Compare stores' });
-    const rowFor = (name: string) => within(compare).getByRole('button', { name: new RegExp(name, 'u') });
+    expect(Array.from(compare.querySelectorAll('.buy-paper-compare-name'), (name) => name.firstChild?.textContent))
+      .toEqual(['Card Kingdom', 'CoolStuffInc', 'Mana Pool', 'StarCityGames', 'TCGplayer']);
+    const rowFor = (name: string) => within(compare).getByRole('button', { name: new RegExp(`^${name}`, 'u') });
     expect(rowFor('Card Kingdom')).toHaveAttribute('aria-pressed', 'true');
-    expect(rowFor('Card Kingdom').querySelector('.visually-hidden')).toHaveTextContent('$4.90');
+    expect(rowFor('Card Kingdom').querySelector('.visually-hidden')).toHaveTextContent('$3.40');
+    expect(rowFor('Card Kingdom')).toHaveTextContent('3 missing');
     expect(rowFor('Mana Pool').querySelector('.visually-hidden')).toHaveTextContent('$2.20');
     expect(rowFor('TCGplayer').querySelector('.visually-hidden')).toHaveTextContent('$3.50');
     expect(rowFor('Mana Pool')).toHaveTextContent('Lowest');
-    expect(rowFor('StarCityGames')).toHaveTextContent('est.');
+    expect(rowFor('StarCityGames')).toHaveTextContent('—');
+    expect(rowFor('StarCityGames')).not.toHaveTextContent('$');
+    expect(rowFor('CoolStuffInc')).not.toHaveTextContent('$');
 
     fireEvent.click(rowFor('Mana Pool'));
     expect(total()).toBe('$2.20');
     expect(screen.getByRole('button', { name: 'Buy @ Mana Pool' })).toBeInTheDocument();
+
+    // A store with no price list shows dashes, not another store's prices.
+    fireEvent.click(rowFor('StarCityGames'));
+    expect(screen.getByText('Estimated Total').closest('div')!.querySelector('dd')).toHaveTextContent('—');
+    expect(container.querySelectorAll('.buy-paper-price')).toHaveLength(4);
+    container.querySelectorAll('.buy-paper-price').forEach((cell) => expect(cell).toHaveTextContent(/^—$/u));
+    expect(screen.getByRole('status')).toHaveTextContent('StarCityGames publishes no price list');
+  });
+
+  it('shows no prices when a store’s list can’t be loaded', async () => {
+    vi.mocked(fetchStorePrices).mockRejectedValue(new Error('down'));
+    localStorage.setItem('mtga-tracker-buy-paper-v1', JSON.stringify({ vendor: 'cardkingdom' }));
+    const { container } = render(<BuyPaperDialog sections={sections} onClose={() => {}} returnFocus={null} />);
+    await screen.findByText('Cards');
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Couldn’t load Card Kingdom’s price list, so no prices are shown.'));
+    expect(screen.getByText('Estimated Total').closest('div')!.querySelector('dd')).toHaveTextContent('—');
+    container.querySelectorAll('.buy-paper-price').forEach((cell) => expect(cell).toHaveTextContent(/^—$/u));
+    const compare = screen.getByRole('list', { name: 'Compare stores' });
+    expect(within(compare).getByRole('button', { name: /^Mana Pool/u })).not.toHaveTextContent('$');
+    expect(within(compare).getByRole('button', { name: /^TCGplayer/u }).querySelector('.visually-hidden')).toHaveTextContent('$3.50');
+  });
+
+  it('starts on TCGplayer', async () => {
+    render(<BuyPaperDialog sections={sections} onClose={() => {}} returnFocus={null} />);
+    expect(await screen.findByRole('button', { name: 'Buy @ TCGplayer' })).toBeInTheDocument();
   });
 
   it('opens the chosen store with the selected cards', async () => {

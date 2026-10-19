@@ -7015,6 +7015,7 @@ a.sidebar-deck-finder {
 .buy-paper-price { text-align: right; font-size: 0.86rem; line-height: 1.25; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .buy-paper-price small { display: block; color: var(--muted); font-size: 0.7rem; }
 .buy-paper-price-pending { color: var(--muted); }
+.buy-paper-no-price { color: var(--subtle); }
 .buy-paper-row-off .buy-paper-qty, .buy-paper-row-off .buy-paper-card, .buy-paper-row-off .buy-paper-price { opacity: 0.45; }
 .buy-paper-tag {
   display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px;

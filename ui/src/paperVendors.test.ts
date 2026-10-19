@@ -22,8 +22,11 @@ afterEach(() => {
 });
 
 describe('paper store requests', () => {
-  it('lists every store once with its bundled icon', () => {
-    expect(PAPER_VENDORS.map((vendor) => vendor.id)).toEqual(['tcgplayer', 'cardkingdom', 'manapool', 'starcitygames', 'coolstuffinc']);
+  it('lists every store once, alphabetically, with its bundled icon', () => {
+    expect(PAPER_VENDORS.map((vendor) => vendor.name)).toEqual(['Card Kingdom', 'CoolStuffInc', 'Mana Pool', 'StarCityGames', 'TCGplayer']);
+    // Stores without their own price list never borrow another store's prices.
+    expect(vendorById('starcitygames')!.priceSource).toBeNull();
+    expect(vendorById('coolstuffinc')!.priceSource).toBeNull();
     PAPER_VENDORS.forEach((vendor) => expect(vendor.icon).toMatch(/\/stores\/[a-z]+\.(png|ico)$/u));
   });
 

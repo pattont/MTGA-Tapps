@@ -84,8 +84,8 @@ export function storeLookupName(arenaName: string): string {
 
 /**
  * Swap in one store's own prices. A card the store lists takes its cheapest
- * in-stock printing there (or its sold-out listing); a card it doesn't list
- * keeps the Scryfall printing, marked as an estimate.
+ * in-stock printing there (or its sold-out listing). A card it doesn't list
+ * gets no price at all: another store's price would be wrong for this one.
  */
 export function applyStorePrices(
   arenaNames: string[],
@@ -107,11 +107,26 @@ export function applyStorePrices(
           usd: entry.usd, finish: entry.finish, in_stock: entry.in_stock,
         },
       });
-    } else if (info?.status === 'paper' && info.printing) {
-      result.set(arenaName, { ...info, printing: { ...info.printing, estimate: true } });
+    } else if (!info || info.status === 'paper') {
+      result.set(arenaName, info
+        ? { ...info, printing: null, not_listed: true }
+        : { status: 'paper', name: null, printing: null, rebalanced: false, cheapest: true, not_listed: true });
     } else {
       result.set(arenaName, info);
     }
+  }
+  return result;
+}
+
+/**
+ * The deck with no prices, for a store that publishes no price list or whose
+ * list couldn't be loaded. Scryfall still decides which cards exist in paper.
+ */
+export function withoutPrices(arenaNames: string[], scryfall: PaperPriceMap): PaperPriceMap {
+  const result: PaperPriceMap = new Map();
+  for (const arenaName of arenaNames) {
+    const info = scryfall.get(arenaName) ?? null;
+    result.set(arenaName, info?.status === 'paper' ? { ...info, printing: null } : info);
   }
   return result;
 }
@@ -137,14 +152,16 @@ export interface CartSummary {
   cardCount: number;
   /** Sum of known prices for those copies. */
   total: number;
+  /** Copies with a known price; 0 means there's no total to show. */
+  pricedCount: number;
   /** Copies going to the store without a known price. */
   unpricedCount: number;
   /** Selected copies left out because they have no paper printing. */
   unavailableCount: number;
   /** Copies the chosen store lists but has sold out. */
   outOfStockCount: number;
-  /** Copies the chosen store doesn't list, priced at the TCGplayer estimate. */
-  estimateCount: number;
+  /** Copies the chosen store's list doesn't have. They count as unpriced too. */
+  notListedCount: number;
 }
 
 export function rowSelected(row: PaperDeckCard, options: CartOptions): boolean {
@@ -161,7 +178,8 @@ export function buildCart(rows: PaperDeckCard[], prices: PaperPriceMap, options:
   let unpricedCount = 0;
   let unavailableCount = 0;
   let outOfStockCount = 0;
-  let estimateCount = 0;
+  let pricedCount = 0;
+  let notListedCount = 0;
   for (const row of rows) {
     if (!rowSelected(row, options)) continue;
     const info = prices.get(row.name) ?? null;
@@ -172,9 +190,12 @@ export function buildCart(rows: PaperDeckCard[], prices: PaperPriceMap, options:
     cardCount += row.quantity;
     const usd = info?.printing?.usd ?? null;
     if (usd === null) unpricedCount += row.quantity;
-    else total += usd * row.quantity;
+    else {
+      total += usd * row.quantity;
+      pricedCount += row.quantity;
+    }
     if (info?.printing?.in_stock === false) outOfStockCount += row.quantity;
-    if (info?.printing?.estimate) estimateCount += row.quantity;
+    if (info?.not_listed) notListedCount += row.quantity;
     const name = info?.name ?? row.name;
     const existing = lines.get(name.toLowerCase());
     if (existing) {
@@ -192,10 +213,11 @@ export function buildCart(rows: PaperDeckCard[], prices: PaperPriceMap, options:
     lines: Array.from(lines.values()),
     cardCount,
     total: Math.round(total * 100) / 100,
+    pricedCount,
     unpricedCount,
     unavailableCount,
     outOfStockCount,
-    estimateCount,
+    notListedCount,
   };
 }
 

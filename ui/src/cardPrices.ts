@@ -33,8 +33,6 @@ export interface PaperPrinting {
   finish: 'nonfoil' | 'foil' | 'etched' | null;
   /** From a store's own list: false when the store has it listed but sold out. */
   in_stock?: boolean;
-  /** The chosen store doesn't list this card; the price is the TCGplayer estimate. */
-  estimate?: boolean;
 }
 
 export interface PaperCardInfo {
@@ -46,6 +44,8 @@ export interface PaperCardInfo {
   rebalanced: boolean;
   /** True once the cheapest-printing pass has settled this card. */
   cheapest: boolean;
+  /** The chosen store's price list doesn't have this card, so it has no price. */
+  not_listed?: boolean;
 }
 
 const STORAGE_KEY = 'mtga-tracker-paper-prices-v1';

@@ -50,10 +50,11 @@ export interface PaperVendor {
   name: string;
   icon: string;
   /**
-   * Where card prices come from: the store's own list via the dashboard, or
-   * Scryfall's TCGplayer market price for stores that publish none.
+   * Where card prices come from: the store's own list via the dashboard,
+   * Scryfall (TCGplayer market prices), or null for a store that publishes
+   * no prices. Never another store's prices: they'd be wrong for this one.
    */
-  priceSource: StorePriceSource | 'tcgplayer';
+  priceSource: StorePriceSource | 'tcgplayer' | null;
   /** One line under the picker saying what happens on Buy. */
   note: string;
   supportsSetCodes: boolean;
@@ -87,26 +88,8 @@ function base64Utf8(text: string): string {
 
 const ICON_BASE = `${import.meta.env.BASE_URL}stores/`;
 
+/** Alphabetical, as the picker and Compare stores list them. */
 export const PAPER_VENDORS: PaperVendor[] = [
-  {
-    id: 'tcgplayer',
-    name: 'TCGplayer',
-    icon: `${ICON_BASE}tcgplayer.ico`,
-    priceSource: 'tcgplayer',
-    note: 'Opens TCGplayer Mass Entry with your list, where you add it to the cart.',
-    supportsSetCodes: true,
-    buildRequest(lines, { setCodes }) {
-      const entries = lines.map((line) => {
-        const base = `${line.quantity} ${storeName(line.name)}`;
-        return setCodes && line.set ? `${base} [${line.set}]${line.collector_number ? ` ${line.collector_number}` : ''}` : base;
-      });
-      const massEntry = withQuery('https://store.tcgplayer.com/massentry', { c: entries.join('||') });
-      return {
-        kind: 'link',
-        url: AFFILIATE.tcgplayer ? withQuery(AFFILIATE.tcgplayer, { subId1: SOURCE, u: massEntry }) : massEntry,
-      };
-    },
-  },
   {
     id: 'cardkingdom',
     name: 'Card Kingdom',
@@ -122,6 +105,17 @@ export const PAPER_VENDORS: PaperVendor[] = [
         kind: 'link',
         url: withQuery('https://www.cardkingdom.com/builder', { ...tracked, c: plainLines(lines).join('\n') }),
       };
+    },
+  },
+  {
+    id: 'coolstuffinc',
+    name: 'CoolStuffInc',
+    icon: `${ICON_BASE}coolstuffinc.png`,
+    priceSource: null,
+    note: 'Copies your list and opens the CoolStuffInc deck builder. Paste it there and choose Build It!',
+    supportsSetCodes: false,
+    buildRequest(lines) {
+      return { kind: 'copy', url: 'https://www.coolstuffinc.com/main_deckBuilder.php', text: plainLines(lines).join('\n') };
     },
   },
   {
@@ -145,7 +139,7 @@ export const PAPER_VENDORS: PaperVendor[] = [
     id: 'starcitygames',
     name: 'StarCityGames',
     icon: `${ICON_BASE}starcitygames.png`,
-    priceSource: 'tcgplayer',
+    priceSource: null,
     note: 'Copies your list and opens the StarCityGames deck builder. Paste it there and choose Get My Deck!',
     supportsSetCodes: false,
     buildRequest(lines) {
@@ -153,17 +147,28 @@ export const PAPER_VENDORS: PaperVendor[] = [
     },
   },
   {
-    id: 'coolstuffinc',
-    name: 'CoolStuffInc',
-    icon: `${ICON_BASE}coolstuffinc.png`,
+    id: 'tcgplayer',
+    name: 'TCGplayer',
+    icon: `${ICON_BASE}tcgplayer.ico`,
     priceSource: 'tcgplayer',
-    note: 'Copies your list and opens the CoolStuffInc deck builder. Paste it there and choose Build It!',
-    supportsSetCodes: false,
-    buildRequest(lines) {
-      return { kind: 'copy', url: 'https://www.coolstuffinc.com/main_deckBuilder.php', text: plainLines(lines).join('\n') };
+    note: 'Opens TCGplayer Mass Entry with your list, where you add it to the cart.',
+    supportsSetCodes: true,
+    buildRequest(lines, { setCodes }) {
+      const entries = lines.map((line) => {
+        const base = `${line.quantity} ${storeName(line.name)}`;
+        return setCodes && line.set ? `${base} [${line.set}]${line.collector_number ? ` ${line.collector_number}` : ''}` : base;
+      });
+      const massEntry = withQuery('https://store.tcgplayer.com/massentry', { c: entries.join('||') });
+      return {
+        kind: 'link',
+        url: AFFILIATE.tcgplayer ? withQuery(AFFILIATE.tcgplayer, { subId1: SOURCE, u: massEntry }) : massEntry,
+      };
     },
   },
 ];
+
+/** The store a new user starts on. */
+export const DEFAULT_VENDOR_ID: VendorId = 'tcgplayer';
 
 export function vendorById(id: string): PaperVendor | undefined {
   return PAPER_VENDORS.find((vendor) => vendor.id === id);
