@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.1
+## 0.7.5
 
 ### Buy on Paper
 
@@ -27,6 +27,8 @@
 
 - The Save to collection button beside Copy Arena Deck is gone. Save decks from
   Deck Finder or Deck Manager instead.
+
+## 0.7.1
 
 ### Replay
 
