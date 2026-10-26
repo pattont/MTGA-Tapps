@@ -57,6 +57,10 @@ export function cardImageCandidates(card: ReplayCard, size: ImageSize): string[]
   if (card.image_url) {
     urls.push(size === 'large' ? card.image_url.replace('/normal/', '/large/') : card.image_url);
   }
+  // The exact token printing ("ttdm/13") when Arena's card DB named it.
+  if (card.is_token && card.token_print && /^[a-z0-9]+\/[^/?#\s]+$/i.test(card.token_print)) {
+    urls.push(`${API_BASE}/${card.token_print}?format=image&version=${size}`);
+  }
   // A back face shares its card with the front; Scryfall serves its picture with face=back.
   const face = card.back_face ? '&face=back' : '';
   if (card.arena_id) {
@@ -428,7 +432,10 @@ export async function resolveCardImage(
   opts: { size?: ImageSize; priority?: number } = {},
 ): Promise<string | null> {
   const size = opts.size ?? 'normal';
-  const cacheKey = size === 'normal' ? key : `${key}@large`;
+  // A token with its exact printing gets its own entry: older pages cached the
+  // wrong card's art for tokens (a Warrior token showed Furious Forebear).
+  const base = card.is_token && card.token_print ? `${key}~${card.token_print}` : key;
+  const cacheKey = size === 'normal' ? base : `${base}@large`;
   const cached = resolvedImageCache.get(cacheKey);
   if (cached) return cached;
   for (const url of cardImageCandidates(card, size)) {

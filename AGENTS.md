@@ -140,12 +140,28 @@ Primary code paths:
   `scripts/export_replay_fixture.py`. `python -m mtga_tracker.replay_dump <game_id>` prints a
   stream. `ui/src/replay/effects.ts` keeps the current action's effect window
   (damage, life, removal, counters, P/T, discards, mills, each with its source)
-  until the next action; removed permanents stay dimmed in their slot meanwhile,
+  until the next action, or any event in a new step or phase (`applyEvent`);
+  removed permanents stay dimmed in their slot meanwhile,
   and moves carry `by` (Arena's affector root) for recorded games.
+  Flying creatures (card `keywords` `flying`, Arena ability id 8, matched by
+  Abilities.Id since it has BaseId 0; tokens by grpId) hover `FLYING_LIFT`
+  above the felt with a further, darker shadow. Tokens never take the
+  `set|collector` image cache (Arena's token number names another card in the
+  set); they carry `token_print` (`t<set>/<number>`, Scryfall's token set).
+  The builder moves a `token_create` row ahead of earlier rows of its turn that
+  name the token (Mobilize attackers print before their creation).
+  Identical tokens and lands stack in one battlefield slot (`layout.stackKey`),
+  and identical abilities next to each other on the stack show as one preview
+  card (`stackView.groupStack`/`foldResolved`); counters the tracker records as
+  `counter_<n>` are named from Arena's `Enums` CounterType at build time.
 - `ui/src/replay/`: the Replay page — pure reducer/layout/playback-clock/image-queue/prefs
   modules with tests, `export/` (pure video plan, Canvas 2D frame composer, WebCodecs +
   mp4-muxer encoder for the in-browser MP4 export; each codec is probed with one frame and
-  H.264 without a reported `decoderConfig` is skipped for VP9, whose config is filled in), and `components/` holding the `@react-three/fiber` scene (lazy-loaded
+  H.264 without a reported `decoderConfig` is skipped for VP9, whose config is filled in; the
+  export driver waits for the canvas's own reconciler to commit each clock step
+  (`state.seq === clock.snapshot.seq`) before drawing, or frames lag an action and
+  the closing hold misses the ending card; Firefox's VP9 ignores bitrate, so sizes
+  are shown as upper limits), and `components/` holding the `@react-three/fiber` scene (lazy-loaded
   route `#/replay/<id>`, list at `#/replay`). Teal `--replay` is reserved for replay
   affordances; everything replay-related carries `replay-wide-only` and is hidden below
   900 px.
@@ -153,6 +169,8 @@ Primary code paths:
   between-game waiting status sits beside the format on the right, and Today's
   Games uses compact 20 px replay icons and one-letter W/L/D result pills
   (full word on hover and for screen readers) to preserve space for deck names.
+  A tiny teal Play / purple Draw `Badge` (`participants.went_first`) follows the deck
+  name; the name truncates first and unknown turn order shows nothing.
 - `src/mtga_tracker/settings.py`: shared `settings.json` — top level of the repo next to
   `config.py` for source runs, per-user data dir for frozen builds (legacy `data/settings.json`
   migrates automatically). Startup preferences are stored in its `startup` section.
@@ -161,7 +179,7 @@ Primary code paths:
   `--login-start` marks OS launches so an already-running app exits quietly; it does not override
   the saved browser preference.
 - `src/mtga_tracker/settings_api.py`: dashboard settings for Deck AI, Deck Finder creators,
-  startup behavior, overlay control, platform capabilities, and resolved tracker paths. The menu
+  startup behavior, the session break, overlay control, platform capabilities, and resolved tracker paths. The menu
   "Tracker Settings" action opens this dashboard page. `settings_dialog.py` retains
   the PyQt Deck AI settings implementation.
 - `src/mtga_tracker/deck_manager.py` / `deck_manager_api.py`: general local deck library,
@@ -555,7 +573,8 @@ Preserve these behaviors unless the user explicitly changes requirements:
   numbered pages with ellipses, first/last navigation and a validated page jump.
   All Games retains 30 rows per page; sorting and filter changes reset the page.
   Sessions returns every runtime session with games matching the current filters,
-  with no total row cap, newest first and 15 rows per page.
+  with no total row cap, newest first and 15 rows per page. Its Play / Draw column
+  (teal/purple counts of `went_first`) sits before Win Rate and sorts by the draw share.
 - Games where the tracker attached mid-game (turn > 1 at first sight) are shown live but never
   persisted (`mid_game_attach` gates `_is_untracked_match`). Midweek Magic and bot matches are
   likewise never persisted.
@@ -698,7 +717,11 @@ Keep schema changes backward-compatible. Use nullable columns and migration help
 
 Important tables:
 
-- `tracker_sessions`: one tracker runtime session.
+- `tracker_sessions`: one tracker runtime session, from launch to quit; a new match
+  starting the session break (Settings → Sessions, `settings.json` `sessions.break_hours`,
+  default 4, 0 = off; measured in log time) after the last game, or after launch when
+  nothing has been played, starts a new one (`tracker_lifecycle._start_new_session_after_break`).
+  Game 2+ of a Bo3 never starts one.
 - `matches`: match grouping within a session.
 - `games`: one game result, duration, total turns, player/opponent turn counts, winner/outcome.
 - `participants`: player/opponent seat, deck metadata, life, opening hand size, mulligans.

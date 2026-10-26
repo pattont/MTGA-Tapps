@@ -5822,7 +5822,25 @@ a.settings-link-button {
   gap: 1px;
 }
 
+/* Deck name plus the play/draw pill on one line: the name truncates first,
+   and the pill is shorter than the name's line, so the row keeps its height. */
+.live-game-deck-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.badge.live-game-turn-order {
+  flex: none;
+  min-height: 0;
+  padding: 1px 6px;
+  font-size: 0.62rem;
+  line-height: 1.2;
+}
+
 .live-game-deck {
+  min-width: 0;
   overflow: hidden;
   font-size: 0.86rem;
   font-weight: 600;

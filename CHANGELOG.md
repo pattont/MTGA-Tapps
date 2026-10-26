@@ -23,10 +23,65 @@
   kept). Turning it off hides the button everywhere, stops downloads and
   deletes the saved price lists.
 
+### Replay
+
+- Creatures with flying hover just above the table, casting a soft shadow
+  beside them. Flying tokens and creatures given a flying counter hover too.
+- Exported videos end on the same Victory / Defeat card as the replay, with
+  final life totals, turns and length. The ending was missing because each
+  frame could be drawn a step before the table caught up. That also made
+  frames show the previous action.
+- The export dialog gives its file size as an upper limit and says the
+  browser's encoder decides the final size. Firefox keeps its own quality
+  whatever the Quality setting, so its files can be much smaller than the
+  estimate. The finished export now names its codec (H.264 or VP9).
+- Tokens created attacking (Mobilize's Warriors) appear as the tokens they are,
+  instead of face-down "inferred" cards attacking from nowhere.
+- Tokens show their own token art. They used to show whichever card shared the
+  token's number in its set: a Mobilize Warrior showed Furious Forebear, a Pest
+  showed Ascendant Dustspeaker.
+- Identical tokens and lands stack in one slot, the rest showing as edges under
+  the top one with a ×N count, so a board of Spirits, Treasures or Mountains
+  fits the table. Tapped ones stack apart from untapped ones.
+- The same ability triggering several times in a row shows as one stack card
+  with a bold ×N count and the copies fanned behind it (three Belladonna Took
+  triggers are one card, not three).
+- Attack arrows point at the planeswalker being attacked instead of the player,
+  at full brightness. Arrows for effects on your own side (a trigger handing
+  out counters) are dimmed, so the ones aimed at the opponent stand out.
+- Arrows from a spell on the stack start at its card. With only a card or two
+  on the stack they used to start in empty space above it.
+- Stepping through a spell resolving while paused no longer bumps its card up
+  half a card and back down when it was the only thing on the stack.
+- Dragging the replay's position bar can no longer lift it off its track: the
+  browser used to start a drag-and-drop, then the playhead jumped somewhere
+  else. A drag the browser interrupts now stays where it was dragged to.
+- A resolved ability's card and its effects leave the table when play moves to
+  the next step, so combat damage no longer shows the last trigger as
+  "Resolved".
+- A tapped card's power/toughness and counter chips stay above and below it
+  instead of running into the cards beside it.
+- Every counter shows its name and count ("plan ×1", "oil ×3"), never a number
+  like "counter_211".
+
 ### Deck page
 
 - The Save to collection button beside Copy Arena Deck is gone. Save decks from
   Deck Finder or Deck Manager instead.
+
+### Live Scoreboard
+
+- Today's Games marks each game with a tiny teal Play or purple Draw pill beside the
+  deck name.
+
+### Dashboard
+
+- The Sessions table has a Play / Draw column before Win Rate, counting the games you
+  were on the play (teal) and on the draw (purple).
+- A session now also ends after a long break: a match that starts four hours or more
+  after your last game opens a new session, so leaving the app running for days no longer
+  piles every night's games into one record. Settings → Sessions sets the break (1 to 12
+  hours, or only when the app opens). A Best-of-3 match always stays in one session.
 
 ## 0.7.1
 

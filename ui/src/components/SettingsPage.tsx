@@ -6,6 +6,7 @@ import {
   fetchTrackerSettings,
   saveDeckAiSettings,
   saveDeckFinderCreators,
+  saveSessionSettings,
   saveStartupSettings,
   startCollectionExport,
   setOverlayEnabled,
@@ -13,6 +14,7 @@ import {
   type CollectionExportJob,
   type OverlaySettings,
   type BuyOnPaperSettings,
+  type SessionSettings,
   type DeckAiSettings,
   type DeckFinderCreator,
   type DeckFinderCreatorSettings,
@@ -290,6 +292,7 @@ export function SettingsPage() {
   const [startup, setStartup] = useState<StartupSettings | null>(null);
   const [overlay, setOverlay] = useState<OverlaySettings | null>(null);
   const [buyOnPaper, setBuyOnPaper] = useState<BuyOnPaperSettings | null>(null);
+  const [sessions, setSessions] = useState<SessionSettings | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -303,6 +306,7 @@ export function SettingsPage() {
           setStartup(settings.startup);
           setOverlay(settings.overlay ?? null);
           setBuyOnPaper(settings.buy_on_paper ?? { enabled: true, cache_bytes: 0 });
+          setSessions(settings.sessions ?? null);
         }
       })
       .catch((exc: unknown) => {
@@ -348,6 +352,16 @@ export function SettingsPage() {
           <StartupForm initial={startup} platform={platform} />
         )}
       </Section>
+
+      {sessions ? (
+        <Section
+          id="settings-sessions"
+          title="Sessions"
+          description="A session is one sitting of play: its record shows on the Live Scoreboard and in the Overview's Sessions table."
+        >
+          <SessionsForm initial={sessions} />
+        </Section>
+      ) : null}
 
       <Section
         id="settings-overlay"
@@ -630,6 +644,62 @@ function OverlayForm({
 
 function formatMegabytes(bytes: number): string {
   return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function sessionBreakLabel(hours: number): string {
+  if (hours === 0) return 'Only when the app opens';
+  return `After ${hours} hour${hours === 1 ? '' : 's'} without a game`;
+}
+
+function SessionsForm({ initial }: { initial: SessionSettings }) {
+  const [settings, setSettings] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function update(hours: number) {
+    setBusy(true);
+    setMessage(null);
+    setError(null);
+    try {
+      setSettings(await saveSessionSettings(hours));
+      setMessage('Saved. It applies from the next match.');
+    } catch (exc: unknown) {
+      setError(exc instanceof Error ? exc.message : 'The session setting could not be saved');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="settings-form">
+      <label className="settings-field">
+        <span>Start a new session</span>
+        <select disabled={busy} value={settings.break_hours} onChange={(event) => void update(Number(event.target.value))}>
+          {settings.choices.map((hours) => (
+            <option key={hours} value={hours}>
+              {sessionBreakLabel(hours)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="settings-hint">
+        Opening the app always starts a new session. With a break set, a match that starts that long
+        after your last game starts one too, so leaving the app running for days doesn't pile every
+        night into one record. A Best-of-3 match always stays in one session.
+      </p>
+      {message ? (
+        <p className="backup-note backup-note-done startup-save-status" role="status">
+          {message}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="collection-export-status collection-export-fail" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function BuyOnPaperForm({ initial }: { initial: BuyOnPaperSettings }) {

@@ -664,6 +664,7 @@ def test_merge_keeps_a_recorded_replay_identical_apart_from_row_ids(tmp_path, mo
     from mtga_tracker import replay_builder
 
     monkeypatch.setattr(replay_builder, "image_resolver_override", lambda arena_id: None)
+    monkeypatch.setattr(replay_builder, "token_print_override", lambda arena_id: None)
     monkeypatch.setattr(replay_builder, "card_facts_override", lambda: {})
     desktop = _recorded_game_db(tmp_path / "desktop.sqlite3", "S-desktop", "d1", extra_events=3)
     laptop = _recorded_game_db(tmp_path / "laptop.sqlite3", "S-laptop", "l1")

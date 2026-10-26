@@ -4,7 +4,7 @@ import json
 import re
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from mtga_tracker.analytics import AnalyticsStore
 from mtga_tracker.tracker import CardEvent, CardTracker, GameState
@@ -8209,3 +8209,86 @@ def test_return_to_the_battlefield_is_not_logged_as_a_return_to_hand(capsys):
         "Opponent: [Yuna, Hope of Spira] returned [Summon: Knights of Round] to battlefield" in out
     )
     assert "to hand" not in out
+
+
+def _session_break(monkeypatch, hours):
+    from mtga_tracker import tracker_lifecycle
+
+    monkeypatch.setattr(tracker_lifecycle, "session_break_hours", lambda: hours)
+
+
+def _finish_game_at(tracker, ended_at, outcome="win"):
+    tracker.game_state.game_start_time = ended_at - timedelta(minutes=5)
+    tracker.game_state.game_end_time = ended_at
+    tracker._session_stats_recorded_this_game = False
+    tracker._record_session_outcome(outcome)
+
+
+def test_new_match_after_a_long_break_starts_a_new_session(monkeypatch):
+    """An app left running for days must not pile every night's games into
+    one session: a match that starts 4+ hours after the last game opens a
+    fresh session with its own id, totals and match ordinals."""
+    _session_break(monkeypatch, 4)
+    tracker = make_tracker()
+    _finish_game_at(tracker, datetime(2026, 10, 20, 23, 50))
+    tracker._arena_match_ordinal_by_id = {"old-match": 1}
+
+    tracker._current_event_time = datetime(2026, 10, 26, 0, 20)
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+
+    assert tracker.session_id != "test-session"
+    assert tracker.session_start_time == datetime(2026, 10, 26, 0, 20)
+    assert (tracker.session_games_played, tracker.session_wins) == (0, 0)
+    assert tracker._arena_match_ordinal_by_id == {}
+
+
+def test_new_match_soon_after_the_last_game_keeps_the_session(monkeypatch):
+    _session_break(monkeypatch, 4)
+    tracker = make_tracker()
+    _finish_game_at(tracker, datetime(2026, 10, 26, 0, 24))
+
+    tracker._current_event_time = datetime(2026, 10, 26, 3, 0)
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+
+    assert tracker.session_id == "test-session"
+    assert tracker.session_games_played == 1
+
+
+def test_a_bo3_match_never_splits_across_sessions(monkeypatch):
+    _session_break(monkeypatch, 4)
+    tracker = make_tracker()
+    _finish_game_at(tracker, datetime(2026, 10, 26, 0, 24))
+    tracker._pending_bo3_continuation = {"game_number": 2}
+
+    tracker._current_event_time = datetime(2026, 10, 26, 6, 0)
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+
+    assert tracker.session_id == "test-session"
+    assert tracker.game_state.game_number == 2
+
+
+def test_session_break_follows_the_setting(monkeypatch):
+    """Settings → Sessions: a longer break keeps a late-night return in the
+    same session, and Never leaves only a relaunch to start one."""
+    _session_break(monkeypatch, 8)
+    tracker = make_tracker()
+    _finish_game_at(tracker, datetime(2026, 10, 26, 0, 24))
+    tracker._current_event_time = datetime(2026, 10, 26, 6, 0)
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+    assert tracker.session_id == "test-session"
+
+    _session_break(monkeypatch, 0)
+    tracker._current_event_time = datetime(2026, 11, 2, 20, 0)
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+    assert tracker.session_id == "test-session"
+
+
+def test_an_ability_object_is_named_after_its_source_card():
+    """A cost paid for Kaito's ninjutsu named the ability object, whose grpId
+    is the ability itself: the line read "as cost for [Card #168506]"."""
+    tracker = make_tracker()
+    tracker.card_db.names = {92314: "Kaito, Bane of Nightmares"}
+    ability = {"type": "GameObjectType_Ability", "grpId": 168506, "objectSourceGrpId": 92314}
+    assert tracker._object_display_name(ability, 495) == "Kaito, Bane of Nightmares"
+    card = {"type": "GameObjectType_Card", "grpId": 92314}
+    assert tracker._object_display_name(card, 317) == "Kaito, Bane of Nightmares"

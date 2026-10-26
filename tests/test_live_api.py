@@ -969,3 +969,28 @@ def test_readonly_open_retries_once_on_cantopen(monkeypatch, tmp_path):
     with pytest.raises(_sqlite3.OperationalError):
         live_api._open_readonly("file:/nowhere/x.sqlite3?mode=ro")
     assert len(calls) == 1
+
+
+def test_games_list_says_whether_each_game_was_on_the_play(tmp_path):
+    store = _store(tmp_path)
+    conn = store.connect()
+    today = datetime.now().strftime("%Y-%m-%d")
+    _seed_history(
+        conn,
+        [
+            ("SH:match:1:game:1", "Skellies", "Foe A", None, "win", today),
+            ("SH:match:2:game:1", "Skellies", "Foe B", None, "loss", today),
+            ("SH:match:3:game:1", "Skellies", "Foe C", None, "win", today),
+        ],
+    )
+    conn.execute("UPDATE participants SET went_first = 1 WHERE id = 'SH:match:1:game:1-p'")
+    conn.execute("UPDATE participants SET went_first = 0 WHERE id = 'SH:match:2:game:1-p'")
+    conn.commit()
+    store.close()
+    payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+    went_first = {game["id"]: game["went_first"] for game in payload["games"]}
+    assert went_first == {
+        "SH:match:1:game:1": 1,
+        "SH:match:2:game:1": 0,
+        "SH:match:3:game:1": None,
+    }

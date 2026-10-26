@@ -219,6 +219,15 @@ def _save_startup(payload: Dict[str, Any]) -> Dict[str, Any]:
     return _startup_payload()
 
 
+def _sessions_payload() -> Dict[str, Any]:
+    from .settings import SESSION_BREAK_HOURS_CHOICES, session_break_hours
+
+    return {
+        "break_hours": session_break_hours(),
+        "choices": list(SESSION_BREAK_HOURS_CHOICES),
+    }
+
+
 def _set_overlay_enabled(payload: Dict[str, Any]) -> Dict[str, Any]:
     from .overlay_launcher import get_manager
 
@@ -257,6 +266,7 @@ def handle_get(path: str, db_path: Optional[Path] = None) -> Optional[Tuple[int,
             "startup": _startup_payload(),
             "overlay": _overlay_status(),
             "buy_on_paper": paper_prices.status(),
+            "sessions": _sessions_payload(),
         }
     except Exception as exc:  # pragma: no cover - defensive surface
         return 500, {"error": f"{type(exc).__name__}: {exc}"}
@@ -272,6 +282,11 @@ def handle_post(path: str, payload: Dict[str, Any]) -> Optional[Tuple[int, Dict[
             return 200, {"deck_finder": write_creator_config(payload)}
         if path == "/api/settings/startup":
             return 200, {"startup": _save_startup(payload)}
+        if path == "/api/settings/sessions":
+            from .settings import save_session_break_hours
+
+            save_session_break_hours(payload.get("break_hours"))
+            return 200, {"sessions": _sessions_payload()}
         if path == "/api/settings/overlay":
             return 200, {"overlay": _set_overlay_enabled(payload)}
         if path == "/api/settings/buy-on-paper":

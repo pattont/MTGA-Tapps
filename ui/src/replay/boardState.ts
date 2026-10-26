@@ -71,7 +71,8 @@ export interface BoardState {
   phase: string | null;
   step: string | null;
   life: Readonly<Record<number, number>>;
-  attackers: ReadonlySet<ObjId>;
+  /** attacker -> the planeswalker or battle it attacks, null when it attacks a player */
+  attackers: ReadonlyMap<ObjId, ObjId | null>;
   /**
    * What the current action did (effects.ts): damage, life, removal, counters
    * and P/T changes with their sources, shown on the table until the next action.
@@ -118,7 +119,7 @@ export class BoardDraft {
   private seatCopies = new Map<number, { seat: MutableSeat; copied: Set<Zone> }>();
   private objectsCopy: Map<ObjId, ObjectState> | null = null;
   private stackCopy: StackItem[] | null = null;
-  private attackersCopy: Set<ObjId> | null = null;
+  private attackersCopy: Map<ObjId, ObjId | null> | null = null;
   private blocksCopy: Map<ObjId, ObjId> | null = null;
   private lifeCopy: Record<number, number> | null = null;
   readonly patch: Partial<BoardState> = {};
@@ -179,8 +180,8 @@ export class BoardDraft {
     return this.stackCopy;
   }
 
-  attackers(): Set<ObjId> {
-    this.attackersCopy ??= new Set(this.base.attackers);
+  attackers(): Map<ObjId, ObjId | null> {
+    this.attackersCopy ??= new Map(this.base.attackers);
     return this.attackersCopy;
   }
 

@@ -19,6 +19,8 @@ interface Entry {
   settled: boolean;
   /** Depth stretch applied at the last apply (see motion.depthStretch). */
   stretch: number;
+  /** Hovering (a flying creature): its shadow falls further away. */
+  hover: boolean;
 }
 
 const scales = { x: 1, y: 1 };
@@ -27,6 +29,8 @@ const scales = { x: 1, y: 1 };
 const SHADOW_DX = 0.05;
 const SHADOW_DY = -0.08;
 const SHADOW_Z = 0.004;
+/** A hovering card's shadow falls this many times further, so the gap under it reads. */
+const HOVER_SHADOW_REACH = 7;
 
 export class MotionRegistry {
   private readonly entries = new Map<string, Entry>();
@@ -79,15 +83,16 @@ export class MotionRegistry {
     return this.entries.get(obj)?.pose ?? null;
   }
 
-  /** First registration places the mesh at `spawn` (or the target when snapping). */
-  set(obj: string, group: Object3D, shadow: Object3D | null, target: Pose, spawn: Pose | null): void {
+  /** First registration places the mesh at `spawn` (or the target when snapping); `hover` marks a flying creature. */
+  set(obj: string, group: Object3D, shadow: Object3D | null, target: Pose, spawn: Pose | null, hover = false): void {
     let entry = this.entries.get(obj);
     if (!entry || entry.group !== group) {
       const start = this.snap || !spawn ? target : spawn;
-      entry = { group, shadow, pose: copyPose(start, {} as Pose), target: copyPose(target, {} as Pose), flight: 0, settled: true, stretch: 1 };
+      entry = { group, shadow, pose: copyPose(start, {} as Pose), target: copyPose(target, {} as Pose), flight: 0, settled: true, stretch: 1, hover };
       this.entries.set(obj, entry);
     } else {
       entry.shadow = shadow;
+      entry.hover = hover;
       copyPose(target, entry.target);
     }
     if (this.snap) copyPose(entry.target, entry.pose);
@@ -151,7 +156,8 @@ export class MotionRegistry {
     group.scale.set(scales.x, scales.y, 1);
     if (shadow) {
       const grow = 1 + z * 0.35;
-      shadow.position.set(pose.x + SHADOW_DX * z, pose.y + SHADOW_DY * z, SHADOW_Z);
+      const reach = entry.hover ? z * HOVER_SHADOW_REACH : z;
+      shadow.position.set(pose.x + SHADOW_DX * reach, pose.y + SHADOW_DY * reach, SHADOW_Z);
       shadow.rotation.set(0, 0, pose.rotZ);
       shadow.scale.set(scales.x * grow, scales.y * grow, 1);
     }

@@ -1104,6 +1104,7 @@ describe('App', () => {
           format: 'Standard',
           best_of: 1,
           deck_name: 'Skellies',
+          went_first: 0,
           opponent_name: 'Villain#12345',
           replay: { state: 'recorded', reason: null },
         },
@@ -1142,6 +1143,11 @@ describe('App', () => {
       'href',
       '#/replay/G8?return=%23%2Flive',
     );
+    // A tiny play/draw tag rides beside the deck name.
+    const tag = todays.querySelector('.live-game-deck-line .live-game-turn-order') as HTMLElement;
+    expect(tag).toHaveAttribute('title', 'On the draw');
+    expect(tag).toHaveClass('badge-drawside');
+    expect(tag.previousElementSibling).toHaveTextContent('Skellies');
     const rightChips = document.querySelector('.live-chips-right') as HTMLElement;
     const waitingChip = within(rightChips).getByText(/Waiting for next match…/);
     expect(waitingChip.previousElementSibling).toHaveTextContent('Std. BO1');
@@ -1184,8 +1190,13 @@ describe('App', () => {
         error: null,
       },
       overlay: { enabled: false, available: true, running: false, binary: '/tmp/tapps-overlay', log: '/tmp/data/overlay.log', error: null },
+      sessions: { break_hours: 4, choices: [0, 1, 2, 3, 4, 6, 8, 12] },
     };
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url) === '/api/settings/sessions') {
+        settings.sessions.break_hours = JSON.parse(String(init?.body)).break_hours;
+        return new Response(JSON.stringify({ sessions: settings.sessions }), { status: 200 });
+      }
       if (String(url) === '/api/settings/startup') {
         const change = JSON.parse(String(init?.body));
         Object.assign(settings.startup, change, {
@@ -1237,6 +1248,13 @@ describe('App', () => {
     expect(headings.indexOf('Backup & restore')).toBeLessThan(headings.indexOf('Deck AI'));
     expect(await screen.findByText('never backed up')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Back up now' })).toBeDisabled();
+    // Sessions: the break defaults to four hours and saves on change.
+    const sessionBreak = screen.getByLabelText('Start a new session') as HTMLSelectElement;
+    expect(sessionBreak.value).toBe('4');
+    expect(within(sessionBreak).getByRole('option', { name: 'Only when the app opens' })).toBeInTheDocument();
+    fireEvent.change(sessionBreak, { target: { value: '8' } });
+    expect(await screen.findByText('Saved. It applies from the next match.')).toBeInTheDocument();
+    expect(settings.sessions.break_hours).toBe(8);
     expect(screen.getByRole('heading', { name: 'Deck Finder Creators' })).toBeInTheDocument();
     expect(await screen.findByLabelText(/Enable AI deck identification/)).toBeChecked();
     expect(screen.getByDisplayValue('Ashlizzlle | Ash')).toBeInTheDocument();

@@ -801,6 +801,18 @@ const topOpponentColumns: Column<TopOpponentRow>[] = [
   },
 ];
 
+/** "4 / 22": games on the play (teal) and on the draw (purple). */
+function SessionPlayDraw({ onPlay, onDraw }: { onPlay: number; onDraw: number }) {
+  if (onPlay + onDraw === 0) return '—';
+  return (
+    <span title={`${onPlay} on the play, ${onDraw} on the draw`}>
+      <span className="text-play">{onPlay}</span>
+      {' / '}
+      <span className="text-drawside">{onDraw}</span>
+    </span>
+  );
+}
+
 const sessionColumns: Column<SessionRow>[] = [
   {
     key: 'started_at',
@@ -812,6 +824,17 @@ const sessionColumns: Column<SessionRow>[] = [
   { key: 'wins', header: 'Wins', numeric: true },
   { key: 'losses', header: 'Losses', numeric: true },
   { key: 'draws', header: 'Draws', numeric: true },
+  {
+    key: 'on_draw',
+    header: 'Play / Draw',
+    render: (row) => <SessionPlayDraw onPlay={row.on_play ?? 0} onDraw={row.on_draw ?? 0} />,
+    // Sorts by the share of games on the draw, so the rough sessions rise to the top.
+    sortValue: (row) => {
+      const known = (row.on_play ?? 0) + (row.on_draw ?? 0);
+      return known ? (row.on_draw ?? 0) / known : null;
+    },
+    numeric: true,
+  },
   {
     key: 'win_rate',
     header: 'Win Rate',
@@ -1834,7 +1857,7 @@ function Dashboard({
         <FormatsTable caption="Format performance" rows={snapshot.formats} />
       </Section>
 
-      <Section id="sessions" title="Sessions" description="Tracker runtime sessions with game volume and record.">
+      <Section id="sessions" title="Sessions" description="Play sessions with game volume and record. A session starts when the app opens, or after the break set in Settings → Sessions.">
         <SortableTable
           caption="Tracker sessions"
           columns={sessionColumns}

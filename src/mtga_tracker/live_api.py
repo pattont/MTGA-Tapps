@@ -524,6 +524,7 @@ def _games_payload(
               m.format,
               m.best_of,
               p.deck_name,
+              p.went_first,
               o.display_name AS opponent_name
             FROM games g
             JOIN matches m ON m.id = g.match_id

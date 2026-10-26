@@ -200,3 +200,27 @@ def merge_settings_section(name: str, values: Dict[str, Any], path: Optional[Pat
     section = document.get(name)
     document[name] = {**(section if isinstance(section, dict) else {}), **values}
     _write_document(path, document)
+
+
+#: Hours without a game after which a new match starts a new session; 0 means
+#: a session ends only when the app closes.
+SESSION_BREAK_HOURS_CHOICES = (0, 1, 2, 3, 4, 6, 8, 12)
+DEFAULT_SESSION_BREAK_HOURS = 4
+
+
+def session_break_hours(path: Optional[Path] = None) -> int:
+    """The saved session break (``sessions.break_hours``), or the default."""
+    value = read_settings_section("sessions", path).get("break_hours")
+    if isinstance(value, bool) or value not in SESSION_BREAK_HOURS_CHOICES:
+        return DEFAULT_SESSION_BREAK_HOURS
+    return int(value)
+
+
+def save_session_break_hours(hours: Any, path: Optional[Path] = None) -> int:
+    """Persist the session break; raises ValueError for an unsupported value."""
+    if isinstance(hours, bool) or hours not in SESSION_BREAK_HOURS_CHOICES:
+        raise ValueError(
+            "'break_hours' must be one of " + ", ".join(map(str, SESSION_BREAK_HOURS_CHOICES))
+        )
+    merge_settings_section("sessions", {"break_hours": int(hours)}, path)
+    return session_break_hours(path)

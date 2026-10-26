@@ -106,13 +106,21 @@ describe('composeFrame', () => {
       ],
       caption: { text: 'You: cast Ajani Resolute', actor: 'player' },
       log: null,
-      ending: { headline: 'Victory', reason: 'Opponent conceded', result: 'win' },
+      ending: {
+        headline: 'Victory',
+        reason: 'Opponent conceded',
+        result: 'win',
+        yourLife: 26,
+        opponentName: 'Jams',
+        theirLife: 11,
+        facts: '10 turns · 3 min',
+      },
       colors: { player: '#4cc38a', opponent: '#e5484d' },
     };
     composeFrame(ctx, layout, input);
     const names = ctx.calls.map((c) => c.name);
     expect(names.filter((n) => n === 'drawImage')).toHaveLength(1);
-    expect(ctx.texts).toEqual(expect.arrayContaining(['Turn 12', "Opponent's turn", '34', '10', '10/10', '4', 'Library 42', 'Card s1', 'Victory', 'Opponent conceded']));
+    expect(ctx.texts).toEqual(expect.arrayContaining(['Turn 12', "Opponent's turn", '34', '10', '10/10', '4', 'Library 42', 'Card s1', 'GAME OVER', 'VICTORY', 'Opponent conceded', 'YOU', 'JAMS', '26', '11', '10 turns · 3 min']));
     expect(ctx.texts.some((t) => t.startsWith('You: cast'))).toBe(true);
     // Two drawable arrows: each strokes a glow and a core and fills a head.
     expect(names.filter((n) => n === 'stroke').length).toBeGreaterThanOrEqual(4);

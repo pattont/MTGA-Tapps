@@ -44,14 +44,19 @@ export function createCardAlphaCanvas(): HTMLCanvasElement {
 }
 
 /** Soft blurred shadow; the plane using it is larger than the card. */
-export function createShadowCanvas(): HTMLCanvasElement {
+export function createShadowCanvas(blur = 10, alpha = 0.75): HTMLCanvasElement {
   const { canvas, ctx } = canvas2d(128, 160);
   if (!ctx) return canvas;
-  ctx.filter = 'blur(10px)';
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+  ctx.filter = `blur(${blur}px)`;
+  ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
   roundRectPath(ctx, 26, 26, 76, 108, 8);
   ctx.fill();
   return canvas;
+}
+
+/** A hovering (flying) card's shadow: tighter and darker, so it reads clear of the card. */
+export function createHoverShadowCanvas(): HTMLCanvasElement {
+  return createShadowCanvas(8, 0.8);
 }
 
 /**

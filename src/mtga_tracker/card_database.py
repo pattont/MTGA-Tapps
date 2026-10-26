@@ -29,6 +29,11 @@ REPLAY_KEYWORD_BASE_IDS = {
     362: "harmonize",
     328: "plot",
 }
+#: Keyword abilities the replay shows on the battlefield, by Abilities.Id
+#: (evergreen keywords are their own ability, with BaseId 0): flying cards hover.
+REPLAY_KEYWORD_ABILITY_IDS = {
+    8: "flying",
+}
 #: Cards.LinkedFaceType of a back face: a transforming card's back, a modal
 #: double-faced card's back.
 TRANSFORM_BACK_FACE_TYPE = 1
@@ -664,7 +669,8 @@ class CardDatabase:
         """Facts the replay needs per casefolded card name, from Arena's card DB.
 
         ``keywords``: the replay-relevant keywords the card has (see
-        ``REPLAY_KEYWORD_BASE_IDS``: casting from the graveyard, plot).
+        ``REPLAY_KEYWORD_BASE_IDS``: casting from the graveyard, plot; and
+        ``REPLAY_KEYWORD_ABILITY_IDS``: flying).
         ``back_face``: the name is the back face of a double-faced card (its
         Scryfall image is the back image). ``front``: for a transforming
         card's back face, the front face's name, so "put [back] onto
@@ -672,8 +678,10 @@ class CardDatabase:
         Arena's language-independent ability base ids. ``type_line`` ("Enchantment
         Creature", supertypes and subtypes left out), ``power`` and ``toughness``
         (printed, as text) fill in cards the game's rows never described, such
-        as an opponent's card the tracker only saw by name. Empty when the DB is
-        unavailable.
+        as an opponent's card the tracker only saw by name. Tokens are keyed
+        ``#<grpId>`` and carry only ``keywords`` (when they have any): a token's
+        name says little ("Bird" and "Spirit" tokens come with and without
+        flying). Empty when the DB is unavailable.
         """
         if getattr(self, "_replay_card_facts", None) is not None:
             return self._replay_card_facts
@@ -704,6 +712,7 @@ class CardDatabase:
                         tuple(REPLAY_KEYWORD_BASE_IDS),
                     ).fetchall()
                 }
+                keyword_of.update(REPLAY_KEYWORD_ABILITY_IDS)
                 rows = self._title_join_rows(
                     cur,
                     'c."GrpId", l."Loc", c."LinkedFaceType", c."LinkedFaceGrpIds", c."AbilityIds",'
@@ -742,12 +751,47 @@ class CardDatabase:
                     if face_type == TRANSFORM_BACK_FACE_TYPE and entry["front"] is None:
                         front = next((names.get(i) for i in ids(linked) if names.get(i)), None)
                         entry["front"] = front
+                token_rows = self._title_join_rows(
+                    cur, 'c."GrpId", c."AbilityIds"', 'c."IsToken" = 1'
+                )
+                for grp_id, abilities in token_rows:
+                    keywords = []
+                    for ability_id in ids(abilities):
+                        keyword = keyword_of.get(ability_id)
+                        if keyword and keyword not in keywords:
+                            keywords.append(keyword)
+                    if keywords:
+                        facts[f"#{int(grp_id)}"] = {"keywords": keywords}
+                facts.update(self._counter_type_facts(cur, clean))
                 conn.close()
             except Exception:
                 facts = {}
         if facts:
             self._replay_card_facts = facts
         return facts
+
+    @staticmethod
+    def _counter_type_facts(cur, clean) -> Dict[str, Dict[str, Any]]:
+        """``#counter:<n>`` -> ``{"counter": "plan"}`` for every Arena CounterType.
+
+        The tracker names only the counters it handles (+1/+1, -1/-1, loyalty)
+        and records the rest as ``counter_<n>``; the replay names them from here.
+        """
+        tables = {
+            row[0] for row in cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        loc = next((t for t in ("Localizations_enUS", "Localizations") if t in tables), None)
+        if "Enums" not in tables or loc is None:
+            return {}
+        out: Dict[str, Dict[str, Any]] = {}
+        for value, text in cur.execute(
+            f'SELECT e."Value", l."Loc" FROM "Enums" e JOIN "{loc}" l ON l."LocId" = e."LocId" '
+            "WHERE e.\"Type\" = 'CounterType'"
+        ).fetchall():
+            name = clean(text)
+            if name and f"#counter:{int(value)}" not in out:
+                out[f"#counter:{int(value)}"] = {"counter": name.lower()}
+        return out
 
     def color_identity_for_name(self, name: str) -> Optional[str]:
         """WUBRG identity for ONE card name straight from Arena's DB — the

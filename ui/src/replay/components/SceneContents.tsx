@@ -197,10 +197,17 @@ function ArrowProjector({
       dom(stackId: string, out: ScreenPoint) {
         const layer = stackRoot.current;
         const node = stackNodes.get(stackId);
-        if (!layer || !node || !node.isConnected) return false;
-        // Layout offsets ignore the card's enter transform: the arrow aims at where it lands.
-        out.x = layer.offsetLeft + node.offsetLeft + 4;
-        out.y = layer.offsetTop + node.offsetTop + Math.min(node.offsetHeight * 0.38, 120);
+        const parent = node?.offsetParent;
+        const stage = layer?.offsetParent;
+        if (!layer || !node || !node.isConnected || !parent || !stage) return false;
+        // The card's own offsets ignore its enter transform, so the arrow aims at
+        // where it lands; its container is measured as drawn, since the stack
+        // column is centered on the stage and the kept cards beside it are
+        // translated (offsets alone put the start far above a short stack).
+        const box = parent.getBoundingClientRect();
+        const origin = stage.getBoundingClientRect();
+        out.x = box.left - origin.left + node.offsetLeft + 4;
+        out.y = box.top - origin.top + node.offsetTop + Math.min(node.offsetHeight * 0.38, 120);
         out.visible = true;
         return true;
       },

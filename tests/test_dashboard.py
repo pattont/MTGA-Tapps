@@ -325,6 +325,8 @@ def test_dashboard_snapshot_and_html_render_latest_game(tmp_path):
     assert snapshot["matches"] == []
     assert snapshot["sessions"][0]["session_id"] == "session-1"
     assert snapshot["sessions"][0]["games"] == 2
+    # One game on the play, one on the draw: the Sessions table's Play / Draw.
+    assert (snapshot["sessions"][0]["on_play"], snapshot["sessions"][0]["on_draw"]) == (1, 1)
     assert "Boros Mouse" in html
     assert "Draw Quality" in html
     assert "Visible Drawn Cards" in html

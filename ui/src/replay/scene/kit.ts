@@ -46,6 +46,8 @@ export interface SceneKit {
   unitBox: BoxGeometry;
   vignetteMaterial: MeshBasicMaterial;
   shadowMaterial: MeshBasicMaterial;
+  /** A hovering (flying) card's shadow: darker, since it falls clear of the card. */
+  hoverShadowMaterial: MeshBasicMaterial;
   ringMaterials: Record<Exclude<PlacementHighlight, null>, MeshBasicMaterial>;
   inferredMaterial: MeshBasicMaterial;
   /** Dims a card the current action removed (held in its slot until the action ends). */
@@ -110,6 +112,11 @@ export function createSceneKit(store: TextureStore): SceneKit {
     depthWrite: false,
     opacity: 0.7,
   });
+  const hoverShadowMaterial = new MeshBasicMaterial({
+    map: store.helper('hoverShadow'),
+    transparent: true,
+    depthWrite: false,
+  });
   const blankMaterial = new MeshBasicMaterial({
     color: new Color('#8f897d'),
     alphaMap: store.helper('alpha'),
@@ -126,6 +133,7 @@ export function createSceneKit(store: TextureStore): SceneKit {
     plotMaterial,
     slotMaterial,
     shadowMaterial,
+    hoverShadowMaterial,
     blankMaterial,
     edgeMaterial,
     railMaterial,
@@ -141,6 +149,7 @@ export function createSceneKit(store: TextureStore): SceneKit {
     unitBox,
     vignetteMaterial,
     shadowMaterial,
+    hoverShadowMaterial,
     ringMaterials,
     inferredMaterial,
     removedMaterial,

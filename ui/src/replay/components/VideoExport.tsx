@@ -23,6 +23,13 @@ function formatBytes(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1000))} kB`;
 }
 
+/** "H.264" or "VP9" from a WebCodecs codec string. */
+function codecName(codec: string): string {
+  if (codec.startsWith('avc1')) return 'H.264';
+  if (codec.startsWith('vp09')) return 'VP9';
+  return codec;
+}
+
 const SIZES: ReadonlyArray<{ width: number; label: string }> = [
   { width: 1920, label: 'Full HD (1920 wide)' },
   { width: 1280, label: 'HD (1280 wide)' },
@@ -121,9 +128,13 @@ function OptionsForm({
         </label>
       </div>
       <p className="replay-export-estimate" aria-live="polite">
-        About {formatClock(plan.seconds)} of video at 30 fps, {estimate.layout.width}×{estimate.layout.height}, around{' '}
-        {formatBytes(estimate.bytes)}
+        About {formatClock(plan.seconds)} of video at 30 fps, {estimate.layout.width}×{estimate.layout.height}, up to
+        about {formatBytes(estimate.bytes)}
         {plan.truncated ? ' (capped at 20 minutes; raise the speed for the whole game)' : ''}.
+      </p>
+      <p className="replay-export-note">
+        The browser&apos;s encoder has the last word on size: it spends less on still moments, and some (Firefox) keep
+        their own quality whatever is chosen here.
       </p>
       <div className="replay-export-actions">
         <button
@@ -222,7 +233,8 @@ export function VideoExportPanel({
           <>
             <p className="replay-export-lead">
               Saved <strong>{state.result.fileName}</strong> · {formatClock(state.result.seconds)} ·{' '}
-              {state.result.width}×{state.result.height} · {formatBytes(state.result.blob.size)}
+              {state.result.width}×{state.result.height} · {codecName(state.result.codec)} ·{' '}
+              {formatBytes(state.result.blob.size)}
             </p>
             <div className="replay-export-actions">
               <a className="replay-btn replay-btn-primary" href={state.url} download={state.result.fileName}>

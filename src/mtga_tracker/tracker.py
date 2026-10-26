@@ -72,21 +72,9 @@ class CardTracker(
         self._pending_game_summary: bool = (
             False  # Defer summary until end of line batch (so ConcedeReq can set winner)
         )
-        self.session_start_time = datetime.now()
-        self.session_games_played = 0
-        self.session_wins = 0
-        self.session_losses = 0
-        self.session_draws = 0
-        self.session_unknown = 0
-        self.session_player_cards_played = 0
-        self.session_opponent_cards_played = 0
-        self.session_total_mulligans = 0
-        self.session_game_runtime_seconds = 0
-        self.session_player_went_first = 0
-        self.session_opponent_went_first = 0
-        self.session_first_unknown = 0
-        self.session_deck_records: Dict[str, Dict[str, Any]] = {}
-        self.session_id = datetime.now().strftime("%Y%m%dT%H%M%S%f")
+        # A session runs from launch until the app closes, or until a new match
+        # starts after a long break (_start_new_session_after_break).
+        self._start_session(datetime.now())
         self._session_stats_recorded_this_game = False
         self._deck_candidates: Dict[str, Dict[str, Any]] = {}
         self._active_deck_candidate_key: Optional[str] = None
@@ -104,9 +92,8 @@ class CardTracker(
         self._console_db_path = DATA_DIR / "mtga_tracker.sqlite3"
         self._diagnostic_text_path = DATA_DIR / "mtga_tracker_unhandled_annotations.log"
         self.analytics = AnalyticsStore(self._console_db_path)
-        # Session-stable match ordinals pinned to Arena's match UUIDs, so every
-        # game of a Bo3 match persists under the same tracker match id.
-        self._arena_match_ordinal_by_id: Dict[str, int] = {}
+        # _start_session also pins session-stable match ordinals to Arena's
+        # match UUIDs, so every game of a Bo3 match keeps one tracker match id.
         # Metadata stashed by _prepare_next_match_game for the next game of the
         # same Bo3 match; consumed by _reset_new_game_tracking.
         self._pending_bo3_continuation: Optional[Dict[str, Any]] = None

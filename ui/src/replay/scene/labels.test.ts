@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { PLAYER, SAMPLE_CARDS, makeSampleStream } from '../fixtures/sampleStream';
 import { StreamBuilder, card } from '../fixtures/streamBuilder';
+import { makeTokenStream } from '../fixtures/tokenStream';
 import { CARD_HEIGHT, layoutBoard } from '../layout';
 import { buildTimeline, stateAt } from '../reducer';
-import { sceneLabels } from './labels';
+import { countersText, sceneLabels } from './labels';
 
 describe('scene labels', () => {
   const stream = makeSampleStream();
@@ -202,5 +203,33 @@ describe('chosen land type', () => {
     // destroy's own action, where it is held in its slot) the choice is gone.
     expect(at('tap').find((l) => l.id === 'counters:p1')?.text).toBe('Mountain');
     expect(at('phase').some((l) => l.id === 'counters:p1')).toBe(false);
+  });
+});
+
+describe('tapped cards and token stacks', () => {
+  it('keeps a tapped card\u2019s chips above and below it, and labels a token stack once with its count', () => {
+    const stream = makeTokenStream();
+    const layout = layoutBoard(buildTimeline(stream).final, { mirrorOpponent: false, hindsight: true, playerSeat: 1 });
+    const labels = sceneLabels(layout, stream.cards);
+    const stat = labels.find((l) => l.id === 'stat:t1')!;
+    const chip = labels.find((l) => l.id === 'counters:t1')!;
+    // Upright, within the sideways card: not out at its left and right edges.
+    expect(Math.abs(stat.x)).toBeLessThan(0.01);
+    expect(stat.y).toBeLessThan(0);
+    expect(Math.abs(chip.x)).toBeLessThan(0.01);
+    expect(chip.y).toBeGreaterThan(0);
+    expect(chip.y).toBeLessThan(0.43);
+    expect(labels.find((l) => l.id === 'stack:t1')).toMatchObject({ text: '\u00d73' });
+    // The stacked tokens carry no labels of their own.
+    expect(labels.some((l) => l.obj === 't2' || l.obj === 't3')).toBe(false);
+  });
+});
+
+describe('counter chips', () => {
+  it('show a count on every counter type but a single +1/+1 or -1/-1', () => {
+    const base = { counters: {} } as unknown as Parameters<typeof countersText>[0];
+    expect(countersText({ ...base, counters: { plan: 1 } })).toBe('plan ×1');
+    expect(countersText({ ...base, counters: { '+1/+1': 1, oil: 3 } })).toBe('+1/+1 · oil ×3');
+    expect(countersText({ ...base, counters: { '+1/+1': 2, loyalty: 4 } })).toBe('+1/+1 ×2');
   });
 });

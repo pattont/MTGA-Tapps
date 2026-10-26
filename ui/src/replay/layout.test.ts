@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { StreamBuilder, card } from './fixtures/streamBuilder';
+import { makeTokenStream } from './fixtures/tokenStream';
 import { OPPONENT, PLAYER, makeSampleStream } from './fixtures/sampleStream';
 import type { CardPlacement, LayoutOptions } from './layout';
 import {
@@ -8,6 +9,7 @@ import {
   CARD_HEIGHT,
   CARD_WIDTH,
   DEFAULT_TABLE_WIDTH,
+  FLYING_LIFT,
   HAND_MIN_VISIBLE,
   HAND_SCALE_FLOOR,
   HAND_SCALE_MAX,
@@ -107,7 +109,8 @@ describe('layoutBoard', () => {
 
   it('builds two tiers per seat: creatures in front, a clear gap, then lands and other permanents', () => {
     const { cards } = layoutBoard(bigBoard(18), { ...OPTS, playerSeat: 1 });
-    const rowY = (row: string) => [...new Set(cards.filter((c) => c.row === row && !c.tapped).map((c) => c.y.toFixed(4)))];
+    // Cards stacked under an identical one sit a few edges higher; the row is where the tops are.
+    const rowY = (row: string) => [...new Set(cards.filter((c) => c.row === row && !c.tapped && !c.stackedUnder).map((c) => c.y.toFixed(4)))];
     expect(rowY('creatures')).toEqual([ROW_Y.creatures.toFixed(4)]);
     expect(rowY('lands')).toEqual([ROW_Y.back.toFixed(4)]);
     expect(rowY('other')).toEqual([ROW_Y.back.toFixed(4)]);
@@ -127,9 +130,11 @@ describe('layoutBoard', () => {
   it('fits a full row of 8 lands and 6 creatures without overlap at the narrowest table', () => {
     const b = new StreamBuilder();
     b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
-    for (let i = 0; i < 8; i += 1) b.move(`l${i}`, 'a1', 'limbo', 'battlefield', 1, 'put');
+    // Eight different lands (identical ones would stack into one slot).
+    for (let i = 0; i < 8; i += 1) b.move(`l${i}`, `l${i}`, 'limbo', 'battlefield', 1, 'put');
     for (let i = 0; i < 6; i += 1) b.move(`c${i}`, 'a2', 'limbo', 'battlefield', 1, 'put');
-    const stream = b.build({ a1: card('Forest', 'Land'), a2: card('Bear', 'Creature', { power: '2', toughness: '2' }) }, { playerSeat: 1 });
+    const lands = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`l${i}`, card(`Land ${i}`, 'Land')]));
+    const stream = b.build({ ...lands, a2: card('Bear', 'Creature', { power: '2', toughness: '2' }) }, { playerSeat: 1 });
     const layout = layoutBoard(buildTimeline(stream).final, { ...OPTS, playerSeat: 1, tableWidth: MIN_TABLE_WIDTH });
     for (const row of ['lands', 'creatures'] as const) {
       const placed = layout.cards.filter((c) => c.row === row).sort((a, b) => a.x - b.x);
@@ -674,6 +679,48 @@ describe('side cards beside the hand', () => {
   });
 });
 
+describe('flying', () => {
+  function skies(extra: (b: StreamBuilder) => void = () => {}) {
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    b.move('drake', 'drake', 'limbo', 'battlefield', PLAYER, 'put');
+    b.move('aura', 'aura', 'limbo', 'battlefield', PLAYER, 'put');
+    b.add('attach', { obj: 'aura', to: 'drake' });
+    b.move('bear', 'bear', 'limbo', 'battlefield', PLAYER, 'put');
+    b.move('wall', 'wall', 'limbo', 'battlefield', OPPONENT, 'put');
+    extra(b);
+    const stream = b.build(
+      {
+        drake: card('Drake', 'Creature', { power: '2', toughness: '2', keywords: ['flying'] }),
+        aura: card('Pacifism', 'Enchantment', { type_line: 'Enchantment — Aura' }),
+        bear: card('Bear', 'Creature', { power: '2', toughness: '2' }),
+        wall: card('Wall', 'Creature', { power: '0', toughness: '4' }),
+      },
+      { playerSeat: PLAYER },
+    );
+    return layoutBoard(buildTimeline(stream).final, OPTS).cards;
+  }
+
+  it('lifts a flying creature off the felt, its tucked cards with it', () => {
+    const cards = skies();
+    const drake = byObj(cards, 'drake');
+    const bear = byObj(cards, 'bear');
+    expect(drake.flying).toBe(true);
+    expect(bear.flying).toBe(false);
+    expect(drake.z - bear.z).toBeGreaterThan(FLYING_LIFT - 0.01);
+    const aura = byObj(cards, 'aura');
+    expect(aura.flying).toBe(false);
+    expect(aura.z).toBeLessThan(drake.z);
+    expect(aura.z).toBeGreaterThan(bear.z + FLYING_LIFT - 0.02);
+  });
+
+  it('lifts a creature given a flying counter', () => {
+    const cards = skies((b) => b.add('counter', { obj: 'wall', type: 'flying', delta: 1, total: 1 }));
+    expect(byObj(cards, 'wall').flying).toBe(true);
+    expect(byObj(skies(), 'wall').flying).toBe(false);
+  });
+});
+
 describe('damage marks', () => {
   function burned(extra: (b: StreamBuilder) => void = () => {}) {
     const b = new StreamBuilder();
@@ -721,5 +768,44 @@ describe('damage marks', () => {
     expect(next.effects.objects.size).toBe(0);
     const gone = layoutBoard(next, OPTS).cards.filter((c) => c.obj === 'c2');
     expect(gone.map((c) => [c.zone, c.row, c.removed])).toEqual([['graveyard', 'pile', null]]);
+  });
+});
+
+describe('identical lands', () => {
+  it('stack by name, untapped and tapped apart', () => {
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    // Two printings of Mountain, one Plains.
+    for (const [obj, key] of [['m1', 'a1'], ['m2', 'a2'], ['m3', 'a1'], ['m4', 'a1'], ['m5', 'a2'], ['p1', 'a3']]) {
+      b.move(obj, key, 'limbo', 'battlefield', 1, 'play_land');
+    }
+    b.add('tap', { objs: ['m4', 'm5'] });
+    const stream = b.build({ a1: card('Mountain', 'Land'), a2: card('Mountain', 'Land'), a3: card('Plains', 'Land') }, { playerSeat: 1 });
+    const cards = layoutBoard(buildTimeline(stream).final, { ...OPTS, playerSeat: 1 }).cards;
+    const byObj = new Map(cards.map((c) => [c.obj, c]));
+    expect(byObj.get('m1')).toMatchObject({ stackCount: 3, tapped: false });
+    expect(['m2', 'm3'].map((obj) => byObj.get(obj)?.stackedUnder)).toEqual(['m1', 'm1']);
+    expect(byObj.get('m4')).toMatchObject({ stackCount: 2, tapped: true });
+    expect(byObj.get('m5')?.stackedUnder).toBe('m4');
+    expect(byObj.get('p1')?.stackCount).toBeUndefined();
+  });
+});
+
+describe('identical tokens', () => {
+  it('stack under the first one and take one slot, apart from a token that differs', () => {
+    const layout = layoutBoard(buildTimeline(makeTokenStream()).final, { ...OPTS, playerSeat: 1 });
+    const byObj = new Map(layout.cards.map((c) => [c.obj, c]));
+    expect(byObj.get('t1')).toMatchObject({ stackCount: 3 });
+    expect(byObj.get('t2')).toMatchObject({ stackedUnder: 't1' });
+    expect(byObj.get('t3')).toMatchObject({ stackedUnder: 't1' });
+    // The one without counters keeps its own slot.
+    expect(byObj.get('t4')?.stackCount).toBeUndefined();
+    expect(byObj.get('t4')?.stackedUnder).toBeUndefined();
+    // The stacked ones fan just off the top card, under it.
+    const top = byObj.get('t1')!;
+    const second = byObj.get('t2')!;
+    expect(Math.abs(second.x - top.x)).toBeLessThan(0.2);
+    expect(second.z).toBeLessThan(top.z);
+    expect(Math.abs(byObj.get('t4')!.x - top.x)).toBeGreaterThan(CARD_HEIGHT * 0.9);
   });
 });

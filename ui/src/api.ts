@@ -325,6 +325,9 @@ export interface SessionRow {
   wins: number;
   losses: number;
   draws: number;
+  /** Games on the play / on the draw; games with unknown turn order count in neither. */
+  on_play?: number | null;
+  on_draw?: number | null;
   win_rate: number | null;
 }
 
@@ -1670,6 +1673,8 @@ export interface LiveGameRow {
   format: string | null;
   best_of: number | null;
   deck_name: string | null;
+  /** 1 on the play, 0 on the draw, null when unknown. */
+  went_first: number | null;
   opponent_name: string | null;
   replay?: ReplayAvailability;
 }
@@ -1770,6 +1775,14 @@ export interface TrackerSettings {
   overlay: OverlaySettings;
   /** Missing from trackers older than Buy on Paper. */
   buy_on_paper?: BuyOnPaperSettings;
+  /** Missing from trackers older than the session break setting. */
+  sessions?: SessionSettings;
+}
+
+export interface SessionSettings {
+  /** Hours without a game before a new match starts a new session; 0 = only when the app opens. */
+  break_hours: number;
+  choices: number[];
 }
 
 export interface BuyOnPaperSettings {
@@ -2007,6 +2020,16 @@ export async function saveStartupSettings(
   });
   const body = await deckFinderJson<{ startup: StartupSettings }>(response);
   return body.startup;
+}
+
+export async function saveSessionSettings(breakHours: number): Promise<SessionSettings> {
+  const response = await fetch('/api/settings/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ break_hours: breakHours }),
+  });
+  const body = await deckFinderJson<{ sessions: SessionSettings }>(response);
+  return body.sessions;
 }
 
 export async function saveDeckFinderCreators(payload: {

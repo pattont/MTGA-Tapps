@@ -1066,6 +1066,45 @@
   border-radius: 6px;
 }
 
+/* One card for several identical abilities: the copies show as cards fanned
+   behind it, in the seat's color, and a bold count sits over its corner. */
+.replay-stack-group {
+  margin: 0 12px 12px 0;
+  box-shadow:
+    6px 6px 0 -1px var(--panel),
+    6px 6px 0 1px color-mix(in srgb, var(--stack-seat) 75%, var(--border)),
+    12px 12px 0 -1px var(--panel),
+    12px 12px 0 1px color-mix(in srgb, var(--stack-seat) 55%, var(--border)),
+    0 0 18px color-mix(in srgb, var(--stack-seat) 30%, transparent),
+    var(--preview-shadow);
+}
+
+.replay-stack-count {
+  position: absolute;
+  z-index: 1;
+  top: -10px;
+  right: -10px;
+  min-width: 2.4em;
+  padding: 3px 10px;
+  border: 2px solid color-mix(in srgb, var(--stack-seat) 60%, #fff);
+  border-radius: 999px;
+  background: var(--stack-seat);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--stack-seat) 70%, transparent), 0 2px 6px rgb(0 0 0 / 45%);
+  color: #071014;
+  font-size: 1.05rem;
+  font-weight: 900;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.replay-stack-chip .replay-stack-count {
+  top: -6px;
+  right: -6px;
+  min-width: 2em;
+  padding: 1px 6px;
+  font-size: 0.8rem;
+}
+
 .replay-stack-caption {
   display: grid;
   gap: 1px;
@@ -1248,9 +1287,12 @@
   filter: drop-shadow(0 0 6px var(--arrow-glow));
 }
 
-/* Combat arrows are context, not the headline: thinner, dimmer and steady.
-   Attackers can fan out by the dozen; blocks are few and short, so they stay brighter. */
-.replay-arrow-attack {
+/* Context, not the headline: thinner, dimmer and steady. Attacks on a player
+   can fan out by the dozen, and a trigger handing its own side counters reaches
+   every creature; blocks are few and short, so they stay brighter. An attack on
+   a planeswalker (strike) keeps the full arrow. */
+.replay-arrow-attack,
+.replay-arrow-support {
   opacity: 0.55;
 }
 
@@ -1259,17 +1301,20 @@
 }
 
 .replay-arrow-attack .replay-arrow-glow,
+.replay-arrow-support .replay-arrow-glow,
 .replay-arrow-block .replay-arrow-glow {
   stroke-width: 6;
   opacity: 0.6;
 }
 
 .replay-arrow-attack .replay-arrow-core,
+.replay-arrow-support .replay-arrow-core,
 .replay-arrow-block .replay-arrow-core {
   stroke-width: 2;
 }
 
 .replay-arrow-attack .replay-arrow-flow,
+.replay-arrow-support .replay-arrow-flow,
 .replay-arrow-block .replay-arrow-flow {
   display: none;
 }
@@ -1318,9 +1363,12 @@
 }
 
 /* With nothing left on the stack, the cards that just left it are the column
-   itself, centered on the stage, instead of hanging from its middle. */
-.replay-stack-empty .replay-stack-exits {
+   itself, centered on the stage, instead of hanging from its middle. Held
+   (paused) or kept, they stay exactly where the card stood on the stack: the
+   beside-the-stack offset below must not nudge them up half a card. */
+.replay-stack-preview.replay-stack-empty .replay-stack-exits {
   position: static;
+  translate: none;
 }
 
 /* A compact row that left the stack: its stamp sits at the row's right end. */

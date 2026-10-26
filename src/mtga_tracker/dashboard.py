@@ -2898,9 +2898,12 @@ def dashboard_snapshot(
                   SUM(g.outcome = 'win') AS wins,
                   SUM(g.outcome = 'loss') AS losses,
                   SUM(g.outcome = 'draw') AS draws,
+                  SUM(p.went_first = 1) AS on_play,
+                  SUM(p.went_first = 0) AS on_draw,
                   ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
                 FROM tracker_sessions s
                 JOIN games g ON g.session_id = s.id
+                LEFT JOIN participants p ON p.game_id = g.id AND p.role = 'player'
                 WHERE {where}
                 GROUP BY s.id
                 ORDER BY s.started_at DESC, s.id DESC

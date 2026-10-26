@@ -42,7 +42,7 @@ export function createInitialState(
     phase: null,
     step: null,
     life,
-    attackers: new Set(),
+    attackers: new Map(),
     effects: EMPTY_EFFECTS,
     blocks: new Map(),
     lastEvent: null,
@@ -59,7 +59,7 @@ function isCombatPhase(phase: string | null): boolean {
 }
 
 function clearCombat(draft: BoardDraft): void {
-  if (draft.base.attackers.size) draft.patch.attackers = new Set();
+  if (draft.base.attackers.size) draft.patch.attackers = new Map();
   if (draft.base.blocks.size) draft.patch.blocks = new Map();
 }
 
@@ -123,7 +123,8 @@ function applyMove(draft: BoardDraft, event: MoveEvent): void {
     exiledWith: event.to === 'exile' ? (event.with ?? null) : null,
     fromHand: event.to === 'exile' && event.from === 'hand',
     faceDown: stays ? prev.faceDown : false,
-    inferred: event.inferred || (prev?.inferred ?? false),
+    // A token's creation is its real arrival, even after rows that named it first.
+    inferred: event.inferred || (event.reason !== 'token_create' && (prev?.inferred ?? false)),
     revealedAt: prev?.revealedAt ?? (card ? event.seq : null),
     ...(chosen ? { chosen } : {}),
   };
@@ -229,7 +230,20 @@ function removeStackItem(draft: BoardDraft, stackId: string): void {
 
 export function applyEvent(state: BoardState, event: ReplayEvent): BoardState {
   const draft = new BoardDraft(state);
-  if (!isEmptyEffects(state.effects) && clearsEffects(event)) draft.patch.effects = EMPTY_EFFECTS;
+  // A new step (blockers declared, then combat damage) is a new action too, even
+  // when no phase event marks it: the last resolution's effects end there.
+  const newStep =
+    (event.step != null && state.step != null && event.step !== state.step) ||
+    (event.phase != null && state.phase != null && event.phase !== state.phase);
+  // The next item resolving after the last one's effects are on the table is a
+  // new action as well: otherwise both show as resolved at once (Belladonna
+  // Took's second trigger beside the first, whose counters were still shown).
+  const nextResolution =
+    (event.kind === 'stack_resolve' || event.kind === 'stack_fizzle') &&
+    (state.effects.objects.size > 0 || state.effects.seats.size > 0);
+  if (!isEmptyEffects(state.effects) && (clearsEffects(event) || newStep || nextResolution)) {
+    draft.patch.effects = EMPTY_EFFECTS;
+  }
   noteEffects(draft, event);
   if (event.phase !== null && event.phase !== undefined) draft.patch.phase = event.phase;
   if (event.step !== null && event.step !== undefined) draft.patch.step = event.step;
@@ -319,7 +333,7 @@ export function applyEvent(state: BoardState, event: ReplayEvent): BoardState {
       break;
     case 'attack': {
       const attackers = draft.attackers();
-      for (const obj of event.objs) attackers.add(obj);
+      for (const obj of event.objs) attackers.set(obj, event.target_obj ?? null);
       break;
     }
     case 'block': {

@@ -16,6 +16,7 @@ write one, and stack items whose resolution was never printed are closed.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 from pathlib import Path
@@ -218,6 +219,125 @@ def _hoist_turn_headers(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         else:
             out.append(row)
     return out
+
+
+def _row_objects(row: Dict[str, Any]) -> Set[str]:
+    """Every object id a row names."""
+    payload = _payload(row)
+    values = [
+        row.get("object_id"),
+        row.get("target_object_id"),
+        payload.get("target_object_id"),
+        payload.get("source_object_id"),
+        *(payload.get("object_ids") or []),
+    ]
+    return {obj for obj in (_obj(value) for value in values) if obj is not None}
+
+
+def _hoist_token_creations(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Move each token's creation before the first row of its turn that names it.
+
+    Arena can create tokens and declare them attackers in one message (Mobilize),
+    and the printed attack lines are written before the silent creation rows.
+    Read in order, the attackers would appear from nowhere as inferred cards.
+    """
+    out = list(rows)
+    creations = [
+        row
+        for row in rows
+        if row.get("event_subtype") == "move" and _payload(row).get("reason") == "token_create"
+    ]
+    for row in creations:
+        obj = _obj(row.get("object_id"))
+        if obj is None:
+            continue
+        at = next(index for index, other in enumerate(out) if other is row)
+        first = next((index for index in range(at) if obj in _row_objects(out[index])), None)
+        if first is None or out[first].get("turn_number") != row.get("turn_number"):
+            continue
+        out.insert(first, out.pop(at))
+    return out
+
+
+_ATTACKER_NAME = re.compile(r"with \[(.+?)(?: \([^()]*\))?\]\s*$")
+
+
+def _link_renamed_attackers(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Point an attack at the permanent it really is when Arena renamed it.
+
+    A creature put onto the battlefield attacking (ninjutsu: Kaito, Bane of
+    Nightmares) gets a new instance id, and the attack line can be written,
+    under that new id, before the move that puts the card there. An attacker
+    id that no other row names is linked to the next card of the same name
+    entering the battlefield that turn, and that move is moved ahead of the
+    attack, so the card is there when it attacks.
+    """
+    out = list(rows)
+    seen: Dict[str, int] = {}
+    for row in rows:
+        for obj in _row_objects(row):
+            seen[obj] = seen.get(obj, 0) + 1
+    for row in [r for r in rows if r.get("event_subtype") == "attack"]:
+        payload = _payload(row)
+        ids = [_obj(v) for v in payload.get("object_ids") or [row.get("object_id")]]
+        lonely = [obj for obj in ids if obj is not None and seen.get(obj, 0) == 1]
+        match = _ATTACKER_NAME.search(str(row.get("text") or ""))
+        if len(lonely) != 1 or len(ids) != 1 or not match:
+            continue
+        at = next(index for index, other in enumerate(out) if other is row)
+        entry = next(
+            (
+                other
+                for other in out[at + 1 :]
+                if other.get("turn_number") == row.get("turn_number")
+                and other.get("event_subtype") == "move"
+                and _zone(other.get("zone_to")) == "battlefield"
+                and _payload(other).get("name") == match.group(1)
+            ),
+            None,
+        )
+        real = _obj(entry.get("object_id")) if entry else None
+        if entry is None or real is None:
+            continue
+        fixed = dict(row)
+        fixed["object_id"] = int(real)
+        fixed["payload_json"] = json.dumps({**payload, "object_ids": [int(real)]})
+        out[at] = fixed
+        out.remove(entry)
+        out.insert(at, entry)
+    return out
+
+
+def _drop_echoed_activations(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Drop a trigger line that only echoes the activated ability right after it.
+
+    Arena can announce an ability activated from the hand (ninjutsu) twice:
+    once read as a trigger, then as the activated ability itself, with the same
+    source and text. The trigger never resolves on its own, so it is dropped.
+    """
+    closed = {
+        str(_payload(row).get("stack_id"))
+        for row in rows
+        if row.get("event_subtype") in STACK_CLOSE_KINDS and _payload(row).get("stack_id")
+    }
+    drop = set()
+    for index, row in enumerate(rows):
+        payload = _payload(row)
+        if row.get("event_subtype") != "stack_push" or payload.get("stack_kind") != "trigger":
+            continue
+        if str(payload.get("stack_id")) in closed:
+            continue
+        for other in rows[index + 1 : index + 5]:
+            later = _payload(other)
+            if (
+                other.get("event_subtype") == "stack_push"
+                and later.get("stack_kind") == "activated"
+                and other.get("object_id") == row.get("object_id")
+                and later.get("text") == payload.get("text")
+            ):
+                drop.add(id(row))
+                break
+    return [row for row in rows if id(row) not in drop]
 
 
 class RecordedBuilder:
@@ -546,6 +666,9 @@ class RecordedBuilder:
         rows = list(self.rows.get("game_events") or [])
         rows.sort(key=lambda row: (str(row.get("event_time") or ""), row.get("id") or 0))
         rows = _hoist_turn_headers(rows)
+        rows = _hoist_token_creations(rows)
+        rows = _link_renamed_attackers(rows)
+        rows = _drop_echoed_activations(rows)
         self.explicit_close = {
             str(_payload(row).get("stack_id")): row.get("event_subtype")
             for row in rows
@@ -717,7 +840,12 @@ class RecordedBuilder:
         card = self._card(row.get("arena_id"), payload.get("name"), payload)
         if stack_kind == "spell" and obj is not None and self.zone_of.get(obj) != "stack":
             source = _zone(row.get("zone_from") or "hand")
-            if obj not in self.zone_of and source not in CREATING_ZONES:
+            if obj not in self.zone_of and source == "exile":
+                # A copy Arena makes in exile and casts at once (a prepared
+                # spell's copy, Studious First-Year's Rampant Growth): it
+                # appears on the stack, not as an inferred card in exile first.
+                source = "limbo"
+            elif obj not in self.zone_of and source not in CREATING_ZONES:
                 self._ensure(obj, source, seat, card)
             source = self.zone_of.get(obj, source)
             self._emit_move(obj, card, source, "stack", seat, controller, "cast")
@@ -922,12 +1050,43 @@ _image_lock = threading.Lock()
 _image_state: Dict[str, Any] = {"cache_mtime": None, "cache": {}, "index": None}
 #: Tests (or callers without an Arena install) may replace this.
 image_resolver_override: Optional[ImageResolver] = None
+#: Same, for a token's Scryfall ``set/number`` (``default_token_print``).
+token_print_override: Optional[ImageResolver] = None
 
 
 def _scryfall_cache_path() -> Path:
     from .paths import DATA_DIR
 
     return DATA_DIR / "scryfall_id_cache.json"
+
+
+def _arena_printing(arena_id: int) -> Optional[Tuple[str, str, str]]:
+    """(name, set, collector number) from Arena's card DB; call under ``_image_lock``."""
+    if _image_state["index"] is None:
+        try:
+            from .card_database import CardDatabase
+
+            _image_state["index"] = CardDatabase().export_index_by_arena_id() or {}
+        except Exception:  # noqa: BLE001 - a missing Arena install is normal
+            _image_state["index"] = {}
+    return _image_state["index"].get(int(arena_id))
+
+
+def default_token_print(arena_id: int) -> Optional[str]:
+    """A token's Scryfall ``set/number``, from Arena's card DB; None when unknown.
+
+    Arena files a token under its card set's code with the token's own number
+    (the Mobilize Warrior is TDM 13), and Scryfall numbers that set's tokens
+    the same way under the set code with a leading "t": ``ttdm/13``.
+    """
+    with _image_lock:
+        entry = _arena_printing(arena_id)
+    if not entry:
+        return None
+    _name, set_code, collector = entry
+    if not set_code or not collector:
+        return None
+    return f"t{set_code.lower()}/{collector}"
 
 
 def default_image_url(arena_id: int) -> Optional[str]:
@@ -957,14 +1116,7 @@ def default_image_url(arena_id: int) -> Optional[str]:
         cache = _image_state["cache"]
         if not cache:
             return None
-        if _image_state["index"] is None:
-            try:
-                from .card_database import CardDatabase
-
-                _image_state["index"] = CardDatabase().export_index_by_arena_id() or {}
-            except Exception:  # noqa: BLE001 - a missing Arena install is normal
-                _image_state["index"] = {}
-        entry = _image_state["index"].get(int(arena_id))
+        entry = _arena_printing(arena_id)
     if not entry:
         return None
     _name, set_code, collector = entry
@@ -979,11 +1131,26 @@ def default_image_url(arena_id: int) -> Optional[str]:
     )
 
 
-def attach_image_urls(stream: Dict[str, Any], resolver: Optional[ImageResolver] = None) -> None:
+def attach_image_urls(
+    stream: Dict[str, Any],
+    resolver: Optional[ImageResolver] = None,
+    token_printer: Optional[ImageResolver] = None,
+) -> None:
     resolve = resolver or image_resolver_override or default_image_url
+    token_print = token_printer or token_print_override or default_token_print
     for entry in (stream.get("cards") or {}).values():
         arena_id = entry.get("arena_id")
         if not arena_id or entry.get("image_url"):
+            continue
+        if entry.get("is_token"):
+            # Never the set/number cache: a token's number names a different
+            # card in the card set (Warrior TDM 13 is Furious Forebear). The
+            # page loads the token printing by ``token_print`` instead.
+            if not entry.get("token_print"):
+                try:
+                    entry["token_print"] = token_print(int(arena_id))
+                except Exception:  # noqa: BLE001 - images are best effort
+                    entry["token_print"] = None
             continue
         try:
             url = resolve(int(arena_id))
@@ -1023,9 +1190,15 @@ def load_card_facts() -> Dict[str, Dict[str, Any]]:
 
 
 def attach_card_facts(stream: Dict[str, Any], facts: Dict[str, Dict[str, Any]]) -> None:
-    """Sets each card entry's ``keywords`` and ``back_face`` from Arena's card DB."""
+    """Sets each card entry's ``keywords`` and ``back_face`` from Arena's card DB.
+
+    A token is looked up by its Arena id (``#<grpId>``) before its name.
+    """
     for entry in (stream.get("cards") or {}).values():
-        fact = facts.get(str(entry.get("name") or "").casefold())
+        fact = None
+        if entry.get("is_token") and entry.get("arena_id"):
+            fact = facts.get(f"#{entry['arena_id']}")
+        fact = fact or facts.get(str(entry.get("name") or "").casefold())
         if not fact:
             continue
         entry["keywords"] = list(fact.get("keywords") or [])
@@ -1040,6 +1213,20 @@ def attach_card_facts(stream: Dict[str, Any], facts: Dict[str, Dict[str, Any]]) 
         for field in ("power", "toughness"):
             if entry.get(field) in (None, "") and fact.get(field) not in (None, ""):
                 entry[field] = str(fact[field])
+
+
+_UNNAMED_COUNTER = re.compile(r"^counter_(\d+)$")
+
+
+def attach_counter_names(stream: Dict[str, Any], facts: Dict[str, Dict[str, Any]]) -> None:
+    """Names counters recorded as ``counter_<n>`` (Arena's CounterType) from the card facts."""
+    for event in stream.get("events") or []:
+        if event.get("kind") != "counter":
+            continue
+        match = _UNNAMED_COUNTER.match(str(event.get("type") or ""))
+        name = match and (facts.get(f"#counter:{match.group(1)}") or {}).get("counter")
+        if name:
+            event["type"] = name
 
 
 def replay_for_game(db_path: Path, game_id: str) -> Dict[str, Any]:
@@ -1064,5 +1251,6 @@ def replay_for_game(db_path: Path, game_id: str) -> Dict[str, Any]:
     rows["card_facts"] = facts
     stream = build_stream(rows)
     attach_card_facts(stream, facts)
+    attach_counter_names(stream, facts)
     attach_image_urls(stream)
     return stream

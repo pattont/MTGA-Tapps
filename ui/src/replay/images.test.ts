@@ -97,6 +97,15 @@ describe('cardImageCandidates', () => {
     expect(saproling).toHaveLength(2);
     expect(saproling.some((url) => url.includes('/named?'))).toBe(false);
   });
+
+  it("tries a token's exact Scryfall printing first", () => {
+    const warrior = card('Warrior', 'Creature', { is_token: true, arena_id: 95832, token_print: 'ttdm/13' });
+    const urls = cardImageCandidates(warrior, 'normal');
+    expect(urls[0]).toBe(`${API}/ttdm/13?format=image&version=normal`);
+    expect(urls[1]).toBe(`${API}/arena/95832?format=image&version=normal`);
+    const odd = card('Warrior', 'Creature', { is_token: true, token_print: '../x?y' });
+    expect(cardImageCandidates(odd, 'normal').some((url) => url.includes('x?y'))).toBe(false);
+  });
 });
 
 describe('tokenSearchCandidates', () => {
@@ -282,6 +291,19 @@ describe('resolveCardImage', () => {
     await expect(resolveCardImage('n:Treasure', card('Treasure', 'Artifact', { is_token: true }), queue)).resolves.toBe(TOKEN_CDN);
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(String(fetchMock.mock.calls[2][0])).toContain('/search?');
+  });
+
+  it("never reuses a token's art cached before it carried its exact printing", async () => {
+    const asked: string[] = [];
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      asked.push(String(url));
+      return okResponse(TOKEN_CDN);
+    });
+    const queue = new ImageQueue({ fetch: fetchMock as unknown as typeof fetch, burst: 10 });
+    resolvedImageCache.set('a95832', CDN); // the wrong card, cached by an older page
+    const warrior = card('Warrior', 'Creature', { is_token: true, arena_id: 95832, token_print: 'ttdm/13' });
+    await expect(resolveCardImage('a95832', warrior, queue)).resolves.toBe(TOKEN_CDN);
+    expect(asked[0]).toContain('/cards/ttdm/13?');
   });
 
   it('retries a rate-limited lookup on the next request but not a missing card', async () => {

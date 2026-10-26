@@ -33,6 +33,7 @@ import type { CardKey, ReplayCard } from '../types';
 import {
   createCardAlphaCanvas,
   createCastableCanvas,
+  createHoverShadowCanvas,
   createInferredCanvas,
   createRingCanvas,
   createShadowCanvas,
@@ -351,10 +352,11 @@ export class TextureStore {
   }
 
   /** Linear-space helper masks (alpha, shadow, rings). */
-  helper(name: 'alpha' | 'shadow' | 'ring' | 'inferred' | 'slot' | 'castable'): Texture {
+  helper(name: 'alpha' | 'shadow' | 'hoverShadow' | 'ring' | 'inferred' | 'slot' | 'castable'): Texture {
     const makers = {
       alpha: createCardAlphaCanvas,
-      shadow: createShadowCanvas,
+      shadow: () => createShadowCanvas(),
+      hoverShadow: createHoverShadowCanvas,
       ring: createRingCanvas,
       inferred: createInferredCanvas,
       castable: createCastableCanvas,

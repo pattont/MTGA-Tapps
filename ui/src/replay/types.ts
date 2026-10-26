@@ -107,12 +107,18 @@ export interface ReplayCard {
   faces: ReplayCardFace[];
   /**
    * Replay-relevant keywords from Arena's card DB: `flashback`, `escape`,
-   * `disturb`, `harmonize` (cast from the graveyard) and `plot`. Absent in
+   * `disturb`, `harmonize` (cast from the graveyard), `plot`, and `flying`
+   * (the creature hovers on the battlefield). Absent in
    * streams built before they existed.
    */
   keywords?: string[];
   /** The back face of a double-faced card: Scryfall's image is the back image. */
   back_face?: boolean;
+  /**
+   * A token's Scryfall `set/number` ("ttdm/13"), from Arena's card DB. Tokens
+   * never get `image_url`: their Arena number names another card in the set.
+   */
+  token_print?: string | null;
 }
 
 export interface ReplayTurn {

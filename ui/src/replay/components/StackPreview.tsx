@@ -18,7 +18,7 @@ import { memo, useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { formatCardName } from '../../format';
 import type { BoardState } from '../reducer';
-import { STACK_KIND_LABELS, compactExits, effectExits, stackExit, stackRows, stackView } from '../scene/stackView';
+import { STACK_KIND_LABELS, compactExits, effectExits, foldResolved, stackExit, stackRows, stackView } from '../scene/stackView';
 import type { StackExit, StackViewItem } from '../scene/stackView';
 import type { TextureStore } from '../scene/textureStore';
 import type { CardKey } from '../types';
@@ -92,17 +92,19 @@ function StackCard({
     .filter(Boolean)
     .join(' ');
   const card = item.card;
+  const grouped = item.count > 1 && !exit;
   return (
     <li
-      className={className}
+      className={grouped ? `${className} replay-stack-group` : className}
       data-stack-id={item.stackId}
       ref={
         nodes
           ? (node) => {
               if (!node) return undefined;
-              nodes.set(item.stackId, node);
+              // One card can stand for several identical abilities: arrows from any of them start here.
+              for (const id of item.stackIds) nodes.set(id, node);
               return () => {
-                if (nodes.get(item.stackId) === node) nodes.delete(item.stackId);
+                for (const id of item.stackIds) if (nodes.get(id) === node) nodes.delete(id);
               };
             }
           : undefined
@@ -113,11 +115,18 @@ function StackCard({
       <div className="card-preview-media replay-stack-media">
         <PreviewCard key={`${card ?? ''}|${item.name}`} store={store} card={card} name={item.name} />
       </div>
+      {grouped ? (
+        <span className="replay-stack-count" aria-label={`${item.count} copies`}>
+          ×{item.count}
+        </span>
+      ) : null}
       <div className="replay-stack-caption">
         <strong>{name}</strong>
         <span className="replay-stack-kind">
           {mine ? 'You' : 'Opponent'} · {STACK_KIND_LABELS[item.kind]}
+          {grouped ? ` ×${item.count}` : ''}
           {item.top && !exit ? ' · resolves next' : ''}
+          {item.resolved && !exit ? ` · ${item.resolved} just resolved` : ''}
         </span>
         {item.text && !compact ? <span className="replay-stack-text">{item.text}</span> : null}
       </div>
@@ -128,11 +137,14 @@ function StackCard({
 
 function StackPreviewImpl({ state, playerSeat, store, snap, playing, nodes, onCardClick }: StackPreviewProps) {
   const items = useMemo(() => stackView(state), [state]);
-  const effectItems = useMemo(() => effectExits(state), [state]);
+  const allEffects = useMemo(() => effectExits(state), [state]);
+  // A copy that just resolved while identical ones wait folds into their card.
+  const folded = useMemo(() => foldResolved(items, allEffects), [items, allEffects]);
+  const effectItems = folded.exits;
   // Derived state: items that just left the stack keep animating for a moment.
   const [tracked, setTracked] = useState<{ items: StackViewItem[]; leaving: Leaving[] }>({ items, leaving: [] });
   if (tracked.items !== items) {
-    const live = new Set(items.map((item) => item.stackId));
+    const live = new Set(items.flatMap((item) => item.stackIds));
     const gone: Leaving[] = snap
       ? []
       : tracked.items
@@ -144,7 +156,7 @@ function StackPreviewImpl({ state, playerSeat, store, snap, playing, nodes, onCa
     setTracked({ items, leaving: snap ? [] : [...kept, ...gone].slice(-2) });
   }
   // An item kept for the current action is drawn from the board state, not as a leaving card.
-  const effectIds = new Set(effectItems.map((item) => item.stackId));
+  const effectIds = new Set(allEffects.map((item) => item.stackId));
   const leaving = tracked.leaving.filter((item) => !effectIds.has(item.stackId));
   const held = !playing && leaving.length > 0;
   const anyLeaving = tracked.leaving.length > 0;
@@ -180,9 +192,10 @@ function StackPreviewImpl({ state, playerSeat, store, snap, playing, nodes, onCa
       style={style}
     >
       <ol className="replay-stack-list" aria-label="Stack">
-        {items.slice(0, full + chips).map((item, i) => (
+        {folded.items.slice(0, full + chips).map((item, i) => (
           <StackCard
-            key={item.stackId}
+            // A group keeps its key (its bottom copy) while copies above it resolve.
+            key={item.stackIds[item.count - 1]}
             item={item}
             compact={i >= full}
             playerSeat={playerSeat}

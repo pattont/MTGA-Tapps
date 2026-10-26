@@ -810,3 +810,180 @@ def test_card_facts_mark_keywords_and_back_faces_and_back_images():
     assert cards["a:2"]["back_face"] is True
     assert cards["a:2"]["image_url"] == "https://cards.scryfall.io/normal/back/a/b/2.jpg"
     assert cards["n:Bear"]["keywords"] == [] and cards["n:Bear"]["back_face"] is False
+
+
+def test_card_facts_look_tokens_up_by_arena_id_before_name():
+    def token(arena_id):
+        return {"name": "Bird", "arena_id": arena_id, "is_token": True, "keywords": []}
+
+    stream = {"cards": {"a7": token(7), "a8": token(8), "n:Bird": token(None)}}
+    facts = {"#7": {"keywords": ["flying"]}, "bird": {"keywords": ["flashback"]}}
+    attach_card_facts(stream, facts)
+    cards = stream["cards"]
+    assert cards["a7"]["keywords"] == ["flying"]
+    assert cards["a8"]["keywords"] == ["flashback"]
+    assert cards["n:Bird"]["keywords"] == ["flashback"]
+
+
+def test_tokens_created_attacking_appear_before_their_attack():
+    """Mobilize: Arena creates the Warriors and declares them attackers in one
+    message, and the printed attack lines are written before the silent
+    creation rows. The stream must create each token first, not invent an
+    inferred card that attacks from nowhere."""
+    r = _Rows()
+    r.turn_row(6, PLAYER)
+    for obj in (310, 311):
+        r.add(
+            "attack",
+            "[1:34] You attacking [opponent] with [Warrior (1/1)]",
+            event_type="attack",
+            seat_id=PLAYER,
+            object_id=obj,
+            payload={"object_ids": [obj], "target_seat": OPPONENT},
+        )
+    for obj in (310, 311):
+        r.move(obj, "limbo", "battlefield", "token_create", PLAYER, 95832, "Warrior", token=True)
+    stream = build_stream(_game_rows(r.rows))
+
+    kinds = [(e["kind"], e.get("obj") or e.get("objs")) for e in stream["events"]]
+    assert kinds.index(("move", "310")) < kinds.index(("attack", ["310"]))
+    assert kinds.index(("move", "311")) < kinds.index(("attack", ["311"]))
+    assert not any(e["kind"] == "move" and e["inferred"] for e in stream["events"])
+
+
+def test_tokens_get_their_token_printing_never_the_card_sets_image():
+    stream = {
+        "cards": {
+            "a95832": {"name": "Warrior", "arena_id": 95832, "is_token": True, "image_url": None},
+            "a95549": {"name": "Voice of Victory", "arena_id": 95549, "is_token": False},
+        }
+    }
+    attach_image_urls(
+        stream,
+        resolver=lambda arena_id: f"https://cards.scryfall.io/{arena_id}.jpg",
+        token_printer=lambda arena_id: "ttdm/13",
+    )
+    warrior = stream["cards"]["a95832"]
+    assert warrior["image_url"] is None
+    assert warrior["token_print"] == "ttdm/13"
+    assert stream["cards"]["a95549"]["image_url"] == "https://cards.scryfall.io/95549.jpg"
+
+
+def test_token_print_is_the_scryfall_token_set(monkeypatch):
+    from mtga_tracker import replay_builder
+
+    monkeypatch.setitem(
+        replay_builder._image_state, "index", {95832: ("Warrior", "TDM", "13"), 1: ("X", "", "")}
+    )
+    assert replay_builder.default_token_print(95832) == "ttdm/13"
+    assert replay_builder.default_token_print(1) is None
+    assert replay_builder.default_token_print(2) is None
+
+
+def test_counters_recorded_by_number_get_arena_names():
+    from mtga_tracker.replay_builder import attach_counter_names
+
+    stream = {
+        "events": [
+            {"kind": "counter", "type": "counter_211", "obj": "1", "delta": 1, "total": 1},
+            {"kind": "counter", "type": "counter_999", "obj": "1", "delta": 1, "total": 1},
+            {"kind": "counter", "type": "+1/+1", "obj": "2", "delta": 1, "total": 1},
+        ]
+    }
+    attach_counter_names(stream, {"#counter:211": {"counter": "plan"}})
+    assert [event["type"] for event in stream["events"]] == ["plan", "counter_999", "+1/+1"]
+
+
+def test_a_prepared_spell_copy_cast_from_exile_appears_on_the_stack():
+    """Arena makes the copy in exile and casts it at once: no inferred card in exile first."""
+    r = _Rows()
+    r.turn_row(3, OPPONENT)
+    r.add(
+        "stack_push",
+        "[0:49] Opponent: cast [Rampant Growth (Sorcery)]",
+        event_type="cast",
+        seat_id=OPPONENT,
+        object_id=296,
+        arena_id=104085,
+        zone_from="exile",
+        zone_to="stack",
+        payload={
+            "stack_id": "s3",
+            "stack_kind": "spell",
+            "name": "Rampant Growth",
+            "type": "Sorcery",
+        },
+    )
+    stream = build_stream(_game_rows(r.rows))
+    moves = [e for e in stream["events"] if e["kind"] == "move" and e["obj"] == "296"]
+    assert [(m["from"], m["to"], m["inferred"]) for m in moves] == [("limbo", "stack", False)]
+
+
+def test_a_ninjutsu_attacker_is_the_card_put_onto_the_battlefield():
+    """Kaito's attack line names its new instance id (501) before the move
+    that puts Kaito (317) onto the battlefield; the echoed trigger line for
+    the same ninjutsu is dropped."""
+    r = _Rows()
+    r.turn_row(9, PLAYER)
+    r.move(
+        317,
+        "library",
+        "hand",
+        "draw",
+        PLAYER,
+        92314,
+        "Kaito, Bane of Nightmares",
+        visible=1,
+        text="drew",
+    )
+    ninjutsu = {
+        "stack_kind": "trigger",
+        "name": "Kaito, Bane of Nightmares",
+        "text": "Ninjutsu 1UB",
+    }
+    r.add(
+        "stack_push",
+        "[4:54] Kaito - Ninjutsu",
+        seat_id=PLAYER,
+        object_id=317,
+        arena_id=92314,
+        payload={**ninjutsu, "stack_id": "s23"},
+    )
+    r.add(
+        "stack_push",
+        "[4:56] Kaito - Ninjutsu",
+        seat_id=PLAYER,
+        object_id=317,
+        arena_id=92314,
+        payload={**ninjutsu, "stack_id": "s24", "stack_kind": "activated"},
+    )
+    r.add(
+        "attack",
+        "[4:56] You attacking [opponent] with [Kaito, Bane of Nightmares (3/4)]",
+        event_type="attack",
+        seat_id=PLAYER,
+        object_id=501,
+        payload={"object_ids": [501], "target_seat": OPPONENT},
+    )
+    r.add("stack_resolve", "resolved", seat_id=PLAYER, payload={"stack_id": "s24"})
+    r.move(
+        317,
+        "hand",
+        "battlefield",
+        "put",
+        PLAYER,
+        92314,
+        "Kaito, Bane of Nightmares",
+        visible=1,
+        text="put",
+    )
+    stream = build_stream(_game_rows(r.rows))
+    events = stream["events"]
+    assert not any(e["kind"] == "move" and e["inferred"] for e in events)
+    attack = next(e for e in events if e["kind"] == "attack")
+    assert attack["objs"] == ["317"]
+    put = next(
+        e for e in events if e["kind"] == "move" and e["obj"] == "317" and e["to"] == "battlefield"
+    )
+    assert put["seq"] < attack["seq"]
+    assert [e["stack_id"] for e in events if e["kind"] == "stack_push"] == ["s24"]

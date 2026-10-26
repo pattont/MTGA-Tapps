@@ -22,7 +22,14 @@ export type ArrowEnd =
   /** A player: the middle of that seat's table edge. */
   | { kind: 'seat'; seat: number };
 
-export type ArrowTone = 'target' | 'damage' | 'attack' | 'block';
+/**
+ * How loud an arrow is. Bright: `target` (a stack item's target, or an effect on
+ * an opponent's permanent), `damage` (harm), `strike` (an attack on a
+ * planeswalker or battle). Dim: `attack` (on a player; they come by the dozen),
+ * `block`, and `support` (an effect on its own side's permanents, like a
+ * trigger handing out counters).
+ */
+export type ArrowTone = 'target' | 'damage' | 'attack' | 'strike' | 'block' | 'support';
 
 export interface SceneArrow {
   id: string;
@@ -85,12 +92,15 @@ function effectArrows(state: BoardState, layout: Layout, placed: ReadonlySet<str
     const from = fromOf(marks.source);
     if (!from || (from.kind === 'obj' && from.obj === obj)) continue;
     const harmful = marks.removed !== null || marks.damage > 0 || (marks.pt !== null && marks.pt.power + marks.pt.toughness < 0);
+    const seat = marks.source?.controller ?? state.playerSeat;
+    // Something done to the acting seat's own permanents is context, not the headline.
+    const own = state.objects.get(obj)?.controller === seat;
     arrows.push({
       id: `effect:${obj}`,
       from,
       to: { kind: 'obj', obj },
-      seat: marks.source?.controller ?? state.playerSeat,
-      tone: harmful ? 'damage' : 'target',
+      seat,
+      tone: harmful ? 'damage' : own ? 'support' : 'target',
     });
   }
   for (const [seat, marks] of effects.seats) {
@@ -117,7 +127,8 @@ function effectArrows(state: BoardState, layout: Layout, placed: ReadonlySet<str
 /**
  * Arrows for one board state: every stack item to each of its targets
  * (bright, animated), the current action's effects from their sources, and during
- * combat attackers toward the defending player and blockers toward the
+ * combat attackers toward the planeswalker or battle they attack (else the
+ * defending player) and blockers toward the
  * attacker they block (dimmer). Only ends the scene can place are kept.
  */
 export function sceneArrows(state: BoardState, layout: Layout): SceneArrow[] {
@@ -143,7 +154,7 @@ export function sceneArrows(state: BoardState, layout: Layout): SceneArrow[] {
   if (state.attackers.size) {
     const blocked = new Set(state.blocks.values());
     const seats = Object.keys(state.seats).map(Number);
-    for (const obj of state.attackers) {
+    for (const [obj, target] of state.attackers) {
       const attacker = state.objects.get(obj);
       if (!attacker || !placed.has(obj) || blocked.has(obj)) continue;
       const defender = seats.find((seat) => seat !== attacker.controller);
@@ -151,9 +162,9 @@ export function sceneArrows(state: BoardState, layout: Layout): SceneArrow[] {
       arrows.push({
         id: `attack:${obj}`,
         from: { kind: 'obj', obj },
-        to: { kind: 'seat', seat: defender },
+        to: target !== null && placed.has(target) ? { kind: 'obj', obj: target } : { kind: 'seat', seat: defender },
         seat: attacker.controller,
-        tone: 'attack',
+        tone: target !== null && placed.has(target) ? 'strike' : 'attack',
       });
     }
     for (const [blocker, attacker] of state.blocks) {

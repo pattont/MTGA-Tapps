@@ -199,6 +199,10 @@ class TrackerStateLookupMixin:
     def _object_display_name(self, obj: Dict[str, Any], instance_id: Optional[int]) -> str:
         """Return best-effort card/permanent display name for a game object."""
         grp_id = obj.get("grpId") or obj.get("overlayGrpId") or obj.get("objectSourceGrpId")
+        if obj.get("type") == "GameObjectType_Ability" and obj.get("objectSourceGrpId"):
+            # An ability's grpId is the ability itself ("Card #168506" for
+            # Kaito's ninjutsu): name the card it comes from instead.
+            grp_id = obj.get("objectSourceGrpId")
         if grp_id:
             name = self._refresh_fallback_name_text(self.card_db.get_card_name(grp_id))
             if name:

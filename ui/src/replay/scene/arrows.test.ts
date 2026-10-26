@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { OPPONENT, PLAYER, makeSampleStream } from '../fixtures/sampleStream';
 import { StreamBuilder, card } from '../fixtures/streamBuilder';
+import { makeTokenStream } from '../fixtures/tokenStream';
 import { layoutBoard } from '../layout';
 import { SLEEVE_COLORS } from '../prefs';
 import { buildTimeline, stateAt } from '../reducer';
 import type { ReplayEvent } from '../types';
 import { arrowBend, arrowControlPoint, arrowShape, neonColors, sceneArrowShape, sceneArrows, seatAnchor, sleeveNeon } from './arrows';
-import { stackExit, stackView } from './stackView';
+import { foldResolved, groupStack, stackExit, stackView } from './stackView';
+import type { StackViewItem } from './stackView';
 
 const stream = makeSampleStream();
 const timeline = buildTimeline(stream);
@@ -182,8 +184,38 @@ describe('stack view', () => {
         top: true,
         targets: 0,
         targeted: false,
+        count: 1,
+        stackIds: ['s5'],
+        resolved: 0,
       },
     ]);
+  });
+
+  it('groups identical abilities next to each other and folds a copy that just resolved', () => {
+    const view = (stackId: string, extra: Partial<StackViewItem> = {}): StackViewItem => ({
+      stackId,
+      card: 'a1',
+      name: 'Belladonna Took',
+      kind: 'trigger',
+      text: 'Whenever a token you control enters',
+      controller: PLAYER,
+      top: false,
+      targets: 0,
+      targeted: false,
+      count: 1,
+      stackIds: [stackId],
+      resolved: 0,
+      ...extra,
+    });
+    const grouped = groupStack([view('s3', { top: true }), view('s2'), view('s9', { targets: 1 }), view('s1')]);
+    expect(grouped.map((item) => [item.stackId, item.count, item.stackIds, item.top])).toEqual([
+      ['s3', 2, ['s3', 's2'], true],
+      ['s9', 1, ['s9'], false],
+      ['s1', 1, ['s1'], false],
+    ]);
+    const { items, exits } = foldResolved(grouped, [{ ...view('s4'), exit: 'resolved' as const }, { ...view('s8'), exit: 'countered' as const }]);
+    expect(items[0]).toMatchObject({ resolved: 1, stackIds: ['s3', 's2', 's4'] });
+    expect(exits.map((item) => item.stackId)).toEqual(['s8']);
   });
 
   it('tells resolved, countered and fizzled exits apart', () => {
@@ -193,5 +225,45 @@ describe('stack view', () => {
     expect(stackExit(stateAt(timeline, fizzled.seq), 's6')).toBe('fizzled');
     const resolved = stream.events.find((e) => e.kind === 'stack_resolve' && e.stack_id === 's5')!;
     expect(stackExit(stateAt(timeline, resolved.seq), 's5')).toBe('resolved');
+  });
+});
+
+describe('attacks on a planeswalker', () => {
+  it('point at the planeswalker, not the player, at full brightness', () => {
+    const state = buildTimeline(makeTokenStream()).final;
+    const arrows = sceneArrows(state, layoutBoard(state, { ...OPTS, playerSeat: 1 }));
+    expect(arrows.some((a) => a.tone === 'attack')).toBe(false);
+    const attacks = arrows.filter((a) => a.tone === 'strike');
+    expect(attacks.map((a) => a.to)).toEqual([
+      { kind: 'obj', obj: 'pw' },
+      { kind: 'obj', obj: 'pw' },
+      { kind: 'obj', obj: 'pw' },
+      { kind: 'obj', obj: 'pw' },
+    ]);
+  });
+});
+
+describe('effect arrow tones', () => {
+  it('are dim on the acting seat\u2019s own permanents and bright on the opponent\u2019s', () => {
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    b.turnStart(1, 1);
+    b.move('src', 'a1', 'limbo', 'battlefield', 1, 'put');
+    b.move('mine', 'a2', 'limbo', 'battlefield', 1, 'put');
+    b.move('theirs', 'a2', 'limbo', 'battlefield', 2, 'put');
+    b.add('stack_push', { stack_id: 's1', obj: 'src', card: 'a1', stack_kind: 'trigger', controller: 1, text: 'Put counters', targets: [] });
+    b.add('stack_resolve', { stack_id: 's1' });
+    b.add('counter', { obj: 'mine', type: '+1/+1', delta: 1, total: 1 });
+    b.add('counter', { obj: 'theirs', type: '+1/+1', delta: 1, total: 1 });
+    const stream = b.build(
+      { a1: card('Source', 'Creature', { power: '1', toughness: '1' }), a2: card('Bear', 'Creature', { power: '2', toughness: '2' }) },
+      { playerSeat: 1 },
+    );
+    const state = buildTimeline(stream).final;
+    const tones = Object.fromEntries(
+      sceneArrows(state, layoutBoard(state, { ...OPTS, playerSeat: 1 })).map((a) => [a.id, a.tone]),
+    );
+    expect(tones['effect:mine']).toBe('support');
+    expect(tones['effect:theirs']).toBe('target');
   });
 });
