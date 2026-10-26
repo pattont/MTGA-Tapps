@@ -22,6 +22,9 @@
   store price downloads (about 120 MB a day at most, a summary of about 16 MB
   kept). Turning it off hides the button everywhere, stops downloads and
   deletes the saved price lists.
+- Mana Pool links now carry Tapps Tracker's referral code, so choosing Mana
+  Pool shows a note that Tapps Tracker may earn a commission, at no cost to
+  you. The other stores still open plain links.
 
 ### Replay
 
@@ -76,6 +79,8 @@
 
 ### Dashboard
 
+- A pink Buy me a coffee button sits below Deck Manager in the sidebar, for anyone who
+  wants to support the tracker. It opens the Buy Me a Coffee page in your browser.
 - The Sessions table has a Play / Draw column before Win Rate, counting the games you
   were on the play (teal) and on the draw (purple).
 - A session now also ends after a long break: a match that starts four hours or more

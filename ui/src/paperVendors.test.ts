@@ -14,12 +14,19 @@ const link = (id: string, setCodes = false) => {
   return new URL(built.url);
 };
 
+const shippedAffiliate = { ...AFFILIATE };
+
 afterEach(() => {
-  AFFILIATE.tcgplayer = '';
-  AFFILIATE.cardkingdom = '';
-  AFFILIATE.manapool = '';
+  Object.assign(AFFILIATE, shippedAffiliate);
   vi.unstubAllGlobals();
 });
+
+/** Mana Pool's add-deck encoding: URL-safe base64, no padding. */
+const decodeDeck = (value: string) => {
+  const standard = value.replace(/-/gu, '+').replace(/_/gu, '/');
+  const bytes = Uint8Array.from(atob(standard), (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+};
 
 describe('paper store requests', () => {
   it('lists every store once, alphabetically, with its bundled icon', () => {
@@ -55,10 +62,29 @@ describe('paper store requests', () => {
 
     const pool = link('manapool');
     expect(pool.origin + pool.pathname).toBe('https://manapool.com/add-deck');
-    expect(atob(pool.searchParams.get('deck')!)).toBe('4 Fable of the Mirror-Breaker\n2 Lightning Bolt');
-    expect(pool.searchParams.has('ref')).toBe(false);
-    AFFILIATE.manapool = 'TAPPS';
-    expect(link('manapool').searchParams.get('ref')).toBe('TAPPS');
+    expect(decodeDeck(pool.searchParams.get('deck')!)).toBe('4 Fable of the Mirror-Breaker\n2 Lightning Bolt');
+    // The shipped referral code rides along as `ref`, after the deck.
+    expect([...pool.searchParams.keys()]).toEqual(['deck', 'ref']);
+    expect(pool.searchParams.get('ref')).toBe('tappstracker');
+    AFFILIATE.manapool = '';
+    expect(link('manapool').searchParams.has('ref')).toBe(false);
+  });
+
+  it('encodes Mana Pool decks the way its affiliate instructions show', () => {
+    const deck = (cards: CartLine[]) => {
+      const built = vendorById('manapool')!.buildRequest(cards, { setCodes: false });
+      if (built.kind !== 'link') throw new Error('expected a link');
+      return new URL(built.url).searchParams.get('deck');
+    };
+    const card = (name: string, quantity: number): CartLine => ({ name, quantity, set: null, collector_number: null });
+    // Their example: "4 Plains [M20] 261" -> deck=NCBQbGFpbnMgW00yMF0gMjYx (a plain name here).
+    expect(deck([card('Plains [M20] 261', 4)])).toBe('NCBQbGFpbnMgW00yMF0gMjYx');
+    // Standard base64 would be ...YWw/CjQg...IEJvbHQ= : "/" becomes "_" and padding goes.
+    expect(deck([card('Question Elemental?', 1), card('Lightning Bolt', 4)])).toBe(
+      'MSBRdWVzdGlvbiBFbGVtZW50YWw_CjQgTGlnaHRuaW5nIEJvbHQ',
+    );
+    // Non-ASCII names survive as UTF-8.
+    expect(decodeDeck(deck([card('Jötun Grunt', 2)])!)).toBe('2 Jötun Grunt');
   });
 
   it('copies the list, then opens stores that cannot take it in a link', async () => {

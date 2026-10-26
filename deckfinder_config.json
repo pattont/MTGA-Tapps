@@ -23,12 +23,12 @@
       "ShortName": "Malone"
     },
     {
-      "name": "ManaMan",
-      "short_name": "Mana"
+      "Name": "ManaMan",
+      "ShortName": "Mana"
     },
     {
-      "name": "JayVillain",
-      "short_name": "Jay"
+      "Name": "JayVillain",
+      "ShortName": "Jay"
     }
   ],
   "TcgplayerCreators": [

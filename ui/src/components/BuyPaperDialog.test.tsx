@@ -182,6 +182,24 @@ describe('BuyPaperDialog', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Opened Card Kingdom in a new tab.');
     expect(JSON.parse(localStorage.getItem('mtga-tracker-buy-paper-v1')!).vendor).toBe('cardkingdom');
   });
+
+  it('opens Mana Pool with the referral code and says so only there', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    render(<BuyPaperDialog sections={sections} onClose={() => {}} returnFocus={null} />);
+    await screen.findByText('Cards');
+    const disclosure = /may earn a commission/u;
+    expect(screen.queryByText(disclosure)).not.toBeInTheDocument();
+
+    fireEvent.click(within(screen.getByRole('list', { name: 'Store' })).getByRole('button', { name: /^Mana Pool/u }));
+    expect(screen.getByText(disclosure)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Buy @ Mana Pool' }));
+
+    await waitFor(() => expect(open).toHaveBeenCalled());
+    const url = new URL(String(open.mock.calls[0][0]));
+    expect(url.origin + url.pathname).toBe('https://manapool.com/add-deck');
+    expect(url.searchParams.get('ref')).toBe('tappstracker');
+    expect(atob(url.searchParams.get('deck')!.replace(/-/gu, '+').replace(/_/gu, '/'))).toBe('4 Opt\n20 Island\n3 Negate');
+  });
 });
 
 describe('Buy on Paper setting', () => {

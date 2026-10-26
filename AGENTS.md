@@ -171,6 +171,9 @@ Primary code paths:
   (full word on hover and for screen readers) to preserve space for deck names.
   A tiny teal Play / purple Draw `Badge` (`participants.went_first`) follows the deck
   name; the name truncates first and unknown turn order shows nothing.
+- `ui/src/supportLink.ts`: the Buy Me a Coffee username for the pink (`--coffee`) sidebar
+  tile below Deck Manager (expanded and collapsed). Empty hides the tile; it opens
+  `buymeacoffee.com/<username>` in a new tab and is covered by `ui/src/SupportLink.test.tsx`.
 - `src/mtga_tracker/settings.py`: shared `settings.json` — top level of the repo next to
   `config.py` for source runs, per-user data dir for frozen builds (legacy `data/settings.json`
   migrates automatically). Startup preferences are stored in its `startup` section.

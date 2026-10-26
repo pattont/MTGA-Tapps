@@ -9,9 +9,9 @@
  * coming soon and they can't be chosen. Their copy-and-open handoff stays here
  * for when a way to price them turns up.
  *
- * Affiliate codes are not set up yet. Fill in AFFILIATE once an account is
- * approved: an empty value sends a plain link, and the dialog only shows its
- * commission disclosure for a store whose code is set.
+ * Fill in AFFILIATE once a store approves an account (Mana Pool has): an
+ * empty value sends a plain link, and the dialog only shows its commission
+ * disclosure for a store whose code is set.
  */
 
 import type { CartLine } from './paperDeck';
@@ -29,7 +29,7 @@ export const AFFILIATE = {
   /** Card Kingdom partner code (their in-house program), sent as `partner`. */
   cardkingdom: '',
   /** Mana Pool referral code (affiliates.manapool.com), sent as `ref`. */
-  manapool: '',
+  manapool: 'tappstracker',
   /** No affiliate programs found for these two yet. */
   starcitygames: '',
   coolstuffinc: '',
@@ -84,12 +84,15 @@ function withQuery(base: string, params: Record<string, string>): string {
   return url.toString();
 }
 
-/** UTF-8 safe base64, as Mana Pool's add-deck link expects. */
-function base64Utf8(text: string): string {
+/**
+ * UTF-8 text as URL-safe base64 without padding (`-` and `_` for `+` and `/`),
+ * which is what Mana Pool's affiliate instructions say add-deck expects.
+ */
+function base64Url(text: string): string {
   const bytes = new TextEncoder().encode(text);
   let binary = '';
   bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
-  return btoa(binary);
+  return btoa(binary).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '');
 }
 
 const ICON_BASE = `${import.meta.env.BASE_URL}stores/`;
@@ -136,8 +139,8 @@ export const PAPER_VENDORS: PaperVendor[] = [
       return {
         kind: 'link',
         url: withQuery('https://manapool.com/add-deck', {
+          deck: base64Url(plainLines(lines).join('\n')),
           ref: AFFILIATE.manapool,
-          deck: base64Utf8(plainLines(lines).join('\n')),
         }),
       };
     },

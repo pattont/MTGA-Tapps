@@ -132,7 +132,7 @@ EDHREC and Cube Cobra send today:
 | --- | --- | --- |
 | TCGplayer | `store.tcgplayer.com/massentry?c=` with entries joined by `\|\|`. With set codes on, each entry reads `qty Name [SET] number`. | Impact tracking link with the Mass Entry URL as `u` |
 | Card Kingdom | `cardkingdom.com/builder?c=`, one card per line | `partner` (in-house program) |
-| Mana Pool | `manapool.com/add-deck?deck=`, the list as UTF-8 base64 | `ref` |
+| Mana Pool | `manapool.com/add-deck?deck=`, the list as UTF-8, URL-safe base64 (`-` and `_` for `+` and `/`, no `=` padding), per Mana Pool's affiliate instructions. They also accept `qty Name [SET] number`; we don't send it, because the printing we know is TCGplayer's and Mana Pool's cart could then cost more than its total here. | `ref`, set to `tappstracker` |
 | StarCityGames | Coming soon. Kept for later: copy the list and open the deck builder for pasting | none found |
 | CoolStuffInc | Coming soon. Kept for later: copy the list and open the deck builder for pasting | none found |
 
@@ -154,7 +154,8 @@ shows a commission disclosure for that store.
   exact IDs from the Impact dashboard.
 - **Card Kingdom**: there's no public signup page; ask Card Kingdom for a
   partner code.
-- **Mana Pool**: apply at [affiliates.manapool.com](https://affiliates.manapool.com).
+- **Mana Pool**: approved. The referral code `tappstracker` is set and sent as
+  `ref`. Apply for others at [affiliates.manapool.com](https://affiliates.manapool.com).
 
 The affiliate code is in the page source, so anyone running a build can see it.
 That's normal for affiliate links.
