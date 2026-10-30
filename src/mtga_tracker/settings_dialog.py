@@ -27,10 +27,9 @@ from PyQt6.QtWidgets import (
 from . import deck_llm
 
 #: (internal name, display label, settings key for the key, settings key for the model, default model)
-_PROVIDERS = (
-    ("openai", "OpenAI", "CHATGPT_API_KEY", "DECK_LLM_OPENAI_MODEL", "gpt-4o-mini"),
-    ("claude", "Anthropic (Claude)", "CLAUDE_API_KEY", "DECK_LLM_CLAUDE_MODEL", "claude-3-5-haiku-20241022"),
-    ("gemini", "Gemini", "GEMINI_API_KEY", "DECK_LLM_GEMINI_MODEL", "gemini-2.0-flash"),
+_PROVIDERS = tuple(
+    (p.key, p.label, p.api_key_setting, p.model_setting, p.default_model)
+    for p in deck_llm.PROVIDERS
 )
 
 #: (config key, tab label) for the Deck Finder creator lists.
@@ -114,7 +113,7 @@ class DeckAISettingsDialog(QDialog):
         layout.addLayout(form)
 
         note = QLabel(
-            "OpenAI, Anthropic, and Gemini keys are supported. The key is "
+            "OpenAI, Anthropic, Google, and xAI keys are supported. The key is "
             "stored in settings.json (top level of the tracker folder, next "
             "to config.py) and is only ever sent to the provider you choose."
         )
@@ -129,13 +128,13 @@ class DeckAISettingsDialog(QDialog):
         self._keys: Dict[str, str] = {}
         self._models: Dict[str, str] = {}
         stored = deck_llm.load_settings()
-        for internal, _label, key_name, model_name, _default in _PROVIDERS:
+        for internal, _label, key_name, _model_name, _default in _PROVIDERS:
             # Prefill from settings.json first, then whatever config.py/env
             # currently resolves to, so existing setups show up as-is.
             self._keys[internal] = str(
                 stored.get(key_name) or deck_llm._get_api_key(internal) or ""
             )
-            self._models[internal] = str(stored.get(model_name) or deck_llm._get_model(internal) or "")
+            self._models[internal] = deck_llm.stored_model(internal)
 
         self.enabled_box.setChecked(deck_llm.is_deck_llm_enabled())
         current = deck_llm._get_provider()
@@ -244,12 +243,12 @@ class DeckAISettingsDialog(QDialog):
     def _save(self) -> None:
         self._stash_current_fields()
         index = self.provider_combo.currentIndex()
-        internal, _label, key_name, model_name, default_model = _PROVIDERS[index]
+        internal, _label, key_name, model_name, _default = _PROVIDERS[index]
         values: Dict[str, object] = {
             "DECK_LLM_ENABLED": self.enabled_box.isChecked(),
             "DECK_LLM_PROVIDER": internal,
             key_name: self._keys.get(internal, ""),
-            model_name: self._models.get(internal, "") or default_model,
+            model_name: self._models.get(internal, ""),
         }
         # Keep edits the user made to non-selected providers too.
         for other, _l, other_key, other_model, _d in _PROVIDERS:

@@ -3,15 +3,20 @@ import { BackupCard } from './BackupCard';
 import {
   collectionDownloadUrl,
   fetchCollectionExportJob,
+  fetchDeckAiModels,
   fetchTrackerSettings,
   saveDeckAiSettings,
   saveDeckFinderCreators,
+  saveSessionSettings,
   saveStartupSettings,
   startCollectionExport,
   setOverlayEnabled,
   type CollectionExportFormat,
   type CollectionExportJob,
   type OverlaySettings,
+  type BuyOnPaperSettings,
+  type SessionSettings,
+  type DeckAiModel,
   type DeckAiSettings,
   type DeckFinderCreator,
   type DeckFinderCreatorSettings,
@@ -31,6 +36,7 @@ import {
   type UpdateSettingsChange,
   type UpdateStatus,
 } from '../updateStatus';
+import { saveBuyOnPaperEnabled } from '../buyOnPaperSetting';
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -300,6 +306,8 @@ export function SettingsPage() {
   const [overlay, setOverlay] = useState<OverlaySettings | null>(null);
   // undefined while loading; null when the tracker predates the updater.
   const [updates, setUpdates] = useState<UpdateSettings | null | undefined>(undefined);
+  const [buyOnPaper, setBuyOnPaper] = useState<BuyOnPaperSettings | null>(null);
+  const [sessions, setSessions] = useState<SessionSettings | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -313,6 +321,8 @@ export function SettingsPage() {
           setStartup(settings.startup);
           setOverlay(settings.overlay ?? null);
           setUpdates(settings.updates ?? null);
+          setBuyOnPaper(settings.buy_on_paper ?? { enabled: true, cache_bytes: 0 });
+          setSessions(settings.sessions ?? null);
         }
       })
       .catch((exc: unknown) => {
@@ -359,6 +369,16 @@ export function SettingsPage() {
         )}
       </Section>
 
+      {sessions ? (
+        <Section
+          id="settings-sessions"
+          title="Sessions"
+          description="A session is one sitting of play: its record shows on the Live Scoreboard and in the Overview's Sessions table."
+        >
+          <SessionsForm initial={sessions} />
+        </Section>
+      ) : null}
+
       <Section
         id="settings-updates"
         title="Updates"
@@ -390,6 +410,22 @@ export function SettingsPage() {
           </p>
         ) : (
           <OverlayForm initial={overlay} platform={platform} />
+        )}
+      </Section>
+
+      <Section
+        id="settings-buy-on-paper"
+        title="Buy on Paper"
+        description="Price a deck in paper and open it at a card store, from Deck Finder, Deck Manager and deck pages."
+      >
+        {error ? (
+          <p className="empty-state deckfinder-state">{error}</p>
+        ) : buyOnPaper === null ? (
+          <p className="state-panel deckfinder-state" role="status" aria-busy="true">
+            Loading...
+          </p>
+        ) : (
+          <BuyOnPaperForm initial={buyOnPaper} />
         )}
       </Section>
 
@@ -890,6 +926,134 @@ function OverlayForm({
   );
 }
 
+function formatMegabytes(bytes: number): string {
+  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function sessionBreakLabel(hours: number): string {
+  if (hours === 0) return 'Only when the app opens';
+  return `After ${hours} hour${hours === 1 ? '' : 's'} without a game`;
+}
+
+function SessionsForm({ initial }: { initial: SessionSettings }) {
+  const [settings, setSettings] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function update(hours: number) {
+    setBusy(true);
+    setMessage(null);
+    setError(null);
+    try {
+      setSettings(await saveSessionSettings(hours));
+      setMessage('Saved. It applies from the next match.');
+    } catch (exc: unknown) {
+      setError(exc instanceof Error ? exc.message : 'The session setting could not be saved');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="settings-form">
+      <label className="settings-field">
+        <span>Start a new session</span>
+        <select disabled={busy} value={settings.break_hours} onChange={(event) => void update(Number(event.target.value))}>
+          {settings.choices.map((hours) => (
+            <option key={hours} value={hours}>
+              {sessionBreakLabel(hours)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="settings-hint">
+        Opening the app always starts a new session. With a break set, a match that starts that long
+        after your last game starts one too, so leaving the app running for days doesn't pile every
+        night into one record. A Best-of-3 match always stays in one session.
+      </p>
+      {message ? (
+        <p className="backup-note backup-note-done startup-save-status" role="status">
+          {message}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="collection-export-status collection-export-fail" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function BuyOnPaperForm({ initial }: { initial: BuyOnPaperSettings }) {
+  const [settings, setSettings] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function setEnabled(enabled: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      setSettings(await saveBuyOnPaperEnabled(enabled));
+    } catch (exc: unknown) {
+      setError(exc instanceof Error ? exc.message : 'Buy on Paper could not be changed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const stored = settings.cache_bytes > 0 ? ` Saved price lists use ${formatMegabytes(settings.cache_bytes)}.` : '';
+  return (
+    <div className={`overlay-card overlay-card-${settings.enabled ? 'on' : 'off'}`}>
+      <div className="overlay-card-main">
+        <span aria-hidden="true" className="overlay-card-dot" />
+        <div className="overlay-card-text">
+          <p className="overlay-card-title" role="status">
+            {settings.enabled ? 'Buy on Paper is on' : 'Buy on Paper is off'}
+          </p>
+          <p className="overlay-card-detail">
+            {settings.enabled
+              ? <>Decks show a Buy on Paper button. To price cards, the tracker downloads Card Kingdom’s and
+                Mana Pool’s public price lists (about 120 MB together) the first time you open it each day,
+                and keeps a small summary in its data folder. TCGplayer prices come from Scryfall.{stored}</>
+              : 'No button and no price downloads. The saved price lists have been deleted.'}
+          </p>
+        </div>
+        <div className="overlay-card-actions">
+          {settings.enabled ? (
+            <button aria-label="Turn off Buy on Paper" className="deck-neutral-button" disabled={busy} type="button" onClick={() => void setEnabled(false)}>
+              Turn off
+            </button>
+          ) : (
+            <button aria-label="Turn on Buy on Paper" className="deck-export-button" disabled={busy} type="button" onClick={() => void setEnabled(true)}>
+              Turn on
+            </button>
+          )}
+        </div>
+      </div>
+      {settings.enabled ? (
+        <p className="overlay-card-keys buy-paper-settings-note">
+          Turning it off hides the button, stops any download in progress and deletes the saved price lists.
+        </p>
+      ) : null}
+      {error ? (
+        <p className="collection-export-status collection-export-fail overlay-card-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+interface ModelList {
+  status: 'loading' | 'ready' | 'error';
+  /** The key the list was loaded with. */
+  key: string;
+  models: DeckAiModel[];
+  error?: string;
+}
+
 function DeckAiForm({ initial }: { initial: DeckAiSettings }) {
   const [enabled, setEnabled] = useState(initial.enabled);
   const [provider, setProvider] = useState(initial.provider);
@@ -901,8 +1065,76 @@ function DeckAiForm({ initial }: { initial: DeckAiSettings }) {
   );
   const [showKey, setShowKey] = useState(false);
   const [status, setStatus] = useState<SaveStatus>('idle');
+  // The saved provider's list starts loading as the form opens.
+  const [modelLists, setModelLists] = useState<Record<string, ModelList>>(() => {
+    const savedKey = (keys[initial.provider] ?? '').trim();
+    return savedKey ? { [initial.provider]: { status: 'loading', key: savedKey, models: [] } } : {};
+  });
+  const latestRequest = useRef<Record<string, number>>({});
 
   const active = initial.providers.find((entry) => entry.key === provider) ?? initial.providers[0];
+  const list = modelLists[provider];
+  const key = (keys[provider] ?? '').trim();
+  const model = models[provider] ?? '';
+
+  function requestModels(target: string, apiKey: string) {
+    const request = (latestRequest.current[target] ?? 0) + 1;
+    latestRequest.current[target] = request;
+    fetchDeckAiModels(target, apiKey)
+      .then((loaded) => {
+        if (latestRequest.current[target] !== request) return;
+        setModelLists((current) => ({
+          ...current,
+          [target]: { status: 'ready', key: apiKey, models: loaded },
+        }));
+      })
+      .catch((reason: unknown) => {
+        if (latestRequest.current[target] !== request) return;
+        setModelLists((current) => ({
+          ...current,
+          [target]: {
+            status: 'error',
+            key: apiKey,
+            models: [],
+            error: reason instanceof Error ? reason.message : String(reason),
+          },
+        }));
+      });
+  }
+
+  function loadModels(target: string, apiKey: string) {
+    setModelLists((current) => ({
+      ...current,
+      [target]: { status: 'loading', key: apiKey, models: current[target]?.models ?? [] },
+    }));
+    requestModels(target, apiKey);
+  }
+
+  useEffect(() => {
+    const saved = initial.providers.find((entry) => entry.key === initial.provider);
+    const savedKey = (saved?.api_key ?? '').trim();
+    if (savedKey) {
+      requestModels(initial.provider, savedKey);
+    }
+    // Once, for the saved provider; the state above already says loading.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // A provider with a key loads its list the first time it is picked; a key
+  // typed in later loads it when the field loses focus.
+  function changeProvider(next: string) {
+    setProvider(next);
+    const nextKey = (keys[next] ?? '').trim();
+    if (nextKey && !modelLists[next]) {
+      loadModels(next, nextKey);
+    }
+  }
+
+  function keyCommitted() {
+    if (key && list?.key !== key) {
+      loadModels(provider, key);
+    }
+  }
 
   async function save() {
     setStatus('saving');
@@ -914,6 +1146,11 @@ function DeckAiForm({ initial }: { initial: DeckAiSettings }) {
       setStatus('error');
     }
   }
+
+  const setModel = (value: string) =>
+    setModels((current) => ({ ...current, [provider]: value }));
+  const showList = list !== undefined && list.models.length > 0 && list.status !== 'error';
+  const listed = new Set(list?.models.map((entry) => entry.id) ?? []);
 
   return (
     <div className="settings-form">
@@ -928,7 +1165,7 @@ function DeckAiForm({ initial }: { initial: DeckAiSettings }) {
 
       <label className="settings-field">
         <span>Provider</span>
-        <select value={provider} onChange={(event) => setProvider(event.target.value)}>
+        <select value={provider} onChange={(event) => changeProvider(event.target.value)}>
           {initial.providers.map((entry) => (
             <option key={entry.key} value={entry.key}>
               {entry.label}
@@ -946,6 +1183,7 @@ function DeckAiForm({ initial }: { initial: DeckAiSettings }) {
             spellCheck={false}
             type={showKey ? 'text' : 'password'}
             value={keys[provider] ?? ''}
+            onBlur={keyCommitted}
             onChange={(event) =>
               setKeys((current) => ({ ...current, [provider]: event.target.value }))
             }
@@ -962,16 +1200,57 @@ function DeckAiForm({ initial }: { initial: DeckAiSettings }) {
 
       <label className="settings-field">
         <span>Model</span>
-        <input
-          placeholder={active?.default_model ?? ''}
-          spellCheck={false}
-          type="text"
-          value={models[provider] ?? ''}
-          onChange={(event) =>
-            setModels((current) => ({ ...current, [provider]: event.target.value }))
-          }
-        />
+        <div className="settings-key-row">
+          {showList ? (
+            <select value={model} onChange={(event) => setModel(event.target.value)}>
+              <option value="">Default ({active?.default_model})</option>
+              {model && !listed.has(model) ? (
+                <option value={model}>{model} (not in your list)</option>
+              ) : null}
+              {list.models.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.label === entry.id ? entry.id : `${entry.label} (${entry.id})`}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              placeholder={active?.default_model ?? ''}
+              spellCheck={false}
+              type="text"
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+            />
+          )}
+          <button
+            className="quick-filter"
+            disabled={!key || list?.status === 'loading'}
+            type="button"
+            onClick={() => loadModels(provider, key)}
+          >
+            {list?.status === 'loading' ? 'Loading…' : showList ? 'Refresh' : 'Load models'}
+          </button>
+        </div>
       </label>
+      <p className="settings-hint" role="status">
+        {list?.status === 'error'
+          ? `${list.error} Type a model name instead, or `
+          : list?.status === 'ready' && list.models.length === 0
+            ? `${active?.label} listed no models for this key. Type a model name, or `
+            : showList
+              ? `Models your key can use, from ${active?.label}. Compare them on `
+              : key
+                ? 'Leave blank for the default. Compare models on '
+                : 'Enter an API key to choose from your models, or compare them on '}
+        {active?.models_url ? (
+          <a href={active.models_url} rel="noreferrer" target="_blank">
+            {active.label}'s model page
+          </a>
+        ) : (
+          "the provider's model page"
+        )}
+        .
+      </p>
 
       <div>
         <button

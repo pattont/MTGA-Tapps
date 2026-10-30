@@ -6,6 +6,7 @@ import {
   importManagedDeck, updateManagedDeck, deleteManagedDeck, removeManagedDecks, type DeckLibrary, type ManagedDeckDetail,
   fetchNativeDeckStatus, startNativeDeckJob, fetchNativeDeckJob, cancelNativeDeckJob, addDeckToArena, type NativeDeckStatus, type NativeDeckAction, type ManagedDeck,
 } from '../deckManagerApi';
+import { usePageVisible } from '../usePageVisible';
 import { formatDateTime } from '../format';
 import { DeckVisual } from './DeckVisual';
 import { DeckTransferProgress } from './DeckTransferProgress';
@@ -13,6 +14,8 @@ import { DeckModal } from './DeckModal';
 import { DeckDetail } from './DeckDetail';
 import { ColorPips } from './ColorPips';
 import { DeckManagerStatus } from './DeckManagerStatus';
+import { BuyPaperButton, BuyPaperDialog } from './BuyPaperDialog';
+import { managedDeckSections } from '../paperDeck';
 import { loadLabel } from '../deckManagerLabels';
 import { DECK_FORMATS, deckFormatLabel } from '../deckFormatLabel';
 
@@ -87,6 +90,7 @@ export function DeckManagerPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [revision, setRevision] = useState<string | undefined>();
   const [modal, setModal] = useState<ModalView | null>(null);
+  const [buyingOpener, setBuyingOpener] = useState<HTMLElement | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [query, setQuery] = useState('');
   const [view, setView] = useState<'saved' | 'trash' | 'arena'>('saved');
@@ -149,6 +153,7 @@ export function DeckManagerPage() {
   const selectedDeck = library?.decks.find((deck) => deck.id === selected);
   const activeDetail = detail?.id === selected && (!revision || detail.revision_id === revision) ? detail : null;
   const editingRevision = modal === 'revision';
+  const pageVisible = usePageVisible();
   const arenaDecks = sortDecks((native?.decks ?? []).filter((deck) => `${deck.name} ${deck.format_name} ${deckFormatLabel(deck.format_name)}`.toLowerCase().includes(query.toLowerCase())
     && (statusFilter === 'all' || arenaStatuses(deck.id).includes(statusFilter))), activeSort);
   const checkedDecks = (library?.decks ?? []).filter((deck) => checked.includes(deck.id));
@@ -166,6 +171,7 @@ export function DeckManagerPage() {
   }, [refresh]);
 
   useEffect(() => {
+    if (!pageVisible) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function readStatus() {
@@ -179,7 +185,7 @@ export function DeckManagerPage() {
     }
     void readStatus();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [refresh]);
+  }, [refresh, pageVisible]);
 
   useEffect(() => {
     if (!nativeJob) return;
@@ -482,6 +488,7 @@ export function DeckManagerPage() {
           closeOnBackdrop={modal !== 'import' && modal !== 'revision'}
           headerActions={modal === 'deck' && activeDetail ? <>
             <button disabled={busy} title="Copy this list in MTG Arena import format" onClick={() => void action(() => exportDeck(false))}><Copy size={16} /> Copy deck list</button>
+            <BuyPaperButton className="deck-manager-buy-paper" disabled={!activeDetail.deck.cards.length} onOpen={setBuyingOpener} />
             {native?.available && !activeDetail.trashed_at && !inArena(activeDetail) ? activeDetail.native_restorable
               ? <button className="deck-manager-copy" disabled={busy || !native.connected || !native.deck_screen_open || native.limit_reached !== false || Boolean(native.pending_transfers?.length)} onClick={() => void action(() => nativeAction('restore', [activeDetail.id]))}><ArrowUpFromLine size={16} /> Restore to Arena</button>
               : <button className="deck-manager-copy" disabled={busy || native.in_game || native.limit_reached === true || Boolean(native.pending_transfers?.length)} title="Adds this list with Arena’s importer. Arena must be on Decks outside a match." onClick={() => void action(() => addSavedToArena(activeDetail))}><ArrowUpFromLine size={16} /> Add to Arena</button>
@@ -592,6 +599,10 @@ export function DeckManagerPage() {
             </form>
           )}
         </DeckModal>
+      ) : null}
+      {buyingOpener && modal === 'deck' && activeDetail ? (
+        <BuyPaperDialog sections={managedDeckSections(activeDetail)}
+          onClose={() => setBuyingOpener(null)} returnFocus={buyingOpener} />
       ) : null}
     </section>
   );

@@ -1,6 +1,6 @@
 """Replay capture, part 2: facts the console never prints.
 
-Taps, P/T changes, opening hands, mulligans, hidden draws, counters, tokens,
+Taps, summoning sickness, P/T changes, opening hands, mulligans, hidden draws, counters, tokens,
 attachments, shuffles, reveals and the combat facts (attack, block, damage).
 Each helper is called by the tracker mixin that already handles the payload
 (no second pass over a message). Types and the row buffer live in
@@ -60,6 +60,7 @@ class ReplayEventsMixin(ReplayCaptureMixin):
             if zone_id is not None:
                 state.tapped.discard(root)
                 state.pt.pop(root, None)
+                state.sick.discard(root)
             return
         seat = self._normalize_seat_id(obj.get("controllerSeatId") or obj.get("ownerSeatId"))
         tapped = bool(obj.get("isTapped"))
@@ -70,6 +71,16 @@ class ReplayEventsMixin(ReplayCaptureMixin):
             else:
                 state.tapped.discard(root)
                 state.pending_untaps.setdefault(seat, []).append(root)
+        # Arena sets this only on creatures that can't attack or use {T} yet;
+        # it already accounts for haste, printed or granted.
+        sick = bool(obj.get("hasSummoningSickness"))
+        if sick != (root in state.sick):
+            if sick:
+                state.sick.add(root)
+                state.pending_sick.setdefault(seat, []).append(root)
+            else:
+                state.sick.discard(root)
+                state.pending_unsick.setdefault(seat, []).append(root)
         if "power" in obj or "toughness" in obj:
             power = stat_value(obj, "power")
             toughness = stat_value(obj, "toughness")
@@ -83,7 +94,7 @@ class ReplayEventsMixin(ReplayCaptureMixin):
 
     @replay_safe()
     def _replay_flush_object_changes(self) -> None:
-        """Write the message's batched tap/untap and P/T rows."""
+        """Write the message's batched tap/untap, summoning sickness and P/T rows."""
         state = getattr(self, "_replay_capture_state", None)
         if state is None:
             return
@@ -92,11 +103,22 @@ class ReplayEventsMixin(ReplayCaptureMixin):
             state.observed = []
             for instance_id, obj in observed:
                 self._replay_diff_object(state, instance_id, obj)
-        if not (state.pending_taps or state.pending_untaps or state.pending_pt):
+        if not (
+            state.pending_taps
+            or state.pending_untaps
+            or state.pending_pt
+            or state.pending_sick
+            or state.pending_unsick
+        ):
             return
         capturing = self._replay_capturing() and (self.game_state.turn_number or 0) >= 1
         if capturing:
-            for kind, pending in (("untap", state.pending_untaps), ("tap", state.pending_taps)):
+            for kind, pending in (
+                ("untap", state.pending_untaps),
+                ("tap", state.pending_taps),
+                ("unsick", state.pending_unsick),
+                ("sick", state.pending_sick),
+            ):
                 for seat, ids in pending.items():
                     self._record_silent_event(
                         ReplayFact(
@@ -116,6 +138,8 @@ class ReplayEventsMixin(ReplayCaptureMixin):
         state.pending_taps = {}
         state.pending_untaps = {}
         state.pending_pt = {}
+        state.pending_sick = {}
+        state.pending_unsick = {}
 
     # -- opening hand / mulligans ------------------------------------------
     @replay_safe()

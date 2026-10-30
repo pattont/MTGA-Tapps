@@ -4,7 +4,7 @@
  * it was playing.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent, PointerEvent } from 'react';
+import type { DragEvent, KeyboardEvent, PointerEvent } from 'react';
 import type { PlaybackClock, PlaybackSnapshot } from '../player';
 import { fractionOfIndex, indexAtFraction, openingEndIndex, scrubSegments, visibleTurnLabels } from '../scrub';
 import type { ReplayStream } from '../types';
@@ -47,11 +47,15 @@ export function ScrubBar({ stream, clock, snapshot }: ScrubBarProps) {
   };
   const fractionAt = (clientX: number) => {
     const rect = track.current?.getBoundingClientRect();
-    return rect && rect.width > 0 ? (clientX - rect.left) / rect.width : 0;
+    return rect && rect.width > 0 ? Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)) : 0;
   };
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
+    // No text selection and no native drag-and-drop: either would let the
+    // browser lift the bar off its track as a drag image and cancel this drag.
+    event.preventDefault();
+    event.currentTarget.focus({ preventScroll: true });
     drag.current = { resume: snapshot.playing, frame: 0, fraction: fractionAt(event.clientX) };
     clock.pause();
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -67,15 +71,20 @@ export function ScrubBar({ stream, clock, snapshot }: ScrubBarProps) {
       seekFraction(state.fraction);
     });
   };
-  const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
+  const endDrag = (event: PointerEvent<HTMLDivElement>, fraction: number | null) => {
     const state = drag.current;
     if (!state) return;
     if (state.frame) cancelAnimationFrame(state.frame);
     drag.current = null;
-    seekFraction(fractionAt(event.clientX));
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    seekFraction(fraction ?? state.fraction);
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     if (state.resume && !clock.snapshot.atEnd) clock.play();
   };
+  const onPointerUp = (event: PointerEvent<HTMLDivElement>) => endDrag(event, fractionAt(event.clientX));
+  // A cancelled drag (the browser took the pointer) stays where it was last
+  // dragged to: a cancel event's coordinates are not a place on the bar.
+  const onPointerCancel = (event: PointerEvent<HTMLDivElement>) => endDrag(event, null);
+  const onDragStart = (event: DragEvent<HTMLDivElement>) => event.preventDefault();
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     // Arrow keys are handled by the page-wide shortcuts; Page keys jump turns here.
     if (event.key === 'PageUp') {
@@ -115,7 +124,9 @@ export function ScrubBar({ stream, clock, snapshot }: ScrubBarProps) {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        onPointerCancel={onPointerCancel}
+        onLostPointerCapture={onPointerCancel}
+        onDragStart={onDragStart}
         onKeyDown={onKeyDown}
       >
         {segments.map((segment) => (

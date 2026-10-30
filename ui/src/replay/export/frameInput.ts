@@ -7,7 +7,7 @@
  */
 import type { Camera } from 'three';
 import { formatCardName } from '../../format';
-import { describeGameEnd } from '../gameEnd';
+import { describeGameEnd, gameEndScore } from '../gameEnd';
 import type { Layout } from '../layout';
 import { activeItemIndex, eventActor, formatClock, phaseLabel, stripClock } from '../logText';
 import type { LogItem } from '../logText';
@@ -20,7 +20,7 @@ import { sceneLabels, seatNumber } from '../scene/labels';
 import type { MotionRegistry } from '../scene/motionRegistry';
 import { projectToScreen } from '../scene/projection';
 import type { ScreenPoint } from '../scene/projection';
-import { STACK_KIND_LABELS, effectExits, stackView } from '../scene/stackView';
+import { STACK_KIND_LABELS, effectExits, foldResolved, stackView } from '../scene/stackView';
 import type { TextureStore } from '../scene/textureStore';
 import type { CardKey, ReplayCard, ReplayStream } from '../types';
 import type { FrameArrow, FrameArrowEnd, FrameInput, FrameLabel, FrameLayout, FrameSeat, FrameStackItem } from './frameComposer';
@@ -82,19 +82,24 @@ export function buildFrameInput(
     image: imageOf(store.face(item.card)),
     name: formatCardName(item.name),
     who: item.controller === playerSeat ? 'You' : 'Opponent',
-    kind: STACK_KIND_LABELS[item.kind],
+    kind: item.count > 1 ? `${STACK_KIND_LABELS[item.kind]} ×${item.count}` : STACK_KIND_LABELS[item.kind],
     top: item.top,
     mine: item.controller === playerSeat,
   });
-  // The live stack, then the items kept for the current action (stamped).
+  // The live stack (identical abilities grouped, as on the page), then the
+  // items kept for the current action (stamped).
+  const folded = foldResolved(stackView(state), effectExits(state));
   const stack: FrameStackItem[] = [
-    ...stackView(state).map(stackItem),
-    ...effectExits(state).map((item) => ({ ...stackItem(item), exit: item.exit })),
+    ...folded.items.map(stackItem),
+    ...folded.exits.map((item) => ({ ...stackItem(item), exit: item.exit })),
   ];
+  // An arrow from any ability a grouped card stands for starts at that card.
+  const stackAlias = new Map<string, string>();
+  for (const item of folded.items) for (const id of item.stackIds) stackAlias.set(id, item.stackId);
 
   const neon = { player: sleeveNeon(prefs.playerSleeve), opponent: sleeveNeon(prefs.opponentSleeve) };
   const endOf = (end: ArrowEnd): FrameArrowEnd | null => {
-    if (end.kind === 'stack') return { stackId: end.stackId };
+    if (end.kind === 'stack') return { stackId: stackAlias.get(end.stackId) ?? end.stackId };
     let x: number;
     let y: number;
     let z: number;
@@ -115,7 +120,8 @@ export function buildFrameInput(
     const to = endOf(arrow.to);
     if (!from || !to) continue;
     const colors = arrow.seat === playerSeat ? neon.player : neon.opponent;
-    arrows.push({ from, to, glow: colors.glow, core: colors.core, reticle: arrow.to.kind === 'seat' });
+    const dim = arrow.tone === 'attack' || arrow.tone === 'block' || arrow.tone === 'support';
+    arrows.push({ from, to, glow: colors.glow, core: colors.core, reticle: arrow.to.kind === 'seat', paired: arrow.paired, atCard: arrow.to.kind === 'obj', dim });
   }
 
   const event = stream.events[clock.snapshot.index];
@@ -155,8 +161,16 @@ export function buildFrameInput(
   let ending: FrameInput['ending'] = null;
   if (state.ended) {
     const summary = describeGameEnd(stream, state);
-    const result = summary.result === 'win' || summary.result === 'loss' || summary.result === 'draw' ? summary.result : 'unknown';
-    ending = { headline: summary.headline, reason: summary.reason, result };
+    const score = gameEndScore(stream, state);
+    ending = {
+      headline: summary.headline,
+      reason: summary.reason,
+      result: summary.result,
+      yourLife: score.yourLife,
+      opponentName: score.opponentName,
+      theirLife: score.theirLife,
+      facts: score.facts.length ? score.facts.join(' · ') : null,
+    };
   }
   return { scene, hud, labels, stack, arrows, caption, log, ending, colors: { player: neon.player.glow, opponent: neon.opponent.glow } };
 }

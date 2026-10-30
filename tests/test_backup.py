@@ -633,3 +633,109 @@ def test_pre_update_backups_keep_two_and_leave_pre_restore_alone(tmp_path, monke
     assert kept[-1].endswith("-pre-update-0.6.5.3.tappsbackup")
     assert restore_copy.is_file()
     assert backup.read_manifest(Path(made[-1]["path"]))["game_ids"] == ["g1"]
+
+
+def _recorded_game_db(path: Path, session: str, game_id: str, *, extra_events=0) -> Path:
+    """One recorded game (``replay_version = 1``) whose replay depends on
+    row order: printed and silent rows share one timestamp, and silent rows
+    key on the game id only (session '' and no match or phase), as live
+    capture writes them."""
+    store = AnalyticsStore(path)
+    conn = store.connect()
+    conn.execute("INSERT INTO tracker_sessions (id, started_at) VALUES (?, '2026-09-01T09:00:00')", (session,))
+    conn.execute("INSERT INTO matches (id, session_id, format, queue, best_of) VALUES (?, ?, 'Ladder', 'Ladder', 1)", (f"{game_id}-m", session))
+    conn.execute(
+        "INSERT INTO games (id, session_id, match_id, game_number, started_at, outcome, duration_seconds, total_turns, replay_version) "
+        "VALUES (?, ?, ?, 1, '2026-09-01T10:00:00', 'win', 120, 1, 1)",
+        (game_id, session, f"{game_id}-m"),
+    )
+    for role, seat in (("player", 1), ("opponent", 2)):
+        conn.execute(
+            "INSERT INTO participants (id, game_id, seat_id, role, display_name, deck_name, starting_life, ending_life, deck_size) "
+            "VALUES (?, ?, ?, ?, ?, 'Mono Green', 20, 20, 60)",
+            (f"{game_id}-{role}", game_id, seat, role, role.title()),
+        )
+    # Rows for another game first, so this database's ids start elsewhere.
+    for index in range(extra_events):
+        conn.execute(
+            "INSERT INTO game_events (session_id, game_id, event_time, text, visible) VALUES (?, 'other', '2026-09-01T08:00:00', ?, 1)",
+            (session, f"filler {index}"),
+        )
+    same = "2026-09-01T10:00:05"
+    rows = [
+        # (printed?, subtype, text, object_id, zones, amount, payload, life)
+        (True, "turn", "Turn 1 - YOUR TURN", None, (None, None), None, {"active_seat": 1}, (20, 20)),
+        (True, "move", "[0:05] You: played [Forest (Land)]", 7, ("hand", "battlefield"), None, {"reason": "play_land", "name": "Forest"}, (20, 20)),
+        (False, "tap", "tap 7", None, (None, None), None, {"object_ids": [7]}, (20, 20)),
+        (False, "counter", "counter 7", 7, (None, None), 1, {"type": "+1/+1", "total": 1}, (20, 20)),
+        (True, "life", "[0:05] Opponent: lost 2 life (now 18)", None, (None, None), -2, {}, (20, 18)),
+        (False, "counter", "counter 7", 7, (None, None), 1, {"type": "+1/+1", "total": 2}, (20, 18)),
+        (False, "untap", "untap 7", None, (None, None), None, {"object_ids": [7]}, (20, 18)),
+    ]
+    for printed, subtype, text, object_id, zones, amount, payload, lives in rows:
+        seat = 2 if subtype == "life" else 1
+        conn.execute(
+            """
+            INSERT INTO game_events (session_id, match_id, game_id, event_time, elapsed_seconds, turn_number, phase,
+                                     event_type, event_subtype, text, player_life, opponent_life, visible, seat_id,
+                                     object_id, zone_from, zone_to, amount, payload_json)
+            VALUES (?, ?, ?, ?, 5, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session if printed else "",
+                f"{game_id}-m" if printed else None,
+                game_id,
+                same,
+                "Phase_Main1" if printed else None,
+                subtype if printed else "silent",
+                subtype,
+                text,
+                lives[0],
+                lives[1],
+                1 if printed else 0,
+                seat,
+                object_id,
+                zones[0],
+                zones[1],
+                amount,
+                json.dumps(payload),
+            ),
+        )
+    conn.commit()
+    store.close()
+    return path
+
+
+def _without_row_ids(stream):
+    return {**stream, "events": [{k: v for k, v in event.items() if k != "row_id"} for event in stream["events"]]}
+
+
+def test_merge_keeps_a_recorded_replay_identical_apart_from_row_ids(tmp_path, monkeypatch):
+    from mtga_tracker import replay_builder
+
+    monkeypatch.setattr(replay_builder, "image_resolver_override", lambda arena_id: None)
+    monkeypatch.setattr(replay_builder, "token_print_override", lambda arena_id: None)
+    monkeypatch.setattr(replay_builder, "card_facts_override", lambda: {})
+    desktop = _recorded_game_db(tmp_path / "desktop.sqlite3", "S-desktop", "d1", extra_events=3)
+    laptop = _recorded_game_db(tmp_path / "laptop.sqlite3", "S-laptop", "l1")
+    before = replay_builder.replay_for_game(laptop, "l1")
+    assert before["fidelity"] == "recorded"
+    assert [e["kind"] for e in before["events"]].count("counter") == 2
+
+    settings = _settings(tmp_path / "settings.json")
+    laptop_backup = backup.export_backup(laptop, tmp_path / "cloud", settings_path=settings, machine="Laptop", overlay_path=tmp_path / "none", deckfinder_path=tmp_path / "none")
+    backup.merge_backup(laptop_backup["path"], desktop, tracker_control=FakeTracker(running=False), settings_path=settings, overlay_path=tmp_path / "none", deckfinder_path=tmp_path / "none")
+
+    conn = sqlite3.connect(desktop)
+    assert conn.execute("SELECT replay_version FROM games WHERE id = 'l1'").fetchone() == (1,)
+    # Silent rows come across although they carry no session id.
+    assert conn.execute("SELECT COUNT(*) FROM game_events WHERE game_id = 'l1' AND visible = 0 AND session_id = ''").fetchone() == (4,)
+    conn.close()
+
+    after = replay_builder.replay_for_game(desktop, "l1")
+    assert _without_row_ids(after) == _without_row_ids(before)
+    # Row ids are renumbered on the way in, in the original order.
+    old_ids = [e["row_id"] for e in before["events"] if e["row_id"] is not None]
+    new_ids = [e["row_id"] for e in after["events"] if e["row_id"] is not None]
+    assert len(new_ids) == len(old_ids) and new_ids != old_ids
+    assert sorted(new_ids) == new_ids

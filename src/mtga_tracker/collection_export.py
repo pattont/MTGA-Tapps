@@ -652,31 +652,50 @@ def aggregate(
     metadata: Dict[int, Tuple[str, str, str]],
     *,
     keep_a_prefix: bool = False,
+    rebalanced: Optional[Dict[int, int]] = None,
 ) -> List[CollectionEntry]:
     """Turn ``{arena_id: qty}`` into export entries, keyed by (name, set).
 
-    Alchemy ``A-`` rebalances collapse onto the base card when the base name
-    is known (unless keep_a_prefix). Ids the metadata can't resolve are
-    skipped — a name is required to import. Blank-set duplicates merge into
-    the single known printing of the same name when there is exactly one,
-    mirroring the original's dedup.
+    Owning a card on Arena also gives you its Alchemy ``A-`` rebalance, so
+    the collection lists both ids with the same count. ``rebalanced`` maps
+    each ``A-`` id to its original (from Arena's card DB) and the pair counts
+    once, at the larger of the two quantities, under the original's printing.
+    Without a link, an ``A-`` name still collapses onto its base name when
+    that name is known (unless keep_a_prefix), again counting the larger
+    side rather than the sum. Ids the metadata can't resolve are skipped — a
+    name is required to import. Blank-set duplicates merge into the single
+    known printing of the same name when there is exactly one, mirroring the
+    original's dedup.
     """
     all_names = {name.lower() for name, _s, _n in metadata.values()}
 
-    def norm(name: str) -> str:
+    def norm(name: str) -> Tuple[str, bool]:
         if not keep_a_prefix and name.startswith("A-"):
             base = name[2:].strip()
             if base and base.lower() in all_names:
-                return base
-        return name
+                return base, True
+        return name, False
+
+    # Fold linked A- ids onto their original card first: one card, one count.
+    counts: Dict[int, int] = dict(collection)
+    folded: Dict[int, List[int]] = {}
+    if rebalanced and not keep_a_prefix:
+        for a_id, base_id in rebalanced.items():
+            if a_id not in counts or base_id == a_id or base_id not in metadata:
+                continue
+            qty = counts.pop(a_id)
+            counts[base_id] = max(counts.get(base_id, 0), qty)
+            folded.setdefault(base_id, []).append(a_id)
 
     raw: Dict[Tuple[str, str], CollectionEntry] = {}
-    for arena_id, qty in collection.items():
+    # Per entry: (sum of original ids, sum of name-collapsed A- ids).
+    sides: Dict[Tuple[str, str], List[int]] = {}
+    for arena_id, qty in counts.items():
         meta = metadata.get(arena_id)
         if not meta:
             continue
         name, set_code, collector = meta
-        name = norm(name)
+        name, is_alchemy = norm(name)
         if not name:
             continue
         key = (name, set_code.upper())
@@ -684,9 +703,12 @@ def aggregate(
         if entry is None:
             entry = CollectionEntry(0, name, set_code.upper(), collector, [])
             raw[key] = entry
-        entry.count += qty
-        if arena_id not in entry.arena_ids:
-            entry.arena_ids.append(arena_id)
+            sides[key] = [0, 0]
+        sides[key][1 if is_alchemy else 0] += qty
+        entry.count = max(sides[key])
+        for aid in [arena_id, *folded.get(arena_id, [])]:
+            if aid not in entry.arena_ids:
+                entry.arena_ids.append(aid)
 
     merged = dict(raw)
     by_name: Dict[str, List[Tuple[Tuple[str, str], CollectionEntry]]] = {}

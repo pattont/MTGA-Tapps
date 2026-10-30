@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { importManagedDeck } from '../deckManagerApi';
 import {
   ChartNoAxesCombined,
   Check,
@@ -63,6 +62,8 @@ import { makeCommanderColumns } from '../commanderColumns';
 import { DeckVisual } from './DeckVisual';
 import { FilterBar } from './FilterBar';
 import { Section } from './Section';
+import { BuyPaperButton, BuyPaperDialog } from './BuyPaperDialog';
+import { parseDeckFinderImport } from '../deckFinderImport';
 import { ManaReadinessTable } from './ManaReadinessTable';
 import { MetricCard } from './MetricCard';
 import { SortableTable, type Column } from './SortableTable';
@@ -627,7 +628,7 @@ export function DeckDetailPage({
 }) {
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [buyingOpener, setBuyingOpener] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -765,6 +766,9 @@ export function DeckDetailPage({
     ['Mana spent / turn', manaCell(playerManaStats.per_turn), manaCell(opponentManaStats.per_turn)],
   ];
 
+  // The Arena export already adds a Brawl commander back as its own section.
+  const buySections = deckExport.available ? parseDeckFinderImport(deckExport.text)?.sections : undefined;
+
   async function copyArenaDeck() {
     if (!deckExport?.available || !deckExport.text) {
       return;
@@ -794,7 +798,6 @@ export function DeckDetailPage({
 
   // Lives on the filter row (trailing slot), in line with Format/Period.
   const copyDeckButton = (
-    <>
     <button
       className="deck-export-button"
       disabled={!deckExport?.available}
@@ -809,12 +812,6 @@ export function DeckDetailPage({
       {copyStatus === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
       {copyStatus === 'copied' ? 'Copied' : copyStatus === 'error' ? 'Copy Failed' : 'Copy Arena Deck'}
     </button>
-    <button className="deck-neutral-button" disabled={!deckExport?.available || saveStatus === 'saving'} type="button" onClick={() => {
-      setSaveStatus('saving');
-      void importManagedDeck(deckExport.text || '', deckName, '')
-        .then(() => setSaveStatus('saved')).catch(() => setSaveStatus('error'));
-    }}>{saveStatus === 'saved' ? 'Saved to collection' : saveStatus === 'saving' ? 'Saving…' : saveStatus === 'error' ? 'Save failed — retry' : 'Save to collection'}</button>
-    </>
   );
 
   const metrics = [
@@ -1262,6 +1259,13 @@ export function DeckDetailPage({
       <Section
         id="deck-cards"
         title="Deck List & Card Performance"
+        headingAction={
+          <BuyPaperButton
+            className="deck-export-button"
+            disabled={!buySections?.length}
+            onOpen={setBuyingOpener}
+          />
+        }
         description={
           deckExport.available
             ? 'Latest captured main deck and sideboard counts, with tracked performance for each card.'
@@ -1309,6 +1313,13 @@ export function DeckDetailPage({
               }
             />
           </>
+        ) : null}
+        {buyingOpener && buySections?.length ? (
+          <BuyPaperDialog
+            sections={buySections}
+            onClose={() => setBuyingOpener(null)}
+            returnFocus={buyingOpener}
+          />
         ) : null}
       </Section>
 

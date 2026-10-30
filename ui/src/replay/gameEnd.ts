@@ -3,6 +3,7 @@
  * chip. The winner comes from the applied `game_end` event when it names a
  * seat, otherwise from the game row's outcome.
  */
+import { formatDuration } from '../format';
 import type { BoardState } from './reducer';
 import type { ReplayStream } from './types';
 
@@ -54,6 +55,32 @@ export function endReasonLabel(reason: string | null | undefined, result: GameEn
     default:
       return code.replace(/\bDrawFromEmptyLib\b/, 'drawing from an empty library');
   }
+}
+
+/** The ending screen's final life totals and game length (the app's card and the exported video share it). */
+export interface GameEndScore {
+  yourLife: number;
+  opponentName: string;
+  /** Null when the stream has no opponent seat. */
+  theirLife: number | null;
+  /** "10 turns", "3 min"; whichever are known. */
+  facts: string[];
+}
+
+export function gameEndScore(stream: ReplayStream, state: BoardState): GameEndScore {
+  const playerSeat = stream.player_seat;
+  const opponentId = Object.keys(stream.seats)
+    .map(Number)
+    .find((seat) => seat !== playerSeat);
+  const opponent = opponentId === undefined ? undefined : stream.seats[String(opponentId)];
+  const yourLife = state.life[playerSeat] ?? stream.seats[String(playerSeat)]?.starting_life ?? 0;
+  const theirLife = opponentId === undefined ? null : (state.life[opponentId] ?? opponent?.starting_life ?? 0);
+  const elapsed = state.lastEvent?.t ?? stream.game.duration_seconds ?? null;
+  const turns = state.turn > 0 ? state.turn : stream.game.total_turns;
+  const facts: string[] = [];
+  if (turns) facts.push(`${turns} turn${turns === 1 ? '' : 's'}`);
+  if (elapsed !== null && elapsed > 0) facts.push(formatDuration(elapsed));
+  return { yourLife, opponentName: opponent?.name || 'Opponent', theirLife, facts };
 }
 
 export function describeGameEnd(stream: ReplayStream, state: BoardState): GameEndSummary {

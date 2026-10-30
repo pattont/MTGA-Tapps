@@ -9,7 +9,7 @@
 import { formatCardName } from '../../format';
 import type { LogItem, LogPart } from '../logText';
 import { formatClock } from '../logText';
-import { arrowShape } from '../scene/arrows';
+import { sceneArrowShape } from '../scene/arrows';
 import type { LabelTone } from '../scene/labels';
 import { stackCardWidth } from '../scene/stackView';
 
@@ -78,6 +78,12 @@ export interface FrameArrow {
   core: string;
   /** A player target: draw the reticle. */
   reticle: boolean;
+  /** Its reverse is drawn too: keep to its own lane (scene/arrows.ts). */
+  paired?: boolean;
+  /** Aims at a card: the head stops short of the damage number. */
+  atCard?: boolean;
+  /** Context rather than the headline (attacks on a player, blocks, effects on one's own side): drawn fainter and thinner. */
+  dim?: boolean;
 }
 
 export interface FrameCaption {
@@ -92,6 +98,17 @@ export interface FrameLog {
   playerSeat: number;
 }
 
+export interface FrameEnding {
+  headline: string;
+  reason: string | null;
+  result: 'win' | 'loss' | 'draw' | 'unknown';
+  yourLife: number;
+  opponentName: string;
+  theirLife: number | null;
+  /** "10 turns · 3 min", or null. */
+  facts: string | null;
+}
+
 export interface FrameInput {
   scene: CanvasImageSource;
   hud: FrameHud;
@@ -101,7 +118,8 @@ export interface FrameInput {
   caption: FrameCaption | null;
   /** The actions log column; null when the layout has no log column. */
   log: FrameLog | null;
-  ending: { headline: string; reason: string | null; result: 'win' | 'loss' | 'draw' | 'unknown' } | null;
+  /** The ending card, as the app shows it (without its buttons); null before the game ends. */
+  ending: FrameEnding | null;
   /** Sleeve accent colors for the two players (HUD names). */
   colors: { player: string; opponent: string };
 }
@@ -148,6 +166,7 @@ const COLORS = {
   win: '#4cc38a',
   loss: '#e5484d',
   draw: '#f0c674',
+  unknown: '#2bb3a3',
 } as const;
 
 const FONT = '"Inter", "Segoe UI", system-ui, -apple-system, sans-serif';
@@ -298,6 +317,10 @@ function drawLabels(ctx: CanvasRenderingContext2D, layout: FrameLayout, labels: 
     const cy = layout.band + label.y * s;
     if (label.tone === 'pile') {
       drawPill(ctx, cx, cy, label.text, 10.5 * s, 600, 'rgba(8,12,16,0.62)', 'rgba(255,255,255,0.1)', COLORS.pileText, 999);
+    } else if (label.tone === 'tucked') {
+      drawPill(ctx, cx, cy, label.text, 10 * s, 600, 'rgba(8,12,16,0.88)', 'rgba(43,179,163,0.6)', '#c9f5ee', 999);
+    } else if (label.tone === 'sick') {
+      drawPill(ctx, cx, cy, label.text, 9.5 * s, 700, 'rgba(78,44,150,0.94)', 'rgba(196,170,255,0.75)', '#f1eaff', 999);
     } else if (label.tone === 'counters') {
       drawPill(ctx, cx, cy, label.text, 10 * s, 600, 'rgba(8,12,16,0.84)', 'rgba(240,198,108,0.4)', COLORS.gold, 999);
     } else if (label.tone === 'damage') {
@@ -475,15 +498,16 @@ function drawArrows(ctx: CanvasRenderingContext2D, layout: FrameLayout, arrows: 
     const from = resolveEnd(arrow.from, rects);
     const to = resolveEnd(arrow.to, rects);
     if (!from || !to) continue;
-    const shape = arrowShape(Math.round(from.x), Math.round(from.y), Math.round(to.x), Math.round(to.y));
+    const shape = sceneArrowShape(Math.round(from.x), Math.round(from.y), Math.round(to.x), Math.round(to.y), arrow);
     const path = new Path2D(shape.d);
-    ctx.globalAlpha = 0.35;
+    const alpha = arrow.dim ? 0.55 : 1;
+    ctx.globalAlpha = 0.35 * alpha;
     ctx.strokeStyle = arrow.glow;
-    ctx.lineWidth = 11;
+    ctx.lineWidth = arrow.dim ? 6 : 11;
     ctx.stroke(path);
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = alpha;
     ctx.strokeStyle = arrow.core;
-    ctx.lineWidth = 3;
+    ctx.lineWidth = arrow.dim ? 2 : 3;
     ctx.stroke(path);
     const head = new Path2D(`M${shape.head.split(' ').join('L')}Z`);
     ctx.fillStyle = arrow.core;
@@ -524,27 +548,114 @@ function drawCaption(ctx: CanvasRenderingContext2D, layout: FrameLayout, caption
   ctx.fillText(ellipsize(ctx, caption.text, width - x0 * 2 - dot * 4), x0 + dot * 2 + 8 * scale, cy);
 }
 
-function drawEnding(ctx: CanvasRenderingContext2D, layout: FrameLayout, ending: NonNullable<FrameInput['ending']>): void {
-  const { band, scale, sceneHeight } = layout;
+/** The ending card over the dimmed table, drawn like the app's (replay.css `.replay-end-*`), in stage CSS px × scale. */
+function drawEnding(ctx: CanvasRenderingContext2D, layout: FrameLayout, ending: FrameEnding): void {
+  const { band, scale: s, sceneHeight } = layout;
   const width = layout.width - layout.logWidth;
-  const sceneH = sceneHeight * scale;
-  ctx.fillStyle = 'rgba(6, 9, 13, 0.55)';
-  ctx.fillRect(0, band, width, sceneH);
-  const tone = ending.result === 'win' ? COLORS.win : ending.result === 'loss' ? COLORS.loss : COLORS.draw;
+  const sceneH = sceneHeight * s;
+  const tone = COLORS[ending.result];
   const cx = width / 2;
   const cy = band + sceneH / 2;
+
+  ctx.fillStyle = 'rgba(4, 10, 12, 0.58)';
+  ctx.fillRect(0, band, width, sceneH);
+  const glow = ctx.createRadialGradient?.(cx, cy, 0, cx, cy, Math.max(width, sceneH) * 0.45);
+  if (glow) {
+    glow.addColorStop(0, `${tone}38`);
+    glow.addColorStop(1, `${tone}00`);
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, band, width, sceneH);
+  }
+
+  // Rows top to bottom (CSS px): eyebrow, headline, reason, score box, facts.
+  const rows: Array<{ h: number; gap: number }> = [
+    { h: 12, gap: 10 },
+    { h: 52, gap: 10 },
+    ...(ending.reason ? [{ h: 18, gap: 16 }] : []),
+    { h: 64, gap: 10 },
+    ...(ending.facts ? [{ h: 14, gap: 0 }] : []),
+  ];
+  const contentH = rows.reduce((sum, row, i) => sum + row.h + (i < rows.length - 1 ? row.gap : 0), 0);
+  const cardW = Math.min(440 * s, width - 48 * s);
+  const cardH = (26 + contentH + 22) * s;
+  const left = cx - cardW / 2;
+  const top = cy - cardH / 2;
+
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+  ctx.shadowBlur = 60 * s;
+  ctx.shadowOffsetY = 24 * s;
+  roundRect(ctx, left, top, cardW, cardH, 14 * s);
+  ctx.fillStyle = 'rgba(14, 20, 24, 0.94)';
+  ctx.fill();
+  ctx.restore();
+  roundRect(ctx, left, top, cardW, cardH, 14 * s);
+  ctx.strokeStyle = `${tone}8c`;
+  ctx.lineWidth = Math.max(1, s);
+  ctx.stroke();
+
+  const spaced = (em: number, px: number) => {
+    ctx.letterSpacing = `${em * px}px`;
+  };
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = `600 ${13 * scale}px ${FONT}`;
-  ctx.fillStyle = COLORS.muted;
-  ctx.fillText('GAME OVER', cx, cy - 46 * scale);
-  ctx.font = `800 ${56 * scale}px ${FONT}`;
+  let y = top + 26 * s;
+  let row = 0;
+  const next = () => {
+    const r = rows[row];
+    const mid = y + (r.h * s) / 2;
+    y += (r.h + r.gap) * s;
+    row += 1;
+    return mid;
+  };
+
+  ctx.font = `700 ${11.5 * s}px ${FONT}`;
+  ctx.fillStyle = 'rgba(241, 244, 246, 0.6)';
+  spaced(0.18, 11.5 * s);
+  ctx.fillText('GAME OVER', cx, next());
+
+  ctx.save();
+  ctx.font = `800 ${52 * s}px ${FONT}`;
   ctx.fillStyle = tone;
-  ctx.fillText(ending.headline, cx, cy);
+  ctx.shadowColor = `${tone}b3`;
+  ctx.shadowBlur = 18 * s;
+  spaced(0.06, 52 * s);
+  ctx.fillText(ending.headline.toUpperCase(), cx, next());
+  ctx.restore();
+  spaced(0, 0);
+
   if (ending.reason) {
-    ctx.font = `500 ${16 * scale}px ${FONT}`;
-    ctx.fillStyle = COLORS.text;
-    ctx.fillText(ellipsize(ctx, ending.reason, width * 0.8), cx, cy + 46 * scale);
+    ctx.font = `500 ${16 * s}px ${FONT}`;
+    ctx.fillStyle = 'rgba(241, 244, 246, 0.85)';
+    ctx.fillText(ellipsize(ctx, ending.reason, cardW - 60 * s), cx, next());
+  }
+
+  const boxMid = next();
+  const boxW = Math.min(cardW - 60 * s, 330 * s);
+  const boxH = 64 * s;
+  roundRect(ctx, cx - boxW / 2, boxMid - boxH / 2, boxW, boxH, 10 * s);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+  ctx.fill();
+  const seat = (x: number, name: string, life: string, winner: boolean) => {
+    ctx.font = `600 ${12 * s}px ${FONT}`;
+    ctx.fillStyle = 'rgba(241, 244, 246, 0.65)';
+    spaced(0.04, 12 * s);
+    ctx.fillText(ellipsize(ctx, name.toUpperCase(), boxW / 2 - 40 * s), x, boxMid - 14 * s);
+    spaced(0, 0);
+    ctx.font = `800 ${30 * s}px ${FONT}`;
+    ctx.fillStyle = winner ? tone : COLORS.text;
+    ctx.fillText(life, x, boxMid + 10 * s);
+  };
+  seat(cx - boxW / 4 - 6 * s, 'You', String(ending.yourLife), ending.result === 'win');
+  seat(cx + boxW / 4 + 6 * s, ending.opponentName, ending.theirLife === null ? '—' : String(ending.theirLife), ending.result === 'loss');
+  ctx.font = `400 ${22 * s}px ${FONT}`;
+  ctx.fillStyle = 'rgba(241, 244, 246, 0.4)';
+  ctx.fillText('–', cx, boxMid + 4 * s);
+
+  if (ending.facts) {
+    ctx.font = `400 ${13 * s}px ${FONT}`;
+    ctx.fillStyle = 'rgba(241, 244, 246, 0.6)';
+    ctx.fillText(ending.facts, cx, next());
   }
 }
 
@@ -755,9 +866,10 @@ export function composeFrame(ctx: CanvasRenderingContext2D, layout: FrameLayout,
   } catch {
     // A lost context leaves the background.
   }
-  drawLabels(ctx, layout, input.labels);
   const rects = drawStack(ctx, layout, input.stack, input.colors);
   drawArrows(ctx, layout, input.arrows, rects);
+  // Labels over the arrows, as on the live table: numbers stay readable.
+  drawLabels(ctx, layout, input.labels);
   if (input.ending) drawEnding(ctx, layout, input.ending);
   drawHud(ctx, layout, input.hud, input.colors);
   drawCaption(ctx, layout, input.caption, input.colors);

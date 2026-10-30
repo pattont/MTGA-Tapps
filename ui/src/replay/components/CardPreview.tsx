@@ -151,6 +151,7 @@ export function CardPreview({ hover, store }: { hover: HoverStore; store: Textur
           <div className="card-preview-media">
             <PreviewCard key={`${info.card ?? ''}|${info.name}`} store={store} card={info.card} name={info.name} />
           </div>
+          {info.note ? <div className="replay-preview-note">{info.note}</div> : null}
           {under.length ? <UnderList store={store} under={under} /> : null}
         </div>
         {box.pictureColumns ? <UnderPictures store={store} under={under} box={box} /> : null}

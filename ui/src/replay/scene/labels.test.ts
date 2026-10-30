@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { PLAYER, SAMPLE_CARDS, makeSampleStream } from '../fixtures/sampleStream';
 import { StreamBuilder, card } from '../fixtures/streamBuilder';
+import { makeTokenStream } from '../fixtures/tokenStream';
 import { CARD_HEIGHT, layoutBoard } from '../layout';
 import { buildTimeline, stateAt } from '../reducer';
-import { sceneLabels } from './labels';
+import { countersText, sceneLabels } from './labels';
 
 describe('scene labels', () => {
   const stream = makeSampleStream();
@@ -202,5 +203,89 @@ describe('chosen land type', () => {
     // destroy's own action, where it is held in its slot) the choice is gone.
     expect(at('tap').find((l) => l.id === 'counters:p1')?.text).toBe('Mountain');
     expect(at('phase').some((l) => l.id === 'counters:p1')).toBe(false);
+  });
+});
+
+describe('tapped cards and token stacks', () => {
+  it('keeps a tapped card\u2019s chips above and below it, and labels a token stack once with its count', () => {
+    const stream = makeTokenStream();
+    const layout = layoutBoard(buildTimeline(stream).final, { mirrorOpponent: false, hindsight: true, playerSeat: 1 });
+    const labels = sceneLabels(layout, stream.cards);
+    const stat = labels.find((l) => l.id === 'stat:t1')!;
+    const chip = labels.find((l) => l.id === 'counters:t1')!;
+    // Upright, within the sideways card: not out at its left and right edges.
+    expect(Math.abs(stat.x)).toBeLessThan(0.01);
+    expect(stat.y).toBeLessThan(0);
+    expect(Math.abs(chip.x)).toBeLessThan(0.01);
+    expect(chip.y).toBeGreaterThan(0);
+    expect(chip.y).toBeLessThan(0.43);
+    expect(labels.find((l) => l.id === 'stack:t1')).toMatchObject({ text: '\u00d73' });
+    // The stacked tokens carry no labels of their own.
+    expect(labels.some((l) => l.obj === 't2' || l.obj === 't3')).toBe(false);
+  });
+});
+
+describe('counter chips', () => {
+  it('show a count on every counter type but a single +1/+1 or -1/-1', () => {
+    const base = { counters: {} } as unknown as Parameters<typeof countersText>[0];
+    expect(countersText({ ...base, counters: { plan: 1 } })).toBe('plan ×1');
+    expect(countersText({ ...base, counters: { '+1/+1': 1, oil: 3 } })).toBe('+1/+1 · oil ×3');
+    expect(countersText({ ...base, counters: { '+1/+1': 2, loyalty: 4 } })).toBe('+1/+1 ×2');
+  });
+});
+
+describe('summoning sickness', () => {
+  const cards = {
+    bear: card('Bear', 'Creature', { power: '2', toughness: '2' }),
+    token: card('Soldier', 'Creature', { power: '1', toughness: '1', is_token: true }),
+  };
+  const opts = { mirrorOpponent: false, hindsight: true, playerSeat: PLAYER };
+
+  function sleepy() {
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    b.turnStart(1, PLAYER);
+    b.move('b1', 'bear', 'limbo', 'battlefield', PLAYER, 'put');
+    b.add('sick', { objs: ['b1'] });
+    b.move('t1', 'token', 'limbo', 'battlefield', PLAYER, 'token_create');
+    b.move('t2', 'token', 'limbo', 'battlefield', PLAYER, 'token_create');
+    b.add('sick', { objs: ['t2'] });
+    b.turnStart(2, PLAYER);
+    b.add('unsick', { objs: ['b1', 't2'] });
+    b.move('b1', 'bear', 'battlefield', 'graveyard', PLAYER, 'destroy');
+    return b.build(cards, { playerSeat: PLAYER });
+  }
+
+  it('puts a purple sleep badge on a sick creature until it can attack', () => {
+    const stream = sleepy();
+    const timeline = buildTimeline(stream);
+    const at = (kind: string) => {
+      const state = stateAt(timeline, stream.events.find((e) => e.kind === kind)!.seq);
+      return { state, layout: layoutBoard(state, opts) };
+    };
+    const sick = at('sick');
+    expect(sick.state.objects.get('b1')?.sick).toBe(true);
+    const badge = sceneLabels(sick.layout, cards).find((l) => l.id === 'sick:b1')!;
+    expect([badge.text, badge.tone]).toEqual(['Zzz', 'sick']);
+    // Centered just above the card's top edge, clear of its name.
+    const bear = sick.layout.cards.find((c) => c.obj === 'b1')!;
+    expect(badge.x).toBeCloseTo(0);
+    expect(badge.y).toBeGreaterThan((CARD_HEIGHT * bear.scale) / 2 + 0.05);
+    const awake = at('unsick');
+    expect(awake.state.objects.get('b1')?.sick).toBe(false);
+    expect(sceneLabels(awake.layout, cards).some((l) => l.tone === 'sick')).toBe(false);
+  });
+
+  it('keeps sick and ready tokens in separate stacks, and forgets sickness off the battlefield', () => {
+    const stream = sleepy();
+    const timeline = buildTimeline(stream);
+    const sickSeq = stream.events.filter((e) => e.kind === 'sick')[1].seq;
+    const split = layoutBoard(stateAt(timeline, sickSeq), opts).cards;
+    expect(split.find((c) => c.obj === 't2')?.stackedUnder).toBeUndefined();
+    expect(split.find((c) => c.obj === 't2')?.sick).toBe(true);
+    const unsick = stream.events.find((e) => e.kind === 'unsick')!.seq;
+    const merged = layoutBoard(stateAt(timeline, unsick), opts).cards;
+    expect(merged.find((c) => c.obj === 't2')?.stackedUnder).toBe('t1');
+    expect(timeline.final.objects.get('b1')?.sick).toBeUndefined();
   });
 });

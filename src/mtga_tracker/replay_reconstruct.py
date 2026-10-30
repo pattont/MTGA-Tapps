@@ -58,6 +58,7 @@ from .replay_reconstruct_grammar import (
     pair_stack_rows,
     parse_bracket,
 )
+from .replay_sickness import SICKNESS_ESTIMATE_LIMITATION, estimate_summoning_sickness
 from .replay_stream import attach_log, build_turns, finalize_logs, seat_colors
 
 __all__ = ["Reconstructor", "pair_stack_rows", "parse_bracket", "reconstruct"]
@@ -688,8 +689,13 @@ class Reconstructor(ReconstructionBoard):
             "game_end", winner_seat=game.get("winner_seat"), reason=game.get("outcome_reason")
         )
         finalize_logs(self.log.events, self.cards)
-        self.stream["events"] = self.log.events
-        self.stream["turns"] = build_turns(self.log.events, self.rows.get("game_turns") or [])
+        events = estimate_summoning_sickness(
+            self.log.events, self.cards.cards, self.rows.get("card_facts")
+        )
+        if events is not self.log.events:
+            self.stream["limitations"].append(SICKNESS_ESTIMATE_LIMITATION)
+        self.stream["events"] = events
+        self.stream["turns"] = build_turns(events, self.rows.get("game_turns") or [])
         self.stream["cards"] = self.cards.cards
         self._seat_colors()
 

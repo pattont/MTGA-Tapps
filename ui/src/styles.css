@@ -1593,6 +1593,15 @@ tbody tr:hover {
   text-decoration: none;
 }
 
+/* Hover-only card name (Deck Finder): plain text that shows the card image. */
+.card-preview-trigger {
+  cursor: default;
+}
+
+.card-preview-trigger:hover {
+  color: var(--accent-strong);
+}
+
 .deck-link:hover,
 .deck-link:focus-visible,
 .card-link:hover,
@@ -4757,7 +4766,9 @@ tr.deck-change-row-out .card-link {
 
 .deckfinder-title-actions {
   display: inline-flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 8px;
 }
@@ -4766,6 +4777,7 @@ tr.deck-change-row-out .card-link {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  border-radius: 999px;
   white-space: nowrap;
 }
 
@@ -5228,8 +5240,10 @@ a.settings-link-button {
   text-decoration: none;
 }
 
-.settings-key-row input {
+.settings-key-row input,
+.settings-key-row select {
   flex: 1;
+  min-width: 0;
 }
 
 /* ---- Collection export ---- */
@@ -6112,7 +6126,25 @@ a.settings-link-button {
   gap: 1px;
 }
 
+/* Deck name plus the play/draw pill on one line: the name truncates first,
+   and the pill is shorter than the name's line, so the row keeps its height. */
+.live-game-deck-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.badge.live-game-turn-order {
+  flex: none;
+  min-height: 0;
+  padding: 1px 6px;
+  font-size: 0.62rem;
+  line-height: 1.2;
+}
+
 .live-game-deck {
+  min-width: 0;
   overflow: hidden;
   font-size: 0.86rem;
   font-weight: 600;
@@ -6562,6 +6594,16 @@ a.sidebar-deck-finder {
 .sidebar-beta { margin-left: 2px; padding: 0 4px; border: 1px solid currentColor; border-radius: 999px; font-size: 0.55rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; vertical-align: 2px; opacity: 0.85; }
 .sidebar-deck-manager:hover, .sidebar-deck-manager:focus-visible { border-color: var(--deck-manager-accent); color: var(--deck-manager-accent); }
 .sidebar-deck-manager.sidebar-deck-manager-active { border-color: var(--deck-manager-accent); color: var(--deck-manager-accent); background: color-mix(in srgb, var(--deck-manager-accent) 24%, transparent); box-shadow: inset 0 0 0 1px var(--deck-manager-accent); }
+/* Buy Me a Coffee tile below Deck Manager: same tile, in its own pink. */
+:root { --coffee: #f472b6; }
+:root[data-theme="light"] { --coffee: #be185d; }
+.sidebar-coffee {
+  color: var(--coffee);
+  border-color: color-mix(in srgb, var(--coffee) 55%, var(--border));
+  background: color-mix(in srgb, var(--coffee) 12%, transparent);
+}
+.sidebar-coffee:hover, .sidebar-coffee:focus-visible { border-color: var(--coffee); color: var(--coffee); background: color-mix(in srgb, var(--coffee) 20%, transparent); }
+.sidebar-coffee .sidebar-nav-label { white-space: nowrap; }
 .deck-manager-beta.replay-heading-beta { border-color: var(--replay); color: var(--replay); }
 .deck-manager-collection { min-height: calc(100dvh - 145px); }
 .deck-manager-collection-toolbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
@@ -7215,3 +7257,198 @@ a.sidebar-deck-finder {
 .update-actions > p {
   margin: 0;
 }
+
+/* Buy on Paper. The open button is green everywhere (gold stays Arena's
+   export); the dialog puts the store picker and options on the left and the
+   card list, live prices and total on the right, sized to fill the screen. */
+:root { --buy-paper: var(--success); }
+.buy-paper-open {
+  display: inline-flex; flex: 0 0 auto; min-height: 36px; align-items: center; gap: 7px; padding: 0 12px;
+  border: 1px solid var(--buy-paper); border-radius: 6px;
+  background: color-mix(in srgb, var(--buy-paper) 10%, var(--panel-strong)); color: var(--buy-paper);
+  font: inherit; font-size: 0.8rem; font-weight: 750; white-space: nowrap; cursor: pointer;
+}
+.buy-paper-open svg { width: 16px; height: 16px; }
+.deck-export-button.buy-paper-open { border-color: var(--buy-paper); color: var(--buy-paper); }
+.deckfinder-detail .deck-export-button.buy-paper-open,
+.deckfinder-detail .buy-paper-open { background: color-mix(in srgb, var(--buy-paper) 12%, var(--panel)); }
+.buy-paper-open:hover:not(:disabled),
+.deckfinder-detail .deck-export-button.buy-paper-open:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--buy-paper) 20%, var(--panel));
+}
+.buy-paper-open:focus-visible { outline: 2px solid var(--buy-paper); outline-offset: 2px; }
+.buy-paper-open:disabled { border-color: var(--border); background: var(--panel-strong); color: var(--subtle); cursor: default; }
+.deckfinder-title-actions .buy-paper-open svg { width: 15px; height: 15px; }
+.deck-manager-heading-actions .buy-paper-open {
+  border-color: color-mix(in srgb, var(--buy-paper) 75%, var(--border)); color: var(--buy-paper);
+  background: color-mix(in srgb, var(--buy-paper) 10%, var(--surface)); font-weight: 650;
+}
+.deck-manager-heading-actions .buy-paper-open:hover:not(:disabled) { background: color-mix(in srgb, var(--buy-paper) 18%, var(--surface)); }
+
+.deck-manager-modal.buy-paper-modal {
+  display: flex; flex-direction: column; width: min(1180px, calc(100% - 32px)); max-height: calc(100dvh - 32px);
+  padding: 20px 24px 0;
+}
+.buy-paper-modal .deck-manager-modal-heading { margin-bottom: 0; padding-bottom: 12px; }
+.buy-paper {
+  display: grid; flex: 1 1 auto; min-height: 0;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 28px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.buy-paper h4 { margin: 0 0 8px; font-size: 0.95rem; }
+.buy-paper-options h4:not(:first-of-type) { margin-top: 22px; }
+.buy-paper-store-note { margin: 8px 0 0; color: var(--muted); font-size: 0.8rem; line-height: 1.45; }
+.buy-paper-vendor-icon { width: 20px; height: 20px; flex-shrink: 0; border-radius: 4px; object-fit: contain; }
+
+.buy-paper-check { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 10px; font-size: 0.92rem; cursor: pointer; }
+.buy-paper-check span { line-height: 1.35; }
+.buy-paper-check small { display: block; margin-top: 2px; color: var(--muted); font-size: 0.78rem; }
+.deck-manager-modal .buy-paper input[type="checkbox"] {
+  display: inline-block; flex-shrink: 0; width: 16px; height: 16px; margin: 2px 0 0; padding: 0;
+  accent-color: var(--accent);
+}
+.buy-paper-check:has(input:disabled) { cursor: default; color: var(--muted); }
+/* Board checkboxes share one line at the top of Options. */
+.buy-paper-board-toggles { display: flex; flex-wrap: wrap; column-gap: 22px; }
+
+.buy-paper-cards { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.buy-paper-cards-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.buy-paper-cards-heading h4 span { color: var(--muted); font-weight: 400; }
+
+/* The list takes whatever height the screen allows, between 300 and 640 px. */
+.buy-paper-list {
+  height: clamp(300px, calc(100dvh - 380px), 640px); overflow-y: auto; overscroll-behavior: contain;
+  padding: 2px 10px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+}
+.buy-paper-board h5 { margin: 8px 0 4px; color: var(--muted); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; }
+.buy-paper-board ul { margin: 0; padding: 0; list-style: none; }
+.buy-paper-row {
+  display: grid; grid-template-columns: auto 30px minmax(0, 1fr) auto; align-items: center; gap: 9px;
+  padding: 3px 4px; border-radius: 6px; cursor: pointer;
+}
+.buy-paper-row:hover { background: var(--hover-tint); }
+.buy-paper-row:has(input:disabled) { cursor: default; }
+.buy-paper-qty {
+  display: grid; place-items: center; height: 30px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--panel); font-size: 0.88rem; font-variant-numeric: tabular-nums;
+}
+.buy-paper-card { min-width: 0; line-height: 1.25; }
+.buy-paper-card strong { display: block; font-size: 0.88rem; font-weight: 600; overflow-wrap: anywhere; }
+.buy-paper-card small { display: block; color: var(--muted); font-size: 0.72rem; overflow-wrap: anywhere; }
+.buy-paper-price { text-align: right; font-size: 0.86rem; line-height: 1.25; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.buy-paper-price small { display: block; color: var(--muted); font-size: 0.7rem; }
+.buy-paper-price-pending { color: var(--muted); }
+.buy-paper-no-price { color: var(--subtle); }
+.buy-paper-row-off .buy-paper-qty, .buy-paper-row-off .buy-paper-card, .buy-paper-row-off .buy-paper-price { opacity: 0.45; }
+.buy-paper-tag {
+  display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px;
+  color: var(--muted); font-size: 0.66rem; font-style: normal; line-height: 1.5;
+}
+.buy-paper-tag-warn { border-color: color-mix(in srgb, var(--danger) 50%, transparent); color: var(--danger); }
+
+/* Switching stores: prices shimmer while the list loads, then each row's new
+   price fades in a beat after the one above, and the total counts over. */
+.buy-paper-skeleton {
+  display: inline-block; width: 52px; height: 0.8em; border-radius: 4px; vertical-align: middle;
+  background: linear-gradient(90deg, var(--panel-strong) 0%, color-mix(in srgb, var(--text) 16%, var(--panel-strong)) 50%, var(--panel-strong) 100%);
+  background-size: 200% 100%;
+  animation: buy-paper-shimmer 1.1s ease-in-out infinite;
+  animation-delay: calc(var(--buy-paper-i, 0) * 30ms);
+}
+.buy-paper-skeleton-wide { width: min(220px, 70%); height: 0.7em; }
+.buy-paper-fade-in {
+  display: inline-block;
+  animation: buy-paper-fade-in 420ms ease-out both;
+  animation-delay: calc(var(--buy-paper-i, 0) * 22ms);
+}
+.buy-paper-price .buy-paper-fade-in { display: block; }
+.buy-paper-amount { display: inline-block; font-variant-numeric: tabular-nums; transition: opacity 200ms; }
+.buy-paper-amount-busy { opacity: 0.5; animation: buy-paper-pulse 1.1s ease-in-out infinite; }
+@keyframes buy-paper-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@keyframes buy-paper-fade-in { from { opacity: 0; transform: translateY(4px); filter: blur(2px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes buy-paper-pulse { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) {
+  .buy-paper-skeleton, .buy-paper-fade-in, .buy-paper-amount-busy { animation: none; }
+}
+
+.buy-paper-summary { margin: 10px 0 0; padding: 0 12px; }
+.buy-paper-summary > div { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 0.92rem; }
+.buy-paper-summary dt, .buy-paper-summary dd { margin: 0; }
+.buy-paper-summary-note { color: var(--muted); font-size: 0.82rem !important; }
+.buy-paper-total { margin-top: 6px; padding-top: 10px !important; border-top: 1px solid var(--border); font-size: 1.08rem !important; font-weight: 750; }
+.buy-paper-total dt { display: inline-flex; align-items: center; gap: 8px; }
+/* The ? beside Estimated Total: a dark popup on hover or keyboard focus. */
+.buy-paper-help { position: relative; display: inline-flex; }
+.buy-paper-help-button {
+  display: inline-flex; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: help;
+}
+.buy-paper-help-button:hover, .buy-paper-help-button:focus-visible { color: var(--text); }
+.buy-paper-help-button:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+.buy-paper-help svg { width: 16px; height: 16px; }
+.buy-paper-tooltip {
+  position: absolute; z-index: 10; bottom: calc(100% + 10px); left: 50%; width: 270px; padding: 10px 14px;
+  border-radius: 8px; background: #0b0e12; color: #eef2f6; box-shadow: 0 10px 30px rgb(0 0 0 / 45%);
+  font-size: 0.8rem; font-weight: 400; line-height: 1.45; text-align: center;
+  opacity: 0; visibility: hidden; pointer-events: none; transform: translate(-50%, 4px);
+  transition: opacity 120ms ease, transform 120ms ease, visibility 120ms;
+}
+.buy-paper-tooltip::after {
+  content: ''; position: absolute; top: 100%; left: 50%; margin-left: -6px;
+  border: 6px solid transparent; border-top-color: #0b0e12;
+}
+.buy-paper-help:hover .buy-paper-tooltip, .buy-paper-help:focus-within .buy-paper-tooltip {
+  opacity: 1; visibility: visible; transform: translate(-50%, 0);
+}
+@media (prefers-reduced-motion: reduce) { .buy-paper-tooltip { transition: none; } }
+
+.buy-paper-footer {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px;
+  margin: 14px -24px 0; padding: 14px 24px; border-top: 1px solid var(--border);
+}
+.buy-paper-footer-text { flex: 1 1 280px; min-width: 0; }
+.buy-paper-status, .buy-paper-disclosure { margin: 0; color: var(--muted); font-size: 0.8rem; line-height: 1.4; }
+.buy-paper-disclosure { margin-top: 2px; }
+.buy-paper-retry {
+  padding: 0; border: 0; background: none; color: var(--accent-strong); font: inherit; text-decoration: underline;
+  cursor: pointer;
+}
+.buy-paper-footer .deck-neutral-button { min-height: 40px; padding: 0 18px; font-size: 0.9rem; }
+.buy-paper-buy {
+  display: inline-flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 18px;
+  border: 1px solid #f4c95d; border-radius: 6px; background: #f4c95d; color: #241c07;
+  font: inherit; font-size: 0.92rem; font-weight: 750; cursor: pointer;
+}
+.buy-paper-buy:hover:not(:disabled), .buy-paper-buy:focus-visible { background: #ffda79; border-color: #ffda79; }
+.buy-paper-buy:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+.buy-paper-buy:disabled { opacity: 0.5; cursor: default; }
+
+@media (max-width: 760px) {
+  .deck-manager-modal.buy-paper-modal { display: block; overflow-y: auto; }
+  .buy-paper { grid-template-columns: 1fr; gap: 18px; }
+  .buy-paper-list { height: min(380px, 50dvh); }
+}
+
+/* The store list: picks the store and shows each one's total. */
+.buy-paper-compare { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.buy-paper-compare button {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px; padding: 0 12px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text);
+  font: inherit; font-size: 0.88rem; text-align: left; cursor: pointer;
+}
+.buy-paper-compare button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
+.buy-paper-compare button:disabled { color: var(--muted); background: transparent; border-style: dashed; cursor: default; }
+.buy-paper-compare button:disabled .buy-paper-vendor-icon { filter: grayscale(1); opacity: 0.6; }
+.buy-paper-compare button:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+.buy-paper-compare .buy-paper-compare-current {
+  border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); font-weight: 650;
+}
+.buy-paper-compare-name { display: inline-flex; flex: 1; align-items: center; min-width: 0; }
+.buy-paper-compare-total { display: inline-flex; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; }
+.buy-paper-compare-total small { color: var(--subtle); font-size: 0.72rem; font-weight: 400; }
+.buy-paper-tag-best { border-color: color-mix(in srgb, var(--buy-paper) 55%, transparent); color: var(--buy-paper); }
+.buy-paper-compare-note { margin: 8px 0 0; color: var(--subtle); font-size: 0.74rem; line-height: 1.4; }
+
+/* Settings: the Buy on Paper card reuses the overlay card. */
+.buy-paper-settings-note { margin: 0; }

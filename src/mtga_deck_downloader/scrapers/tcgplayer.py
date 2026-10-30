@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime
 from typing import Any
-from urllib.parse import quote, urljoin
+from urllib.parse import urljoin
 
 from mtga_deck_downloader.models import DeckEntry
 from mtga_deck_downloader.scrapers.common import ScrapeError, create_session
@@ -19,8 +19,6 @@ class TCGPlayerScraper:
     LATEST_URL = f"{API_BASE}/content/decks/{GAME}"
     EVENTS_URL = f"{API_BASE}/content/events/{GAME}/"
     SEARCH_URL = f"{API_BASE}/content/search/"
-    AUTHOR_URL = f"{API_BASE}/content/author/{{author_name}}/"
-    AFFILIATE_DECKS_URL = f"{API_BASE}/decks/"
     DECK_URL = f"{API_BASE}/deck/{GAME}/{{deck_id}}/"
     DEFAULT_DECK_LIMIT = 50
     DEFAULT_EVENT_LIMIT = 25
@@ -32,7 +30,6 @@ class TCGPlayerScraper:
         self._session.headers.update({"Accept-Language": "en-US,en;q=0.9"})
         self._deck_payload_cache: dict[str, dict[str, Any] | None] = {}
         self._event_decks_cache: dict[tuple[str, str], list[DeckEntry]] = {}
-        self._author_id_cache: dict[str, str] = {}
 
     def fetch_trending_decks(self, limit: int = DEFAULT_DECK_LIMIT) -> list[DeckEntry]:
         payload = self._get_json(
@@ -47,7 +44,9 @@ class TCGPlayerScraper:
         rows = payload.get("result") if isinstance(payload, dict) else None
         if not isinstance(rows, list):
             raise ScrapeError("Unexpected TCGPlayer trending deck payload.")
-        return [entry for row in rows[:limit] if (entry := self._parse_trending_row(row)) is not None]
+        return [
+            entry for row in rows[:limit] if (entry := self._parse_trending_row(row)) is not None
+        ]
 
     def fetch_latest_decks(self, limit: int = DEFAULT_DECK_LIMIT) -> list[DeckEntry]:
         payload = self._get_json(
@@ -66,15 +65,19 @@ class TCGPlayerScraper:
             raise ScrapeError("Unexpected TCGPlayer latest deck payload.")
         return [entry for row in rows[:limit] if (entry := self._parse_latest_row(row)) is not None]
 
-    def fetch_creator_decks(self, author_name: str, limit: int = DEFAULT_DECK_LIMIT) -> list[DeckEntry]:
-        author_id = self._get_author_id(author_name)
+    def fetch_creator_decks(
+        self, author_name: str, limit: int = DEFAULT_DECK_LIMIT
+    ) -> list[DeckEntry]:
+        # The deck search filters by author name across every Magic format.
+        # (TCGPlayer retired the old /decks/?authorID= listing in 2026; it now 404s.)
         payload = self._get_json(
-            self.AFFILIATE_DECKS_URL,
+            self.SEARCH_URL,
             {
-                "authorID": author_id,
+                "contentType": "deck",
+                "game": self.GAME,
+                "author": author_name,
                 "rows": max(1, limit),
                 "offset": 0,
-                "latest": True,
                 "sort": "created",
                 "order": "desc",
             },
@@ -82,37 +85,17 @@ class TCGPlayerScraper:
         rows = payload.get("result") if isinstance(payload, dict) else None
         if not isinstance(rows, list):
             raise ScrapeError("Unexpected TCGPlayer creator deck payload.")
+        if not rows:
+            raise ScrapeError(f"TCGPlayer has no decks by {author_name}; check the creator name.")
 
         results: list[DeckEntry] = []
         for row in rows[:limit]:
-            entry = self._parse_affiliate_deck_row(row)
+            entry = self._parse_search_deck_row(row)
             if entry is None:
                 continue
             notes = self._join_notes([entry.notes, f"Creator: {author_name}"])
             results.append(replace(entry, notes=notes))
         return results
-
-    def _get_author_id(self, author_name: str) -> str:
-        cache = getattr(self, "_author_id_cache", {})
-        if author_name in cache:
-            return cache[author_name]
-
-        payload = self._get_json(
-            self.AUTHOR_URL.format(author_name=quote(author_name)),
-            {
-                "rows": 1,
-                "offset": 0,
-            },
-        )
-        result = payload.get("result") if isinstance(payload, dict) else None
-        author = result.get("author") if isinstance(result, dict) else None
-        author_id = str(author.get("uuid") or "").strip() if isinstance(author, dict) else ""
-        if not author_id:
-            raise ScrapeError(f"Could not find TCGPlayer author ID for {author_name}.")
-
-        cache[author_name] = author_id
-        self._author_id_cache = cache
-        return author_id
 
     def fetch_events(self, limit: int = DEFAULT_EVENT_LIMIT) -> list[DeckEntry]:
         payload = self._get_json(
@@ -130,7 +113,9 @@ class TCGPlayerScraper:
             raise ScrapeError("Unexpected TCGPlayer events payload.")
         return [entry for row in rows[:limit] if (entry := self._parse_event_row(row)) is not None]
 
-    def fetch_event_decks(self, event: DeckEntry, limit: int = DEFAULT_DECK_LIMIT) -> list[DeckEntry]:
+    def fetch_event_decks(
+        self, event: DeckEntry, limit: int = DEFAULT_DECK_LIMIT
+    ) -> list[DeckEntry]:
         if not event.event_date:
             raise ScrapeError("Selected TCGPlayer event did not include an event date.")
 
@@ -250,30 +235,17 @@ class TCGPlayerScraper:
             event_date=self._format_date(str(deck.get("eventDate") or "").strip()),
         )
 
-    def _parse_affiliate_deck_row(self, row: Any) -> DeckEntry | None:
-        if not isinstance(row, dict):
+    def _parse_search_deck_row(self, row: Any) -> DeckEntry | None:
+        entry = self._parse_latest_row(row)
+        if entry is None:
             return None
-        deck = row.get("deck")
-        deck_id = str(row.get("id") or "").strip()
-        if not isinstance(deck, dict) or not deck_id:
-            return None
-        deck_name = str(deck.get("name") or "").strip()
-        if not deck_name:
-            return None
-
-        canonical = str(row.get("canonicalURL") or "").strip()
-        if not canonical:
-            canonical = self._deck_canonical_url(deck_name, deck_id)
-
-        created = self._format_date(str(deck.get("created") or "").strip())
-        return DeckEntry(
-            name=deck_name,
-            source_site="tcgplayer.com",
-            source_url=urljoin(self.BASE_URL, canonical),
-            format_label=self._format_label(str(deck.get("format") or "standard")),
-            player_name=self._clean_text(deck.get("playerName")),
-            event_date=created,
-            notes=f"Created: {created}" if created else None,
+        published = self._format_date(str(row.get("date") or "").strip())
+        if not published:
+            return entry
+        return replace(
+            entry,
+            event_date=entry.event_date or published,
+            notes=f"Created: {published}",
         )
 
     def _parse_latest_row(self, row: Any) -> DeckEntry | None:
@@ -358,7 +330,8 @@ class TCGPlayerScraper:
             player_name=self._clean_text(deck_meta.get("playerName")) or deck.player_name,
             placing=self._clean_text(deck_meta.get("eventRank")) or deck.placing,
             event_name=self._clean_text(deck_meta.get("eventName")) or deck.event_name,
-            event_date=self._format_date(str(deck_meta.get("eventDate") or "").strip()) or deck.event_date,
+            event_date=self._format_date(str(deck_meta.get("eventDate") or "").strip())
+            or deck.event_date,
             notes=deck.notes,
         )
         if include_text:
@@ -400,7 +373,9 @@ class TCGPlayerScraper:
                 card_payload = cards.get(card_id)
                 if not isinstance(card_payload, dict):
                     continue
-                card_name = str(card_payload.get("displayName") or card_payload.get("name") or "").strip()
+                card_name = str(
+                    card_payload.get("displayName") or card_payload.get("name") or ""
+                ).strip()
                 if not card_name:
                     continue
                 lines.append(f"{quantity} {card_name}")

@@ -206,11 +206,58 @@ def test_aggregate_maps_names_and_collapses_alchemy_prefix():
     entries = ce.aggregate(collection, METADATA)
     by_name = {e.name: e for e in entries}
     assert by_name["Sheoldred, the Apocalypse"].count == 3
-    # A-Vivi collapses onto Vivi Ornitier (base name known): 1 + 2 = 3
+    # A-Vivi collapses onto Vivi Ornitier (base name known). Owning a card
+    # gives you its rebalance too, so the pair counts once: max(1, 2) = 2.
     assert "A-Vivi Ornitier" not in by_name
-    assert by_name["Vivi Ornitier"].count == 3
+    assert by_name["Vivi Ornitier"].count == 2
     # Unknown id 12345 is skipped (no name to import).
     assert 12345 not in {aid for e in entries for aid in e.arena_ids}
+
+
+# Orcish Bowmasters after the 22 September 2026 revert: Arena's DB strips the
+# A- version's name to the original's (a sprite tag, not "A-"), and the
+# collection lists both ids with the same count.
+REVERTED_METADATA = {
+    84795: ("Orcish Bowmasters", "LTR", "103"),
+    90246: ("Orcish Bowmasters", "LTR", "103"),
+    107456: ("Orcish Bowmasters", "HOC", "19"),
+    107490: ("Orcish Bowmasters", "HOC", "19"),
+    82159: ("Sheoldred, the Apocalypse", "DMU", "107"),
+    90000: ("Sheoldred, the Apocalypse", "DMU", "107"),
+}
+REVERTED_LINKS = {90246: 84795, 107490: 107456, 90000: 82159}
+
+
+def test_aggregate_counts_a_card_and_its_rebalance_once():
+    collection = {84795: 4, 90246: 4, 107456: 1, 107490: 1, 82159: 3, 90000: 3}
+    entries = ce.aggregate(collection, REVERTED_METADATA, rebalanced=REVERTED_LINKS)
+    by_key = {(e.name, e.set): e for e in entries}
+    assert by_key[("Orcish Bowmasters", "LTR")].count == 4  # not 8
+    assert by_key[("Orcish Bowmasters", "HOC")].count == 1
+    assert by_key[("Sheoldred, the Apocalypse", "DMU")].count == 3  # not 6
+    assert sorted(by_key[("Orcish Bowmasters", "LTR")].arena_ids) == [84795, 90246]
+    assert sum(e.count for e in entries) == 8
+
+
+def test_aggregate_rebalance_alone_counts_under_the_original():
+    entries = ce.aggregate({70500: 2}, METADATA, rebalanced={70500: 70501})
+    assert [(e.name, e.count, e.arena_ids) for e in entries] == [
+        ("Vivi Ornitier", 2, [70501, 70500])
+    ]
+
+
+def test_aggregate_takes_the_larger_side_of_a_linked_pair():
+    entries = ce.aggregate({70500: 4, 70501: 2}, METADATA, rebalanced={70500: 70501})
+    assert [(e.name, e.count) for e in entries] == [("Vivi Ornitier", 4)]
+
+
+def test_aggregate_still_sums_different_printings_in_one_set():
+    metadata = {
+        82159: ("Sheoldred, the Apocalypse", "DMU", "107"),
+        82347: ("Sheoldred, the Apocalypse", "DMU", "369"),
+    }
+    entries = ce.aggregate({82159: 2, 82347: 1}, metadata, rebalanced={})
+    assert [(e.name, e.count) for e in entries] == [("Sheoldred, the Apocalypse", 3)]
 
 
 def test_aggregate_keeps_a_prefix_when_requested():
@@ -416,6 +463,59 @@ def test_export_index_falls_back_to_single_localizations_table(tmp_path):
     db = CardDatabase(cache_path=str(tmp_path / "cache.json"), mtga_data_dir=str(raw_dir))
     index = db.export_index_by_arena_id()
     assert index[90573] == ("Sheoldred, the Apocalypse", "DMU", "107")
+
+
+def _rebalance_db(tmp_path, *, defunct: bool):
+    raw_dir = tmp_path / "Raw"
+    raw_dir.mkdir()
+    conn = sqlite3.connect(raw_dir / "Raw_CardDatabase_fake.mtga")
+    if defunct:
+        conn.execute(
+            'CREATE TABLE "Cards" (GrpId INTEGER, IsRebalanced INTEGER, '
+            "RebalancedCardGrpId INTEGER, DefunctRebalancedCardGrpId INTEGER)"
+        )
+        # After a revert both sides point at each other through the Defunct column.
+        conn.executemany(
+            'INSERT INTO "Cards" VALUES (?, ?, ?, ?)',
+            [(84795, 0, 0, 90246), (90246, 1, 0, 84795), (91234, 0, 0, 0)],
+        )
+    else:
+        conn.execute(
+            'CREATE TABLE "Cards" (GrpId INTEGER, IsRebalanced INTEGER, '
+            "RebalancedCardGrpId INTEGER)"
+        )
+        # A live rebalance: only the original points at its A- version.
+        conn.executemany(
+            'INSERT INTO "Cards" VALUES (?, ?, ?)',
+            [(70501, 0, 70500), (70500, 1, 0), (91234, 0, 0)],
+        )
+    conn.commit()
+    conn.close()
+    return raw_dir
+
+
+def test_rebalance_links_read_reverted_pairs(tmp_path):
+    from mtga_tracker.card_database import CardDatabase
+
+    raw_dir = _rebalance_db(tmp_path, defunct=True)
+    db = CardDatabase(cache_path=str(tmp_path / "cache.json"), mtga_data_dir=str(raw_dir))
+    assert db.rebalance_links_by_arena_id() == {90246: 84795}
+
+
+def test_rebalance_links_read_live_pairs(tmp_path):
+    from mtga_tracker.card_database import CardDatabase
+
+    raw_dir = _rebalance_db(tmp_path, defunct=False)
+    db = CardDatabase(cache_path=str(tmp_path / "cache.json"), mtga_data_dir=str(raw_dir))
+    assert db.rebalance_links_by_arena_id() == {70500: 70501}
+
+
+def test_rebalance_links_empty_without_the_columns(tmp_path):
+    from mtga_tracker.card_database import CardDatabase
+
+    raw_dir = _fake_arena_db(tmp_path, loc_table="Localizations_enUS")
+    db = CardDatabase(cache_path=str(tmp_path / "cache.json"), mtga_data_dir=str(raw_dir))
+    assert db.rebalance_links_by_arena_id() == {}
 
 
 def _entries(n):

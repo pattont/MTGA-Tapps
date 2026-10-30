@@ -74,6 +74,8 @@ EVENT_FIELDS: Dict[str, Tuple[str, ...]] = {
     ),
     "tap": ("objs",),
     "untap": ("objs",),
+    "sick": ("objs",),
+    "unsick": ("objs",),
     "counter": ("obj", "type", "delta", "total"),
     "pt": ("obj", "power", "toughness"),
     "attach": ("obj", "to"),
@@ -557,7 +559,7 @@ def validate_stream(stream: Dict[str, Any]) -> List[str]:
         elif kind in STACK_CLOSE_KINDS:
             if open_stack.pop(event["stack_id"], None) is None:
                 problems.append(f"seq {seq}: {kind} for unknown/closed {event['stack_id']}")
-        elif kind in ("tap", "untap", "attack"):
+        elif kind in ("tap", "untap", "sick", "unsick", "attack"):
             for obj in event.get("objs") or []:
                 known(obj, kind, seq)
         elif kind in ("counter", "pt", "identity", "reveal", "attach"):

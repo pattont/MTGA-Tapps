@@ -55,7 +55,8 @@ mtga-tracker-replay-dump = "mtga_tracker.replay_dump:main"
 # API payload, and UI readout derives from it. Nothing to edit per release.
 # From a git checkout the version comes from the nearest v* tag (dev builds
 # between tags get 0.5.9.2.devN+g<sha>); a tarball without git history falls
-# back to 0.0.0+unknown rather than failing to install.
+# back to 0.0.0+unknown rather than failing to install. Source runs read the
+# same version live from git (src/mtga_tracker/source_version.py).
 [tool.setuptools_scm]
 version_file = "src/mtga_tracker/_version.py"
 fallback_version = "0.0.0+unknown"

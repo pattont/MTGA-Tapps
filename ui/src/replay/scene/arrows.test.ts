@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { OPPONENT, PLAYER, makeSampleStream } from '../fixtures/sampleStream';
 import { StreamBuilder, card } from '../fixtures/streamBuilder';
+import { makeTokenStream } from '../fixtures/tokenStream';
 import { layoutBoard } from '../layout';
 import { SLEEVE_COLORS } from '../prefs';
 import { buildTimeline, stateAt } from '../reducer';
 import type { ReplayEvent } from '../types';
-import { arrowBend, arrowControlPoint, arrowShape, neonColors, sceneArrows, seatAnchor, sleeveNeon } from './arrows';
-import { stackExit, stackView } from './stackView';
+import { arrowBend, arrowControlPoint, arrowShape, neonColors, sceneArrowShape, sceneArrows, seatAnchor, sleeveNeon } from './arrows';
+import { foldResolved, groupStack, stackExit, stackView } from './stackView';
+import type { StackViewItem } from './stackView';
 
 const stream = makeSampleStream();
 const timeline = buildTimeline(stream);
@@ -78,6 +80,25 @@ describe('scene arrows', () => {
     expect(mine.y).toBeLessThan(-layout.table.depth / 2);
     expect(theirs.y).toBe(-mine.y);
   });
+
+  it('pairs the two arrows of creatures that damaged each other, so each keeps its own lane', () => {
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    b.move('p1', 'a1', 'limbo', 'battlefield', 1, 'put');
+    b.move('o1', 'a2', 'limbo', 'battlefield', 2, 'put');
+    b.add('damage', { source: 'p1', target_obj: 'o1', target_seat: null, amount: 1, combat: false });
+    b.add('damage', { source: 'o1', target_obj: 'p1', target_seat: null, amount: 1, combat: false });
+    const built = b.build({
+      a1: card('Simulacrum Shaper', 'Creature', { power: '2', toughness: '2' }),
+      a2: card('Freya Crescent', 'Creature', { power: '1', toughness: '1' }),
+    }, { playerSeat: 1 });
+    const state = buildTimeline(built).final;
+    const arrows = sceneArrows(state, layoutBoard(state, { ...OPTS, playerSeat: 1 }));
+    expect(arrows.map((arrow) => [arrow.id, arrow.seat, arrow.paired])).toEqual([
+      ['effect:o1', 1, true],
+      ['effect:p1', 2, true],
+    ]);
+  });
 });
 
 describe('arrow colors', () => {
@@ -116,6 +137,29 @@ describe('arrow geometry', () => {
     expect(arrowBend(400)).toBeGreaterThan(arrowBend(900) - 1e-9);
   });
 
+  it('puts an arrow and its reverse in separate lanes, bowing apart', () => {
+    const down = sceneArrowShape(300, 100, 300, 500, { paired: true });
+    const up = sceneArrowShape(300, 500, 300, 100, { paired: true });
+    const start = (d: string) => d.split(/[MQ ]+/).filter(Boolean).map(Number);
+    const [dsx, , dcx] = start(down.d);
+    const [usx, , ucx] = start(up.d);
+    // Ends sit on opposite sides of the chord, and the curves bow away from each other.
+    expect(Math.sign(dsx - 300)).toBe(-Math.sign(usx - 300));
+    expect(Math.sign(dcx - 300)).toBe(Math.sign(dsx - 300));
+    expect(Math.sign(ucx - 300)).toBe(Math.sign(usx - 300));
+    expect(Math.abs(dcx - ucx)).toBeGreaterThan(100);
+  });
+
+  it("stops an arrow at a card short of the card's centre, where the damage number sits", () => {
+    const tip = (head: string) => head.split(' ')[0].split(',').map(Number);
+    const [, ty] = tip(sceneArrowShape(300, 100, 300, 500, { atCard: true }).head);
+    expect(500 - ty).toBeGreaterThanOrEqual(45);
+    const [tx] = tip(sceneArrowShape(100, 300, 500, 300, { atCard: true }).head);
+    expect(500 - tx).toBeGreaterThanOrEqual(50);
+    // A player target keeps its tip on the reticle.
+    expect(tip(sceneArrowShape(300, 100, 300, 500, {}).head)).toEqual([300, 500]);
+  });
+
   it('ends the curve at the arrowhead base and puts the tip on the target', () => {
     const shape = arrowShape(600, 120, 200, 400);
     expect(shape.d.startsWith('M600 120 Q')).toBe(true);
@@ -140,8 +184,38 @@ describe('stack view', () => {
         top: true,
         targets: 0,
         targeted: false,
+        count: 1,
+        stackIds: ['s5'],
+        resolved: 0,
       },
     ]);
+  });
+
+  it('groups identical abilities next to each other and folds a copy that just resolved', () => {
+    const view = (stackId: string, extra: Partial<StackViewItem> = {}): StackViewItem => ({
+      stackId,
+      card: 'a1',
+      name: 'Belladonna Took',
+      kind: 'trigger',
+      text: 'Whenever a token you control enters',
+      controller: PLAYER,
+      top: false,
+      targets: 0,
+      targeted: false,
+      count: 1,
+      stackIds: [stackId],
+      resolved: 0,
+      ...extra,
+    });
+    const grouped = groupStack([view('s3', { top: true }), view('s2'), view('s9', { targets: 1 }), view('s1')]);
+    expect(grouped.map((item) => [item.stackId, item.count, item.stackIds, item.top])).toEqual([
+      ['s3', 2, ['s3', 's2'], true],
+      ['s9', 1, ['s9'], false],
+      ['s1', 1, ['s1'], false],
+    ]);
+    const { items, exits } = foldResolved(grouped, [{ ...view('s4'), exit: 'resolved' as const }, { ...view('s8'), exit: 'countered' as const }]);
+    expect(items[0]).toMatchObject({ resolved: 1, stackIds: ['s3', 's2', 's4'] });
+    expect(exits.map((item) => item.stackId)).toEqual(['s8']);
   });
 
   it('tells resolved, countered and fizzled exits apart', () => {
@@ -151,5 +225,45 @@ describe('stack view', () => {
     expect(stackExit(stateAt(timeline, fizzled.seq), 's6')).toBe('fizzled');
     const resolved = stream.events.find((e) => e.kind === 'stack_resolve' && e.stack_id === 's5')!;
     expect(stackExit(stateAt(timeline, resolved.seq), 's5')).toBe('resolved');
+  });
+});
+
+describe('attacks on a planeswalker', () => {
+  it('point at the planeswalker, not the player, at full brightness', () => {
+    const state = buildTimeline(makeTokenStream()).final;
+    const arrows = sceneArrows(state, layoutBoard(state, { ...OPTS, playerSeat: 1 }));
+    expect(arrows.some((a) => a.tone === 'attack')).toBe(false);
+    const attacks = arrows.filter((a) => a.tone === 'strike');
+    expect(attacks.map((a) => a.to)).toEqual([
+      { kind: 'obj', obj: 'pw' },
+      { kind: 'obj', obj: 'pw' },
+      { kind: 'obj', obj: 'pw' },
+      { kind: 'obj', obj: 'pw' },
+    ]);
+  });
+});
+
+describe('effect arrow tones', () => {
+  it('are dim on the acting seat\u2019s own permanents and bright on the opponent\u2019s', () => {
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    b.turnStart(1, 1);
+    b.move('src', 'a1', 'limbo', 'battlefield', 1, 'put');
+    b.move('mine', 'a2', 'limbo', 'battlefield', 1, 'put');
+    b.move('theirs', 'a2', 'limbo', 'battlefield', 2, 'put');
+    b.add('stack_push', { stack_id: 's1', obj: 'src', card: 'a1', stack_kind: 'trigger', controller: 1, text: 'Put counters', targets: [] });
+    b.add('stack_resolve', { stack_id: 's1' });
+    b.add('counter', { obj: 'mine', type: '+1/+1', delta: 1, total: 1 });
+    b.add('counter', { obj: 'theirs', type: '+1/+1', delta: 1, total: 1 });
+    const stream = b.build(
+      { a1: card('Source', 'Creature', { power: '1', toughness: '1' }), a2: card('Bear', 'Creature', { power: '2', toughness: '2' }) },
+      { playerSeat: 1 },
+    );
+    const state = buildTimeline(stream).final;
+    const tones = Object.fromEntries(
+      sceneArrows(state, layoutBoard(state, { ...OPTS, playerSeat: 1 })).map((a) => [a.id, a.tone]),
+    );
+    expect(tones['effect:mine']).toBe('support');
+    expect(tones['effect:theirs']).toBe('target');
   });
 });

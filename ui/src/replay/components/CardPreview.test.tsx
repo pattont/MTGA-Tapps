@@ -2,7 +2,7 @@ import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { card } from '../fixtures/streamBuilder';
 import { ImageQueue, resolvedImageCache } from '../images';
-import { HoverStore } from '../scene/hoverStore';
+import { HoverStore, SICK_NOTE } from '../scene/hoverStore';
 import { TextureStore } from '../scene/textureStore';
 import { CardPreview } from './CardPreview';
 
@@ -50,6 +50,17 @@ describe('CardPreview', () => {
     for (const image of screen.queryAllByRole('img')) {
       expect(image.getAttribute('src')).not.toContain('api.scryfall.com');
     }
+    store.dispose();
+  });
+
+  it('says when the hovered creature is summoning sick', () => {
+    const store = new TextureStore({ a2: card('Bear', 'Creature', { image_url: 'https://cards.scryfall.io/normal/front/b/2/bear.jpg' }) });
+    const hover = new HoverStore();
+    render(<CardPreview hover={hover} store={store} />);
+    act(() => hover.set({ key: 'scene:2', card: 'a2', name: 'Bear', note: SICK_NOTE, x: 10, y: 10, source: 'scene' }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent("Summoning sick: can't attack");
+    act(() => hover.set({ key: 'scene:3', card: 'a2', name: 'Bear', x: 10, y: 10, source: 'scene' }));
+    expect(screen.getByRole('tooltip')).not.toHaveTextContent('Summoning sick');
     store.dispose();
   });
 

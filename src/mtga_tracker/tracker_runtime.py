@@ -31,16 +31,12 @@ class TrackerRuntimeMixin:
     def _print_deck_ai_status(self) -> None:
         """One startup line saying whether AI deck identification is active."""
         try:
-            from .deck_llm import diagnose
+            from .deck_llm import diagnose, provider_label as label_for
 
             status = diagnose()
             if not status.get("enabled"):
                 return
-            provider_label = {
-                "openai": "OpenAI",
-                "claude": "Anthropic (Claude)",
-                "gemini": "Gemini",
-            }.get(str(status.get("provider") or ""), str(status.get("provider") or "?"))
+            provider_label = label_for(str(status.get("provider") or ""))
             if status.get("has_api_key"):
                 self._print_line(
                     f" Deck AI: enabled — {provider_label} ({status.get('model') or '?'})"

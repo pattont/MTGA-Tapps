@@ -1107,6 +1107,7 @@ describe('App', () => {
           format: 'Standard',
           best_of: 1,
           deck_name: 'Skellies',
+          went_first: 0,
           opponent_name: 'Villain#12345',
           replay: { state: 'recorded', reason: null },
         },
@@ -1145,6 +1146,11 @@ describe('App', () => {
       'href',
       '#/replay/G8?return=%23%2Flive',
     );
+    // A tiny play/draw tag rides beside the deck name.
+    const tag = todays.querySelector('.live-game-deck-line .live-game-turn-order') as HTMLElement;
+    expect(tag).toHaveAttribute('title', 'On the draw');
+    expect(tag).toHaveClass('badge-drawside');
+    expect(tag.previousElementSibling).toHaveTextContent('Skellies');
     const rightChips = document.querySelector('.live-chips-right') as HTMLElement;
     const waitingChip = within(rightChips).getByText(/Waiting for next match…/);
     expect(waitingChip.previousElementSibling).toHaveTextContent('Std. BO1');
@@ -1159,16 +1165,17 @@ describe('App', () => {
         monitoring: '~/Library/Logs/Wizards Of The Coast/MTGA/Player.log',
         card_db: '~/S/MTGA/Raw_CardDatabase_test.mtga',
         log_db: '~/Repo/MTGA-Tapps/data/mtga_tracker.sqlite3',
-        deck_ai: 'enabled — Gemini (gemini-2.0-flash)',
+        deck_ai: 'enabled — Google (Gemini) (gemini-3.5-flash-lite)',
         version: '0.5.8',
       },
       deck_ai: {
         enabled: true,
         provider: 'gemini',
         providers: [
-          { key: 'openai', label: 'OpenAI', api_key: '', model: '', default_model: 'gpt-4o-mini' },
-          { key: 'claude', label: 'Anthropic (Claude)', api_key: '', model: '', default_model: 'claude-3-5-haiku-20241022' },
-          { key: 'gemini', label: 'Gemini', api_key: 'g-key', model: '', default_model: 'gemini-2.0-flash' },
+          { key: 'openai', label: 'OpenAI (ChatGPT)', api_key: '', model: '', default_model: 'gpt-6-luna', models_url: 'https://developers.openai.com/api/docs/models' },
+          { key: 'claude', label: 'Anthropic (Claude)', api_key: '', model: '', default_model: 'claude-haiku-5-5' },
+          { key: 'gemini', label: 'Google (Gemini)', api_key: 'g-key', model: 'gemini-old', default_model: 'gemini-3.5-flash-lite', models_url: 'https://ai.google.dev/gemini-api/docs/models' },
+          { key: 'grok', label: 'xAI (Grok)', api_key: '', model: '', default_model: 'grok-4.20-0309-non-reasoning', models_url: 'https://docs.x.ai/developers/models' },
         ],
       },
       deck_finder: {
@@ -1187,8 +1194,23 @@ describe('App', () => {
         error: null,
       },
       overlay: { enabled: false, available: true, running: false, binary: '/tmp/tapps-overlay', log: '/tmp/data/overlay.log', error: null },
+      sessions: { break_hours: 4, choices: [0, 1, 2, 3, 4, 6, 8, 12] },
     };
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url) === '/api/settings/deck-ai/models') {
+        const request = JSON.parse(String(init?.body));
+        if (request.provider === 'openai') {
+          return new Response(JSON.stringify({ error: 'OpenAI (ChatGPT) did not accept this API key.' }), { status: 400 });
+        }
+        return new Response(
+          JSON.stringify({ models: [{ id: 'gemini-3-flash', label: 'Gemini 3 Flash' }] }),
+          { status: 200 },
+        );
+      }
+      if (String(url) === '/api/settings/sessions') {
+        settings.sessions.break_hours = JSON.parse(String(init?.body)).break_hours;
+        return new Response(JSON.stringify({ sessions: settings.sessions }), { status: 200 });
+      }
       if (String(url) === '/api/settings/startup') {
         const change = JSON.parse(String(init?.body));
         Object.assign(settings.startup, change, {
@@ -1240,8 +1262,44 @@ describe('App', () => {
     expect(headings.indexOf('Backup & restore')).toBeLessThan(headings.indexOf('Deck AI'));
     expect(await screen.findByText('never backed up')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Back up now' })).toBeDisabled();
+    // Sessions: the break defaults to four hours and saves on change.
+    const sessionBreak = screen.getByLabelText('Start a new session') as HTMLSelectElement;
+    expect(sessionBreak.value).toBe('4');
+    expect(within(sessionBreak).getByRole('option', { name: 'Only when the app opens' })).toBeInTheDocument();
+    fireEvent.change(sessionBreak, { target: { value: '8' } });
+    expect(await screen.findByText('Saved. It applies from the next match.')).toBeInTheDocument();
+    expect(settings.sessions.break_hours).toBe(8);
     expect(screen.getByRole('heading', { name: 'Deck Finder Creators' })).toBeInTheDocument();
     expect(await screen.findByLabelText(/Enable AI deck identification/)).toBeChecked();
+    // Deck AI: the saved provider's models load into a dropdown, keeping the
+    // saved model even when the provider no longer lists it.
+    const provider = screen.getByLabelText('Provider') as HTMLSelectElement;
+    expect(within(provider).getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'OpenAI (ChatGPT)',
+      'Anthropic (Claude)',
+      'Google (Gemini)',
+      'xAI (Grok)',
+    ]);
+    const modelSelect = (await screen.findByRole('option', { name: 'Gemini 3 Flash (gemini-3-flash)' }))
+      .parentElement as HTMLSelectElement;
+    expect(modelSelect.value).toBe('gemini-old');
+    expect(within(modelSelect).getByRole('option', { name: 'gemini-old (not in your list)' })).toBeInTheDocument();
+    expect(within(modelSelect).getByRole('option', { name: 'Default (gemini-3.5-flash-lite)' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: "Google (Gemini)'s model page" })).toHaveAttribute(
+      'href',
+      'https://ai.google.dev/gemini-api/docs/models',
+    );
+    // A key the provider rejects falls back to typing the model name.
+    fireEvent.change(provider, { target: { value: 'openai' } });
+    const openAiKey = screen.getByPlaceholderText('API key');
+    fireEvent.change(openAiKey, { target: { value: 'sk-bad' } });
+    fireEvent.blur(openAiKey);
+    expect(await screen.findByText(/did not accept this API key\. Type a model name instead/)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('gpt-6-luna')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: "OpenAI (ChatGPT)'s model page" })).toHaveAttribute(
+      'href',
+      'https://developers.openai.com/api/docs/models',
+    );
     expect(screen.getByDisplayValue('Ashlizzlle | Ash')).toBeInTheDocument();
     expect(screen.getByDisplayValue('https://www.youtube.com/@SlothMtg/videos | Sloth')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('YouTube'), { target: { value: '@HelloGoodGame | HGG\n@SlothMtg | Sloth' } });

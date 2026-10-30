@@ -17,45 +17,46 @@ class RecordingTCGPlayerScraper(TCGPlayerScraper):
 
 
 class TCGPlayerScraperTests(unittest.TestCase):
-    def test_creator_decks_match_author_latest_order_across_magic_formats(self) -> None:
+    def test_creator_decks_search_by_author_name_across_magic_formats(self) -> None:
         scraper = RecordingTCGPlayerScraper(
             [
                 {
-                    "result": {
-                        "author": {
-                            "uuid": "b332b7d9-a0c6-11ed-8d46-42010a8a038e",
-                            "name": "Arne Huschenbeth",
-                        },
-                    }
-                },
-                {
                     "result": [
                         {
-                            "id": 546993,
-                            "deck": {
-                                "created": "2026-06-12T14:06:03Z",
-                                "name": "Jeskai Lessons",
-                                "format": "standard",
+                            "contentType": "deck",
+                            "date": "7/17/2026",
+                            "deckData": {
+                                "deckName": "Esper Goryo's",
+                                "format": "modern",
                                 "playerName": "Arne Huschenbeth",
                             },
+                            "deckID": "548737",
+                            "title": "Esper Goryo's",
+                            "canonicalURL": "/magic-the-gathering/deck/Esper-Goryo's/548737",
                         },
                         {
-                            "id": 546640,
-                            "deck": {
-                                "created": "2026-06-05T18:16:15Z",
-                                "name": "Jeskai Lessons",
+                            "contentType": "deck",
+                            "date": "6/12/2026",
+                            "deckData": {
+                                "deckName": "Jeskai Lessons",
                                 "format": "standard",
                                 "playerName": "Arne Huschenbeth",
                             },
+                            "deckID": "546993",
+                            "title": "Jeskai Lessons",
+                            "canonicalURL": "/magic-the-gathering/deck/Jeskai-Lessons/546993",
                         },
                         {
-                            "id": 546073,
-                            "deck": {
-                                "created": "2026-05-23T15:41:47Z",
-                                "name": "Mono-Green Landfall",
+                            "contentType": "deck",
+                            "date": "6/5/2026",
+                            "deckData": {
+                                "deckName": "Jeskai Lessons",
                                 "format": "standard",
                                 "playerName": "Arne Huschenbeth",
                             },
+                            "deckID": "546640",
+                            "title": "Jeskai Lessons",
+                            "canonicalURL": "/magic-the-gathering/deck/Jeskai-Lessons/546640",
                         },
                     ]
                 },
@@ -66,36 +67,40 @@ class TCGPlayerScraperTests(unittest.TestCase):
 
         self.assertEqual(
             [deck.name for deck in decks],
-            ["Jeskai Lessons", "Jeskai Lessons", "Mono-Green Landfall"],
+            ["Esper Goryo's", "Jeskai Lessons", "Jeskai Lessons"],
         )
-        self.assertEqual(decks[0].source_url, "https://www.tcgplayer.com/magic-the-gathering/deck/Jeskai-Lessons/546993")
-        self.assertEqual(decks[0].format_label, "Standard")
-        self.assertEqual(decks[0].player_name, "Arne Huschenbeth")
-        self.assertEqual(decks[0].event_date, "06/12/2026")
-        self.assertEqual(decks[0].notes, "Created: 06/12/2026 | Creator: Arne Huschenbeth")
+        self.assertEqual(
+            decks[1].source_url,
+            "https://www.tcgplayer.com/magic-the-gathering/deck/Jeskai-Lessons/546993",
+        )
+        self.assertEqual(decks[0].format_label, "Modern")
+        self.assertEqual(decks[1].format_label, "Standard")
+        self.assertEqual(decks[1].player_name, "Arne Huschenbeth")
+        self.assertEqual(decks[1].event_date, "06/12/2026")
+        self.assertEqual(decks[1].notes, "Created: 06/12/2026 | Creator: Arne Huschenbeth")
         self.assertEqual(
             scraper.requests,
             [
                 (
-                    "https://infinite-api.tcgplayer.com/content/author/Arne%20Huschenbeth/",
+                    "https://infinite-api.tcgplayer.com/content/search/",
                     {
-                        "rows": 1,
-                        "offset": 0,
-                    },
-                ),
-                (
-                    "https://infinite-api.tcgplayer.com/decks/",
-                    {
-                        "authorID": "b332b7d9-a0c6-11ed-8d46-42010a8a038e",
+                        "contentType": "deck",
+                        "game": "magic",
+                        "author": "Arne Huschenbeth",
                         "rows": 3,
                         "offset": 0,
-                        "latest": True,
                         "sort": "created",
                         "order": "desc",
                     },
                 ),
             ],
         )
+
+    def test_creator_with_no_decks_names_the_creator(self) -> None:
+        scraper = RecordingTCGPlayerScraper([{"result": []}])
+
+        with self.assertRaisesRegex(Exception, "no decks by Nobody Here"):
+            scraper.fetch_creator_decks("Nobody Here")
 
 
 if __name__ == "__main__":

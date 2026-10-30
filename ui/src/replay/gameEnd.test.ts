@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { makeSampleStream } from './fixtures/sampleStream';
-import { describeGameEnd, endReasonLabel } from './gameEnd';
+import { describeGameEnd, endReasonLabel, gameEndScore } from './gameEnd';
 import { buildTimeline } from './reducer';
 
 describe('endReasonLabel', () => {
@@ -39,5 +39,18 @@ describe('describeGameEnd', () => {
     const timeline = buildTimeline(stream);
     const end = describeGameEnd(stream, timeline.final);
     expect(end).toEqual({ result: 'loss', headline: 'Defeat', reason: 'You reached 0 life' });
+  });
+});
+
+describe('gameEndScore', () => {
+  it('gives the final life totals, opponent name and game length the ending card shows', () => {
+    const stream = makeSampleStream();
+    const final = buildTimeline(stream).final;
+    const score = gameEndScore(stream, final);
+    const opponentSeat = Object.keys(stream.seats).map(Number).find((seat) => seat !== stream.player_seat) as number;
+    expect(score.yourLife).toBe(final.life[stream.player_seat]);
+    expect(score.theirLife).toBe(final.life[opponentSeat]);
+    expect(score.opponentName).toBe(stream.seats[String(opponentSeat)].name || 'Opponent');
+    expect(score.facts[0]).toBe(`${final.turn} turn${final.turn === 1 ? '' : 's'}`);
   });
 });

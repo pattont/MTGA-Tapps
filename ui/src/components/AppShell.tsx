@@ -7,6 +7,7 @@ import {
   ArrowLeftRight,
   Bot,
   CalendarClock,
+  Coffee,
   Circle,
   Crown,
   Clock,
@@ -45,6 +46,7 @@ import { TRACKER_NAME } from '../branding';
 import { dashboardNavItems, type AppNavItem } from '../nav';
 import { REPLAY_ROUTE_HASH, parseDeckFinderRoute, parseDeckManagerRoute } from '../routes';
 import type { ThemeName } from '../theme';
+import { buyMeACoffeeUrl } from '../supportLink';
 import { CardSearch } from './CardSearch';
 import { CollapseToggle } from './CollapseToggle';
 import { UpdateIndicator, UpdateNotices } from './UpdateIndicator';
@@ -173,6 +175,7 @@ export function AppShell({
   const replayActive = launcher === 'replay';
   const finderActive = launcher === 'deck-finder';
   const managerActive = launcher === 'deck-manager';
+  const coffeeUrl = buyMeACoffeeUrl();
   useEffect(() => {
     function onHashChange() {
       setLauncher(activeLauncher(window.location.hash));
@@ -455,6 +458,11 @@ export function AppShell({
             <a aria-current={managerActive ? 'page' : undefined} aria-label="Deck Manager (Beta)" className={`sidebar-deck-finder sidebar-deck-manager sidebar-deck-finder-mini${managerActive ? ' sidebar-deck-manager-active' : ''}`} href="#/deck-manager" title="Deck Manager (Beta)">
               <Layers aria-hidden="true" />
             </a>
+            {coffeeUrl ? (
+              <a aria-label="Buy me a coffee" className="sidebar-deck-finder sidebar-coffee sidebar-deck-finder-mini" href={coffeeUrl} rel="noreferrer" target="_blank" title="Buy me a coffee">
+                <Coffee aria-hidden="true" />
+              </a>
+            ) : null}
           </div>
         ) : (
           <div className="sidebar-bottom">
@@ -476,6 +484,12 @@ export function AppShell({
               <Layers aria-hidden="true" />
               <span className="sidebar-nav-label">Deck Manager <span className="sidebar-beta">Beta</span></span>
             </a>
+            {coffeeUrl ? (
+              <a className="sidebar-deck-finder sidebar-coffee" href={coffeeUrl} rel="noreferrer" target="_blank" title="Support Tapps Tracker on Buy Me a Coffee">
+                <Coffee aria-hidden="true" />
+                <span className="sidebar-nav-label">Buy me a coffee</span>
+              </a>
+            ) : null}
             <UpdateNotices controller={update} />
             {footerVersion ? (
               <span

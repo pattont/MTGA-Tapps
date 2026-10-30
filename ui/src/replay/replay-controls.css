@@ -26,6 +26,15 @@
   height: 20px;
   cursor: pointer;
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
+
+.replay-scrub,
+.replay-scrub * {
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .replay-scrub-segment {

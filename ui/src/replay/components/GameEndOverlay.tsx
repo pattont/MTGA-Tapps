@@ -5,8 +5,7 @@
  * removes it; "Show table" hides it until the position changes again.
  */
 import { useState } from 'react';
-import { formatDuration } from '../../format';
-import { describeGameEnd } from '../gameEnd';
+import { describeGameEnd, gameEndScore } from '../gameEnd';
 import type { PlaybackClock } from '../player';
 import type { BoardState } from '../reducer';
 import type { ReplayStream } from '../types';
@@ -26,18 +25,7 @@ export function GameEndOverlay({ stream, state, clock, backHash }: GameEndOverla
   if (!state.ended || hiddenAt === state.seq) return null;
 
   const end = describeGameEnd(stream, state);
-  const playerSeat = stream.player_seat;
-  const opponentId = Object.keys(stream.seats)
-    .map(Number)
-    .find((seat) => seat !== playerSeat);
-  const opponent = opponentId === undefined ? undefined : stream.seats[String(opponentId)];
-  const yourLife = state.life[playerSeat] ?? stream.seats[String(playerSeat)]?.starting_life ?? 0;
-  const theirLife = opponentId === undefined ? null : (state.life[opponentId] ?? opponent?.starting_life ?? 0);
-  const elapsed = state.lastEvent?.t ?? stream.game.duration_seconds ?? null;
-  const turns = state.turn > 0 ? state.turn : stream.game.total_turns;
-  const facts: string[] = [];
-  if (turns) facts.push(`${turns} turn${turns === 1 ? '' : 's'}`);
-  if (elapsed !== null && elapsed > 0) facts.push(formatDuration(elapsed));
+  const { yourLife, opponentName, theirLife, facts } = gameEndScore(stream, state);
 
   return (
     <div className={`replay-end replay-end-${end.result}`} role="dialog" aria-modal="false" aria-label="Game result">
@@ -54,7 +42,7 @@ export function GameEndOverlay({ stream, state, clock, backHash }: GameEndOverla
             –
           </span>
           <div className={`replay-end-seat${end.result === 'loss' ? ' replay-end-seat-winner' : ''}`}>
-            <span className="replay-end-seat-name">{opponent?.name || 'Opponent'}</span>
+            <span className="replay-end-seat-name">{opponentName}</span>
             <span className="replay-end-life">{theirLife ?? '—'}</span>
           </div>
         </div>

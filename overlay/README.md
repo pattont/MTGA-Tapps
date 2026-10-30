@@ -17,7 +17,10 @@ Settings and the tracker menu control its lifecycle.
 - `src-tauri/` — the shell. `lib.rs` owns the window (rail ↔ panel sizing,
   docking, hotkeys, click-through; no tray of its own — the tracker's menu bar
   drives it by launching a second instance with `--open-settings`, `--show`
-  or `--hide`, which the single-instance guard hands over), `dock.rs` the pure geometry,
+  or `--hide`, which the single-instance guard hands over), `parent.rs` the
+  `--parent-pid` watchdog that quits the overlay once the tracker that started
+  it is gone (a tracker reusing a running overlay hands over its own pid the
+  same way), `dock.rs` the pure geometry,
   `settings.rs` the persisted preferences (`overlay.json` in the app config
   dir), `arena.rs` the once-a-second "is Arena in front" probe.
 

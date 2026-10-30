@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { makeLongStream } from './fixtures/longStream';
+import { StreamBuilder, card } from './fixtures/streamBuilder';
 import { OPPONENT, PLAYER, makeSampleStream } from './fixtures/sampleStream';
 import type { BoardState } from './reducer';
 import { applyEvent, buildTimeline, createInitialState, stateAt, turnAtSeq } from './reducer';
@@ -31,7 +32,7 @@ function snapshot(state: BoardState) {
     activeSeat: state.activeSeat,
     phase: state.phase,
     life: state.life,
-    attackers: [...state.attackers].sort(),
+    attackers: [...state.attackers.keys()].sort(),
     blocks: [...state.blocks.entries()].sort(),
     winnerSeat: state.winnerSeat,
   };
@@ -107,7 +108,7 @@ describe('replay reducer', () => {
       target_obj: null,
     };
     const next = applyEvent(base, second);
-    expect([...next.attackers].sort()).toEqual(['211', '215']);
+    expect([...next.attackers.keys()].sort()).toEqual(['211', '215']);
   });
 
   it('counters a spell: Negate resolves first, Elves go to the graveyard', () => {
@@ -150,7 +151,7 @@ describe('replay reducer', () => {
 
   it('marks attackers and blocks through combat and clears them after', () => {
     const blocked = reduceTo(stream, seqWhere(stream, (e) => e.kind === 'block'));
-    expect([...blocked.attackers]).toEqual(['215']);
+    expect([...blocked.attackers.keys()]).toEqual(['215']);
     expect(blocked.blocks.get('104')).toBe('215');
     const transformed = reduceTo(stream, seqWhere(stream, (e) => e.kind === 'identity'));
     expect(transformed.objects.get('215')?.card).toBe('a1011');
@@ -275,5 +276,48 @@ describe('replay timeline performance', () => {
     const timeline = buildTimeline(stream);
     stateAt(timeline, Math.floor(stream.events.length / 2));
     expect(performance.now() - started).toBeLessThan(500);
+  });
+});
+
+describe('token creation', () => {
+  it("clears the inferred mark of a token that rows named before its creation", () => {
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    b.move('310', null, 'limbo', 'battlefield', 1, 'unknown', { inferred: true });
+    b.move('310', 'a1', 'battlefield', 'battlefield', 1, 'token_create');
+    const warrior = card('Warrior', 'Creature', { is_token: true, power: '1', toughness: '1' });
+    const final = buildTimeline(b.build({ a1: warrior }, { playerSeat: 1 })).final;
+    expect(final.objects.get('310')).toMatchObject({ card: 'a1', inferred: false });
+  });
+});
+
+describe('effect window', () => {
+  it('closes when play moves to a new step, even without a phase event', () => {
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    b.turnStart(1, 1);
+    b.move('src', 'a1', 'limbo', 'battlefield', 1, 'put');
+    b.move('bear', 'a1', 'limbo', 'battlefield', 1, 'put');
+    b.phaseTo('Phase_Combat', 'Step_DeclareBlock');
+    b.add('stack_push', { stack_id: 's1', obj: 'src', card: 'a1', stack_kind: 'trigger', controller: 1, text: 'Counters', targets: [] });
+    b.add('stack_resolve', { stack_id: 's1' });
+    b.add('counter', { obj: 'bear', type: '+1/+1', delta: 1, total: 1 });
+    const resolved = buildTimeline(b.build({ a1: card('Bear', 'Creature') }, { playerSeat: 1 })).final;
+    expect(resolved.effects.exits).toHaveLength(1);
+    // Combat damage carries its own step; the resolution's effects end there.
+    const damage: ReplayEvent = {
+      ...b.events[b.events.length - 1],
+      seq: b.events.length,
+      step: 'Step_CombatDamage',
+      kind: 'damage',
+      source: 'bear',
+      target_obj: null,
+      target_seat: 2,
+      amount: 2,
+      combat: true,
+    } as ReplayEvent;
+    const next = applyEvent(resolved, damage);
+    expect(next.effects.exits).toHaveLength(0);
+    expect(next.effects.objects.has('bear')).toBe(false);
   });
 });

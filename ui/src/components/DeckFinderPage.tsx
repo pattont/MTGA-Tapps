@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, Check, Copy, Dices, ExternalLink, FolderOpen, Info, Layers, Plus, RefreshCw, Search } from 'lucide-react';
 import { fetchDeckLibrary, type DeckCollection, type NativeDeckJob, importManagedDeck, addDeckToArena, fetchNativeDeckStatus, fetchNativeDeckJob, type NativeDeckStatus } from '../deckManagerApi';
+import { usePageVisible } from '../usePageVisible';
 import { DeckTransferProgress } from './DeckTransferProgress';
 import { DeckModal } from './DeckModal';
 import { exportedDeckName } from '../deckFinderName';
@@ -21,8 +22,11 @@ import { Section } from './Section';
 import { SortableTable, type Column } from './SortableTable';
 import { parseDeckFinderImport } from '../deckFinderImport';
 import { DeckFinderDeckList } from './DeckFinderDeckList';
+import { BuyPaperButton, BuyPaperDialog } from './BuyPaperDialog';
 
 const JOB_POLL_MS = 700;
+/** Arena status refresh while a deck is open; Add to Arena re-checks everything when clicked. */
+const NATIVE_STATUS_MS = 10_000;
 const JOB_TIMEOUT_MS = 120_000;
 
 const SITE_SUBTITLES: Record<string, string> = {
@@ -39,8 +43,14 @@ function addBlockedReason(status: NativeDeckStatus): string | null {
   if (status.in_game) return 'Add to Arena is paused while you are in a game.';
   if (status.pending_transfers?.length) return 'Add to Arena is paused until an interrupted transfer is reconciled in Deck Manager.';
   if (status.busy) return 'Add to Arena is waiting for another Arena deck operation to finish.';
-  if (status.limit_reached === true) return 'Arena’s deck slots are full. Move a deck to your collection first.';
   return null;
+}
+
+/** Slots are only known from the last time a job read Arena, which may be out of
+    date (decks deleted in Arena since). A note, never a block: clicking Add reads
+    Arena again and stops there if the slots really are full. */
+function slotsNote(status: NativeDeckStatus): string | null {
+  return status.limit_reached === true ? 'Arena’s deck slots were full when last checked. Add to Arena checks again.' : null;
 }
 
 /** Arena wasn't on Decks: the fix is in Arena, so Deck Manager has nothing to offer. */
@@ -129,13 +139,22 @@ export function DeckFinderPage() {
   const [saving, setSaving] = useState(false);
   const [collections, setCollections] = useState<DeckCollection[]>([]);
   const [pickingCollection, setPickingCollection] = useState<HTMLElement | null>(null);
+  const [buyingOpener, setBuyingOpener] = useState<HTMLElement | null>(null);
   const [collectionQuery, setCollectionQuery] = useState('');
   const [transferProgress, setTransferProgress] = useState<NativeDeckJob['progress']>();
+  const collectionsLoaded = useRef(false);
   useEffect(() => {
+    // The whole saved library comes back with the collections, so it is only
+    // read once someone opens the collection picker.
+    if (!pickingCollection || collectionsLoaded.current) return;
     const controller = new AbortController();
-    fetchDeckLibrary(controller.signal).then((library) => { if (!controller.signal.aborted) setCollections(library.collections ?? []); }).catch(() => {});
+    fetchDeckLibrary(controller.signal).then((library) => {
+      if (controller.signal.aborted) return;
+      collectionsLoaded.current = true;
+      setCollections(library.collections ?? []);
+    }).catch(() => {});
     return () => controller.abort();
-  }, []);
+  }, [pickingCollection]);
   const [nativeStatus, setNativeStatus] = useState<NativeDeckStatus | null>(null);
   const [arenaJob, setArenaJob] = useState<{ id: string; source: string } | null>(null);
   const [arenaFeedback, setArenaFeedback] = useState<{ source: string; message: string; error: boolean } | null>(null);
@@ -148,7 +167,12 @@ export function DeckFinderPage() {
   // and "back to results" after a variants drill-down.
   const [lastFetch, setLastFetch] = useState<FetchArgs | null>(null);
 
+  const pageVisible = usePageVisible();
+  const showingDeck = selectedDeck !== null;
   useEffect(() => {
+    // Arena's status only gates the Add to Arena button, so it is read while a
+    // deck is open in a visible tab, and again at once when either returns.
+    if (!pageVisible || !showingDeck) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
@@ -156,11 +180,11 @@ export function DeckFinderPage() {
         const status = await fetchNativeDeckStatus(controller.signal);
         if (!controller.signal.aborted) setNativeStatus(status);
       } catch { /* Provider browsing and clipboard export remain available. */ }
-      if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 5000);
+      if (!controller.signal.aborted) timer = setTimeout(() => void poll(), NATIVE_STATUS_MS);
     }
     void poll();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [nativeRefresh]);
+  }, [nativeRefresh, pageVisible, showingDeck]);
 
   useEffect(() => {
     if (!arenaJob) return;
@@ -796,6 +820,7 @@ export function DeckFinderPage() {
                       >
                         <ExternalLink aria-hidden="true" /> Source
                       </a>
+                      <BuyPaperButton className="deck-export-button" disabled={!parsedDeck} onOpen={setBuyingOpener} />
                       <button
                         className="deck-export-button deckfinder-title-export"
                         disabled={!selectedDeck.deck_text}
@@ -821,7 +846,7 @@ export function DeckFinderPage() {
                   <legend><a href="#/deck-manager" title="Open Deck Manager"><Layers aria-hidden="true" />Deck Manager</a></legend>
                   <div className="deckfinder-detail-actions">
                     {nativeStatus?.available ? <button className="deck-export-button deckfinder-manager-add" type="button"
-                      disabled={saving || adding || addedSource === selectedDeck.source_url + selectedDeck.name || nativeStatus.busy || nativeStatus.in_game || nativeStatus.limit_reached === true || Boolean(nativeStatus.pending_transfers?.length) || !selectedDeck.deck_text}
+                      disabled={saving || adding || addedSource === selectedDeck.source_url + selectedDeck.name || nativeStatus.busy || nativeStatus.in_game || Boolean(nativeStatus.pending_transfers?.length) || !selectedDeck.deck_text}
                       title={addBlockedReason(nativeStatus) ?? 'Adds the deck with Arena’s importer. Arena must be open on Decks outside a match, with a free deck slot.'}
                       onClick={() => void addSelectedDeck()}>{addedSource === selectedDeck.source_url + selectedDeck.name ? <Check aria-hidden="true" /> : <Plus aria-hidden="true" />}{adding ? 'Adding…' : addedSource === selectedDeck.source_url + selectedDeck.name ? 'Added to Arena' : 'Add to Arena'}</button> : null}
                     <button className="deck-neutral-button deckfinder-manager-save" disabled={saving || adding || !selectedDeck.deck_text} type="button" onClick={(event) => {
@@ -832,6 +857,7 @@ export function DeckFinderPage() {
                   </div>
                   {adding && arenaFeedback?.source === selectedDeck.source_url + selectedDeck.name ? <DeckTransferProgress detail={arenaFeedback.message} progress={transferProgress} /> : null}
                   {nativeStatus?.available && !adding && addBlockedReason(nativeStatus) ? <p className="deckfinder-arena-blocked">{addBlockedReason(nativeStatus)} {nativeStatus.pending_transfers?.length ? <a href="#/deck-manager">Open Deck Manager</a> : null}</p> : null}
+                  {nativeStatus?.available && !adding && !addBlockedReason(nativeStatus) && slotsNote(nativeStatus) && arenaFeedback?.source !== selectedDeck.source_url + selectedDeck.name ? <p className="deckfinder-arena-blocked">{slotsNote(nativeStatus)}</p> : null}
                   {savedDeckId?.source === selectedDeck.source_url + selectedDeck.name ? <p role="status">Deck saved to {collections.find((c) => c.id === savedDeckId.collection)?.name ?? 'Unsorted'}. <a href="#/deck-manager">Open Deck Manager</a></p> : null}
                   {saveError?.source === selectedDeck.source_url + selectedDeck.name ? <p role="alert">{saveError.message}</p> : null}
                   {!adding && arenaFeedback?.source === selectedDeck.source_url + selectedDeck.name ? <p role={arenaFeedback.error ? 'alert' : 'status'}>{arenaFeedback.message} {arenaFeedback.error && !needsDecksScreen(arenaFeedback.message) ? <a href="#/deck-manager">Open Deck Manager</a> : null}</p> : null}
@@ -871,6 +897,11 @@ export function DeckFinderPage() {
             )}
           </div>
         </section>
+      ) : null}
+      {/* Outside the selected-deck panel so its provider-colored headings don't apply. */}
+      {buyingOpener && selectedDeck && parsedDeck ? (
+        <BuyPaperDialog sections={parsedDeck.sections}
+          onClose={() => setBuyingOpener(null)} returnFocus={buyingOpener} />
       ) : null}
     </div>
   );

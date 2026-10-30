@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import hashlib
+import importlib.util
 from pathlib import Path
+import sys
 from threading import Timer
 
 from .deck_manager import DeckManagerError
@@ -14,9 +16,10 @@ from .paths import native_deck_platform_supported
 def availability():
     if not native_deck_platform_supported():
         return False, "Direct transfers support Arena on Apple Silicon Macs and 64-bit Windows."
-    try:
-        import frida  # noqa: F401
-    except ImportError:
+    # Locate Frida without importing it: the import loads its native library
+    # into the tracker for good, and status is polled by pages that may never
+    # attach. The attach itself imports it.
+    if "frida" not in sys.modules and importlib.util.find_spec("frida") is None:
         return False, "The native deck adapter is missing from this installation."
     return True, "Open Arena’s Decks screen, then load its decks."
 

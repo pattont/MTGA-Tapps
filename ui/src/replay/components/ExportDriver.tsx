@@ -66,6 +66,8 @@ export interface ExportDriverProps extends ExportHandle, Omit<FrameSource, 'stre
 const ART_TIMEOUT_MS = 30_000;
 /** Frames between progress reports and a yield to the browser. */
 const REPORT_EVERY = 5;
+/** Longest wait for the canvas to commit a new board before the frame is drawn anyway. */
+const COMMIT_TIMEOUT_MS = 2_000;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -124,6 +126,15 @@ export function ExportDriver(props: ExportDriverProps) {
       }
       if (cancelled) return;
 
+      // The canvas renders its children with its own reconciler, so a clock
+      // step committed with flushSync can reach the board a tick later. Draw
+      // only once it has: otherwise a frame shows the previous action, and the
+      // closing hold repeats the board from before the game ended.
+      const boardCommitted = async () => {
+        const deadline = performance.now() + COMMIT_TIMEOUT_MS;
+        while (latest.current.state.seq !== clock.snapshot.seq && performance.now() < deadline) await sleep(0);
+      };
+
       const encoder = await createMp4Encoder({ width: layout.width, height: layout.height, fps: plan.fps, quality: job.quality });
       const startSeq = clock.seq;
       const wasPlaying = clock.isPlaying;
@@ -131,6 +142,7 @@ export function ExportDriver(props: ExportDriverProps) {
       registry.fixedStep = 1 / plan.fps;
       try {
         flushSync(() => clock.seek(stream.events[plan.fromIndex].seq));
+        await boardCommitted();
         let renderedIndex = -1;
         for (let f = 0; f < total; f += 1) {
           if (cancelled) {
@@ -138,7 +150,10 @@ export function ExportDriver(props: ExportDriverProps) {
             return;
           }
           const target = plan.frames[f];
-          while (clock.snapshot.index < target) flushSync(() => clock.step(1));
+          if (clock.snapshot.index < target) {
+            while (clock.snapshot.index < target) flushSync(() => clock.step(1));
+            await boardCommitted();
+          }
           // A hold with nothing in motion repeats the last frame: no render, no compose.
           const still = renderedIndex === clock.snapshot.index && !registry.busy;
           if (!still) {

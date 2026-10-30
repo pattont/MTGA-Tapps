@@ -1,0 +1,8 @@
+Store icons for the Buy on Paper dialog. Vite copies this folder into
+ui/dist/stores/; the dashboard makes no runtime logo requests to store sites.
+
+Card Kingdom: https://www.cardkingdom.com/favicon.ico (48 px frame, converted to PNG)
+CoolStuffInc: https://www.coolstuffinc.com/favicon.ico (48 px frame, converted to PNG)
+Mana Pool: https://manapool.com/favicon.ico (32 px PNG)
+StarCityGames: apple-touch-icon from starcitygames.com, scaled to 64 px
+TCGplayer: same file as ui/public/providers/tcgplayer.ico

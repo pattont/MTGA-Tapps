@@ -188,17 +188,38 @@ class TrackerStateLookupMixin:
             current = int(parent)
         return current
 
-    def _record_object_id_change(self, orig_id: Optional[int], new_id: Optional[int]) -> None:
+    def _record_object_id_change(
+        self,
+        orig_id: Optional[int],
+        new_id: Optional[int],
+        game_objects_by_id: Optional[Dict[int, Dict[str, Any]]] = None,
+    ) -> None:
         """Track object id remaps so cast/resolve stages can be deduped as one spell."""
         if orig_id is None or new_id is None:
             return
         orig_root = self._canonical_instance_id(orig_id) or int(orig_id)
+        new_id = int(new_id)
+        if self.game_state.instance_roots.get(new_id) != orig_root:
+            # Arena can reuse an id whose object it never deleted (an ability
+            # whose activation was undone): a snapshot under the new id belongs
+            # to that earlier object. Keep only what this message says of it.
+            current = (game_objects_by_id or {}).get(new_id)
+            if isinstance(current, dict):
+                self.game_state.object_snapshots[new_id] = {
+                    k: v for k, v in current.items() if v is not None
+                }
+            else:
+                self.game_state.object_snapshots.pop(new_id, None)
         self.game_state.instance_roots[int(orig_id)] = orig_root
-        self.game_state.instance_roots[int(new_id)] = orig_root
+        self.game_state.instance_roots[new_id] = orig_root
 
     def _object_display_name(self, obj: Dict[str, Any], instance_id: Optional[int]) -> str:
         """Return best-effort card/permanent display name for a game object."""
         grp_id = obj.get("grpId") or obj.get("overlayGrpId") or obj.get("objectSourceGrpId")
+        if obj.get("type") == "GameObjectType_Ability" and obj.get("objectSourceGrpId"):
+            # An ability's grpId is the ability itself ("Card #168506" for
+            # Kaito's ninjutsu): name the card it comes from instead.
+            grp_id = obj.get("objectSourceGrpId")
         if grp_id:
             name = self._refresh_fallback_name_text(self.card_db.get_card_name(grp_id))
             if name:

@@ -120,7 +120,15 @@ def test_manager_starts_with_api_url_and_stops(tmp_path):
     status = manager.set_enabled(True)
     assert status["running"] is True
     assert status["enabled"] is True
-    assert launched[0].args == [str(binary), "--log", str(tmp_path / "data" / "overlay.log"), "--api", "http://127.0.0.1:8123"]
+    assert launched[0].args == [
+        str(binary),
+        "--log",
+        str(tmp_path / "data" / "overlay.log"),
+        "--parent-pid",
+        str(os.getpid()),
+        "--api",
+        "http://127.0.0.1:8123",
+    ]
     assert launched[0].kwargs["cwd"] == str(tmp_path)
     assert (tmp_path / "data" / "overlay-stderr.log").exists()
     assert status["log"] == str(tmp_path / "data" / "overlay.log")
@@ -280,16 +288,28 @@ def test_manager_recognizes_and_stops_external_overlay(tmp_path):
         killed.append(pid)
         external_pids.remove(pid)
 
+    handoffs = []
+
+    def popen(args, **kwargs):
+        handoffs.append(FakeProcess(args, **kwargs))
+        return handoffs[-1]
+
     manager = OverlayManager(
         binary=binary,
         settings_path=tmp_path / "settings.json",
-        popen=lambda *args, **kwargs: pytest.fail("existing overlay should be reused"),
+        popen=popen,
         log_dir=tmp_path,
         process_finder=lambda _binary: list(external_pids),
         process_killer=kill,
     )
 
     assert manager.set_enabled(True)["running"] is True
+    # The existing overlay is reused, not tracked as our child; the one
+    # handoff launch tells it to follow this tracker's pid from now on.
+    assert manager._process is None
+    assert len(handoffs) == 1
+    pid_flag = handoffs[0].args.index("--parent-pid")
+    assert handoffs[0].args[pid_flag + 1] == str(os.getpid())
     status = manager.set_enabled(False)
 
     assert killed == [4321]
@@ -360,3 +380,23 @@ def test_frozen_mac_build_looks_in_contents_helpers_first(monkeypatch, tmp_path)
     monkeypatch.delenv(overlay_launcher.BINARY_ENV, raising=False)
     first = overlay_launcher.overlay_binary_candidates()[0]
     assert first == tmp_path / "MTGA Tracker.app" / "Contents" / "Helpers" / "Tapps Overlay.app" / "Contents" / "MacOS" / "tapps-overlay"
+
+
+def test_windows_app_control_block_gets_a_readable_error(tmp_path):
+    binary = _fake_binary(tmp_path)
+
+    def popen(args, **kwargs):
+        error = OSError(22, "An Application Control policy has blocked this file")
+        error.winerror = 4551
+        raise error
+
+    manager = OverlayManager(
+        binary=binary,
+        settings_path=tmp_path / "settings.json",
+        popen=popen,
+        log_dir=tmp_path,
+        process_finder=lambda _binary: [],
+    )
+
+    assert manager.start() is False
+    assert "Smart App Control" in manager.status()["error"]

@@ -337,16 +337,16 @@ class OverlayManager:
             if binary is None:
                 self._last_error = "The overlay is not included in this build."
                 return False
+            args = self._launch_args(binary)
             if self._external_process_ids(binary):
                 # A previous tracker process may have left the single Tauri
-                # instance running. It is still the live overlay; do not
-                # spawn a short-lived handoff child and later call it a stop.
+                # instance running. It is still the live overlay: hand it our
+                # pid so it now lives as long as this tracker, but do not
+                # track the short-lived handoff child and later call it a stop.
+                self._handoff(binary, args)
                 self._last_error = None
                 return True
             self._ensure_executable(binary)
-            args = [str(binary), "--log", str(self.log_path)]
-            if self._api_url:
-                args += ["--api", self._api_url]
             stderr: Any = subprocess.DEVNULL
             try:
                 self.stderr_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -364,12 +364,33 @@ class OverlayManager:
                     **_detached_kwargs(),
                 )
             except OSError as exc:
-                self._last_error = f"Could not start the overlay: {exc}"
+                self._last_error = _start_error_message(exc)
                 self._process = None
                 return False
             self._last_error = None
             self._last_exit_code = None
             return True
+
+    def _launch_args(self, binary: Path) -> List[str]:
+        # --parent-pid: the overlay quits on its own once this process is
+        # gone (crash, Task Manager, uninstall), so it never outlives us.
+        args = [str(binary), "--log", str(self.log_path), "--parent-pid", str(os.getpid())]
+        if self._api_url:
+            args += ["--api", self._api_url]
+        return args
+
+    def _handoff(self, binary: Path, args: List[str]) -> None:
+        try:
+            self._popen(
+                args,
+                cwd=str(binary.parent),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                **_detached_kwargs(),
+            )
+        except OSError:
+            pass
 
     #: Flags the running overlay understands from a second launch (its
     #: single-instance guard hands the arguments over and the second copy
@@ -487,6 +508,21 @@ class OverlayManager:
                 binary.chmod(mode | 0o755)
         except OSError:
             pass
+
+
+#: Windows ERROR_SYSTEM_INTEGRITY_POLICY_VIOLATION: Smart App Control (or an
+#: organization's App Control policy) refused to run the overlay executable.
+_WINERROR_APP_CONTROL_BLOCKED = 4551
+
+
+def _start_error_message(exc: OSError) -> str:
+    if getattr(exc, "winerror", None) == _WINERROR_APP_CONTROL_BLOCKED:
+        return (
+            "Windows blocked the overlay (Smart App Control / App Control policy, "
+            "error 4551). Restarting Windows may clear it; if it keeps "
+            "happening, see Windows Security > App & browser control."
+        )
+    return f"Could not start the overlay: {exc}"
 
 
 def _detached_kwargs() -> Dict[str, Any]:

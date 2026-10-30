@@ -4,12 +4,13 @@
  * current power/toughness or the planeswalker's loyalty (Arena style), plus a
  * small chip across its upper edge for any other counters, or "Commander" on
  * a seat's commander (with its counters after it), or the basic land type a
- * land chose as it entered (Multiversal Passage), in that land's color. Stack items are
+ * land chose as it entered (Multiversal Passage), in that land's color, and a
+ * purple sleep badge just above the top edge of a summoning-sick creature. Stack items are
  * captioned by the DOM stack preview instead. Pure: computed once per board
  * state; the projector moves them each rendered frame without React.
  */
 import type { ObjectMarks, RemovalKind, SeatMarks } from '../effects';
-import { CARD_HEIGHT, PILE_CARD_DEPTH, PILE_MAX_CARDS } from '../layout';
+import { CARD_HEIGHT, CARD_WIDTH, PILE_CARD_DEPTH, PILE_MAX_CARDS, TAPPED_ROTATION } from '../layout';
 import type { CardPlacement, CastableMark, Layout, PileZone } from '../layout';
 import type { CardKey, ReplayCard } from '../types';
 
@@ -20,6 +21,8 @@ export type LabelTone =
   | 'counters'
   | 'commander'
   | 'castable'
+  | 'tucked'
+  | 'sick'
   | 'damage'
   | 'removed'
   | 'buff'
@@ -54,6 +57,9 @@ export interface SceneLabel {
   emphasis?: boolean;
 }
 
+/** Text of the sleep badge on a summoning-sick creature. */
+export const SICK_BADGE = 'Zzz';
+
 /** Counter type recorded games use for planeswalker loyalty (replay_capture.COUNTER_TYPE_NAMES). */
 export const LOYALTY_COUNTER = 'loyalty';
 
@@ -68,6 +74,27 @@ function rotate(dx: number, dy: number, angle: number): [number, number] {
   const c = Math.cos(angle);
   const s = Math.sin(angle);
   return [dx * c - dy * s, dx * s + dy * c];
+}
+
+/**
+ * Offsets on a card in its upright frame: a tapped card's labels stay above
+ * and below it, within its sideways footprint, instead of turning with it to
+ * its left and right edges, where they ran into the neighbouring cards.
+ */
+function cardFrame(placement: CardPlacement): {
+  at: (dx: number, dy: number) => [number, number];
+  /** Half the footprint's height and width, scaled. */
+  half: number;
+  halfWidth: number;
+} {
+  const angle = placement.rotZ - (placement.tapped ? TAPPED_ROTATION : 0);
+  const height = placement.tapped ? CARD_WIDTH : CARD_HEIGHT;
+  const width = placement.tapped ? CARD_HEIGHT : CARD_WIDTH;
+  return {
+    at: (dx, dy) => rotate(dx, dy, angle),
+    half: (height / 2) * placement.scale,
+    halfWidth: (width / 2) * placement.scale,
+  };
 }
 
 function isPlaneswalker(card: ReplayCard | undefined): boolean {
@@ -91,20 +118,22 @@ export function statBadge(
   return printed ? { text: printed, tone: 'stat', emphasis: false } : null;
 }
 
-/** Counters other than loyalty, as a short chip text ("+1/+1 ×2 · flying"). */
+/** Counters other than loyalty, as a short chip text ("+1/+1 ×2 · flying ×1"). */
 const CASTABLE_LABELS: Record<CastableMark, string> = {
   flashback: 'Flashback',
   escape: 'Escape',
   disturb: 'Disturb',
   harmonize: 'Harmonize',
   plot: 'Plotted',
+  cast_from_exile: 'From exile',
 };
 
 export function countersText(placement: CardPlacement): string | null {
   const parts: string[] = [];
   for (const [type, count] of Object.entries(placement.counters)) {
     if (type === LOYALTY_COUNTER) continue;
-    parts.push(count === 1 ? type : `${type} ×${count}`);
+    // "+1/+1" alone reads as one counter; any other type always shows its count ("plan ×1").
+    parts.push(count === 1 && (type === '+1/+1' || type === '-1/-1') ? type : `${type} ×${count}`);
   }
   return parts.length ? parts.join(' · ') : null;
 }
@@ -166,8 +195,17 @@ export function seatNumber(marks: SeatMarks): { text: string; tone: 'life-loss' 
 function effectLabels(labels: SceneLabel[], placement: CardPlacement): void {
   const { marks } = placement;
   if (!marks) return;
+  const frame = cardFrame(placement);
+  const s = placement.scale;
+  const change = placement.zone === 'battlefield' ? changeLabel(marks) : null;
+  // A tapped card is short: the removal chip sits just below the middle, the
+  // damage and change chips just above it, side by side when both show.
+  const lower = placement.tapped ? -0.12 * s : -0.2 * s;
+  const changeAt = placement.tapped
+    ? frame.at(placement.damage ? 0.25 * s : 0, 0.1 * s)
+    : frame.at(0, 0.3 * s);
   if (placement.removed) {
-    const [dx, dy] = rotate(0, -0.2 * placement.scale, placement.rotZ);
+    const [dx, dy] = frame.at(0, lower);
     labels.push({
       id: `removed:${placement.obj}`,
       text: REMOVAL_LABELS[placement.removed],
@@ -179,12 +217,11 @@ function effectLabels(labels: SceneLabel[], placement: CardPlacement): void {
       align: 'center',
     });
   } else if (marks.tapped && placement.zone === 'battlefield') {
-    const [dx, dy] = rotate(0, -0.2 * placement.scale, placement.rotZ);
+    const [dx, dy] = frame.at(0, lower);
     labels.push({ id: `tapped:${placement.obj}`, text: 'Tapped', tone: 'effect', obj: placement.obj, x: dx, y: dy, z: 0.05, align: 'center' });
   }
-  const change = placement.zone === 'battlefield' ? changeLabel(marks) : null;
   if (change) {
-    const [dx, dy] = rotate(0, 0.3 * placement.scale, placement.rotZ);
+    const [dx, dy] = changeAt;
     labels.push({ id: `change:${placement.obj}`, text: change.text, tone: change.tone, obj: placement.obj, x: dx, y: dy, z: 0.05, align: 'center' });
   }
 }
@@ -244,11 +281,16 @@ export function sceneLabels(layout: Layout, cards: Readonly<Record<CardKey, Repl
       });
       continue;
     }
+    // A token stacked under an identical one shows only its edge; the top card speaks for the stack.
+    if (placement.stackedUnder) continue;
     if (placement.faceUp) effectLabels(labels, placement);
     if (placement.zone !== 'battlefield' || !placement.faceUp) continue;
+    const frame = cardFrame(placement);
+    const s = placement.scale;
     if (placement.damage) {
       // A red badge over the art for damage this moment ("−6"), above the stat badge.
-      const [dx, dy] = rotate(0, 0.08 * placement.scale, placement.rotZ);
+      const change = placement.marks ? changeLabel(placement.marks) : null;
+      const [dx, dy] = placement.tapped ? frame.at(change ? -0.25 * s : 0, 0.1 * s) : frame.at(0, 0.08 * s);
       labels.push({
         id: `damage:${placement.obj}`,
         text: `\u2212${placement.damage}`,
@@ -263,7 +305,7 @@ export function sceneLabels(layout: Layout, cards: Readonly<Record<CardKey, Repl
     const card = placement.card ? cards[placement.card] : undefined;
     const badge = statBadge(placement, card);
     if (badge) {
-      const [dx, dy] = rotate(0, (-CARD_HEIGHT / 2 + 0.1) * placement.scale, placement.rotZ);
+      const [dx, dy] = frame.at(0, -frame.half + 0.1 * s);
       labels.push({
         id: `stat:${placement.obj}`,
         text: badge.text,
@@ -280,8 +322,51 @@ export function sceneLabels(layout: Layout, cards: Readonly<Record<CardKey, Repl
     const parts = [placement.chosen, placement.commander ? 'Commander' : null, counters].filter(Boolean);
     const chip = parts.length ? parts.join(' · ') : null;
     const landTone = placement.chosen ? LAND_TYPE_TONES[placement.chosen.split(' ')[0]] : undefined;
+    if (placement.stackCount) {
+      // How many identical tokens the stack holds, in the lower left corner.
+      const [dx, dy] = frame.at(-frame.halfWidth + 0.14 * s, -frame.half + 0.1 * s);
+      labels.push({
+        id: `stack:${placement.obj}`,
+        text: `\u00d7${placement.stackCount}`,
+        tone: 'pile',
+        obj: placement.obj,
+        x: dx,
+        y: dy,
+        z: 0.02,
+        align: 'center',
+      });
+    }
+    if (placement.sick) {
+      // Summoning sick: a sleep badge centered just above the top edge, clear of the name.
+      const [dx, dy] = frame.at(0, frame.half + 0.08 * s);
+      labels.push({
+        id: `sick:${placement.obj}`,
+        text: SICK_BADGE,
+        tone: 'sick',
+        obj: placement.obj,
+        x: dx,
+        y: dy,
+        z: 0.02,
+        align: 'center',
+      });
+    }
+    if (placement.tuckedCount) {
+      // How many cards the host's pile of exiled cards holds: a badge on the
+      // upper right corner, clear of the name and cost (hover lists them).
+      const [dx, dy] = frame.at(frame.halfWidth - 0.06 * s, frame.half + 0.02 * s);
+      labels.push({
+        id: `tucked:${placement.obj}`,
+        text: `${placement.tuckedCount} under`,
+        tone: 'tucked',
+        obj: placement.obj,
+        x: dx,
+        y: dy,
+        z: 0.02,
+        align: 'center',
+      });
+    }
     if (chip) {
-      const [dx, dy] = rotate(0, (CARD_HEIGHT / 2 - 0.1) * placement.scale, placement.rotZ);
+      const [dx, dy] = frame.at(0, frame.half - 0.1 * s);
       labels.push({
         id: `counters:${placement.obj}`,
         text: chip,

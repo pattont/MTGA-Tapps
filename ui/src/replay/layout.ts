@@ -176,7 +176,30 @@ export function attachStep(count: number, room: number = attachRoom(true)): { dx
   const shift = Math.min(ATTACH_SHIFT_MAX, Math.max(0, natural - room));
   return { dx: ATTACH_DX, dy: Math.min(ATTACH_DY, (room + shift) / count), shift };
 }
+/**
+ * A noncreature artifact or enchantment holding more cards than this that it
+ * exiled (Pinnacle Starcage can take a whole board) shows them as a pile with
+ * a count in its top right corner instead of a fan; the hover preview lists
+ * and pictures them all. Creatures, and anything with auras or equipment,
+ * always fan.
+ */
+const TUCKED_FAN_MAX = 2;
+/** Edges a pile of exiled cards shows under its host, however many it holds. */
+const PILE_EDGES = 2;
+
+/** Edge shown per card under the top of a stack of identical cards: enough to count them, nothing to read. */
+const STACK_EDGE_DY = 0.07;
+/** A stack's edges never spread wider than this to the side, however many cards it holds. */
+const STACK_MAX_SPREAD = 0.2;
+
+/** Offsets for a stack of `count` identical cards under the top one: thin edges, and the top never slides. */
+function stackStep(count: number, room: number): { dx: number; dy: number; shift: number } {
+  if (count <= 0) return { dx: 0, dy: 0, shift: 0 };
+  return { dx: Math.min(ATTACH_DX, STACK_MAX_SPREAD / count), dy: Math.min(STACK_EDGE_DY, room / count), shift: 0 };
+}
 const BASE_Z = 0.02;
+/** How far a flying creature hovers above the felt (its tucked cards rise with it). */
+export const FLYING_LIFT = 0.25;
 const STACK_Z = 0.9;
 /** In-scene stack cards: the motion anchor under the DOM stack preview. */
 export const STACK_SCALE = 0.6;
@@ -208,9 +231,12 @@ export const GRAVEYARD_CAST_KEYWORDS: readonly string[] = ['flashback', 'escape'
 
 /**
  * A card its owner may cast from outside the hand, shown just beside the hand
- * (as Arena does): the keyword that allows it, or `plot` for a plotted card.
+ * (as Arena does): the keyword that allows it, `plot` for a plotted card, or
+ * `cast_from_exile` for an exiled card whose own text lets it be cast from
+ * there (card keywords `cast_from_exile` and, once it exiled itself from the
+ * hand, `cast_while_exiled`: Emrakul, the Exigent Doom).
  */
-export type CastableMark = 'flashback' | 'escape' | 'disturb' | 'harmonize' | 'plot';
+export type CastableMark = 'flashback' | 'escape' | 'disturb' | 'harmonize' | 'plot' | 'cast_from_exile';
 
 /** Gap between the hand and its side cards, and how much of each side card the next leaves showing. */
 export const SIDE_GAP = 0.35;
@@ -269,8 +295,18 @@ export interface CardPlacement {
   damage: number | null;
   /** What the current action did to it (effects.ts), or null. */
   marks: ObjectMarks | null;
+  /** A face-up creature with flying (printed or a flying counter): it hovers, lifted `FLYING_LIFT`. */
+  flying: boolean;
+  /** On the battlefield and summoning sick: a purple sleep badge (`Zzz`) centered above its top edge. */
+  sick?: boolean;
   /** Removed this action: held dimmed in its battlefield slot (or, discarded, on the graveyard) with this chip. */
   removed: RemovalKind | null;
+  /** The top card of a stack of identical tokens or lands: how many the stack holds (absent otherwise). */
+  stackCount?: number;
+  /** A token or land stacked under an identical one, or a card in a host's pile of exiled cards (that one's obj): drawn as an edge, without labels. */
+  stackedUnder?: ObjId;
+  /** A host showing the cards it exiled as a pile (`TUCKED_FAN_MAX`): how many the pile holds (absent otherwise). */
+  tuckedCount?: number;
 }
 
 /** A seat's life change, damage taken and cards milled this action, at its table edge. */
@@ -407,7 +443,16 @@ interface Context {
   castable: ReadonlyMap<ObjId, CastableMark>;
   /** Permanents removed this action, still drawn in their battlefield slot (and nowhere else). */
   held: ReadonlySet<ObjId>;
+  /** top token obj -> the identical tokens stacked under it (`stackIdenticalTokens`). */
+  stacked: Map<ObjId, ObjectState[]>;
   out: CardPlacement[];
+}
+
+/** A face-up creature with flying, printed (card `keywords`) or from a flying counter. */
+export function hasFlying(state: BoardState, object: ObjectState): boolean {
+  if (object.faceDown) return false;
+  if (Object.keys(object.counters).some((type) => type.toLowerCase() === 'flying')) return true;
+  return object.card ? (state.cards[object.card]?.keywords?.includes('flying') ?? false) : false;
 }
 
 /** Why `object` shows beside its owner's hand, if it does. */
@@ -418,7 +463,10 @@ export function castableMark(state: BoardState, object: ObjectState): CastableMa
     const keyword = keywords.find((k) => GRAVEYARD_CAST_KEYWORDS.includes(k));
     return keyword ? (keyword as CastableMark) : null;
   }
-  if (object.zone === 'exile' && object.fromHand && keywords.includes('plot')) return 'plot';
+  if (object.zone !== 'exile') return null;
+  if (object.fromHand && keywords.includes('plot')) return 'plot';
+  if (keywords.includes('cast_from_exile')) return 'cast_from_exile';
+  if (object.fromHand && keywords.includes('cast_while_exiled')) return 'cast_from_exile';
   return null;
 }
 
@@ -474,6 +522,7 @@ function placeObject(
   faceCard: CardKey | null = object.card,
   seat: number = frame.seat,
   under: readonly UnderCard[] = NO_UNDER,
+  flying = false,
 ): void {
   const { x, y } = toTable(frame, local.x, local.y);
   const faceUp = faceCard !== null && !object.faceDown;
@@ -503,14 +552,18 @@ function placeObject(
     castable: row === 'castable' ? (ctx.castable.get(object.obj) ?? null) : null,
     damage: object.zone === 'battlefield' ? marks?.damage || null : null,
     marks,
+    flying,
     removed: ctx.held.has(object.obj) || (row === 'pile' && marks?.removed === 'discarded') ? (marks?.removed ?? null) : null,
+    ...(object.zone === 'battlefield' && object.sick && !ctx.held.has(object.obj) ? { sick: true } : {}),
   });
 }
 
 const NO_UNDER: readonly UnderCard[] = [];
 
-function footprint(object: ObjectState, attachments: number, scale: number): number {
-  return ((object.tapped ? CARD_HEIGHT : CARD_WIDTH) + attachments * attachStep(attachments).dx) * scale;
+/** Width a host takes in its row: the card, plus its fan of tucked cards or stacked copies. */
+function footprint(object: ObjectState, attachments: number, scale: number, stacked = 0): number {
+  const fan = attachments ? attachments * attachStep(attachments).dx : stacked * stackStep(stacked, 1).dx;
+  return ((object.tapped ? CARD_HEIGHT : CARD_WIDTH) + fan) * scale;
 }
 
 function naturalWidth(widths: readonly number[], gap: number): number {
@@ -535,7 +588,9 @@ function groupCenters(widths: readonly number[], gap: number, start: number, spa
   }
   const end = start + span;
   const step = (end - widths[n - 1] - start) / (n - 1);
-  return widths.map((w, i) => Math.min(start + step * i + w / 2, end - w / 2));
+  // A span narrower than its last card (a row overflowing even when squeezed)
+  // would push cards left of `start`, into the pile lane: they stay at it.
+  return widths.map((w, i) => Math.max(start + w / 2, Math.min(start + step * i + w / 2, end - w / 2)));
 }
 
 /** Narrowest a group may be squeezed to (each card keeps MIN_VISIBLE of its width). */
@@ -637,11 +692,73 @@ function collectAttachments(state: BoardState, seatIds: number[]): Map<ObjId, Ob
   return attachments;
 }
 
+/** Whether a host shows its tucked cards as a counted pile rather than a fan (`TUCKED_FAN_MAX`). */
+function pilesTucked(cards: BoardState['cards'], host: ObjectState, tucked: readonly ObjectState[]): boolean {
+  return tucked.length > TUCKED_FAN_MAX && tucked.every((o) => o.zone === 'exile') && rowOf(host, cards) === 'other';
+}
+
 /** Exiled cards tucked under a host are not in the pile. */
 function tuckedAway(attachments: ReadonlyMap<ObjId, ObjectState[]>): ReadonlySet<ObjId> {
   const tucked = new Set<ObjId>();
   for (const list of attachments.values()) for (const object of list) if (object.zone === 'exile') tucked.add(object.obj);
   return tucked;
+}
+
+/**
+ * What makes two tokens, or two lands, interchangeable on the table: the same
+ * card (a land by name, whatever its printing), controller, tapped state,
+ * summoning sickness, stats, counters, chosen land type, combat role and current-action marks.
+ * Null for anything that must stay on its own: neither a token nor a land,
+ * face down, carrying attachments, removed, damaged or targeted this action,
+ * or in a block.
+ */
+function stackKey(ctx: Context, object: ObjectState, row: BattlefieldRow): string | null {
+  const card = object.card ? ctx.state.cards[object.card] : undefined;
+  const land = row === 'lands';
+  if (!card || !(card.is_token || land) || object.faceDown || object.inferred) return null;
+  if (ctx.attachments.has(object.obj) || ctx.held.has(object.obj)) return null;
+  const highlight = highlightOf(ctx, object.obj);
+  if (highlight === 'damaged' || highlight === 'targeted' || highlight === 'blocking') return null;
+  for (const attacker of ctx.state.blocks.values()) if (attacker === object.obj) return null;
+  const counters = Object.entries(object.counters).sort(([a], [b]) => (a < b ? -1 : 1));
+  const attacking = ctx.state.attackers.has(object.obj) ? (ctx.state.attackers.get(object.obj) ?? 'player') : null;
+  const marks = ctx.state.effects.objects.get(object.obj) ?? null;
+  return JSON.stringify([
+    land && !card.is_token ? `name:${card.name}` : object.card,
+    object.controller,
+    object.tapped,
+    object.sick ?? false,
+    object.power,
+    object.toughness,
+    counters,
+    object.chosen ?? null,
+    attacking,
+    marks,
+  ]);
+}
+
+/**
+ * Identical tokens and lands stack under the first of them, Arena style, so a
+ * board of Spirits, Treasures or Mountains takes one slot (tapped ones in a
+ * stack of their own); the rest show as edges like tucked cards. Returns the
+ * row's hosts with the stacked cards taken out.
+ */
+function stackIdenticalTokens(ctx: Context, list: readonly ObjectState[], row: BattlefieldRow): ObjectState[] {
+  const tops = new Map<string, ObjectState>();
+  const out: ObjectState[] = [];
+  for (const object of list) {
+    const key = stackKey(ctx, object, row);
+    const top = key === null ? undefined : tops.get(key);
+    if (top) {
+      const members = ctx.stacked.get(top.obj) ?? [];
+      members.push(object);
+      ctx.stacked.set(top.obj, members);
+      continue;
+    }
+    if (key !== null) tops.set(key, object);
+    out.push(object);
+  }
+  return out;
 }
 
 function placeGroup(
@@ -655,28 +772,42 @@ function placeGroup(
   scale: number,
 ): void {
   list.forEach((object, i) => {
-    const attached = ctx.attachments.get(object.obj) ?? [];
+    const attachments = ctx.attachments.get(object.obj) ?? [];
+    const stack = ctx.stacked.get(object.obj) ?? [];
+    const piled = pilesTucked(ctx.state.cards, object, attachments);
+    // Identical tokens fan out under the top one exactly like tucked cards.
+    const attached = attachments.length ? attachments : stack;
     const ownWidth = footprint(object, 0, scale);
     const x = centers[i] - widths[i] / 2 + ownWidth / 2;
-    const step = attachStep(attached.length, attachRoom(frame.opponent));
+    const step = piled
+      ? stackStep(PILE_EDGES, attachRoom(frame.opponent))
+      : attachments.length
+        ? attachStep(attached.length, attachRoom(frame.opponent))
+        : stackStep(stack.length, attachRoom(frame.opponent));
     // Up on screen for both seats (seat-local +y maps to world -y for the
     // opponent), and to the right as seen by the viewer.
     const up = frame.opponent ? -1 : 1;
     const right = frame.opponent && frame.mirror ? -1 : 1;
     // The host slides away from its fan to keep the strips out of the next row.
     const cardY = y + (ctx.state.attackers.has(object.obj) ? ATTACK_OFFSET : 0) - up * step.shift * scale;
-    const z = BASE_Z + 0.004 * (attached.length + 1) + i * 0.0005;
-    const under = attached.map((child): UnderCard => ({ obj: child.obj, card: child.card, zone: child.zone }));
-    placeObject(ctx, frame, object, { x, y: cardY, z, scale }, row, object.card, frame.seat, under);
+    const flying = row === 'creatures' && hasFlying(ctx.state, object);
+    const z = BASE_Z + 0.004 * (attached.length + 1) + i * 0.0005 + (flying ? FLYING_LIFT : 0);
+    const under = attachments.map((child): UnderCard => ({ obj: child.obj, card: child.card, zone: child.zone }));
+    placeObject(ctx, frame, object, { x, y: cardY, z, scale }, row, object.card, frame.seat, under, flying);
+    if (stack.length) ctx.out[ctx.out.length - 1].stackCount = stack.length + 1;
+    if (piled) ctx.out[ctx.out.length - 1].tuckedCount = attachments.length;
     attached.forEach((child, k) => {
-      // Tucked cards sit under the host, each one a title strip higher.
+      // Tucked cards sit under the host, each one a title strip higher; a pile
+      // shows only its first edges, the rest squared up behind them.
+      const offset = piled ? Math.min(k + 1, PILE_EDGES) : k + 1;
       const local = {
-        x: x + right * step.dx * scale * (k + 1),
-        y: cardY + up * step.dy * scale * (k + 1),
+        x: x + right * step.dx * scale * offset,
+        y: cardY + up * step.dy * scale * offset,
         z: z - 0.004 * (k + 1),
         scale,
       };
-      placeObject(ctx, frame, child, local, row, child.card, child.controller);
+      placeObject(ctx, frame, child, local, row, child.card, child.controller, NO_UNDER, stack.length ? flying : false);
+      if (stack.length || piled) ctx.out[ctx.out.length - 1].stackedUnder = object.obj;
     });
   });
 }
@@ -699,8 +830,13 @@ function layoutBattlefield(ctx: Context, frame: Frame, objects: ObjectState[]): 
   for (const object of objects) {
     if (!attachedHost(ctx.state, object)) hosts[rowOf(object, ctx.state.cards)].push(object);
   }
+  for (const row of Object.keys(hosts) as BattlefieldRow[]) hosts[row] = stackIdenticalTokens(ctx, hosts[row], row);
   const widthsOf = (list: ObjectState[], scale: number) =>
-    list.map((o) => footprint(o, attachments.get(o.obj)?.length ?? 0, scale));
+    list.map((o) => {
+      const tucked = attachments.get(o.obj) ?? [];
+      if (pilesTucked(ctx.state.cards, o, tucked)) return footprint(o, 0, scale, PILE_EDGES);
+      return footprint(o, tucked.length, scale, ctx.stacked.get(o.obj)?.length ?? 0);
+    });
   // Front row: creatures centered as before; planeswalkers at full size,
   // anchored to the viewer's right edge of the row (Arena puts them beside
   // the creatures, out to the right), with a gap kept between the two.
@@ -959,7 +1095,7 @@ export function layoutBoard(state: BoardState, opts: LayoutOptions): Layout {
   const castable = collectCastable(state, seatIds, tucked);
   const table = tableGeometry(opts.tableWidth, opts.commandZone ?? false, opts.handScale, opts.opponentHandScale);
   const held = new Set(state.effects.held.keys());
-  const ctx: Context = { state, opts, table, targeted, damaged, blockers, attachments, tucked, castable, held, out: [] };
+  const ctx: Context = { state, opts, table, targeted, damaged, blockers, attachments, tucked, castable, held, stacked: new Map(), out: [] };
   const piles: PilePlacement[] = [];
 
   for (const seatId of seatIds) {

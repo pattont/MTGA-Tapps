@@ -326,6 +326,9 @@ export interface SessionRow {
   wins: number;
   losses: number;
   draws: number;
+  /** Games on the play / on the draw; games with unknown turn order count in neither. */
+  on_play?: number | null;
+  on_draw?: number | null;
   win_rate: number | null;
 }
 
@@ -1671,6 +1674,8 @@ export interface LiveGameRow {
   format: string | null;
   best_of: number | null;
   deck_name: string | null;
+  /** 1 on the play, 0 on the draw, null when unknown. */
+  went_first: number | null;
   opponent_name: string | null;
   replay?: ReplayAvailability;
 }
@@ -1705,6 +1710,13 @@ export interface DeckAiProviderSettings {
   api_key: string;
   model: string;
   default_model: string;
+  /** The provider's public model page. */
+  models_url?: string;
+}
+
+export interface DeckAiModel {
+  id: string;
+  label: string;
 }
 
 export interface DeckAiSettings {
@@ -1771,6 +1783,22 @@ export interface TrackerSettings {
   overlay: OverlaySettings;
   /** Absent from trackers older than the in-app updater. */
   updates?: UpdateSettings;
+  /** Missing from trackers older than Buy on Paper. */
+  buy_on_paper?: BuyOnPaperSettings;
+  /** Missing from trackers older than the session break setting. */
+  sessions?: SessionSettings;
+}
+
+export interface SessionSettings {
+  /** Hours without a game before a new match starts a new session; 0 = only when the app opens. */
+  break_hours: number;
+  choices: number[];
+}
+
+export interface BuyOnPaperSettings {
+  enabled: boolean;
+  /** Bytes the saved store price lists take on disk. */
+  cache_bytes: number;
 }
 
 export async function fetchTrackerSettings(signal?: AbortSignal): Promise<TrackerSettings> {
@@ -1982,6 +2010,17 @@ export async function saveDeckAiSettings(payload: {
   return body.deck_ai;
 }
 
+/** Models this key can use, asked of the provider. `apiKey` may be unsaved. */
+export async function fetchDeckAiModels(provider: string, apiKey: string): Promise<DeckAiModel[]> {
+  const response = await fetch('/api/settings/deck-ai/models', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider, api_key: apiKey }),
+  });
+  const body = await deckFinderJson<{ models?: DeckAiModel[] }>(response);
+  return body.models ?? [];
+}
+
 export async function setOverlayEnabled(enabled: boolean): Promise<OverlaySettings> {
   const response = await fetch('/api/settings/overlay', {
     method: 'POST',
@@ -2006,6 +2045,16 @@ export async function saveStartupSettings(
   });
   const body = await deckFinderJson<{ startup: StartupSettings }>(response);
   return body.startup;
+}
+
+export async function saveSessionSettings(breakHours: number): Promise<SessionSettings> {
+  const response = await fetch('/api/settings/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ break_hours: breakHours }),
+  });
+  const body = await deckFinderJson<{ sessions: SessionSettings }>(response);
+  return body.sessions;
 }
 
 export async function saveDeckFinderCreators(payload: {

@@ -1045,3 +1045,28 @@ def test_game_activity_and_the_status_light_share_one_heartbeat_rule(tmp_path, m
     assert live_api.build_status_payload(db)["tracker"]["state"] == "idle"
     monkeypatch.setattr(live_api, "_tracker_state", lambda status, now: "sentinel")
     assert live_api.game_activity(db)["tracker"] == "sentinel"
+
+
+def test_games_list_says_whether_each_game_was_on_the_play(tmp_path):
+    store = _store(tmp_path)
+    conn = store.connect()
+    today = datetime.now().strftime("%Y-%m-%d")
+    _seed_history(
+        conn,
+        [
+            ("SH:match:1:game:1", "Skellies", "Foe A", None, "win", today),
+            ("SH:match:2:game:1", "Skellies", "Foe B", None, "loss", today),
+            ("SH:match:3:game:1", "Skellies", "Foe C", None, "win", today),
+        ],
+    )
+    conn.execute("UPDATE participants SET went_first = 1 WHERE id = 'SH:match:1:game:1-p'")
+    conn.execute("UPDATE participants SET went_first = 0 WHERE id = 'SH:match:2:game:1-p'")
+    conn.commit()
+    store.close()
+    payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+    went_first = {game["id"]: game["went_first"] for game in payload["games"]}
+    assert went_first == {
+        "SH:match:1:game:1": 1,
+        "SH:match:2:game:1": 0,
+        "SH:match:3:game:1": None,
+    }

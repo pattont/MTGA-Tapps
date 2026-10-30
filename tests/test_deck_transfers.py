@@ -1008,3 +1008,23 @@ def test_arena_text_export_adds_printings_from_card_ids(monkeypatch):
         **deck,
         "import_text": "Deck\n4 Forest",
     }
+
+
+def test_a_job_that_stops_early_still_refreshes_the_saved_arena_status(tmp_path, monkeypatch):
+    """Deck Finder shows the last status a job read. A user who frees slots in
+    Arena and clicks Add must see the fresh read even when the add then fails."""
+    arena = Arena()
+
+    @contextmanager
+    def attach():
+        yield arena
+
+    monkeypatch.setattr(api.nb, "attach", attach)
+    path = tmp_path / "library.db"
+    key = api._key(path)
+    monkeypatch.setitem(api._STATUS, key, {"connected": True, "limit_reached": True})
+    arena.on_decks = False
+    with pytest.raises(dm.DeckManagerError):
+        api.execute(path, "backup", [], str(uuid.uuid4()), lambda _: None)
+    assert api._STATUS[key]["limit_reached"] is False
+    assert api._STATUS[key]["deck_screen_open"] is False

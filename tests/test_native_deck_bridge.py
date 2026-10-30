@@ -110,3 +110,24 @@ def test_windows_arena_process_is_found_by_its_exe_name(fake_frida, monkeypatch)
     with nb.attach():
         pass
     assert attached == [9]
+
+
+def test_availability_locates_frida_without_importing_it(monkeypatch):
+    # Status is polled by dashboard pages that may never attach; importing
+    # Frida there would load its native library into the tracker for good.
+    monkeypatch.setattr(nb, "native_deck_platform_supported", lambda: True)
+    monkeypatch.delitem(sys.modules, "frida", raising=False)
+    looked_up = []
+    monkeypatch.setattr(
+        nb.importlib.util, "find_spec", lambda name: looked_up.append(name) or object()
+    )
+
+    assert nb.availability()[0] is True
+    assert looked_up == ["frida"]
+    assert "frida" not in sys.modules
+
+    monkeypatch.setattr(nb.importlib.util, "find_spec", lambda name: None)
+    assert nb.availability() == (
+        False,
+        "The native deck adapter is missing from this installation.",
+    )

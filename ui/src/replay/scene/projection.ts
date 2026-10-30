@@ -1,7 +1,7 @@
 /** World -> canvas pixel projection for DOM labels (pure, allocation-free). */
 import { Vector3 } from 'three';
 import type { Camera } from 'three';
-import { arrowShape } from './arrows';
+import { sceneArrowShape } from './arrows';
 import type { ArrowEnd, SceneArrow } from './arrows';
 import type { SceneLabel } from './labels';
 
@@ -178,7 +178,7 @@ export function positionArrows(
     entry.sy = sy;
     entry.tx = tx;
     entry.ty = ty;
-    const shape = arrowShape(sx, sy, tx, ty);
+    const shape = sceneArrowShape(sx, sy, tx, ty, { paired: arrow.paired, atCard: arrow.to.kind === 'obj' });
     const parts = node.children;
     for (let k = 0; k < parts.length; k += 1) {
       const part = parts[k];

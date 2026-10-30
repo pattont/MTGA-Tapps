@@ -10,9 +10,13 @@ Endpoints (all under /api/settings):
 - POST /api/settings/updates   -> save update preferences (partial booleans:
                                   check, auto_download, auto_install)
 - POST /api/settings/deck-ai   -> save AI provider/keys/models
+- POST /api/settings/deck-ai/models -> {provider, api_key?} list the models
+                                  that key can use (asks the provider)
 - POST /api/settings/deck-finder -> save the creator lists
 - POST /api/settings/overlay   -> {enabled} start/stop the in-game overlay, or
                                   {request: "open-settings"} to open its ⚙ flyout
+- POST /api/settings/buy-on-paper -> {enabled} show Buy on Paper; off stops store
+                                  price downloads and deletes the saved lists
 """
 
 from __future__ import annotations
@@ -20,13 +24,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-#: (internal name, display label, settings key for the key, settings key for
-#: the model, default model) — mirrors settings_dialog._PROVIDERS.
-AI_PROVIDERS = (
-    ("openai", "OpenAI", "CHATGPT_API_KEY", "DECK_LLM_OPENAI_MODEL", "gpt-4o-mini"),
-    ("claude", "Anthropic (Claude)", "CLAUDE_API_KEY", "DECK_LLM_CLAUDE_MODEL", "claude-3-5-haiku-20241022"),
-    ("gemini", "Gemini", "GEMINI_API_KEY", "DECK_LLM_GEMINI_MODEL", "gemini-2.0-flash"),
-)
+
+def _ai_providers():
+    from .deck_llm import PROVIDERS
+
+    return PROVIDERS
 
 
 def _deck_ai_payload() -> Dict[str, Any]:
@@ -34,14 +36,17 @@ def _deck_ai_payload() -> Dict[str, Any]:
 
     stored = deck_llm.load_settings()
     providers = []
-    for internal, label, key_name, model_name, default_model in AI_PROVIDERS:
+    for info in _ai_providers():
         providers.append(
             {
-                "key": internal,
-                "label": label,
-                "api_key": str(stored.get(key_name) or deck_llm._get_api_key(internal) or ""),
-                "model": str(stored.get(model_name) or ""),
-                "default_model": default_model,
+                "key": info.key,
+                "label": info.label,
+                "api_key": str(
+                    stored.get(info.api_key_setting) or deck_llm._get_api_key(info.key) or ""
+                ),
+                "model": deck_llm.stored_model(info.key),
+                "default_model": info.default_model,
+                "models_url": info.models_url,
             }
         )
     return {
@@ -55,7 +60,7 @@ def _save_deck_ai(payload: Dict[str, Any]) -> Dict[str, Any]:
     from . import deck_llm
 
     provider = str(payload.get("provider") or "").strip().lower()
-    if provider not in {p[0] for p in AI_PROVIDERS}:
+    if provider not in {p.key for p in _ai_providers()}:
         raise ValueError(f"Unknown AI provider: {provider!r}")
     keys = payload.get("keys") if isinstance(payload.get("keys"), dict) else {}
     models = payload.get("models") if isinstance(payload.get("models"), dict) else {}
@@ -64,14 +69,16 @@ def _save_deck_ai(payload: Dict[str, Any]) -> Dict[str, Any]:
         "DECK_LLM_ENABLED": bool(payload.get("enabled")),
         "DECK_LLM_PROVIDER": provider,
     }
-    for internal, _label, key_name, model_name, default_model in AI_PROVIDERS:
+    for info in _ai_providers():
+        internal, key_name, model_name = info.key, info.api_key_setting, info.model_setting
         key_value = str(keys.get(internal) or "").strip()
         model_value = str(models.get(internal) or "").strip()
         if internal == provider:
             # The selected provider's fields are authoritative (an empty key
-            # clears it); an empty model falls back to the default.
+            # clears it). An empty model is stored empty so it follows the
+            # provider default when that changes.
             values[key_name] = key_value
-            values[model_name] = model_value or default_model
+            values[model_name] = model_value
         else:
             # Keep edits to non-selected providers without clearing values
             # the page never loaded.
@@ -81,6 +88,16 @@ def _save_deck_ai(payload: Dict[str, Any]) -> Dict[str, Any]:
                 values[model_name] = model_value
     deck_llm.save_settings(values)
     return _deck_ai_payload()
+
+
+def _list_deck_ai_models(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Ask the provider which models the key can use. The key may be one the
+    page has not saved yet; it goes only to that provider."""
+    from . import deck_llm
+
+    provider = str(payload.get("provider") or "").strip().lower()
+    api_key = str(payload.get("api_key") or "").strip() or None
+    return {"provider": provider, "models": deck_llm.list_models(provider, api_key)}
 
 
 def _tilde(value: Any) -> Optional[str]:
@@ -106,11 +123,7 @@ def _deck_ai_summary() -> str:
         return "unknown"
     if not status.get("enabled"):
         return "disabled"
-    provider_label = {
-        "openai": "OpenAI",
-        "claude": "Anthropic (Claude)",
-        "gemini": "Gemini",
-    }.get(str(status.get("provider") or ""), str(status.get("provider") or "?"))
+    provider_label = deck_llm.provider_label(str(status.get("provider") or ""))
     if not status.get("has_api_key"):
         return f"enabled — {provider_label} (no API key set)"
     return f"enabled — {provider_label} ({status.get('model') or '?'})"
@@ -151,7 +164,9 @@ def _tracker_info(db_path: Optional[Path]) -> Dict[str, Any]:
 def _platform_info() -> Dict[str, Any]:
     import sys
 
-    system = "macos" if sys.platform == "darwin" else "windows" if sys.platform == "win32" else "other"
+    system = (
+        "macos" if sys.platform == "darwin" else "windows" if sys.platform == "win32" else "other"
+    )
     return {
         "system": system,
         # Collection export reads process memory, which only the macOS/Windows
@@ -259,6 +274,15 @@ def _save_updates(payload: Dict[str, Any]) -> Dict[str, Any]:
     return _updates_payload()
 
 
+def _sessions_payload() -> Dict[str, Any]:
+    from .settings import SESSION_BREAK_HOURS_CHOICES, session_break_hours
+
+    return {
+        "break_hours": session_break_hours(),
+        "choices": list(SESSION_BREAK_HOURS_CHOICES),
+    }
+
+
 def _set_overlay_enabled(payload: Dict[str, Any]) -> Dict[str, Any]:
     from .overlay_launcher import get_manager
 
@@ -283,6 +307,7 @@ def handle_get(path: str, db_path: Optional[Path] = None) -> Optional[Tuple[int,
     if path != "/api/settings":
         return None
     try:
+        from . import paper_prices
         from .deckfinder_api import read_creator_config
 
         return 200, {
@@ -296,6 +321,8 @@ def handle_get(path: str, db_path: Optional[Path] = None) -> Optional[Tuple[int,
             "startup": _startup_payload(),
             "overlay": _overlay_status(),
             "updates": _updates_payload(),
+            "buy_on_paper": paper_prices.status(),
+            "sessions": _sessions_payload(),
         }
     except Exception as exc:  # pragma: no cover - defensive surface
         return 500, {"error": f"{type(exc).__name__}: {exc}"}
@@ -305,16 +332,29 @@ def handle_post(path: str, payload: Dict[str, Any]) -> Optional[Tuple[int, Dict[
     try:
         if path == "/api/settings/deck-ai":
             return 200, {"deck_ai": _save_deck_ai(payload)}
+        if path == "/api/settings/deck-ai/models":
+            return 200, _list_deck_ai_models(payload)
         if path == "/api/settings/deck-finder":
             from .deckfinder_api import write_creator_config
 
             return 200, {"deck_finder": write_creator_config(payload)}
         if path == "/api/settings/startup":
             return 200, {"startup": _save_startup(payload)}
+        if path == "/api/settings/sessions":
+            from .settings import save_session_break_hours
+
+            save_session_break_hours(payload.get("break_hours"))
+            return 200, {"sessions": _sessions_payload()}
         if path == "/api/settings/overlay":
             return 200, {"overlay": _set_overlay_enabled(payload)}
         if path == "/api/settings/updates":
             return 200, {"updates": _save_updates(payload)}
+        if path == "/api/settings/buy-on-paper":
+            from . import paper_prices
+
+            if not isinstance(payload.get("enabled"), bool):
+                raise ValueError("'enabled' must be a boolean")
+            return 200, {"buy_on_paper": paper_prices.set_enabled(payload["enabled"])}
     except (ValueError, TypeError) as exc:
         return 400, {"error": str(exc)}
     except Exception as exc:  # pragma: no cover - defensive surface

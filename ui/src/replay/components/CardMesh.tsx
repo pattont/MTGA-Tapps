@@ -1,7 +1,7 @@
 /**
  * One card on the table: front and back planes (single-sided, so no
  * z-fighting), optional highlight ring and dashed "inferred" outline, and a
- * soft shadow on the felt. Position and rotation are owned by the motion
+ * soft shadow on the felt (cast further for a flying creature, which hovers). Position and rotation are owned by the motion
  * registry; React only updates the target.
  */
 import type { ThreeEvent } from '@react-three/fiber';
@@ -45,18 +45,18 @@ function CardMeshImpl({ placement, cardInfo, sleeve, store, kit, registry, spawn
   const shadow = useRef<Mesh>(null);
   const invalidate = useThree((s) => s.invalidate);
   const face = useFace(store, placement.card);
-  const { obj, x, y, z, rotZ, rotY, scale } = placement;
+  const { obj, x, y, z, rotZ, rotY, scale, flying } = placement;
 
   useLayoutEffect(() => {
     const node = group.current;
     if (!node) return;
     const target = { x, y, z, rotZ, rotY, scale };
     const start = registry.pose(obj) ? null : spawn(placement);
-    registry.set(obj, node, shadow.current, target, start);
+    registry.set(obj, node, shadow.current, target, start, flying);
     invalidate();
     // Only the pose fields matter; `placement` is a fresh object every layout.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [obj, x, y, z, rotZ, rotY, scale, registry, invalidate]);
+  }, [obj, x, y, z, rotZ, rotY, scale, flying, registry, invalidate]);
 
   useLayoutEffect(() => {
     const node = group.current;
@@ -108,10 +108,17 @@ function CardMeshImpl({ placement, cardInfo, sleeve, store, kit, registry, spawn
           <mesh geometry={kit.card} material={kit.removedMaterial} position-z={0.0016} raycast={noRaycast} />
         ) : null}
         {placement.inferred ? (
-          <mesh geometry={kit.inferred} material={kit.inferredMaterial} position-z={-0.002} raycast={noRaycast} />
+          // A face-down card is the group turned over: turn the outline back so its tag reads.
+          <mesh
+            geometry={kit.inferred}
+            material={kit.inferredMaterial}
+            position-z={-0.002}
+            rotation-y={placement.faceUp ? 0 : Math.PI}
+            raycast={noRaycast}
+          />
         ) : null}
       </group>
-      <mesh ref={shadow} geometry={kit.shadow} material={kit.shadowMaterial} raycast={noRaycast} />
+      <mesh ref={shadow} geometry={kit.shadow} material={flying ? kit.hoverShadowMaterial : kit.shadowMaterial} raycast={noRaycast} />
     </>
   );
 }
@@ -131,6 +138,7 @@ function samePlacement(a: CardPlacement, b: CardPlacement): boolean {
     a.inferred === b.inferred &&
     a.castable === b.castable &&
     a.removed === b.removed &&
+    a.flying === b.flying &&
     a.seat === b.seat &&
     sameUnder(a.under, b.under)
   );

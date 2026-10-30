@@ -200,6 +200,13 @@ def execute(db_path, action, selections, request_id, progress, cancelled=lambda:
             report = bridge.roster()
             dt.roster_ids(report)
             mark(f"roster of {len(report['decks'])}")
+            # Publish the fresh read at once, so a job that stops early (slots
+            # full, wrong screen) still replaces an out-of-date status.
+            with _LOCK:
+                _STATUS[_key(db_path)] = {
+                    **_public_roster(report),
+                    "_account_key": bridge.account_key,
+                }
             if action == "reconcile":
                 report = dt.reconcile(conn, bridge, report, _resolve_names())
             elif action == "add":

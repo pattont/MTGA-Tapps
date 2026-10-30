@@ -329,6 +329,22 @@ function Scoreboard({
   );
 }
 
+/** A tiny teal "Play" / purple "Draw" pill after the deck name; nothing when unknown. */
+function TurnOrderTag({ wentFirst }: { wentFirst: number | null }) {
+  if (wentFirst !== 0 && wentFirst !== 1) return null;
+  const onPlay = wentFirst === 1;
+  return (
+    <Badge
+      tone={onPlay ? 'play' : 'drawside'}
+      className="live-game-turn-order"
+      title={onPlay ? 'On the play' : 'On the draw'}
+    >
+      <span aria-hidden="true">{onPlay ? 'Play' : 'Draw'}</span>
+      <span className="visually-hidden">{onPlay ? 'On the play' : 'On the draw'}</span>
+    </Badge>
+  );
+}
+
 function GamesList({ games }: { games: LiveGameRow[] }) {
   if (games.length === 0) {
     return <p className="empty-state">No finished games yet today — go queue up!</p>;
@@ -343,7 +359,10 @@ function GamesList({ games }: { games: LiveGameRow[] }) {
               <span className="visually-hidden">{outcomeLabel(game.outcome)}</span>
             </Badge>
             <span className="live-game-main">
-              <span className="live-game-deck">{game.deck_name ?? '(unknown deck)'}</span>
+              <span className="live-game-deck-line">
+                <span className="live-game-deck">{game.deck_name ?? '(unknown deck)'}</span>
+                <TurnOrderTag wentFirst={game.went_first} />
+              </span>
               <span className="live-game-meta">
                 {[
                   game.opponent_name ? `vs ${game.opponent_name}` : null,

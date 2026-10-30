@@ -29,6 +29,31 @@ REPLAY_KEYWORD_BASE_IDS = {
     362: "harmonize",
     328: "plot",
 }
+#: Keyword abilities the replay shows on the battlefield, by Abilities.Id
+#: (evergreen keywords are their own ability, with BaseId 0): flying cards hover;
+#: haste only refines the summoning sickness estimate for older games.
+REPLAY_KEYWORD_ABILITY_IDS = {
+    8: "flying",
+    9: "haste",
+}
+#: Rules text that lets a card be cast while it is exiled, read from Arena's
+#: English ability text, by replay keyword: ``cast_from_exile`` wherever the
+#: card was exiled from ("You may cast this card from exile.": Eternal Scourge,
+#: Squee), ``cast_while_exiled`` only after the card's own ability exiled it
+#: from the hand (Emrakul, the Exigent Doom's cycle: "Exile this card from your
+#: hand: ... You may cast this card for as long as it remains exiled.").
+#: Conditional permissions ("as long as you control a Lukka planeswalker") are
+#: left out.
+CAST_FROM_EXILE_TEXT = {
+    "cast_from_exile": re.compile(
+        r"\byou may cast this card from (?:your graveyard or from )?exile\s*\.", re.IGNORECASE
+    ),
+    "cast_while_exiled": re.compile(
+        r"\bexile this card from your hand\b.*\byou may cast this card for as long as it "
+        r"remains exiled\s*\.",
+        re.IGNORECASE | re.DOTALL,
+    ),
+}
 #: Cards.LinkedFaceType of a back face: a transforming card's back, a modal
 #: double-faced card's back.
 TRANSFORM_BACK_FACE_TYPE = 1
@@ -664,7 +689,9 @@ class CardDatabase:
         """Facts the replay needs per casefolded card name, from Arena's card DB.
 
         ``keywords``: the replay-relevant keywords the card has (see
-        ``REPLAY_KEYWORD_BASE_IDS``: casting from the graveyard, plot).
+        ``REPLAY_KEYWORD_BASE_IDS``: casting from the graveyard, plot; and
+        ``REPLAY_KEYWORD_ABILITY_IDS``: flying, haste; and ``cast_from_exile`` /
+        ``cast_while_exiled``, from ``CAST_FROM_EXILE_TEXT``).
         ``back_face``: the name is the back face of a double-faced card (its
         Scryfall image is the back image). ``front``: for a transforming
         card's back face, the front face's name, so "put [back] onto
@@ -672,8 +699,12 @@ class CardDatabase:
         Arena's language-independent ability base ids. ``type_line`` ("Enchantment
         Creature", supertypes and subtypes left out), ``power`` and ``toughness``
         (printed, as text) fill in cards the game's rows never described, such
-        as an opponent's card the tracker only saw by name. Empty when the DB is
-        unavailable.
+        as an opponent's card the tracker only saw by name. ``grp_ids``: the
+        card's Arena ids, so a token copy of it (Arena gives it the card's
+        own id) can be told apart from a real token. Tokens are keyed
+        ``#<grpId>`` and carry only ``keywords`` (when they have any): a token's
+        name says little ("Bird" and "Spirit" tokens come with and without
+        flying). Empty when the DB is unavailable.
         """
         if getattr(self, "_replay_card_facts", None) is not None:
             return self._replay_card_facts
@@ -704,6 +735,12 @@ class CardDatabase:
                         tuple(REPLAY_KEYWORD_BASE_IDS),
                     ).fetchall()
                 }
+                keyword_of.update(REPLAY_KEYWORD_ABILITY_IDS)
+                exile_until = self._exile_until_leaves_ability_ids(cur, clean)
+                exile_casts = {
+                    keyword: self._ability_ids_matching(cur, clean, pattern)
+                    for keyword, pattern in CAST_FROM_EXILE_TEXT.items()
+                }
                 rows = self._title_join_rows(
                     cur,
                     'c."GrpId", l."Loc", c."LinkedFaceType", c."LinkedFaceGrpIds", c."AbilityIds",'
@@ -726,6 +763,7 @@ class CardDatabase:
                             "toughness": None,
                         },
                     )
+                    entry.setdefault("grp_ids", []).append(int(grp_id))
                     if entry["type_line"] is None:
                         type_ids = set(ids(types))
                         words = [w for i, w in ARENA_CARD_TYPES.items() if i in type_ids]
@@ -737,17 +775,91 @@ class CardDatabase:
                         keyword = keyword_of.get(ability_id)
                         if keyword and keyword not in entry["keywords"]:
                             entry["keywords"].append(keyword)
+                        if ability_id in exile_until:
+                            entry["exiles_until_leaves"] = True
+                        for keyword, matching in exile_casts.items():
+                            if ability_id in matching and keyword not in entry["keywords"]:
+                                entry["keywords"].append(keyword)
                     if face_type in BACK_FACE_TYPES:
                         entry["back_face"] = True
                     if face_type == TRANSFORM_BACK_FACE_TYPE and entry["front"] is None:
                         front = next((names.get(i) for i in ids(linked) if names.get(i)), None)
                         entry["front"] = front
+                token_rows = self._title_join_rows(
+                    cur, 'c."GrpId", c."AbilityIds"', 'c."IsToken" = 1'
+                )
+                for grp_id, abilities in token_rows:
+                    keywords = []
+                    for ability_id in ids(abilities):
+                        keyword = keyword_of.get(ability_id)
+                        if keyword and keyword not in keywords:
+                            keywords.append(keyword)
+                    if keywords:
+                        facts[f"#{int(grp_id)}"] = {"keywords": keywords}
+                facts.update(self._counter_type_facts(cur, clean))
                 conn.close()
             except Exception:
                 facts = {}
         if facts:
             self._replay_card_facts = facts
         return facts
+
+    @staticmethod
+    def _exile_until_leaves_ability_ids(cur, clean) -> set:
+        """Ability ids that exile something "until ... leaves the battlefield".
+
+        Banishing Light, Deep-Cavern Bat, Sheltered by Ghosts, Perilous Snare:
+        the replay tucks what they exile under them. Read from the abilities'
+        English text, so any card worded that way counts.
+        """
+        pattern = re.compile(r"\bexile\b.*\buntil\b.*\bleaves the battlefield\b", re.I | re.S)
+        return CardDatabase._ability_ids_matching(cur, clean, pattern)
+
+    @staticmethod
+    def _ability_ids_matching(cur, clean, pattern) -> set:
+        """Ability ids whose English text matches ``pattern`` (empty when unreadable)."""
+        import sqlite3
+
+        tables = {
+            row[0] for row in cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        loc = next((t for t in ("Localizations_enUS", "Localizations") if t in tables), None)
+        if "Abilities" not in tables or loc is None:
+            return set()
+        columns = {row[1] for row in cur.execute('PRAGMA table_info("Abilities")')}
+        if "TextId" not in columns:
+            return set()
+        try:
+            rows = cur.execute(
+                f'SELECT a."Id", l."Loc" FROM "Abilities" a JOIN "{loc}" l ON l."LocId" = a."TextId"'
+            ).fetchall()
+        except sqlite3.Error:
+            # Only refines the replay: a schema we cannot read must not cost the other facts.
+            return set()
+        return {int(ability_id) for ability_id, text in rows if pattern.search(clean(text))}
+
+    @staticmethod
+    def _counter_type_facts(cur, clean) -> Dict[str, Dict[str, Any]]:
+        """``#counter:<n>`` -> ``{"counter": "plan"}`` for every Arena CounterType.
+
+        The tracker names only the counters it handles (+1/+1, -1/-1, loyalty)
+        and records the rest as ``counter_<n>``; the replay names them from here.
+        """
+        tables = {
+            row[0] for row in cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        loc = next((t for t in ("Localizations_enUS", "Localizations") if t in tables), None)
+        if "Enums" not in tables or loc is None:
+            return {}
+        out: Dict[str, Dict[str, Any]] = {}
+        for value, text in cur.execute(
+            f'SELECT e."Value", l."Loc" FROM "Enums" e JOIN "{loc}" l ON l."LocId" = e."LocId" '
+            "WHERE e.\"Type\" = 'CounterType'"
+        ).fetchall():
+            name = clean(text)
+            if name and f"#counter:{int(value)}" not in out:
+                out[f"#counter:{int(value)}"] = {"counter": name.lower()}
+        return out
 
     def color_identity_for_name(self, name: str) -> Optional[str]:
         """WUBRG identity for ONE card name straight from Arena's DB — the
@@ -973,6 +1085,54 @@ class CardDatabase:
                 index = {}
         self._export_index_by_arena_id = index
         return index
+
+    def rebalance_links_by_arena_id(self) -> Dict[int, int]:
+        """Map each Alchemy rebalanced (``A-``) GrpId to its original card's GrpId.
+
+        Owning a card on Arena also gives you its rebalanced version, so the
+        collection lists both ids with the same count. Arena links them through
+        ``RebalancedCardGrpId`` while a rebalance is live, and through
+        ``DefunctRebalancedCardGrpId`` after it is reverted (the 22 September
+        2026 revert). Returns an empty dict when the database or columns are
+        missing.
+        """
+        if getattr(self, "_rebalance_links", None) is not None:
+            return self._rebalance_links
+
+        links: Dict[int, int] = {}
+        db_path = self._resolve_mtga_db_path()
+        if db_path:
+            try:
+                conn = self._connect_mtga_db(db_path)
+                try:
+                    cur = conn.cursor()
+                    cur.execute('PRAGMA table_info("Cards")')
+                    columns = {str(row[1]) for row in cur.fetchall()}
+                    link_cols = [
+                        c
+                        for c in ("RebalancedCardGrpId", "DefunctRebalancedCardGrpId")
+                        if c in columns
+                    ]
+                    if "IsRebalanced" in columns and link_cols:
+                        select = ", ".join(f'c."{c}"' for c in link_cols)
+                        rows = cur.execute(
+                            f'SELECT c."GrpId", c."IsRebalanced", {select} FROM "Cards" c '
+                            'WHERE c."GrpId" IS NOT NULL'
+                        ).fetchall()
+                        for grp_id, is_rebalanced, *partners in rows:
+                            partner = next((int(p) for p in partners if p and int(p) > 0), 0)
+                            if not partner:
+                                continue
+                            if is_rebalanced:
+                                links.setdefault(int(grp_id), partner)
+                            else:
+                                links.setdefault(partner, int(grp_id))
+                finally:
+                    conn.close()
+            except Exception:
+                links = {}
+        self._rebalance_links = links
+        return links
 
     def get_card_ability_texts(self, grp_id: int) -> List[str]:
         """Return every localized ability text for a card (for role classification)."""

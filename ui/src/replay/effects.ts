@@ -6,7 +6,8 @@
  *
  * A window collects every effect from one action and stays open until the
  * next action (`clearsEffects`: a turn, phase, cast, ability, attack, block,
- * land, draw or the game's end). Its source is the stack item that resolved
+ * land, draw or the game's end; any event in a new step or phase; and an item
+ * resolving once the previous one's effects are on the table). Its source is the stack item that resolved
  * last, kept after it left the stack; a damage or life event names its own
  * source when it knows it, and a removal move names its source in `by`
  * (recorded games) when Arena logged one. Removed permanents are held

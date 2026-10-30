@@ -28,7 +28,11 @@ Repo layout:
   completed behavior belongs in reference docs, and the README links only to current
   features and reference guides. `docs/RELEASING.md` covers releases. `CHANGELOG.md` tracks releases.
   The version comes from the git tag (setuptools-scm writes `_version.py`); there is no
-  hand-edited version string anywhere, and a release is cut by pushing a `v*` tag. Never
+  hand-edited version string anywhere, and a release is cut by pushing a `v*` tag.
+  Source runs from a git checkout read it live at import (`source_version.py`, one
+  `git describe`, setuptools-scm's format: `0.7.2.dev9+g<sha>[.dYYYYMMDD]`), so the dev
+  version follows each commit without a reinstall; frozen builds and the PyInstaller
+  spec still use `_version.py`. Never
   bump or invent a version in code. For pre-tag screenshots, the dashboard accepts
   `?screenshotVersion=<version>` before its hash route; this changes only the sidebar
   footer label, not the actual package version or update check.
@@ -116,7 +120,12 @@ Primary code paths:
   (Mono-X, guilds, shards/wedges, 4c names, 5c). The UI mirrors this in `ui/src/colorCombos.ts`.
 - `src/mtga_tracker/payload_codec.py` / `payload_dump.py`: zlib codec for the raw payload
   archive and the CLI to print archived payloads as readable JSON.
-- `src/mtga_tracker/deck_llm.py`: opt-in AI opponent-deck identification (OpenAI/Claude/Gemini).
+- `src/mtga_tracker/deck_llm.py`: opt-in AI opponent-deck identification (OpenAI/Claude/Gemini/Grok).
+  `PROVIDERS` is the one provider list (labels, setting names, default models, model-page
+  links); the Settings page, Qt dialog and console lines read it. Grok uses xAI's
+  OpenAI-style chat completions through the same code path as OpenAI. `list_models` fills
+  the Settings model dropdown (`POST /api/settings/deck-ai/models`, free list calls made
+  only when the Settings page asks, never by the tracker).
   Config resolution order: `settings.json` ("deck_ai" section) → `config.py` → env. One cheap
   call per completed game, fired from `_start_opponent_archetype_lookup` on a daemon thread —
   it must NEVER block live tracking. Reasoning-class OpenAI models (gpt-5/o-series) get
@@ -140,12 +149,54 @@ Primary code paths:
   `scripts/export_replay_fixture.py`. `python -m mtga_tracker.replay_dump <game_id>` prints a
   stream. `ui/src/replay/effects.ts` keeps the current action's effect window
   (damage, life, removal, counters, P/T, discards, mills, each with its source)
-  until the next action; removed permanents stay dimmed in their slot meanwhile,
+  until the next action, or any event in a new step or phase (`applyEvent`);
+  removed permanents stay dimmed in their slot meanwhile,
   and moves carry `by` (Arena's affector root) for recorded games.
+  Flying creatures (card `keywords` `flying`, Arena ability id 8, matched by
+  Abilities.Id since it has BaseId 0; tokens by grpId) hover `FLYING_LIFT`
+  above the felt with a further, darker shadow.
+  Summoning sickness is Arena's `hasSummoningSickness` object flag (creatures
+  only; already off for printed or granted haste), captured as silent
+  `sick`/`unsick` rows from `replay_version` 2; older games are estimated by
+  `replay_sickness.py` and say so in `limitations`. A sick battlefield card
+  gets a purple `Zzz` badge centered just above its top edge (clear of the
+  name) and a hover note. Tokens never take the
+  `set|collector` image cache (Arena's token number names another card in the
+  set); they carry `token_print` (`t<set>/<number>`, Scryfall's token set).
+  The builder moves a `token_create` row ahead of earlier rows of its turn that
+  name the token (Mobilize attackers print before their creation).
+  Identical tokens and lands stack in one battlefield slot (`layout.stackKey`),
+  and identical abilities next to each other on the stack show as one preview
+  card (`stackView.groupStack`/`foldResolved`); counters the tracker records as
+  `counter_<n>` are named from Arena's `Enums` CounterType at build time.
+  An exile's host (`with`) comes from Arena's affector; Arena usually deletes
+  the exiling ability in the same message, so capture falls back to
+  `ability_instance_sources`, and the builder (`_tuck_orphan_exiles`) repairs
+  older rows from the card facts' `exiles_until_leaves` (abilities whose text
+  exiles "until ... leaves the battlefield").
+  More than two cards exiled by a noncreature artifact or enchantment show as
+  a pile with an `N under` corner badge (`layout.pilesTucked`); hover lists them.
+  A move onto the battlefield printed after rows the card itself is the source
+  of at the same moment (its enters trigger) is moved ahead of them
+  (`_hoist_battlefield_entries`), and a silent move repeating the card's
+  previous move exactly is dropped (`_drop_repeated_moves`).
+  A card cast inside a message Arena only summarized reappears under a new id
+  no row moved; when one same-card copy sits in that seat's exile, the builder
+  renames it back and moves it out of exile, inferred (`_reconnect_lost_arrivals`,
+  `LOST_ARRIVAL_LIMITATION`). Exiled cards whose own text lets them be cast
+  from exile (card keywords `cast_from_exile`, `cast_while_exiled`, from
+  `card_database.CAST_FROM_EXILE_TEXT`) sit beside the hand like plotted cards.
+  The "inferred" outline turns with a face-down card so its tag never mirrors.
+  A token entry whose Arena id is a real card's (card facts `grp_ids`) is a
+  token copy of it and keeps the card's own image (`attach_card_facts`).
 - `ui/src/replay/`: the Replay page — pure reducer/layout/playback-clock/image-queue/prefs
   modules with tests, `export/` (pure video plan, Canvas 2D frame composer, WebCodecs +
   mp4-muxer encoder for the in-browser MP4 export; each codec is probed with one frame and
-  H.264 without a reported `decoderConfig` is skipped for VP9, whose config is filled in), and `components/` holding the `@react-three/fiber` scene (lazy-loaded
+  H.264 without a reported `decoderConfig` is skipped for VP9, whose config is filled in; the
+  export driver waits for the canvas's own reconciler to commit each clock step
+  (`state.seq === clock.snapshot.seq`) before drawing, or frames lag an action and
+  the closing hold misses the ending card; Firefox's VP9 ignores bitrate, so sizes
+  are shown as upper limits), and `components/` holding the `@react-three/fiber` scene (lazy-loaded
   route `#/replay/<id>`, list at `#/replay`). Teal `--replay` is reserved for replay
   affordances; everything replay-related carries `replay-wide-only` and is hidden below
   900 px.
@@ -153,6 +204,11 @@ Primary code paths:
   between-game waiting status sits beside the format on the right, and Today's
   Games uses compact 20 px replay icons and one-letter W/L/D result pills
   (full word on hover and for screen readers) to preserve space for deck names.
+  A tiny teal Play / purple Draw `Badge` (`participants.went_first`) follows the deck
+  name; the name truncates first and unknown turn order shows nothing.
+- `ui/src/supportLink.ts`: the Buy Me a Coffee username for the pink (`--coffee`) sidebar
+  tile below Deck Manager (expanded and collapsed). Empty hides the tile; it opens
+  `buymeacoffee.com/<username>` in a new tab and is covered by `ui/src/SupportLink.test.tsx`.
 - `src/mtga_tracker/settings.py`: shared `settings.json` — top level of the repo next to
   `config.py` for source runs, per-user data dir for frozen builds (legacy `data/settings.json`
   migrates automatically). Startup preferences are stored in its `startup` section.
@@ -161,7 +217,7 @@ Primary code paths:
   `--login-start` marks OS launches so an already-running app exits quietly; it does not override
   the saved browser preference.
 - `src/mtga_tracker/settings_api.py`: dashboard settings for Deck AI, Deck Finder creators,
-  startup behavior, overlay control, platform capabilities, and resolved tracker paths. The menu
+  startup behavior, the session break, overlay control, platform capabilities, and resolved tracker paths. The menu
   "Tracker Settings" action opens this dashboard page. `settings_dialog.py` retains
   the PyQt Deck AI settings implementation.
 - `src/mtga_tracker/deck_manager.py` / `deck_manager_api.py`: general local deck library,
@@ -318,11 +374,20 @@ Primary code paths:
   row. Add to Arena and Save to collection sit below the description in a
   fieldset whose legend links to Deck Manager, styled in its orange accent; a
   right-aligned accent pill notes that Arena must be on Decks, filled in after that failure. The heading wraps on narrow screens.
+  The selected deck's card names use `CardLink previewOnly`: a hover image with
+  no link to the card page (images load only on hover).
   Stale hydration responses cannot replace a newer selection or clear its
   loading state. `ui/src/deckFinderImport.ts` parses import text for display,
   retaining separate Deck/Sideboard/Commander/Companion sections; clipboard
   export uses the original text. Unrecognized imports fall back to raw text.
   The Deck Finder route skips the Overview snapshot request in `ui/src/App.tsx`.
+  Deck Finder reads Arena status (`/api/deck-manager/native`) only while a deck is
+  open and the tab is visible (`usePageVisible`), and the saved library only when
+  the collection picker first opens. Dashboard pollers skip hidden tabs.
+  Its slots-full state is only the last job's read, so it is a note, not a
+  disabled button; every job publishes its roster read before acting on it.
+  `native_deck_bridge.availability()` locates Frida with `find_spec` and must not
+  import it; only an attach loads its native library.
 - `src/mtga_deck_downloader/providers/youtube.py` + `scrapers/youtube.py` /
   `youtube_decklist.py`: YouTube creator decks from the latest 15 Videos-tab
   entries sorted by Latest. Use keyless filtered player metadata, three worker
@@ -337,8 +402,45 @@ Primary code paths:
   show warnings and are not cached. UI uses a simple loading message, no progress
   bar. The README covers creator setup; regression fixtures live in
   `tests/deck_downloader/fixtures/youtube/`.
+- `ui/src/components/BuyPaperDialog.tsx` + `cardPrices.ts` / `paperDeck.ts` /
+  `paperVendors.ts` / `scryfallQueue.ts` / `storePrices.ts`: Buy on Paper (no
+  schema). A green button sits between Source and Export to Arena in Deck Finder,
+  in the Deck Manager deck dialog header, and in the deck page's Deck List section heading.
+  Prices are Scryfall TCGplayer-market prices: one collection pass, then batched
+  `(!"A" or !"B")` searches sorted by `usd`, with basics searched separately.
+  Scryfall allows 2 requests per second on search/collection and locks the caller
+  out after a 429 (seen as a CORS error in the browser), so every price call
+  goes through `scryfallFetch`, which spaces calls and backs off for a minute.
+  Never add per-card requests. Settled results cache in localStorage for 24 h.
+  Card Kingdom and Mana Pool price from their own public lists:
+  `src/mtga_tracker/paper_prices.py` downloads each (50–70 MB) on a background
+  thread at most daily. It stream-parses with ijson, keeps the cheapest in-stock
+  copy per name and face, and caches the result in `<data dir>/paper_prices/`;
+  `GET /api/paper-prices` answers ready/loading/error and never blocks. The
+  dialog loads both lists when it opens, for the store list. That list is the
+  only store picker (no dropdown) and shows each store's total. A store shows only
+  its own prices, never another store's as a stand-in: unlisted cards and a list
+  that failed to load show a dash and stay out of totals. A store we can't price
+  (SCG/CSI: `priceSource: null`, `comingSoon`) shows "Coming soon" and can't be
+  chosen; a saved choice of one falls back to TCGplayer. Stores are listed
+  alphabetically; TCGplayer is the default.
+  Tests (`tests/test_paper_prices.py`) never download.
+  Settings → Buy on Paper (after In-game overlay; `settings.json`
+  `buy_on_paper.enabled`, default on) is the off switch. Off hides every button
+  (`BuyPaperButton` reads `ui/src/buyOnPaperSetting.ts`), cancels downloads
+  through a generation counter, makes lookups answer 403, and deletes the price
+  folder. The folder holds one index per store plus at most one capped download
+  each; every refresh sweeps leftovers. Keep it bounded.
+  Store links follow EDHREC/Cube Cobra formats; SCG and CSI keep a dormant
+  copy-and-open handoff for when they can be priced. Empty `AFFILIATE` values mean plain links, and the commission
+  disclosure shows only for a store with a code. Never track a paper collection.
+  See `docs/BUY_ON_PAPER.md`.
 - `src/mtga_tracker/collection_api.py` / `collection_export.py` / `inventory.py`: explicit
   collection-export jobs, macOS/Windows process-memory readers, and local card metadata.
+  Arena's collection lists a card and its Alchemy `A-` version with the same count;
+  `CardDatabase.rebalance_links_by_arena_id` pairs them (`RebalancedCardGrpId` while live,
+  `DefunctRebalancedCardGrpId` after a revert) and `aggregate` counts each pair once, at
+  the larger quantity. Never sum the two.
 - `src/mtga_tracker/updater.py` (the `UpdateManager` and `get_manager()`), with
   `updater_manifest.py` (PEP 440 compare, strict manifest parser, `UPDATE_PUBLIC_KEYS`,
   asset selection), `updater_download.py` / `updater_fetch.py` (manifest fetch, resumable
@@ -379,6 +481,10 @@ Primary code paths:
   The manager recognizes an already-running Tauri singleton by its exact executable path;
   a successful second-instance handoff must not be treated as the overlay quitting or change
   `overlay.enabled` to false. Exit code 23 is reserved for an explicit **Quit overlay** action.
+  The tracker launches the overlay with `--parent-pid <its pid>` (and hands that pid to a reused
+  overlay through a second launch); `overlay/src-tauri/src/parent.rs` quits the overlay once that
+  process is gone, so a crashed, killed or uninstalled tracker never leaves it over Arena. The
+  Windows uninstaller also stops both executables (`[UninstallRun]` taskkill) before removing files.
   On macOS, `overlay/src-tauri/src/arena.rs` parses `lsappinfo` one property line at a time;
   macOS 27 returns extra properties even with `-only`, so never parse everything after the first
   equals sign or Arena will be treated as never frontmost and the overlay will hide itself.
@@ -567,7 +673,8 @@ Preserve these behaviors unless the user explicitly changes requirements:
   numbered pages with ellipses, first/last navigation and a validated page jump.
   All Games retains 30 rows per page; sorting and filter changes reset the page.
   Sessions returns every runtime session with games matching the current filters,
-  with no total row cap, newest first and 15 rows per page.
+  with no total row cap, newest first and 15 rows per page. Its Play / Draw column
+  (teal/purple counts of `went_first`) sits before Win Rate and sorts by the draw share.
 - Games where the tracker attached mid-game (turn > 1 at first sight) are shown live but never
   persisted (`mid_game_attach` gates `_is_untracked_match`). Midweek Magic and bot matches are
   likewise never persisted.
@@ -699,6 +806,11 @@ Arena logs are not a simple chronological event stream. Be careful with inferred
   the choice in `subtypes` (`SubType_Mountain`) and has no `color`. The tracker
   remembers the chooser (`GameState.land_type_choosers`) and reads the type from
   `subtypes`, so printed land types (Sacred Foundry) are never shown as a choice.
+- Arena reuses instance ids it never deleted (an ability whose activation was
+  undone): an `ObjectIdChanged` to such an id must not inherit the old object's
+  snapshot (`_record_object_id_change` replaces or drops it), or an opponent's
+  hidden draw reads as yours. A message with more than 50 objects or annotations
+  is logged only as "Message summarized because ...", with no details at all.
 - Arena's SBA death annotations reference instance ids that do NOT match declared
   attacker/blocker ids (verified against real logs) — combat deaths cannot be told apart
   from burn kills at SBA time, which is why lethal-damage deaths are excluded from
@@ -710,7 +822,11 @@ Keep schema changes backward-compatible. Use nullable columns and migration help
 
 Important tables:
 
-- `tracker_sessions`: one tracker runtime session.
+- `tracker_sessions`: one tracker runtime session, from launch to quit; a new match
+  starting the session break (Settings → Sessions, `settings.json` `sessions.break_hours`,
+  default 4, 0 = off; measured in log time) after the last game, or after launch when
+  nothing has been played, starts a new one (`tracker_lifecycle._start_new_session_after_break`).
+  Game 2+ of a Bo3 never starts one.
 - `matches`: match grouping within a session.
 - `games`: one game result, duration, total turns, player/opponent turn counts, winner/outcome.
 - `participants`: player/opponent seat, deck metadata, life, opening hand size, mulligans.

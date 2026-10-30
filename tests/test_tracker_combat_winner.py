@@ -4,7 +4,7 @@ import json
 import re
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from mtga_tracker.analytics import AnalyticsStore
 from mtga_tracker.tracker import CardEvent, CardTracker, GameState
@@ -3863,6 +3863,69 @@ def test_graveyard_to_hand_put_is_not_a_draw(capsys):
     capsys.readouterr()
     assert g.drawn_card_events.get(1, []) == []
     assert tracker._seat_stats(1)["cards_drawn"] == 0
+
+
+def test_reused_instance_id_does_not_inherit_the_old_objects_seat(capsys):
+    """Arena reused the id of an undone activation for the opponent's hidden draw.
+
+    Giant's Boulder's ability (seat 2, the player) was 501 while it chose
+    targets; the activation was undone, never deleted, and the opponent's draw
+    was renumbered 404 -> 501. The draw is the opponent's, not "You: drew".
+    """
+    tracker = make_tracker()
+    g = tracker.game_state
+    g.player_seat_id = 2
+    g.opponent_seat_id = 1
+    g.turn_number = 10
+    g.active_player = 1
+    g.last_opponent_turn_number = 10
+    ability = {
+        "instanceId": 501,
+        "grpId": 76738,
+        "type": "GameObjectType_Ability",
+        "zoneId": 27,
+        "ownerSeatId": 2,
+        "controllerSeatId": 2,
+        "parentId": 351,
+        "objectSourceGrpId": 103555,
+    }
+    tracker._snapshot_game_objects([ability])
+    data = {
+        "zones": [
+            {"zoneId": 31, "type": "ZoneType_Hand", "ownerSeatId": 1},
+            {"zoneId": 32, "type": "ZoneType_Library", "ownerSeatId": 1},
+        ],
+        "annotations": [
+            {
+                "id": 1,
+                "affectedIds": [404],
+                "type": ["AnnotationType_ObjectIdChanged"],
+                "details": [
+                    {"key": "orig_id", "valueInt32": [404]},
+                    {"key": "new_id", "valueInt32": [501]},
+                ],
+            },
+            {
+                "id": 2,
+                "affectedIds": [501],
+                "type": ["AnnotationType_ZoneTransfer"],
+                "details": [
+                    {"key": "zone_src", "valueInt32": [32]},
+                    {"key": "zone_dest", "valueInt32": [31]},
+                    {"key": "category", "valueString": ["Draw"]},
+                ],
+            },
+        ],
+    }
+
+    tracker._process_game_events(data)
+
+    out = capsys.readouterr().out
+    assert "Opponent: drew a card" in out
+    assert "You: drew" not in out
+    assert tracker._seat_stats(1)["cards_drawn"] == 1
+    assert tracker._seat_stats(2)["cards_drawn"] == 0
+    assert 501 not in g.object_snapshots
 
 
 def test_mid_game_attach_shows_live_but_is_not_saved(capsys):
@@ -8209,3 +8272,86 @@ def test_return_to_the_battlefield_is_not_logged_as_a_return_to_hand(capsys):
         "Opponent: [Yuna, Hope of Spira] returned [Summon: Knights of Round] to battlefield" in out
     )
     assert "to hand" not in out
+
+
+def _session_break(monkeypatch, hours):
+    from mtga_tracker import tracker_lifecycle
+
+    monkeypatch.setattr(tracker_lifecycle, "session_break_hours", lambda: hours)
+
+
+def _finish_game_at(tracker, ended_at, outcome="win"):
+    tracker.game_state.game_start_time = ended_at - timedelta(minutes=5)
+    tracker.game_state.game_end_time = ended_at
+    tracker._session_stats_recorded_this_game = False
+    tracker._record_session_outcome(outcome)
+
+
+def test_new_match_after_a_long_break_starts_a_new_session(monkeypatch):
+    """An app left running for days must not pile every night's games into
+    one session: a match that starts 4+ hours after the last game opens a
+    fresh session with its own id, totals and match ordinals."""
+    _session_break(monkeypatch, 4)
+    tracker = make_tracker()
+    _finish_game_at(tracker, datetime(2026, 10, 20, 23, 50))
+    tracker._arena_match_ordinal_by_id = {"old-match": 1}
+
+    tracker._current_event_time = datetime(2026, 10, 26, 0, 20)
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+
+    assert tracker.session_id != "test-session"
+    assert tracker.session_start_time == datetime(2026, 10, 26, 0, 20)
+    assert (tracker.session_games_played, tracker.session_wins) == (0, 0)
+    assert tracker._arena_match_ordinal_by_id == {}
+
+
+def test_new_match_soon_after_the_last_game_keeps_the_session(monkeypatch):
+    _session_break(monkeypatch, 4)
+    tracker = make_tracker()
+    _finish_game_at(tracker, datetime(2026, 10, 26, 0, 24))
+
+    tracker._current_event_time = datetime(2026, 10, 26, 3, 0)
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+
+    assert tracker.session_id == "test-session"
+    assert tracker.session_games_played == 1
+
+
+def test_a_bo3_match_never_splits_across_sessions(monkeypatch):
+    _session_break(monkeypatch, 4)
+    tracker = make_tracker()
+    _finish_game_at(tracker, datetime(2026, 10, 26, 0, 24))
+    tracker._pending_bo3_continuation = {"game_number": 2}
+
+    tracker._current_event_time = datetime(2026, 10, 26, 6, 0)
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+
+    assert tracker.session_id == "test-session"
+    assert tracker.game_state.game_number == 2
+
+
+def test_session_break_follows_the_setting(monkeypatch):
+    """Settings → Sessions: a longer break keeps a late-night return in the
+    same session, and Never leaves only a relaunch to start one."""
+    _session_break(monkeypatch, 8)
+    tracker = make_tracker()
+    _finish_game_at(tracker, datetime(2026, 10, 26, 0, 24))
+    tracker._current_event_time = datetime(2026, 10, 26, 6, 0)
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+    assert tracker.session_id == "test-session"
+
+    _session_break(monkeypatch, 0)
+    tracker._current_event_time = datetime(2026, 11, 2, 20, 0)
+    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
+    assert tracker.session_id == "test-session"
+
+
+def test_an_ability_object_is_named_after_its_source_card():
+    """A cost paid for Kaito's ninjutsu named the ability object, whose grpId
+    is the ability itself: the line read "as cost for [Card #168506]"."""
+    tracker = make_tracker()
+    tracker.card_db.names = {92314: "Kaito, Bane of Nightmares"}
+    ability = {"type": "GameObjectType_Ability", "grpId": 168506, "objectSourceGrpId": 92314}
+    assert tracker._object_display_name(ability, 495) == "Kaito, Bane of Nightmares"
+    card = {"type": "GameObjectType_Card", "grpId": 92314}
+    assert tracker._object_display_name(card, 317) == "Kaito, Bane of Nightmares"

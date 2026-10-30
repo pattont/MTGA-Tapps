@@ -306,6 +306,25 @@
   color: #ebe3ff;
 }
 
+.replay-label-tucked {
+  border-color: color-mix(in srgb, var(--replay, #2bb3a3) 60%, transparent);
+  background: rgb(8 12 16 / 88%);
+  color: #c9f5ee;
+  font-size: 0.62rem;
+  font-variant-numeric: tabular-nums;
+}
+/* Summoning sick: a purple sleep badge on the creature's upper left corner. */
+.replay-label-sick {
+  padding: 0 6px;
+  border-color: rgb(196 170 255 / 75%);
+  background: rgb(78 44 150 / 94%);
+  color: #f1eaff;
+  font-size: 0.6rem;
+  font-style: italic;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
 .replay-label-counters {
   border-color: rgb(240 198 108 / 40%);
   background: rgb(8 12 16 / 84%);
@@ -1066,6 +1085,45 @@
   border-radius: 6px;
 }
 
+/* One card for several identical abilities: the copies show as cards fanned
+   behind it, in the seat's color, and a bold count sits over its corner. */
+.replay-stack-group {
+  margin: 0 12px 12px 0;
+  box-shadow:
+    6px 6px 0 -1px var(--panel),
+    6px 6px 0 1px color-mix(in srgb, var(--stack-seat) 75%, var(--border)),
+    12px 12px 0 -1px var(--panel),
+    12px 12px 0 1px color-mix(in srgb, var(--stack-seat) 55%, var(--border)),
+    0 0 18px color-mix(in srgb, var(--stack-seat) 30%, transparent),
+    var(--preview-shadow);
+}
+
+.replay-stack-count {
+  position: absolute;
+  z-index: 1;
+  top: -10px;
+  right: -10px;
+  min-width: 2.4em;
+  padding: 3px 10px;
+  border: 2px solid color-mix(in srgb, var(--stack-seat) 60%, #fff);
+  border-radius: 999px;
+  background: var(--stack-seat);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--stack-seat) 70%, transparent), 0 2px 6px rgb(0 0 0 / 45%);
+  color: #071014;
+  font-size: 1.05rem;
+  font-weight: 900;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.replay-stack-chip .replay-stack-count {
+  top: -6px;
+  right: -6px;
+  min-width: 2em;
+  padding: 1px 6px;
+  font-size: 0.8rem;
+}
+
 .replay-stack-caption {
   display: grid;
   gap: 1px;
@@ -1248,9 +1306,12 @@
   filter: drop-shadow(0 0 6px var(--arrow-glow));
 }
 
-/* Combat arrows are context, not the headline: thinner, dimmer and steady.
-   Attackers can fan out by the dozen; blocks are few and short, so they stay brighter. */
-.replay-arrow-attack {
+/* Context, not the headline: thinner, dimmer and steady. Attacks on a player
+   can fan out by the dozen, and a trigger handing its own side counters reaches
+   every creature; blocks are few and short, so they stay brighter. An attack on
+   a planeswalker (strike) keeps the full arrow. */
+.replay-arrow-attack,
+.replay-arrow-support {
   opacity: 0.55;
 }
 
@@ -1259,17 +1320,20 @@
 }
 
 .replay-arrow-attack .replay-arrow-glow,
+.replay-arrow-support .replay-arrow-glow,
 .replay-arrow-block .replay-arrow-glow {
   stroke-width: 6;
   opacity: 0.6;
 }
 
 .replay-arrow-attack .replay-arrow-core,
+.replay-arrow-support .replay-arrow-core,
 .replay-arrow-block .replay-arrow-core {
   stroke-width: 2;
 }
 
 .replay-arrow-attack .replay-arrow-flow,
+.replay-arrow-support .replay-arrow-flow,
 .replay-arrow-block .replay-arrow-flow {
   display: none;
 }
@@ -1318,9 +1382,12 @@
 }
 
 /* With nothing left on the stack, the cards that just left it are the column
-   itself, centered on the stage, instead of hanging from its middle. */
-.replay-stack-empty .replay-stack-exits {
+   itself, centered on the stage, instead of hanging from its middle. Held
+   (paused) or kept, they stay exactly where the card stood on the stack: the
+   beside-the-stack offset below must not nudge them up half a card. */
+.replay-stack-preview.replay-stack-empty .replay-stack-exits {
   position: static;
+  translate: none;
 }
 
 /* A compact row that left the stack: its stamp sits at the row's right end. */
@@ -1491,6 +1558,21 @@
 /* Hover preview: what is tucked under the hovered permanent (heights match hoverStore.underListHeight). */
 .replay-preview-under {
   margin-top: 6px;
+}
+
+/* A status line under the preview image: a summoning-sick creature's, in the sleep badge's purple. */
+.replay-preview-note {
+  box-sizing: border-box;
+  height: 34px;
+  margin-top: 6px;
+  padding: 2px 8px;
+  overflow: hidden;
+  border-left: 3px solid rgb(150 110 235);
+  border-radius: 4px;
+  background: color-mix(in srgb, rgb(120 80 220) 12%, var(--panel));
+  color: var(--text);
+  font-size: 0.72rem;
+  line-height: 1.25;
 }
 
 .replay-preview-under-title {

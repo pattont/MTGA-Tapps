@@ -12,7 +12,7 @@ import type { BoardState } from '../reducer';
 import { sceneArrows, sleeveNeon } from '../scene/arrows';
 import { DEFAULT_MARGINS, fitTableForView } from '../scene/cameraFit';
 import type { TableFit } from '../scene/cameraFit';
-import type { HoverStore } from '../scene/hoverStore';
+import { SICK_NOTE, type HoverStore } from '../scene/hoverStore';
 import { createSceneKit } from '../scene/kit';
 import { sceneLabels } from '../scene/labels';
 import { MotionRegistry } from '../scene/motionRegistry';
@@ -267,7 +267,8 @@ function ReplaySceneImpl({
         const under = p.under.length
           ? p.under.map((u) => ({ card: u.card, name: u.card ? (cards[u.card]?.name ?? '') : '', zone: u.zone }))
           : undefined;
-        hover.set({ key: sceneKey(p), card: p.card, name: cards[p.card]?.name ?? '', under, x, y, source: 'scene' });
+        const note = p.sick ? SICK_NOTE : undefined;
+        hover.set({ key: sceneKey(p), card: p.card, name: cards[p.card]?.name ?? '', under, note, x, y, source: 'scene' });
       },
       out(p) {
         hover.clear(sceneKey(p));
@@ -344,13 +345,7 @@ function ReplaySceneImpl({
       ) : (
         <WebGLNotice />
       )}
-      <div className="replay-labels" ref={labelRoot} aria-hidden="true">
-        {labels.map((label) => (
-          <span key={label.id} className={`replay-label replay-label-${label.tone}${label.emphasis ? ' replay-label-emphasis' : ''}`}>
-            {label.text}
-          </span>
-        ))}
-      </div>
+      {/* Arrows go under the labels, so a damage number always reads over them. */}
       <svg className={`replay-arrows${snap ? ' replay-arrows-snap' : ''}`} aria-hidden="true">
         <defs>
           <filter id="replay-arrow-blur" x="-20%" y="-20%" width="140%" height="140%">
@@ -378,6 +373,13 @@ function ReplaySceneImpl({
           })}
         </g>
       </svg>
+      <div className="replay-labels" ref={labelRoot} aria-hidden="true">
+        {labels.map((label) => (
+          <span key={label.id} className={`replay-label replay-label-${label.tone}${label.emphasis ? ' replay-label-emphasis' : ''}`}>
+            {label.text}
+          </span>
+        ))}
+      </div>
       {zoomLevel > 1 ? (
         <button type="button" className="replay-zoom-pill" onClick={() => zoom.reset()} title="Show the whole table (0)">
           {zoomLevel.toFixed(1)}× · Reset zoom

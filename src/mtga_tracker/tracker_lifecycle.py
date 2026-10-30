@@ -3,15 +3,60 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from .opening_hand import state_has_opening_hand_zone
+from .settings import DEFAULT_SESSION_BREAK_HOURS, session_break_hours
 from .state import GameState
 
 
 class TrackerLifecycleMixin:
     """Game start/end, winner, and match lifecycle helpers used by CardTracker."""
+
+    def _start_session(self, started_at: datetime) -> None:
+        """Begin a session: a new id and zeroed totals."""
+        self.session_start_time = started_at
+        self.session_games_played = 0
+        self.session_wins = 0
+        self.session_losses = 0
+        self.session_draws = 0
+        self.session_unknown = 0
+        self.session_player_cards_played = 0
+        self.session_opponent_cards_played = 0
+        self.session_total_mulligans = 0
+        self.session_game_runtime_seconds = 0
+        self.session_player_went_first = 0
+        self.session_opponent_went_first = 0
+        self.session_first_unknown = 0
+        self.session_deck_records: Dict[str, Dict[str, Any]] = {}
+        self.session_id = datetime.now().strftime("%Y%m%dT%H%M%S%f")
+        self._session_last_game_end: Optional[datetime] = None
+        # Match ordinals are per session (they are part of the match id).
+        self._arena_match_ordinal_by_id: Dict[str, int] = {}
+
+    def _start_new_session_after_break(self) -> bool:
+        """Start a new session when a new match begins after a long break.
+
+        The break is Settings → Sessions (``sessions.break_hours``, default 4;
+        0 turns it off), so an app left running for days does not pile every
+        night's games into one session. Called only for a brand-new match,
+        never for game 2+ of a Bo3, so a match always stays in one session.
+        The break is measured in log time from the last finished game, or from
+        the launch before any game.
+        """
+        try:
+            hours = session_break_hours()
+        except Exception:  # noqa: BLE001 - an unreadable settings file keeps the default
+            hours = DEFAULT_SESSION_BREAK_HOURS
+        if hours <= 0:
+            return False
+        now = self._now()
+        last_activity = getattr(self, "_session_last_game_end", None) or self.session_start_time
+        if now - last_activity < timedelta(hours=hours):
+            return False
+        self._start_session(now)
+        return True
 
     def _reset_game_state(self):
         """Reset game state for a new game."""
@@ -602,6 +647,8 @@ class TrackerLifecycleMixin:
 
     def _reset_new_game_tracking(self, *, opening_mulligan_prompt_seen: bool) -> None:
         """Initialize tracking fields for a newly detected game."""
+        if not getattr(self, "_pending_bo3_continuation", None):
+            self._start_new_session_after_break()
         self.game_state.format_str = "Unknown"
         self.game_state.match_type = "best_of_1"
         # A stale Arena match UUID here is poison: this game's rows would be
@@ -1235,6 +1282,7 @@ class TrackerLifecycleMixin:
             self.session_unknown += 1
         self._record_session_deck_outcome(outcome)
         self._session_stats_recorded_this_game = True
+        self._session_last_game_end = self.game_state.game_end_time or self._now()
 
     def _try_resolve_winner_from_log_tail(self) -> None:
         """Last-chance winner lookup from recent structured log payloads."""
