@@ -12,7 +12,7 @@ import type { BoardState } from '../reducer';
 import { sceneArrows, sleeveNeon } from '../scene/arrows';
 import { DEFAULT_MARGINS, fitTableForView } from '../scene/cameraFit';
 import type { TableFit } from '../scene/cameraFit';
-import type { HoverStore } from '../scene/hoverStore';
+import { SICK_NOTE, type HoverStore } from '../scene/hoverStore';
 import { createSceneKit } from '../scene/kit';
 import { sceneLabels } from '../scene/labels';
 import { MotionRegistry } from '../scene/motionRegistry';
@@ -267,7 +267,8 @@ function ReplaySceneImpl({
         const under = p.under.length
           ? p.under.map((u) => ({ card: u.card, name: u.card ? (cards[u.card]?.name ?? '') : '', zone: u.zone }))
           : undefined;
-        hover.set({ key: sceneKey(p), card: p.card, name: cards[p.card]?.name ?? '', under, x, y, source: 'scene' });
+        const note = p.sick ? SICK_NOTE : undefined;
+        hover.set({ key: sceneKey(p), card: p.card, name: cards[p.card]?.name ?? '', under, note, x, y, source: 'scene' });
       },
       out(p) {
         hover.clear(sceneKey(p));

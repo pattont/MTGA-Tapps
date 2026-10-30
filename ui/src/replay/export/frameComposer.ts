@@ -317,6 +317,10 @@ function drawLabels(ctx: CanvasRenderingContext2D, layout: FrameLayout, labels: 
     const cy = layout.band + label.y * s;
     if (label.tone === 'pile') {
       drawPill(ctx, cx, cy, label.text, 10.5 * s, 600, 'rgba(8,12,16,0.62)', 'rgba(255,255,255,0.1)', COLORS.pileText, 999);
+    } else if (label.tone === 'tucked') {
+      drawPill(ctx, cx, cy, label.text, 10 * s, 600, 'rgba(8,12,16,0.88)', 'rgba(43,179,163,0.6)', '#c9f5ee', 999);
+    } else if (label.tone === 'sick') {
+      drawPill(ctx, cx, cy, label.text, 9.5 * s, 700, 'rgba(78,44,150,0.94)', 'rgba(196,170,255,0.75)', '#f1eaff', 999);
     } else if (label.tone === 'counters') {
       drawPill(ctx, cx, cy, label.text, 10 * s, 600, 'rgba(8,12,16,0.84)', 'rgba(240,198,108,0.4)', COLORS.gold, 999);
     } else if (label.tone === 'damage') {

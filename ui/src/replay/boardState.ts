@@ -45,6 +45,8 @@ export interface ObjectState {
   revealedAt: number | null;
   /** On the battlefield: the basic land type it chose as it entered (Multiversal Passage). */
   chosen?: string;
+  /** On the battlefield: summoning sick (can't attack or use {T} abilities yet). */
+  sick?: boolean;
 }
 
 export interface StackItem {

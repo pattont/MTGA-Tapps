@@ -1,4 +1,5 @@
 import type { ParsedDeckImport } from '../deckFinderImport';
+import { CardLink } from './CardLink';
 
 export function DeckFinderDeckList({ deck }: { deck: ParsedDeckImport }) {
   return (
@@ -10,7 +11,7 @@ export function DeckFinderDeckList({ deck }: { deck: ParsedDeckImport }) {
             {section.cards.map((card, index) => (
               <li key={`${card.name}-${index}`}>
                 <span className="deckfinder-card-quantity">{card.quantity}</span>
-                <span>{card.name}</span>
+                <CardLink cardName={card.name} previewOnly>{card.name}</CardLink>
               </li>
             ))}
           </ul>

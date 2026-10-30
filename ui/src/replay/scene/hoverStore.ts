@@ -14,6 +14,8 @@ export interface HoverInfo {
   name: string;
   /** Cards tucked under the hovered card (auras, equipment, cards it exiled), bottom first. */
   under?: readonly HoverUnder[];
+  /** A short status line under the image (a summoning-sick creature's), when set. */
+  note?: string;
   /** Viewport coordinates of the pointer or the anchor's edge. */
   x: number;
   y: number;
@@ -55,6 +57,11 @@ export const UNDER_MAX_ROWS = 6;
 const UNDER_HEADER_PX = 26;
 const UNDER_ROW_PX = 34;
 const UNDER_MORE_PX = 20;
+
+/** Height the status note adds below the image (replay.css `.replay-preview-note`). */
+export const NOTE_PX = 40;
+/** What a summoning-sick creature's preview says. */
+export const SICK_NOTE = "Summoning sick: can't attack or use {T} abilities until its controller's next turn.";
 
 /** Height the tucked-card list adds below the image. */
 export function underListHeight(count: number): number {
@@ -113,7 +120,7 @@ export function previewPosition(info: HoverInfo, viewport: { width: number; heig
   const pictureWidth = shown <= 2 ? hostWidth - 10 : Math.round((hostWidth - 10) * PICTURE_SCALE);
   const picturesWidth = pictureColumns ? pictureColumns * pictureWidth + (pictureColumns - 1) * PICTURE_GAP : 0;
   const width = hostWidth + (pictureColumns ? PICTURE_GAP + picturesWidth : 0);
-  const hostHeight = (hostWidth - 10) * IMAGE_RATIO + 10 + underListHeight(under.length);
+  const hostHeight = (hostWidth - 10) * IMAGE_RATIO + 10 + (info.note ? NOTE_PX : 0) + underListHeight(under.length);
   const picturesHeight = pictureColumns
     ? pictureRows * pictureWidth * IMAGE_RATIO + (pictureRows - 1) * PICTURE_GAP + 10 + (pictures.length > shown ? PICTURE_MORE_PX : 0)
     : 0;

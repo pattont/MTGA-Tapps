@@ -3,6 +3,7 @@ import { BackupCard } from './BackupCard';
 import {
   collectionDownloadUrl,
   fetchCollectionExportJob,
+  fetchDeckAiModels,
   fetchTrackerSettings,
   saveDeckAiSettings,
   saveDeckFinderCreators,
@@ -15,6 +16,7 @@ import {
   type OverlaySettings,
   type BuyOnPaperSettings,
   type SessionSettings,
+  type DeckAiModel,
   type DeckAiSettings,
   type DeckFinderCreator,
   type DeckFinderCreatorSettings,
@@ -762,6 +764,14 @@ function BuyOnPaperForm({ initial }: { initial: BuyOnPaperSettings }) {
   );
 }
 
+interface ModelList {
+  status: 'loading' | 'ready' | 'error';
+  /** The key the list was loaded with. */
+  key: string;
+  models: DeckAiModel[];
+  error?: string;
+}
+
 function DeckAiForm({ initial }: { initial: DeckAiSettings }) {
   const [enabled, setEnabled] = useState(initial.enabled);
   const [provider, setProvider] = useState(initial.provider);
@@ -773,8 +783,76 @@ function DeckAiForm({ initial }: { initial: DeckAiSettings }) {
   );
   const [showKey, setShowKey] = useState(false);
   const [status, setStatus] = useState<SaveStatus>('idle');
+  // The saved provider's list starts loading as the form opens.
+  const [modelLists, setModelLists] = useState<Record<string, ModelList>>(() => {
+    const savedKey = (keys[initial.provider] ?? '').trim();
+    return savedKey ? { [initial.provider]: { status: 'loading', key: savedKey, models: [] } } : {};
+  });
+  const latestRequest = useRef<Record<string, number>>({});
 
   const active = initial.providers.find((entry) => entry.key === provider) ?? initial.providers[0];
+  const list = modelLists[provider];
+  const key = (keys[provider] ?? '').trim();
+  const model = models[provider] ?? '';
+
+  function requestModels(target: string, apiKey: string) {
+    const request = (latestRequest.current[target] ?? 0) + 1;
+    latestRequest.current[target] = request;
+    fetchDeckAiModels(target, apiKey)
+      .then((loaded) => {
+        if (latestRequest.current[target] !== request) return;
+        setModelLists((current) => ({
+          ...current,
+          [target]: { status: 'ready', key: apiKey, models: loaded },
+        }));
+      })
+      .catch((reason: unknown) => {
+        if (latestRequest.current[target] !== request) return;
+        setModelLists((current) => ({
+          ...current,
+          [target]: {
+            status: 'error',
+            key: apiKey,
+            models: [],
+            error: reason instanceof Error ? reason.message : String(reason),
+          },
+        }));
+      });
+  }
+
+  function loadModels(target: string, apiKey: string) {
+    setModelLists((current) => ({
+      ...current,
+      [target]: { status: 'loading', key: apiKey, models: current[target]?.models ?? [] },
+    }));
+    requestModels(target, apiKey);
+  }
+
+  useEffect(() => {
+    const saved = initial.providers.find((entry) => entry.key === initial.provider);
+    const savedKey = (saved?.api_key ?? '').trim();
+    if (savedKey) {
+      requestModels(initial.provider, savedKey);
+    }
+    // Once, for the saved provider; the state above already says loading.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // A provider with a key loads its list the first time it is picked; a key
+  // typed in later loads it when the field loses focus.
+  function changeProvider(next: string) {
+    setProvider(next);
+    const nextKey = (keys[next] ?? '').trim();
+    if (nextKey && !modelLists[next]) {
+      loadModels(next, nextKey);
+    }
+  }
+
+  function keyCommitted() {
+    if (key && list?.key !== key) {
+      loadModels(provider, key);
+    }
+  }
 
   async function save() {
     setStatus('saving');
@@ -786,6 +864,11 @@ function DeckAiForm({ initial }: { initial: DeckAiSettings }) {
       setStatus('error');
     }
   }
+
+  const setModel = (value: string) =>
+    setModels((current) => ({ ...current, [provider]: value }));
+  const showList = list !== undefined && list.models.length > 0 && list.status !== 'error';
+  const listed = new Set(list?.models.map((entry) => entry.id) ?? []);
 
   return (
     <div className="settings-form">
@@ -800,7 +883,7 @@ function DeckAiForm({ initial }: { initial: DeckAiSettings }) {
 
       <label className="settings-field">
         <span>Provider</span>
-        <select value={provider} onChange={(event) => setProvider(event.target.value)}>
+        <select value={provider} onChange={(event) => changeProvider(event.target.value)}>
           {initial.providers.map((entry) => (
             <option key={entry.key} value={entry.key}>
               {entry.label}
@@ -818,6 +901,7 @@ function DeckAiForm({ initial }: { initial: DeckAiSettings }) {
             spellCheck={false}
             type={showKey ? 'text' : 'password'}
             value={keys[provider] ?? ''}
+            onBlur={keyCommitted}
             onChange={(event) =>
               setKeys((current) => ({ ...current, [provider]: event.target.value }))
             }
@@ -834,16 +918,57 @@ function DeckAiForm({ initial }: { initial: DeckAiSettings }) {
 
       <label className="settings-field">
         <span>Model</span>
-        <input
-          placeholder={active?.default_model ?? ''}
-          spellCheck={false}
-          type="text"
-          value={models[provider] ?? ''}
-          onChange={(event) =>
-            setModels((current) => ({ ...current, [provider]: event.target.value }))
-          }
-        />
+        <div className="settings-key-row">
+          {showList ? (
+            <select value={model} onChange={(event) => setModel(event.target.value)}>
+              <option value="">Default ({active?.default_model})</option>
+              {model && !listed.has(model) ? (
+                <option value={model}>{model} (not in your list)</option>
+              ) : null}
+              {list.models.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.label === entry.id ? entry.id : `${entry.label} (${entry.id})`}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              placeholder={active?.default_model ?? ''}
+              spellCheck={false}
+              type="text"
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+            />
+          )}
+          <button
+            className="quick-filter"
+            disabled={!key || list?.status === 'loading'}
+            type="button"
+            onClick={() => loadModels(provider, key)}
+          >
+            {list?.status === 'loading' ? 'Loading…' : showList ? 'Refresh' : 'Load models'}
+          </button>
+        </div>
       </label>
+      <p className="settings-hint" role="status">
+        {list?.status === 'error'
+          ? `${list.error} Type a model name instead, or `
+          : list?.status === 'ready' && list.models.length === 0
+            ? `${active?.label} listed no models for this key. Type a model name, or `
+            : showList
+              ? `Models your key can use, from ${active?.label}. Compare them on `
+              : key
+                ? 'Leave blank for the default. Compare models on '
+                : 'Enter an API key to choose from your models, or compare them on '}
+        {active?.models_url ? (
+          <a href={active.models_url} rel="noreferrer" target="_blank">
+            {active.label}'s model page
+          </a>
+        ) : (
+          "the provider's model page"
+        )}
+        .
+      </p>
 
       <div>
         <button

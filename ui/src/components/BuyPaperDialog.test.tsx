@@ -69,6 +69,10 @@ describe('BuyPaperDialog', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Buy 4 Opt' }));
     expect(total()).toBe('$2.50');
 
+    // The board choices are the first Options row, not a separate Boards menu.
+    const boardToggles = screen.getByRole('group', { name: 'Boards' });
+    expect(within(boardToggles).getAllByRole('checkbox').map((box) => box.closest('label')?.textContent)).toEqual(['Main Deck', 'Sideboard']);
+    expect(screen.queryByText('Boards')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Sideboard' }));
     expect(total()).toBe('$1.00');
     expect(screen.queryByRole('checkbox', { name: 'Buy 3 Negate' })).not.toBeInTheDocument();
@@ -187,7 +191,7 @@ describe('BuyPaperDialog', () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null);
     render(<BuyPaperDialog sections={sections} onClose={() => {}} returnFocus={null} />);
     await screen.findByText('Cards');
-    const disclosure = /may earn a commission/u;
+    const disclosure = 'Buying through Mana Pool earns Tapps Tracker a small commission at no cost to you, which helps support its ongoing development.';
     expect(screen.queryByText(disclosure)).not.toBeInTheDocument();
 
     fireEvent.click(within(screen.getByRole('list', { name: 'Store' })).getByRole('button', { name: /^Mana Pool/u }));

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from mtga_tracker.replay_reconstruct import pair_stack_rows, parse_bracket, reconstruct
+from mtga_tracker.replay_sickness import SICKNESS_ESTIMATE_LIMITATION
 from mtga_tracker.replay_stream import validate_stream
 
 FIXTURES = Path(__file__).parent / "fixtures" / "replay"
@@ -896,3 +897,26 @@ def test_conditional_and_counted_token_sentences_are_not_created():
     assert created_tokens(text) == [("Treasure", 1, None, None, [])]
     assert created_tokens("Create a 1/1 white Soldier creature token for each creature.") == []
     assert created_tokens("Create a token that's a copy of target creature.") == []
+
+
+def test_summoning_sickness_is_estimated_until_the_controllers_next_turn():
+    stream = _stream(
+        [
+            T1,
+            ("cast", "[0:01] You: cast [Grizzly Bears (Creature 2/2)]"),
+            ("turn", "Turn 2 - OPPONENT'S TURN"),
+            ("turn", "Turn 3 - YOUR TURN"),
+        ]
+    )
+    enter = next(e for e in stream["events"] if e["kind"] == "move" and e["reason"] == "resolve")
+    sick = [
+        (e["kind"], e["turn"], e["objs"])
+        for e in stream["events"]
+        if e["kind"] in ("sick", "unsick")
+    ]
+    assert sick == [("sick", 1, [enter["obj"]]), ("unsick", 3, [enter["obj"]])]
+    assert stream["events"][enter["seq"] + 1]["kind"] == "sick"
+    assert SICKNESS_ESTIMATE_LIMITATION in stream["limitations"]
+    # A creature first seen attacking is inferred: never marked.
+    stream = _stream([T1, ("attack", "[0:05] You attacking [opponent] with [Rabbit (1/1)]")])
+    assert not [e for e in stream["events"] if e["kind"] in ("sick", "unsick")]

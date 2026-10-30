@@ -23,13 +23,40 @@
   kept). Turning it off hides the button everywhere, stops downloads and
   deletes the saved price lists.
 - Mana Pool links now carry Tapps Tracker's referral code, so choosing Mana
-  Pool shows a note that Tapps Tracker may earn a commission, at no cost to
-  you. The other stores still open plain links.
+  Pool shows a note that buying there earns Tapps Tracker a small commission at
+  no cost to you, which helps support its development. The other stores still
+  open plain links.
+
+### Deck Finder
+
+- **Add to Arena** no longer stays greyed out after you free deck slots in
+  Arena. Full slots are only known from the last time the tracker read Arena,
+  so Deck Finder now shows that as a note and lets you click: the add reads
+  Arena again and stops with the same message only if the slots really are
+  full. Any Arena read, even one that stops early, now updates the saved status.
 
 ### Replay
 
 - Creatures with flying hover just above the table, casting a soft shadow
   beside them. Flying tokens and creatures given a flying counter hover too.
+- Summoning-sick creatures carry a purple "Zzz" badge above the card until
+  they can attack or tap, and hovering one says so. New games use Arena's own
+  flag, which already accounts for haste, including haste from other cards.
+  Older games estimate it from when each creature entered and whether it has
+  haste printed, so haste given by another card can be missed there.
+- A card you may cast from exile because of its own text sits beside your hand
+  with a "From exile" chip, the way Arena shows it: Emrakul, the Exigent Doom
+  and the rest of its cycle after they exile themselves from your hand, and
+  Eternal Scourge or Squee wherever they were exiled from.
+- Arena writes a very large update to its log as a summary with no details.
+  A card cast during one used to show up later as an unknown face-down card
+  while its old copy stayed in exile. It now returns from exile as itself
+  (marked inferred), and the replay notes the gap. Earlier games are fixed too.
+- The "inferred" tag under a face-down card reads normally instead of
+  mirrored.
+- A card that also had a token copy made of it during the game (Emrakul, the
+  Exigent Doom copied by Three Steps Ahead) shows its own art, not a token's
+  from the same set.
 - Exported videos end on the same Victory / Defeat card as the replay, with
   final life totals, turns and length. The ending was missing because each
   frame could be drawn a step before the table caught up. That also made
@@ -43,6 +70,19 @@
 - Tokens show their own token art. They used to show whichever card shared the
   token's number in its set: a Mobilize Warrior showed Furious Forebear, a Pest
   showed Ascendant Dustspeaker.
+- Every card that exiles something "until this leaves the battlefield"
+  (Banishing Light, Sheltered by Ghosts, Deep-Cavern Bat, Perilous Snare,
+  Solitary Cell and the rest) now keeps what it exiled tucked under it. It
+  used to work only when Arena still held the exiling trigger, which was
+  rarely: most exiles landed in the exile pile. Earlier games are fixed too.
+- A card put onto the battlefield together with its own enters trigger
+  (Repurposing Bay fetching Pinnacle Starcage) no longer appears from nowhere
+  with an "inferred" outline, and a land play Arena reports twice no longer
+  moves the land again. Earlier games are fixed too.
+- A noncreature artifact or enchantment that has exiled more than two cards
+  (Pinnacle Starcage can take a whole board) shows them as a neat pile with an
+  "N under" badge on its corner instead of a tall fan; hover the card to see
+  them all. One or two cards, and anything under a creature, still fan out.
 - Identical tokens and lands stack in one slot, the rest showing as edges under
   the top one with a ×N count, so a board of Spirits, Treasures or Mountains
   fits the table. Tapped ones stack apart from untapped ones.
@@ -79,6 +119,8 @@
 
 ### Dashboard
 
+- In Deck Finder, hovering a card in the selected deck shows the card's image, so
+  you can size up a card before adding the deck. Images load only on hover.
 - A pink Buy me a coffee button sits below Deck Manager in the sidebar, for anyone who
   wants to support the tracker. It opens the Buy Me a Coffee page in your browser.
 - The Sessions table has a Play / Draw column before Win Rate, counting the games you
@@ -88,8 +130,28 @@
   piles every night's games into one record. Settings → Sessions sets the break (1 to 12
   hours, or only when the app opens). A Best-of-3 match always stays in one session.
 
+### Deck AI
+
+- Grok is now a Deck AI provider: pick **xAI (Grok)** in Settings → Deck AI and paste
+  an xAI API key. Its default model skips hidden reasoning, so each identification
+  stays a small request.
+- The Model field is now a dropdown of the models your key can use, loaded from the
+  provider when you open Settings or enter a key. A link beside it opens the
+  provider's own model page. If the list can't load, you can still type a model name.
+- Providers are labelled **OpenAI (ChatGPT)**, **Anthropic (Claude)**,
+  **Google (Gemini)** and **xAI (Grok)**.
+- New default models: GPT-6 Luna for OpenAI, Claude Haiku 5.5 for Anthropic and
+  Gemini 3.5 Flash-Lite for Google. The old Gemini 2.0 Flash default has been shut
+  down and Claude 3.5 Haiku is no longer offered, so Deck AI with either had stopped
+  naming decks; GPT-4o mini shuts down in January 2027. If you never picked a model,
+  you move to the new default automatically. A model you chose yourself is kept.
+
 ### Fixes
 
+- An opponent's draw could be logged as yours ("You: drew a card"), counted in your
+  draws and shown as an unknown card in your hand in the replay. Arena had reused the
+  id of an ability you started and then cancelled, and the tracker still remembered
+  that ability under it.
 - The in-game overlay could outlive the tracker: after the tracker crashed, was
   ended from Task Manager, or was uninstalled, the overlay kept showing over Arena
   until the next restart. The overlay now quits on its own a few seconds after the

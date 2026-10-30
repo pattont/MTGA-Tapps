@@ -1588,6 +1588,15 @@ tbody tr:hover {
   text-decoration: none;
 }
 
+/* Hover-only card name (Deck Finder): plain text that shows the card image. */
+.card-preview-trigger {
+  cursor: default;
+}
+
+.card-preview-trigger:hover {
+  color: var(--accent-strong);
+}
+
 .deck-link:hover,
 .deck-link:focus-visible,
 .card-link:hover,
@@ -4938,8 +4947,10 @@ a.settings-link-button {
   text-decoration: none;
 }
 
-.settings-key-row input {
+.settings-key-row input,
+.settings-key-row select {
   flex: 1;
+  min-width: 0;
 }
 
 /* ---- Collection export ---- */
@@ -6981,21 +6992,12 @@ a.sidebar-deck-finder {
   accent-color: var(--accent);
 }
 .buy-paper-check:has(input:disabled) { cursor: default; color: var(--muted); }
+/* Board checkboxes share one line at the top of Options. */
+.buy-paper-board-toggles { display: flex; flex-wrap: wrap; column-gap: 22px; }
 
 .buy-paper-cards { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .buy-paper-cards-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .buy-paper-cards-heading h4 span { color: var(--muted); font-weight: 400; }
-.buy-paper-boards { position: relative; }
-.buy-paper-boards summary {
-  display: inline-flex; align-items: center; gap: 6px; color: var(--accent-strong); font-size: 0.88rem;
-  cursor: pointer; list-style: none;
-}
-.buy-paper-boards summary::-webkit-details-marker { display: none; }
-.buy-paper-boards summary svg { width: 15px; height: 15px; }
-.buy-paper-boards-menu {
-  position: absolute; z-index: 5; right: 0; top: calc(100% + 6px); min-width: 170px; padding: 12px 14px 2px;
-  border: 1px solid var(--border); border-radius: 8px; background: var(--panel-strong); box-shadow: var(--shadow);
-}
 
 /* The list takes whatever height the screen allows, between 300 and 640 px. */
 .buy-paper-list {
@@ -7089,7 +7091,7 @@ a.sidebar-deck-finder {
 }
 .buy-paper-footer-text { flex: 1 1 280px; min-width: 0; }
 .buy-paper-status, .buy-paper-disclosure { margin: 0; color: var(--muted); font-size: 0.8rem; line-height: 1.4; }
-.buy-paper-disclosure { margin-top: 2px; font-size: 0.74rem; }
+.buy-paper-disclosure { margin-top: 2px; }
 .buy-paper-retry {
   padding: 0; border: 0; background: none; color: var(--accent-strong); font: inherit; text-decoration: underline;
   cursor: pointer;

@@ -20,7 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, TypeVar
 
-REPLAY_VERSION = 1
+#: 2: also records summoning sickness (``sick``/``unsick`` rows).
+REPLAY_VERSION = 2
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 
@@ -333,6 +334,9 @@ class ReplayCaptureState:
         "pending_taps",
         "pending_untaps",
         "pending_pt",
+        "sick",
+        "pending_sick",
+        "pending_unsick",
         "user_action_ids",
         "blocks",
         "ambient",
@@ -357,6 +361,10 @@ class ReplayCaptureState:
         self.pending_taps: Dict[int, List[int]] = {}
         self.pending_untaps: Dict[int, List[int]] = {}
         self.pending_pt: Dict[int, Tuple[int, int]] = {}
+        # Root ids Arena marks hasSummoningSickness, and this message's changes by seat.
+        self.sick: set = set()
+        self.pending_sick: Dict[int, List[int]] = {}
+        self.pending_unsick: Dict[int, List[int]] = {}
         self.user_action_ids: set = set()
         self.blocks: set = set()
         self.ambient: Optional[ReplayFact] = None
@@ -730,6 +738,35 @@ class ReplayCaptureMixin:
             payload=payload,
         )
 
+    def _replay_affector(
+        self, affector: int, game_objects_by_id: Dict[int, Dict[str, Any]]
+    ) -> Tuple[Optional[int], Dict[str, Any]]:
+        """The source permanent's id (and object) behind an ``affectorId``.
+
+        An ability object names its source in ``parentId``. When Arena deletes
+        the ability in the same message (Perilous Snare's trigger exiling a
+        card), neither the message nor the snapshots hold it any more; the
+        source recorded when the ability went on the stack stands in.
+        """
+        snapshots = getattr(self.game_state, "object_snapshots", {}) or {}
+        obj = game_objects_by_id.get(affector) or snapshots.get(affector) or {}
+        if obj.get("type") == "GameObjectType_Ability" or obj.get("parentId") is not None:
+            try:
+                source_id = int(obj.get("parentId"))
+            except (TypeError, ValueError):
+                return None, {}
+            return source_id, game_objects_by_id.get(source_id) or snapshots.get(source_id) or {}
+        if not obj:
+            sources = getattr(self.game_state, "ability_instance_sources", {}) or {}
+            source = sources.get(affector)
+            if source is not None:
+                source_id = int(source)
+                return (
+                    source_id,
+                    game_objects_by_id.get(source_id) or snapshots.get(source_id) or {},
+                )
+        return affector, obj
+
     def _replay_move_source(
         self,
         annotation: Dict[str, Any],
@@ -748,14 +785,9 @@ class ReplayCaptureMixin:
             affector = int(annotation.get("affectorId"))
         except (TypeError, ValueError):
             return None
-        snapshots = getattr(self.game_state, "object_snapshots", {}) or {}
-        obj = game_objects_by_id.get(affector) or snapshots.get(affector) or {}
-        source_id = affector
-        if obj.get("type") == "GameObjectType_Ability" or obj.get("parentId") is not None:
-            try:
-                source_id = int(obj.get("parentId"))
-            except (TypeError, ValueError):
-                return None
+        source_id, _obj = self._replay_affector(affector, game_objects_by_id)
+        if source_id is None:
+            return None
         root = self._replay_root(source_id)
         if root is None or root == self._replay_root(instance_id):
             return None
@@ -781,16 +813,8 @@ class ReplayCaptureMixin:
             affector = int(annotation.get("affectorId"))
         except (TypeError, ValueError):
             return None
-        snapshots = getattr(self.game_state, "object_snapshots", {}) or {}
-        obj = game_objects_by_id.get(affector) or snapshots.get(affector) or {}
-        host_id = affector
-        if obj.get("type") == "GameObjectType_Ability" or obj.get("parentId") is not None:
-            try:
-                host_id = int(obj.get("parentId"))
-            except (TypeError, ValueError):
-                return None
-            obj = game_objects_by_id.get(host_id) or snapshots.get(host_id) or {}
-        if not obj or obj.get("type") != "GameObjectType_Card":
+        host_id, obj = self._replay_affector(affector, game_objects_by_id)
+        if host_id is None or not obj or obj.get("type") != "GameObjectType_Card":
             return None
         if self._replay_zone_name(obj.get("zoneId"), zones_by_id) != "battlefield":
             return None
@@ -829,6 +853,7 @@ class ReplayCaptureMixin:
         if fact.zone_to != "battlefield":
             state.tapped.discard(fact.object_id)
             state.pt.pop(fact.object_id, None)
+            state.sick.discard(fact.object_id)
 
     # -- stack ------------------------------------------------------------
     @replay_safe()

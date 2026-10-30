@@ -217,7 +217,7 @@ class TrackerEventsMixin(
         new_instance_id = parsed_details.new_instance_id
 
         if "AnnotationType_ObjectIdChanged" in ann_type:
-            self._record_object_id_change(orig_instance_id, new_instance_id)
+            self._record_object_id_change(orig_instance_id, new_instance_id, game_objects_by_id)
             return
 
         if "AnnotationType_TokenCreated" in ann_type:

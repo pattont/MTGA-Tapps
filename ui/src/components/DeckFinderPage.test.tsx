@@ -230,7 +230,7 @@ it('tells the user to return to Arena’s Decks screen instead of opening Deck M
   expect(screen.getByText('Arena must be on its Decks screen')).toHaveClass('deckfinder-manager-hint-alert');
 });
 
-it.each([{ in_game: true }, { limit_reached: true }])('blocks direct adds while a game is active or slots are full', async (guard) => {
+it.each([{ in_game: true }])('blocks direct adds while a game is active', async (guard) => {
   vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ available: true, connected: true, busy: false, decks: [], limit: 100, limit_reached: false, deck_screen_open: true, message: '', ...guard });
   render(<DeckFinderPage />);
   await chooseCreator();
@@ -303,4 +303,16 @@ it('explains that a pending transfer pauses direct adds', async () => {
 it('reads the exported Arena name, falling back to the listed name', () => {
   expect(exportedDeckName('About\nName Rakdos Lizards (Ash)\n\nDeck\n4 Forest', 'Rakdos Lizards')).toBe('Rakdos Lizards (Ash)');
   expect(exportedDeckName('Deck\n4 Forest', 'Rakdos Lizards')).toBe('Rakdos Lizards');
+});
+
+it('lets Add to Arena check again when the slots were full at the last check', async () => {
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ available: true, connected: true, busy: false, decks: [], limit: 100, limit_reached: true, deck_screen_open: true, message: '' });
+  vi.mocked(addDeckToArena).mockResolvedValue({ job_id: 'add-job' });
+  vi.mocked(fetchNativeDeckJob).mockResolvedValue({ state: 'running', detail: 'Reading Arena’s current decks…' });
+  render(<DeckFinderPage />);
+  await chooseCreator();
+  fireEvent.click(await screen.findByRole('button', { name: deck.name }));
+  expect(await screen.findByText(/were full when last checked/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Add to Arena' }));
+  await waitFor(() => expect(addDeckToArena).toHaveBeenCalledOnce());
 });

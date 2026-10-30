@@ -4,7 +4,8 @@
  * current power/toughness or the planeswalker's loyalty (Arena style), plus a
  * small chip across its upper edge for any other counters, or "Commander" on
  * a seat's commander (with its counters after it), or the basic land type a
- * land chose as it entered (Multiversal Passage), in that land's color. Stack items are
+ * land chose as it entered (Multiversal Passage), in that land's color, and a
+ * purple sleep badge just above the top edge of a summoning-sick creature. Stack items are
  * captioned by the DOM stack preview instead. Pure: computed once per board
  * state; the projector moves them each rendered frame without React.
  */
@@ -20,6 +21,8 @@ export type LabelTone =
   | 'counters'
   | 'commander'
   | 'castable'
+  | 'tucked'
+  | 'sick'
   | 'damage'
   | 'removed'
   | 'buff'
@@ -53,6 +56,9 @@ export interface SceneLabel {
   /** A stat badge that differs from the printed card (modified power/toughness). */
   emphasis?: boolean;
 }
+
+/** Text of the sleep badge on a summoning-sick creature. */
+export const SICK_BADGE = 'Zzz';
 
 /** Counter type recorded games use for planeswalker loyalty (replay_capture.COUNTER_TYPE_NAMES). */
 export const LOYALTY_COUNTER = 'loyalty';
@@ -119,6 +125,7 @@ const CASTABLE_LABELS: Record<CastableMark, string> = {
   disturb: 'Disturb',
   harmonize: 'Harmonize',
   plot: 'Plotted',
+  cast_from_exile: 'From exile',
 };
 
 export function countersText(placement: CardPlacement): string | null {
@@ -322,6 +329,35 @@ export function sceneLabels(layout: Layout, cards: Readonly<Record<CardKey, Repl
         id: `stack:${placement.obj}`,
         text: `\u00d7${placement.stackCount}`,
         tone: 'pile',
+        obj: placement.obj,
+        x: dx,
+        y: dy,
+        z: 0.02,
+        align: 'center',
+      });
+    }
+    if (placement.sick) {
+      // Summoning sick: a sleep badge centered just above the top edge, clear of the name.
+      const [dx, dy] = frame.at(0, frame.half + 0.08 * s);
+      labels.push({
+        id: `sick:${placement.obj}`,
+        text: SICK_BADGE,
+        tone: 'sick',
+        obj: placement.obj,
+        x: dx,
+        y: dy,
+        z: 0.02,
+        align: 'center',
+      });
+    }
+    if (placement.tuckedCount) {
+      // How many cards the host's pile of exiled cards holds: a badge on the
+      // upper right corner, clear of the name and cost (hover lists them).
+      const [dx, dy] = frame.at(frame.halfWidth - 0.06 * s, frame.half + 0.02 * s);
+      labels.push({
+        id: `tucked:${placement.obj}`,
+        text: `${placement.tuckedCount} under`,
+        tone: 'tucked',
         obj: placement.obj,
         x: dx,
         y: dy,

@@ -35,8 +35,9 @@ function LifeChange({ state, seat }: { state: BoardState; seat: number }) {
 
 export function FidelityBadge({ stream }: { stream: ReplayStream }) {
   const recorded = stream.fidelity === 'recorded';
+  // A game recorded before a fact was captured lists what the replay estimates instead.
   const title = recorded
-    ? 'Recorded with full detail while the game was played.'
+    ? ['Recorded with full detail while the game was played.', ...stream.limitations.map((line) => `• ${line}`)].join('\n')
     : ['Reconstructed from the event log. Approximate:', ...stream.limitations.map((line) => `• ${line}`)].join('\n');
   return (
     <span

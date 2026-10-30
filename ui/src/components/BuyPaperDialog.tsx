@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { CircleHelp, Funnel, ShoppingCart } from 'lucide-react';
+import { CircleHelp, ShoppingCart } from 'lucide-react';
 import type { ImportSection } from '../deckFinderImport';
 import { lookupPaperPrices, type PaperPriceMap } from '../cardPrices';
 import {
@@ -302,6 +302,16 @@ export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialo
           <p className="buy-paper-store-note">{vendor.note}</p>
 
           <h4>Options</h4>
+          {presentBoards.length > 1 ? (
+            <div className="buy-paper-board-toggles" role="group" aria-label="Boards">
+              {presentBoards.map((board) => (
+                <label key={board} className="buy-paper-check">
+                  <input type="checkbox" checked={boards.has(board)} onChange={() => toggleBoard(board)} />
+                  <span>{BOARD_LABELS[board]}</span>
+                </label>
+              ))}
+            </div>
+          ) : null}
           <label className="buy-paper-check">
             <input
               type="checkbox"
@@ -325,19 +335,6 @@ export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialo
         <div className="buy-paper-cards">
           <div className="buy-paper-cards-heading">
             <h4>Cards <span>({cart.cardCount} selected)</span></h4>
-            {presentBoards.length > 1 ? (
-              <details className="buy-paper-boards">
-                <summary><Funnel aria-hidden="true" />Boards</summary>
-                <div className="buy-paper-boards-menu">
-                  {presentBoards.map((board) => (
-                    <label key={board} className="buy-paper-check">
-                      <input type="checkbox" checked={boards.has(board)} onChange={() => toggleBoard(board)} />
-                      <span>{BOARD_LABELS[board]}</span>
-                    </label>
-                  ))}
-                </div>
-              </details>
-            ) : null}
           </div>
 
           <div className="buy-paper-list" aria-label="Cards to buy" aria-busy={storeLoading || pending > 0}>
@@ -447,7 +444,7 @@ export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialo
       <div className="buy-paper-footer">
         <div className="buy-paper-footer-text">
           <p className="buy-paper-status" role="status">{status}</p>
-          {affiliateActive(vendor) ? <p className="buy-paper-disclosure">Tapps Tracker may earn a commission from purchases through this link, at no cost to you.</p> : null}
+          {affiliateActive(vendor) ? <p className="buy-paper-disclosure">Buying through {vendor.name} earns Tapps Tracker a small commission at no cost to you, which helps support its ongoing development.</p> : null}
         </div>
         <button type="button" className="deck-neutral-button" onClick={onClose}>Cancel</button>
         <button type="button" className="buy-paper-buy" disabled={!cart.lines.length} onClick={() => void buy()}>

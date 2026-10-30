@@ -36,6 +36,7 @@ import {
   usesCommandZone,
 } from './layout';
 import { stackView } from './scene/stackView';
+import { sceneLabels } from './scene/labels';
 import { buildTimeline, stateAt } from './reducer';
 import type { ReplayEvent } from './types';
 
@@ -480,6 +481,36 @@ describe('layoutBoard', () => {
     expect(aura.z).toBeLessThan(host.z);
   });
 
+  it('piles more than two cards exiled by a noncreature artifact, with a count, but always fans them under a creature', () => {
+    const tuckUnder = (host: string, type: string, count: number) => {
+      const b = new StreamBuilder();
+      b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+      b.move('host', 'a2', 'limbo', 'battlefield', 2, 'put');
+      for (let i = 0; i < count; i += 1) b.move(`x${i}`, 'a1', 'library', 'exile', 1, 'exile', { with: 'host' });
+      const extra = type === 'Creature' ? { power: '1', toughness: '1' } : {};
+      const stream = b.build({ a1: card('Bear', 'Creature', { power: '2', toughness: '2' }), a2: card(host, type, extra) }, { playerSeat: 1 });
+      const tl = buildTimeline(stream);
+      return layoutBoard(stateAt(tl, stream.events[stream.events.length - 1].seq), { ...OPTS, playerSeat: 1 });
+    };
+    const pile = tuckUnder('Pinnacle Starcage', 'Artifact', 6);
+    const cage = byObj(pile.cards, 'host');
+    expect(cage.tuckedCount).toBe(6);
+    expect(cage.under).toHaveLength(6);
+    const edges = pile.cards.filter((c) => c.obj.startsWith('x'));
+    expect(edges.every((c) => c.stackedUnder === 'host')).toBe(true);
+    // Two edges show, however many cards it holds: the rest square up behind the second.
+    expect(new Set(edges.map((c) => c.y.toFixed(6))).size).toBe(2);
+    expect(sceneLabels(pile, {}).some((l) => l.id === 'tucked:host' && l.text === '6 under')).toBe(true);
+
+    const two = tuckUnder('Pinnacle Starcage', 'Artifact', 2);
+    expect(byObj(two.cards, 'host').tuckedCount).toBeUndefined();
+    expect(two.cards.some((c) => c.stackedUnder === 'host')).toBe(false);
+
+    const bat = tuckUnder('Deep-Cavern Bat', 'Creature', 4);
+    expect(byObj(bat.cards, 'host').tuckedCount).toBeUndefined();
+    expect(new Set(bat.cards.filter((c) => c.obj.startsWith('x')).map((c) => c.y.toFixed(6))).size).toBe(4);
+  });
+
   it('fans tucked cards upward on screen for either seat, sliding the host and compressing so the fan stays out of the next row', () => {
     const build = (seat: number, count: number) => {
       const b = new StreamBuilder();
@@ -676,6 +707,31 @@ describe('side cards beside the hand', () => {
     expect(before.castable).toBe('flashback');
     const after = sideBoard((b) => b.move('g1', 'looting', 'graveyard', 'stack', PLAYER, 'cast'));
     expect(byObj(after.cards, 'g1').castable).toBeNull();
+  });
+
+  it('shows a card its own text lets its owner cast from exile', () => {
+    // Emrakul, the Exigent Doom exiles itself from the hand; Eternal Scourge
+    // may be cast from exile however it got there.
+    const cards = {
+      emrakul: card('Emrakul, the Exigent Doom', 'Creature', { keywords: ['cast_while_exiled'] }),
+      scourge: card('Eternal Scourge', 'Creature', { keywords: ['cast_from_exile'] }),
+    };
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    b.move('e1', 'emrakul', 'limbo', 'hand', PLAYER, 'draw');
+    b.move('e1', 'emrakul', 'hand', 'exile', PLAYER, 'exile');
+    b.move('e2', 'emrakul', 'limbo', 'battlefield', PLAYER, 'put');
+    b.move('e2', 'emrakul', 'battlefield', 'exile', PLAYER, 'exile');
+    b.move('s1', 'scourge', 'limbo', 'battlefield', PLAYER, 'put');
+    b.move('s1', 'scourge', 'battlefield', 'exile', PLAYER, 'exile');
+    b.phaseTo('Phase_Main1');
+    const layout = layoutBoard(buildTimeline(b.build(cards, { playerSeat: PLAYER })).final, OPTS);
+    expect([byObj(layout.cards, 'e1').row, byObj(layout.cards, 'e1').castable]).toEqual([
+      'castable',
+      'cast_from_exile',
+    ]);
+    expect(byObj(layout.cards, 'e2').row).toBe('pile');
+    expect(byObj(layout.cards, 's1').castable).toBe('cast_from_exile');
   });
 });
 

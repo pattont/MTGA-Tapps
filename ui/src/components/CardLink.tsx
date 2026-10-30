@@ -26,6 +26,8 @@ interface CardLinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'h
   cardName: string;
   children?: ReactNode;
   returnHash?: string;
+  /** Show the hover image only; the name is plain text, not a link to the card page. */
+  previewOnly?: boolean;
 }
 
 function CardLinkPreview({
@@ -33,6 +35,7 @@ function CardLinkPreview({
   children,
   className,
   returnHash,
+  previewOnly = false,
   ...anchorProps
 }: CardLinkProps) {
   const previewUrl = cardPreviewImageUrl(cardName);
@@ -84,14 +87,24 @@ function CardLinkPreview({
 
   return (
     <>
-      <a
-        ref={setReference}
-        className={['card-link', className].filter(Boolean).join(' ')}
-        href={cardRouteHash(cardName, returnHash)}
-        {...getReferenceProps(anchorProps)}
-      >
-        {children ?? displayName}
-      </a>
+      {previewOnly ? (
+        <span
+          ref={setReference}
+          className={['card-preview-trigger', className].filter(Boolean).join(' ')}
+          {...getReferenceProps()}
+        >
+          {children ?? displayName}
+        </span>
+      ) : (
+        <a
+          ref={setReference}
+          className={['card-link', className].filter(Boolean).join(' ')}
+          href={cardRouteHash(cardName, returnHash)}
+          {...getReferenceProps(anchorProps)}
+        >
+          {children ?? displayName}
+        </a>
+      )}
       {open ? (
         <FloatingPortal root={elements.reference instanceof HTMLElement ? elements.reference.closest<HTMLDialogElement>('dialog') ?? undefined : undefined}>
           <div

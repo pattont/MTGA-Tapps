@@ -1,4 +1,4 @@
-"""Deck archetype identification via LLM (Gemini, OpenAI, or Claude).
+"""Deck archetype identification via LLM (OpenAI, Claude, Gemini, or Grok).
 
 Configuration is resolved in this order (first hit wins per value):
   1. settings.json at the project top level, next to config.py (written by
@@ -8,13 +8,18 @@ Configuration is resolved in this order (first hit wins per value):
 
 Recognized values (same names in settings.json, config.py, and env):
   DECK_LLM_ENABLED         - True/False (default: False)
-  DECK_LLM_PROVIDER        - "OpenAI" | "Claude" | "Gemini" (default: "Gemini")
+  DECK_LLM_PROVIDER        - "OpenAI" | "Claude" | "Gemini" | "Grok" (default: "Gemini")
   CHATGPT_API_KEY          - API key for OpenAI ("OPENAI_API_KEY" also honored in env)
   CLAUDE_API_KEY           - API key for Anthropic Claude
-  GEMINI_API_KEY           - API key for Gemini
-  DECK_LLM_OPENAI_MODEL    - OpenAI model (default: "gpt-4o-mini")
-  DECK_LLM_CLAUDE_MODEL    - Claude model (default: "claude-3-5-haiku-20241022")
-  DECK_LLM_GEMINI_MODEL    - Gemini model (default: "gemini-2.0-flash")
+  GEMINI_API_KEY           - API key for Google Gemini
+  GROK_API_KEY             - API key for xAI Grok ("XAI_API_KEY" also honored in env)
+  DECK_LLM_OPENAI_MODEL    - OpenAI model (default: "gpt-6-luna")
+  DECK_LLM_CLAUDE_MODEL    - Claude model (default: "claude-haiku-5-5")
+  DECK_LLM_GEMINI_MODEL    - Gemini model (default: "gemini-3.5-flash-lite")
+  DECK_LLM_GROK_MODEL      - Grok model (default: "grok-4.20-0309-non-reasoning")
+
+PROVIDERS is the single list of providers; the Settings page, the Qt dialog
+and the console status lines all read their labels and setting names from it.
 
 The archetype call is intentionally cheap: one small request per game, made
 after the game completes, with reasoning-class models asked for low effort.
@@ -24,11 +29,87 @@ import json
 import os
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 _config: Any = None
+
+
+@dataclass(frozen=True)
+class Provider:
+    key: str  # internal name stored as DECK_LLM_PROVIDER
+    label: str  # shown in the Settings provider dropdown
+    api_key_setting: str
+    model_setting: str
+    default_model: str
+    env_keys: Tuple[str, ...]  # environment fallbacks for the API key
+    models_url: str  # the provider's public model list
+    #: Earlier defaults. Saving used to write the default into settings.json,
+    #: so a stored copy of one of these means "the default", not a choice.
+    old_defaults: Tuple[str, ...] = ()
+
+
+#: Dropdown order.
+PROVIDERS: Tuple[Provider, ...] = (
+    Provider(
+        "openai",
+        "OpenAI (ChatGPT)",
+        "CHATGPT_API_KEY",
+        "DECK_LLM_OPENAI_MODEL",
+        # OpenAI's replacement for gpt-4o-mini (shut down 2027-01-14).
+        "gpt-6-luna",
+        ("CHATGPT_API_KEY", "OPENAI_API_KEY"),
+        "https://developers.openai.com/api/docs/models",
+        ("gpt-4o-mini",),
+    ),
+    Provider(
+        "claude",
+        "Anthropic (Claude)",
+        "CLAUDE_API_KEY",
+        "DECK_LLM_CLAUDE_MODEL",
+        "claude-haiku-5-5",
+        ("CLAUDE_API_KEY",),
+        "https://platform.claude.com/docs/en/models/overview",
+        ("claude-3-5-haiku-20241022",),
+    ),
+    Provider(
+        "gemini",
+        "Google (Gemini)",
+        "GEMINI_API_KEY",
+        "DECK_LLM_GEMINI_MODEL",
+        # Thinks minimally by default; gemini-2.0-flash is shut down.
+        "gemini-3.5-flash-lite",
+        ("GEMINI_API_KEY",),
+        "https://ai.google.dev/gemini-api/docs/models",
+        ("gemini-2.0-flash",),
+    ),
+    Provider(
+        "grok",
+        "xAI (Grok)",
+        "GROK_API_KEY",
+        "DECK_LLM_GROK_MODEL",
+        # Non-reasoning: no hidden reasoning tokens to pay for.
+        "grok-4.20-0309-non-reasoning",
+        ("GROK_API_KEY", "XAI_API_KEY"),
+        "https://docs.x.ai/developers/models",
+    ),
+)
+
+_PROVIDER_BY_KEY: Dict[str, Provider] = {p.key: p for p in PROVIDERS}
+#: Other spellings accepted for DECK_LLM_PROVIDER.
+_PROVIDER_ALIASES = {"chatgpt": "openai", "anthropic": "claude", "google": "gemini", "xai": "grok"}
+
+
+def get_provider_info(provider: str) -> Optional[Provider]:
+    return _PROVIDER_BY_KEY.get(provider)
+
+
+def provider_label(provider: str) -> str:
+    info = _PROVIDER_BY_KEY.get(provider)
+    return info.label if info else (provider or "?")
 
 
 def _load_config() -> Any:
@@ -43,6 +124,7 @@ def _load_config() -> Any:
             if str(_root) not in sys.path:
                 sys.path.insert(0, str(_root))
             import config as _config_mod  # type: ignore[import-not-found]
+
             _config = _config_mod
         except ImportError:
             _config = False  # no config module
@@ -143,7 +225,8 @@ def _get_provider() -> str:
         _env("DECK_LLM_PROVIDER"),
     ):
         p = (raw or "").strip().lower() if isinstance(raw, str) else ""
-        if p in ("gemini", "openai", "claude"):
+        p = _PROVIDER_ALIASES.get(p, p)
+        if p in _PROVIDER_BY_KEY:
             return p
     return "gemini"
 
@@ -164,23 +247,20 @@ def _get_api_key(provider: str) -> Optional[str]:
                 return v
         return None
 
-    if provider == "gemini":
-        return _val("GEMINI_API_KEY", ("GEMINI_API_KEY",))
-    if provider == "openai":
-        return _val("CHATGPT_API_KEY", ("CHATGPT_API_KEY", "OPENAI_API_KEY"))
-    if provider == "claude":
-        return _val("CLAUDE_API_KEY", ("CLAUDE_API_KEY",))
-    return None
+    info = _PROVIDER_BY_KEY.get(provider)
+    if info is None:
+        return None
+    return _val(info.api_key_setting, info.env_keys)
 
 
 def _get_model(provider: str) -> str:
     """Model name for the given provider, from settings.json / config.py / env."""
-    keys = {"gemini": "DECK_LLM_GEMINI_MODEL", "openai": "DECK_LLM_OPENAI_MODEL", "claude": "DECK_LLM_CLAUDE_MODEL"}
-    key = keys.get(provider)
-    if not key:
+    info = _PROVIDER_BY_KEY.get(provider)
+    if info is None:
         return ""
-    s = _setting(key)
-    if isinstance(s, str) and s:
+    key = info.model_setting
+    s = stored_model(provider)
+    if s:
         return s
     cfg = _load_config()
     if cfg is not None and hasattr(cfg, key):
@@ -192,12 +272,19 @@ def _get_model(provider: str) -> str:
         v = v or _env("OPENAI_MODEL")
     if v:
         return v
-    defaults = {"gemini": "gemini-2.0-flash", "openai": "gpt-4o-mini", "claude": "claude-3-5-haiku-20241022"}
-    return defaults.get(provider, "")
+    return info.default_model
 
 
-def _get_openai_model() -> str:
-    return _get_model("openai")
+def stored_model(provider: str) -> str:
+    """The model chosen in settings.json, or "" for the provider default
+    (including a stored copy of an earlier default)."""
+    info = _PROVIDER_BY_KEY.get(provider)
+    if info is None:
+        return ""
+    value = _setting(info.model_setting)
+    if not isinstance(value, str) or value in info.old_defaults:
+        return ""
+    return value
 
 
 def _get_gemini_model() -> str:
@@ -244,21 +331,42 @@ def last_error() -> Optional[str]:
 
 
 #: OpenAI models that spend completion tokens on hidden reasoning.
-_REASONING_MODEL_RE = re.compile(r"^(o\d|gpt-5)", re.IGNORECASE)
+_REASONING_MODEL_RE = re.compile(r"^(o\d|gpt-([5-9]|\d{2}))", re.IGNORECASE)
+
+#: OpenAI-compatible chat completion endpoints.
+_CHAT_COMPLETIONS_URLS = {
+    "openai": "https://api.openai.com/v1/chat/completions",
+    "grok": "https://api.x.ai/v1/chat/completions",
+}
 
 
-def _openai_complete(prompt: str, api_key: str, max_tokens: int) -> Optional[str]:
-    """OpenAI chat completion, tolerant of reasoning-family models.
+def _wants_low_effort(provider: str, model: str) -> bool:
+    """Whether to ask the model for low reasoning effort.
 
-    Reasoning models (gpt-5 family, o-series) burn completion tokens on
-    hidden reasoning before emitting any visible text — and those hidden
-    tokens are billed. Two mitigations, both cost-savers: request low
+    Grok's reasoning models default to "high" effort and cannot turn
+    reasoning off; only the "-non-reasoning" variants skip it.
+    """
+    if provider == "grok":
+        return "non-reasoning" not in model.lower()
+    return bool(_REASONING_MODEL_RE.match(model))
+
+
+def _openai_complete(
+    prompt: str, api_key: str, max_tokens: int, provider: str = "openai"
+) -> Optional[str]:
+    """OpenAI-style chat completion (OpenAI or xAI Grok), tolerant of
+    reasoning-family models.
+
+    Reasoning models (gpt-5 family, o-series, most of Grok 4) burn completion
+    tokens on hidden reasoning before emitting any visible text — and those
+    hidden tokens are billed. Two mitigations, both cost-savers: request low
     reasoning effort when the model looks reasoning-class, and retry once
     with a modestly larger budget only if the reply still comes back empty
     with finish_reason=length.
     """
     global _last_error
-    model = _get_openai_model()
+    model = _get_model(provider)
+    url = _CHAT_COMPLETIONS_URLS[provider]
 
     def _call(tokens: int, effort: Optional[str]) -> dict:
         body: dict = {
@@ -269,7 +377,7 @@ def _openai_complete(prompt: str, api_key: str, max_tokens: int) -> Optional[str
         if effort:
             body["reasoning_effort"] = effort
         req = urllib.request.Request(
-            "https://api.openai.com/v1/chat/completions",
+            url,
             data=json.dumps(body).encode("utf-8"),
             method="POST",
         )
@@ -278,10 +386,10 @@ def _openai_complete(prompt: str, api_key: str, max_tokens: int) -> Optional[str
         with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode())["choices"][0]
 
-    # "low" is accepted across reasoning families (gpt-5, o-series); the
-    # cheapest label varies by model, so don't chase it. Non-reasoning
-    # models (gpt-4o-mini etc.) get no effort parameter at all.
-    effort: Optional[str] = "low" if _REASONING_MODEL_RE.match(model) else None
+    # "low" is accepted across reasoning families (gpt-5, o-series, Grok 4);
+    # the cheapest label varies by model, so don't chase it. Non-reasoning
+    # models (gpt-4.1 etc.) get no effort parameter at all.
+    effort: Optional[str] = "low" if _wants_low_effort(provider, model) else None
     try:
         choice = _call(max_tokens, effort)
     except urllib.error.HTTPError as exc:
@@ -309,7 +417,7 @@ def _complete_raw(prompt: str, max_tokens: int = 1024) -> Optional[str]:
     """Send a prompt to the configured provider; return the raw reply text.
 
     max_tokens is generous because reasoning-class models (OpenAI gpt-5
-    family, o-series) burn completion tokens on hidden reasoning before any
+    family, o-series, Grok 4) burn completion tokens on hidden reasoning before any
     visible text — a small cap returns an EMPTY reply, not a shorter one.
     """
     global _last_error
@@ -338,8 +446,8 @@ def _complete_raw(prompt: str, max_tokens: int = 1024) -> Optional[str]:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 data = json.loads(resp.read().decode())
             return data["candidates"][0]["content"]["parts"][0]["text"]
-        if provider == "openai":
-            return _openai_complete(prompt, api_key, max_tokens)
+        if provider in _CHAT_COMPLETIONS_URLS:
+            return _openai_complete(prompt, api_key, max_tokens, provider)
         if provider == "claude":
             body = {
                 "model": _get_claude_model(),
@@ -374,6 +482,137 @@ def _complete_raw(prompt: str, max_tokens: int = 1024) -> Optional[str]:
         return None
     _last_error = "no text in response"
     return None
+
+
+# ---------------------------------------------------------------------------
+# Model lists for the Settings page. Listing models is free on every
+# provider and happens only when the Settings page asks; it never runs from
+# the tracker.
+# ---------------------------------------------------------------------------
+
+
+class ModelListError(ValueError):
+    """A model list could not be fetched; the message is shown on the page."""
+
+
+#: Words in a model id that mark it as something other than a text chat
+#: model (images, audio, embeddings...) or one the chat endpoint rejects.
+_NON_CHAT_MODEL_WORDS = (
+    "audio",
+    "codex",
+    "computer-use",
+    "deep-research",
+    "embed",
+    "image",
+    "imagen",
+    "imagine",
+    "live",
+    "moderation",
+    "realtime",
+    "robotics",
+    "search",
+    "transcribe",
+    "tts",
+    "veo",
+    "video",
+    "voice",
+)
+#: OpenAI's "-pro" models answer only on the Responses API.
+_OPENAI_CHAT_PREFIX_RE = re.compile(r"^(gpt-|chatgpt-|o\d)", re.IGNORECASE)
+
+
+def _is_chat_model(model_id: str) -> bool:
+    lowered = model_id.lower()
+    return not any(word in lowered for word in _NON_CHAT_MODEL_WORDS)
+
+
+def _get_json(url: str, headers: Dict[str, str]) -> Any:
+    req = urllib.request.Request(url, method="GET")
+    for name, value in headers.items():
+        req.add_header(name, value)
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read().decode())
+
+
+def _fetch_models(provider: str, api_key: str) -> List[Dict[str, str]]:
+    if provider in ("openai", "grok"):
+        base = "https://api.openai.com" if provider == "openai" else "https://api.x.ai"
+        data = _get_json(f"{base}/v1/models", {"Authorization": f"Bearer {api_key}"})
+        rows = [row for row in data.get("data", []) if isinstance(row, dict) and row.get("id")]
+        rows.sort(key=lambda row: row.get("created") or 0, reverse=True)
+        models = []
+        for row in rows:
+            model_id = str(row["id"])
+            if not _is_chat_model(model_id):
+                continue
+            if provider == "openai" and (
+                not _OPENAI_CHAT_PREFIX_RE.match(model_id)
+                or "-pro" in model_id
+                or "instruct" in model_id
+            ):
+                continue
+            models.append({"id": model_id, "label": model_id})
+        return models
+    if provider == "claude":
+        data = _get_json(
+            "https://api.anthropic.com/v1/models?limit=1000",
+            {"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+        )
+        # Anthropic lists newest first.
+        return [
+            {"id": str(row["id"]), "label": str(row.get("display_name") or row["id"])}
+            for row in data.get("data", [])
+            if isinstance(row, dict) and row.get("id")
+        ]
+    if provider == "gemini":
+        models = []
+        page_token = ""
+        for _page in range(5):
+            url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000"
+            if page_token:
+                url += f"&pageToken={urllib.parse.quote(page_token)}"
+            data = _get_json(url, {"x-goog-api-key": api_key})
+            for row in data.get("models", []):
+                if not isinstance(row, dict):
+                    continue
+                model_id = str(row.get("name") or "").split("/", 1)[-1]
+                if (
+                    model_id.startswith("gemini-")
+                    and "generateContent" in (row.get("supportedGenerationMethods") or [])
+                    and _is_chat_model(model_id)
+                ):
+                    models.append(
+                        {"id": model_id, "label": str(row.get("displayName") or model_id)}
+                    )
+            page_token = str(data.get("nextPageToken") or "")
+            if not page_token:
+                break
+        return models
+    raise ModelListError(f"Unknown AI provider: {provider!r}")
+
+
+def list_models(provider: str, api_key: Optional[str] = None) -> List[Dict[str, str]]:
+    """Text models the key can use, as [{"id", "label"}].
+
+    Uses `api_key` when given (the Settings page may hold an unsaved key),
+    otherwise the stored one. Raises ModelListError with a readable message.
+    """
+    info = _PROVIDER_BY_KEY.get(provider)
+    if info is None:
+        raise ModelListError(f"Unknown AI provider: {provider!r}")
+    key = (api_key or "").strip() or _get_api_key(provider)
+    if not key:
+        raise ModelListError("Enter an API key to load the model list.")
+    try:
+        return _fetch_models(provider, key)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (400, 401, 403):
+            raise ModelListError(f"{info.label} did not accept this API key.") from exc
+        raise ModelListError(f"{info.label} answered HTTP {exc.code}.") from exc
+    except urllib.error.URLError as exc:
+        raise ModelListError(f"Could not reach {info.label}: {exc.reason}") from exc
+    except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
+        raise ModelListError(f"{info.label} sent an unexpected model list.") from exc
 
 
 def diagnose() -> dict:

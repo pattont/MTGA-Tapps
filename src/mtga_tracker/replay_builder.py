@@ -22,6 +22,12 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
+from .replay_sickness import (
+    SICKNESS_CAPTURE_VERSION,
+    SICKNESS_ESTIMATE_LIMITATION,
+    card_fact,
+    estimate_summoning_sickness,
+)
 from .replay_stream import (
     CREATING_ZONES,
     FIDELITY_RECORDED,
@@ -193,7 +199,7 @@ def _zone(value: Any) -> str:
 
 
 #: Silent state rows of a turn's beginning; moves (opening hands) never move.
-_HOISTABLE_KINDS = ("untap", "tap", "phase", "pt", "counter")
+_HOISTABLE_KINDS = ("untap", "tap", "unsick", "sick", "phase", "pt", "counter")
 
 
 def _hoist_turn_headers(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -256,6 +262,45 @@ def _hoist_token_creations(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if first is None or out[first].get("turn_number") != row.get("turn_number"):
             continue
         out.insert(first, out.pop(at))
+    return out
+
+
+def _hoist_battlefield_entries(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Move a permanent's entry before its own rows logged at that same moment.
+
+    Arena can put a card onto the battlefield and its enters triggers on the stack
+    in one message, and the trigger lines can print before the move (Repurposing
+    Bay fetching Pinnacle Starcage). Read in order, the card would appear from
+    nowhere as an inferred card. Only rows the card itself is the source of move
+    it, and never past a resolution or an earlier move of the card.
+    """
+    out = list(rows)
+    entries = [
+        row
+        for row in rows
+        if row.get("event_subtype") == "move"
+        and row.get("zone_to") == "battlefield"
+        and row.get("zone_from") not in (None, "", "battlefield", "stack")
+    ]
+    for row in entries:
+        obj = _obj(row.get("object_id"))
+        if obj is None:
+            continue
+        at = next(index for index, other in enumerate(out) if other is row)
+        first = None
+        for index in range(at - 1, -1, -1):
+            other = out[index]
+            if other.get("event_time") != row.get("event_time"):
+                break
+            kind = other.get("event_subtype")
+            if kind in STACK_CLOSE_KINDS or (
+                kind == "move" and _obj(other.get("object_id")) == obj
+            ):
+                break
+            if kind != "move" and _obj(other.get("object_id")) == obj:
+                first = index
+        if first is not None:
+            out.insert(first, out.pop(at))
     return out
 
 
@@ -340,6 +385,300 @@ def _drop_echoed_activations(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     return [row for row in rows if id(row) not in drop]
 
 
+def _drop_repeated_moves(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Drop a silent move that repeats the card's previous move exactly.
+
+    Arena can send a land play's zone transfer again in a later message, and
+    capture records it a second time. Replayed, the land would move from the
+    battlefield to the battlefield.
+    """
+    last: Dict[str, Tuple[Any, Any, Any]] = {}
+    out = []
+    for row in rows:
+        obj = _obj(row.get("object_id"))
+        if row.get("event_subtype") == "move" and obj is not None:
+            move = (row.get("zone_from"), row.get("zone_to"), _payload(row).get("reason"))
+            if row.get("visible", 1) in (0, "0", False) and last.get(obj) == move:
+                continue
+            last[obj] = move
+        out.append(row)
+    return out
+
+
+_UNTIL_LEAVES = re.compile(r"\buntil\b.*\bleaves the battlefield\b", re.IGNORECASE)
+
+
+def _tuck_orphan_exiles(
+    rows: List[Dict[str, Any]], facts: Optional[Dict[str, Dict[str, Any]]] = None
+) -> List[Dict[str, Any]]:
+    """Name the host of a card exiled "until this leaves the battlefield".
+
+    When Arena deleted the exiling ability in the same message (the usual case),
+    the capture could not find its source: the exile row's ``by`` is the
+    ability's own id, which no other row names, and it has no ``with``. Such an
+    exile belongs under the source of the item that resolved just before it in
+    the same turn, when that card exiles "until ... leaves the battlefield":
+    by the ability's printed text, or by the card's Arena abilities
+    (``exiles_until_leaves`` in the card facts) when the trigger was never
+    printed and the card itself resolved last (Sheltered by Ghosts, Deep-Cavern
+    Bat, Banishing Light).
+    """
+    facts = facts or {}
+
+    def exiles_until_leaves(push: Dict[str, Any]) -> bool:
+        payload = _payload(push)
+        if _UNTIL_LEAVES.search(str(payload.get("text") or "")):
+            return True
+        name = str(payload.get("name") or "").casefold()
+        return bool((facts.get(name) or {}).get("exiles_until_leaves"))
+
+    known: Set[str] = set()
+    for row in rows:
+        for column in ("object_id", "target_object_id"):
+            obj = _obj(row.get(column))
+            if obj is not None:
+                known.add(obj)
+    pushes: Dict[str, Dict[str, Any]] = {}
+    resolved: Optional[Dict[str, Any]] = None
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        kind = row.get("event_subtype")
+        payload = _payload(row)
+        if kind == "stack_push" and payload.get("stack_id"):
+            pushes[str(payload["stack_id"])] = row
+        elif kind == "stack_resolve" and payload.get("stack_id"):
+            resolved = pushes.get(str(payload["stack_id"]))
+        elif kind == "turn":
+            resolved = None
+        elif (
+            kind == "move"
+            and _zone(row.get("zone_to")) == "exile"
+            and "with" not in payload
+            and payload.get("by") is not None
+            and _obj(payload.get("by")) not in known
+            and resolved is not None
+            and resolved.get("turn_number") == row.get("turn_number")
+            and _obj(resolved.get("object_id")) is not None
+            and exiles_until_leaves(resolved)
+        ):
+            host = int(resolved["object_id"])
+            row = dict(row)
+            row["payload_json"] = json.dumps({**payload, "with": host, "by": host})
+        out.append(row)
+    return out
+
+
+#: Row kinds that can only name a permanent already on the battlefield (as their source).
+_ON_BATTLEFIELD_KINDS = frozenset(
+    ("attack", "block", "tap", "untap", "sick", "unsick", "damage", "counter", "pt", "attach")
+)
+
+#: Added to ``limitations`` when the builder reconnects a card Arena's log lost track of.
+LOST_ARRIVAL_LIMITATION = (
+    "Arena's log left out the details of some very large updates; a card that "
+    "arrived during one is shown arriving later, marked inferred."
+)
+
+
+def _named_objects(row: Dict[str, Any]) -> List[str]:
+    """Every object id a row names, in any column or payload field."""
+    payload = _payload(row)
+    values: List[Any] = [
+        row.get("object_id"),
+        row.get("target_object_id"),
+        payload.get("target_object_id"),
+        payload.get("source_object_id"),
+        payload.get("by"),
+        payload.get("with"),
+        *(payload.get("object_ids") or []),
+        *(payload.get("targets") or []),
+    ]
+    for pair in payload.get("pairs") or []:
+        if isinstance(pair, dict):
+            values.extend((pair.get("blocker"), pair.get("attacker")))
+    return [obj for obj in (_obj(value) for value in values) if obj is not None]
+
+
+def _renamed(row: Dict[str, Any], old: str, new: str) -> Dict[str, Any]:
+    """``row`` with object id ``old`` replaced by ``new`` everywhere it appears."""
+
+    def swap(value: Any) -> Any:
+        return int(new) if _obj(value) == old else value
+
+    out = dict(row)
+    for column in ("object_id", "target_object_id"):
+        out[column] = swap(row.get(column))
+    payload = _payload(row)
+    if payload:
+        fixed = dict(payload)
+        for key in ("target_object_id", "source_object_id", "by", "with"):
+            if key in fixed:
+                fixed[key] = swap(fixed[key])
+        for key in ("object_ids", "targets"):
+            if isinstance(fixed.get(key), list):
+                fixed[key] = [swap(value) for value in fixed[key]]
+        if isinstance(fixed.get("pairs"), list):
+            fixed["pairs"] = [
+                (
+                    {
+                        **pair,
+                        "blocker": swap(pair.get("blocker")),
+                        "attacker": swap(pair.get("attacker")),
+                    }
+                    if isinstance(pair, dict)
+                    else pair
+                )
+                for pair in fixed["pairs"]
+            ]
+        out["payload_json"] = json.dumps(fixed)
+    return out
+
+
+def _lost_arrivals(rows: List[Dict[str, Any]]) -> Dict[str, Tuple[int, int, Dict[str, Any]]]:
+    """Objects first named on the battlefield, never seen arriving there.
+
+    Maps each to ``(first index naming it, its Arena id, the first row it is the
+    source of)``. The Arena id is the one on that row: a row's ``arena_id`` describes
+    its ``object_id``. Objects with an ``identity`` row (face-down, transformed)
+    are left out: their first Arena id may not be what was showing.
+    """
+    first: Dict[str, int] = {}
+    moved: Set[str] = set()
+    source: Dict[str, Dict[str, Any]] = {}
+    hidden: Set[str] = set()
+    for index, row in enumerate(rows):
+        kind = row.get("event_subtype")
+        for obj in _named_objects(row):
+            first.setdefault(obj, index)
+        obj = _obj(row.get("object_id"))
+        if obj is None:
+            continue
+        if kind == "identity":
+            hidden.add(obj)
+        if kind == "move" and obj not in source:
+            moved.add(obj)
+        if obj not in source and row.get("arena_id") and obj not in moved:
+            source[obj] = row
+    out: Dict[str, Tuple[int, int, Dict[str, Any]]] = {}
+    for obj, row in source.items():
+        if obj in hidden or row.get("event_subtype") not in _ON_BATTLEFIELD_KINDS | {"stack_push"}:
+            continue
+        if row.get("event_subtype") == "stack_push" and _payload(row).get("stack_kind") == "spell":
+            continue
+        out[obj] = (first[obj], int(row["arena_id"]), row)
+    return out
+
+
+def _reconnect_lost_arrivals(rows: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], bool]:
+    """Bring back a card whose return to the battlefield Arena's log left out.
+
+    Arena logs a message with more than 50 objects or annotations only as a
+    summary ("Message summarized because ..."), so a card cast in one (Emrakul,
+    the Exigent Doom cast from exile) turns up later under a new instance id no
+    row ever moved, and the card it was stays in exile. When exactly one card
+    with that Arena id sits in the same seat's exile (put there with no host)
+    and no row names it again, the new id is that card: its rows are renamed and
+    a silent inferred ``exile → battlefield`` move goes before its first row,
+    with Arena's ``sick`` flag when the first sickness row for it says so.
+    Returns the rows and whether anything was reconnected.
+    """
+    lost = _lost_arrivals(rows)
+    if not lost:
+        return rows, False
+    named_at: Dict[str, List[int]] = {}
+    exiled: Dict[str, Tuple[int, Dict[str, Any]]] = {}
+    for index, row in enumerate(rows):
+        for obj in set(_named_objects(row)):
+            named_at.setdefault(obj, []).append(index)
+        obj = _obj(row.get("object_id"))
+        if row.get("event_subtype") == "move" and obj is not None:
+            exiled[obj] = (index, row)
+    out = list(rows)
+    changed = False
+    for new, (start, arena_id, source) in sorted(lost.items(), key=lambda item: -item[1][0]):
+        seat = _int(source.get("controller_seat")) or _int(source.get("seat_id"))
+        candidates = []
+        for old, (index, move) in exiled.items():
+            payload = _payload(move)
+            if (
+                old != new
+                and index < start
+                and _zone(move.get("zone_to")) == "exile"
+                and _int(move.get("arena_id")) == arena_id
+                and not payload.get("token")
+                and payload.get("with") is None
+                and all(at <= index for at in named_at.get(old, []))
+                and seat in (None, _int(move.get("controller_seat")) or _int(move.get("seat_id")))
+            ):
+                candidates.append((old, move))
+        if len(candidates) != 1:
+            continue
+        old, move = candidates[0]
+        anchor = out[start]
+        arrival = {
+            **{key: anchor.get(key) for key in ("event_time", "elapsed_seconds", "turn_number")},
+            **{
+                key: anchor.get(key)
+                for key in ("phase", "step", "session_id", "match_id", "game_id")
+            },
+            "id": None,
+            "visible": 0,
+            "event_type": None,
+            "event_subtype": "move",
+            "object_id": int(old),
+            "target_object_id": None,
+            "arena_id": arena_id,
+            "zone_from": "exile",
+            "zone_to": "battlefield",
+            "seat_id": move.get("seat_id"),
+            "controller_seat": move.get("controller_seat"),
+            "actor_role": move.get("actor_role"),
+            "text": f"move {old}",
+            "payload_json": json.dumps(
+                {
+                    **{
+                        k: v
+                        for k, v in _payload(move).items()
+                        if k in ("name", "type", "power", "toughness")
+                    },
+                    "reason": "unknown",
+                    "inferred": True,
+                }
+            ),
+        }
+        tail = [
+            _renamed(row, new, old) if new in _named_objects(row) else row for row in out[start:]
+        ]
+        added = [arrival]
+        for index, row in enumerate(tail):
+            kind = row.get("event_subtype")
+            ids = [_obj(value) for value in _payload(row).get("object_ids") or []]
+            if kind in ("sick", "unsick") and old in ids:
+                if kind == "sick":
+                    # Sick from the moment it arrived: the flag moves up with it.
+                    rest = [int(value) for value in ids if value != old and value is not None]
+                    added.append(
+                        {
+                            **arrival,
+                            "event_subtype": "sick",
+                            "object_id": None,
+                            "arena_id": None,
+                            "zone_from": None,
+                            "zone_to": None,
+                            "text": row.get("text"),
+                            "payload_json": json.dumps({"object_ids": [int(old)]}),
+                        }
+                    )
+                    if rest:
+                        tail[index] = dict(row, payload_json=json.dumps({"object_ids": rest}))
+                    else:
+                        tail[index] = None  # type: ignore[call-overload]
+                break
+        out = out[:start] + added + [row for row in tail if row is not None]
+        changed = True
+    return out, changed
+
+
 class RecordedBuilder:
     """Single-use: ``RecordedBuilder(rows).run()`` returns the stream."""
 
@@ -375,6 +714,8 @@ class RecordedBuilder:
             if row.get("arena_id"):
                 self.deck_by_arena.setdefault(int(row["arena_id"]), row)
         self._synthetic = 0
+        self.reconnected = False
+        self.learned_arena: Dict[str, int] = {}
         self._pending_ability: Optional[str] = None
         self.explicit_close: Dict[str, Any] = {}
 
@@ -448,6 +789,9 @@ class RecordedBuilder:
         """Introduce an object the rows reference before ever creating it."""
         if obj is None or obj in self.zone_of:
             return
+        if card is None and obj in self.learned_arena:
+            # Its later rows say what it is (a card cast while Arena's log only summarized).
+            card = self._card(self.learned_arena[obj], None)
         owner = seat if seat is not None else self.player_seat
         self._emit_move(obj, card, "limbo", zone, owner, owner, "unknown", inferred=True)
 
@@ -667,8 +1011,13 @@ class RecordedBuilder:
         rows.sort(key=lambda row: (str(row.get("event_time") or ""), row.get("id") or 0))
         rows = _hoist_turn_headers(rows)
         rows = _hoist_token_creations(rows)
+        rows = _hoist_battlefield_entries(rows)
         rows = _link_renamed_attackers(rows)
         rows = _drop_echoed_activations(rows)
+        rows = _drop_repeated_moves(rows)
+        rows = _tuck_orphan_exiles(rows, self.rows.get("card_facts"))
+        rows, self.reconnected = _reconnect_lost_arrivals(rows)
+        self.learned_arena = {obj: arena for obj, (_, arena, _) in _lost_arrivals(rows).items()}
         self.explicit_close = {
             str(_payload(row).get("stack_id")): row.get("event_subtype")
             for row in rows
@@ -768,6 +1117,7 @@ class RecordedBuilder:
             owner,
             controller,
             str(payload.get("reason") or "unknown"),
+            inferred=bool(payload.get("inferred")),
             index=_int(payload.get("index")),
             exiled_with=_obj(payload.get("with")) if dest == "exile" else None,
             moved_by=_obj(payload.get("by")),
@@ -783,6 +1133,12 @@ class RecordedBuilder:
 
     def _on_untap(self, row, payload):
         return self._on_tap(row, payload, kind="untap")
+
+    def _on_sick(self, row, payload):
+        return self._on_tap(row, payload, kind="sick")
+
+    def _on_unsick(self, row, payload):
+        return self._on_tap(row, payload, kind="unsick")
 
     def _on_counter(self, row, payload):
         obj = _obj(row.get("object_id"))
@@ -1012,8 +1368,19 @@ class RecordedBuilder:
                 "game_end", winner_seat=game.get("winner_seat"), reason=game.get("outcome_reason")
             )
         finalize_logs(self.log.events, self.cards)
-        self.stream["events"] = self.log.events
-        self.stream["turns"] = build_turns(self.log.events, self.rows.get("game_turns") or [])
+        events = self.log.events
+        if self.reconnected:
+            self.stream["limitations"].append(LOST_ARRIVAL_LIMITATION)
+        version = _int(self.stream.get("replay_version")) or 0
+        if version < SICKNESS_CAPTURE_VERSION:
+            estimated = estimate_summoning_sickness(
+                events, self.cards.cards, self.rows.get("card_facts")
+            )
+            if estimated is not events:
+                events = estimated
+                self.stream["limitations"].append(SICKNESS_ESTIMATE_LIMITATION)
+        self.stream["events"] = events
+        self.stream["turns"] = build_turns(events, self.rows.get("game_turns") or [])
         self.stream["cards"] = self.cards.cards
         for seat_key, info in self.stream["seats"].items():
             seat = int(seat_key)
@@ -1192,13 +1559,16 @@ def load_card_facts() -> Dict[str, Dict[str, Any]]:
 def attach_card_facts(stream: Dict[str, Any], facts: Dict[str, Dict[str, Any]]) -> None:
     """Sets each card entry's ``keywords`` and ``back_face`` from Arena's card DB.
 
-    A token is looked up by its Arena id (``#<grpId>``) before its name.
+    A token is looked up by its Arena id (``#<grpId>``) before its name. A
+    "token" whose Arena id is a real card's is a token copy of that card (Arena
+    gives the copy the card's own id), and that id names the real card too: it
+    is not a token, so it shows the card's own printing.
     """
     for entry in (stream.get("cards") or {}).values():
-        fact = None
-        if entry.get("is_token") and entry.get("arena_id"):
-            fact = facts.get(f"#{entry['arena_id']}")
-        fact = fact or facts.get(str(entry.get("name") or "").casefold())
+        real = facts.get(str(entry.get("name") or "").casefold()) or {}
+        if entry.get("is_token") and _int(entry.get("arena_id")) in (real.get("grp_ids") or ()):
+            entry["is_token"] = False
+        fact = card_fact(entry, facts)
         if not fact:
             continue
         entry["keywords"] = list(fact.get("keywords") or [])

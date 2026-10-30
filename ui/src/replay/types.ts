@@ -107,7 +107,9 @@ export interface ReplayCard {
   faces: ReplayCardFace[];
   /**
    * Replay-relevant keywords from Arena's card DB: `flashback`, `escape`,
-   * `disturb`, `harmonize` (cast from the graveyard), `plot`, and `flying`
+   * `disturb`, `harmonize` (cast from the graveyard), `plot`,
+   * `cast_from_exile` / `cast_while_exiled` (its own text lets it be cast from
+   * exile; the latter only once it exiled itself from the hand), and `flying`
    * (the creature hovers on the battlefield). Absent in
    * streams built before they existed.
    */
@@ -193,6 +195,16 @@ export interface TapEvent extends ReplayEventBase {
 }
 export interface UntapEvent extends ReplayEventBase {
   kind: 'untap';
+  objs: ObjId[];
+}
+/** Summoning sickness began: these creatures can't attack or use {T} abilities yet. */
+export interface SickEvent extends ReplayEventBase {
+  kind: 'sick';
+  objs: ObjId[];
+}
+/** Summoning sickness ended (their controller's turn began, or they attacked). */
+export interface UnsickEvent extends ReplayEventBase {
+  kind: 'unsick';
   objs: ObjId[];
 }
 export interface CounterEvent extends ReplayEventBase {
@@ -305,6 +317,8 @@ export type ReplayEvent =
   | MoveEvent
   | TapEvent
   | UntapEvent
+  | SickEvent
+  | UnsickEvent
   | CounterEvent
   | PtEvent
   | AttachEvent
@@ -334,6 +348,8 @@ export const EVENT_KINDS: readonly ReplayEventKind[] = [
   'move',
   'tap',
   'untap',
+  'sick',
+  'unsick',
   'counter',
   'pt',
   'attach',

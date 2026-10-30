@@ -90,7 +90,7 @@ history so you can see which matchups actually beat you. An Opponents section
 shows your most-faced opponents and your record by opponent color combination,
 and the **All Opponents** page lists everyone you've ever been paired against
 (a Bo3 counts once) with a per-opponent page behind each name. Optionally,
-bring your own AI key (OpenAI, Anthropic, or Gemini) and the tracker names the
+bring your own AI key (OpenAI, Anthropic, Google, or xAI) and the tracker names the
 opponent's actual archetype — "Jeskai Control", "Gruul Aggro" — after each
 game.
 
@@ -126,8 +126,8 @@ below.
 **Buy on Paper.** From Deck Finder, Deck Manager or a deck page, see what a deck
 costs in paper card by card, untick what you already own, and compare totals at
 TCGplayer, Card Kingdom and Mana Pool from each store's own prices. Then open the
-rest in that store. StarCityGames and CoolStuffInc are coming soon. See
-[Buy on Paper](docs/BUY_ON_PAPER.md).
+rest in that store with one click. StarCityGames and CoolStuffInc are coming
+soon. See [Buy on Paper](#buy-on-paper) below.
 
 **Backup & restore.** Everything the tracker knows — games, settings, Deck
 Finder creators, saved deck library, overlay preferences — in one `.tappsbackup` file, written
@@ -288,7 +288,8 @@ table tuned to each site — win rates and matches for untapped.gg archetypes,
 event placings for tournament sites, and so on. Open any deck to see its list,
 then **Export to Arena** copies it in Arena's import format (or **Source**
 opens the original page). The selected deck appears beside the results with
-its main deck and any sideboard, commander or companion section. The
+its main deck and any sideboard, commander or companion section; hover a card
+to see its image. The
 **Deck Manager** actions below its title can save it to a named collection or
 add it directly to Arena on a supported client when Arena is ready on Decks.
 "Surprise Me" pulls a random importable deck. Your
@@ -337,6 +338,62 @@ checked.
 The local library and **Copy deck list** remain available without direct Arena
 access. Native jobs require a supported client on the Decks screen outside a
 match.
+
+## Buy on Paper
+
+Want an Arena deck on the table? The green **Buy on Paper** button prices it in
+paper and sends the list to a store. It sits next to the Arena export on three
+screens:
+
+- **Deck Finder** — in the selected deck's title row.
+- **Deck Manager** — in a saved deck's header.
+- **Deck page** — in the Deck List section heading, using the newest list you
+  played (a Brawl commander included).
+
+![Buy on Paper dialog comparing store totals, with board and basic-land options](docs/images/buy-on-paper.png)
+
+The dialog lists every card with its price, per copy and per line. Untick the
+cards you already own and the total updates as you go. The **Store** list on
+the left shows what your selection costs at each store, marks the cheapest
+complete one **Lowest**, and switches stores with a click:
+
+| Store | Prices |
+| --- | --- |
+| Card Kingdom | Card Kingdom's own price list |
+| CoolStuffInc | Coming soon |
+| Mana Pool | Mana Pool's own price list |
+| StarCityGames | Coming soon |
+| TCGplayer | TCGplayer market prices via Scryfall (the default) |
+
+Each store only shows its own prices. A card a store doesn't list shows a dash
+and stays out of its total, so a cheaper-looking partial total never wins.
+Arena-only cards (Alchemy) are labeled and left out; rebalanced `A-` cards are
+priced as their paper originals.
+
+**Options** narrow what you buy:
+
+- **Board checkboxes** — Main Deck and Sideboard (plus Commander, Companion or
+  Maybeboard when the deck has them) on one line.
+- **Include set codes** — asks the store for the printings priced here, where
+  the store supports it; otherwise the store picks the printing.
+- **Skip basic lands** — leaves out Plains, Island, Swamp, Mountain, Forest and
+  Wastes.
+
+The **Buy @** button (for example **Buy @ Mana Pool**) opens that store's cart
+or deck import in a new tab with your list filled in; you review and check out
+there. The tracker never records what you own or buy.
+
+Mana Pool links carry Tapps Tracker's referral code: buying through Mana Pool
+earns Tapps Tracker a small commission at no cost to you, which helps support
+its ongoing development. The dialog says so whenever Mana Pool is selected.
+The other stores open plain links.
+
+Card Kingdom's and Mana Pool's price lists are downloaded in the background the
+first time you open the dialog, at most once a day (50–70 MB each, about 16 MB
+kept on disk). **Settings → Buy on Paper** turns the feature off: it hides the
+button everywhere, stops downloads and deletes the saved price lists. The
+[Buy on Paper guide](docs/BUY_ON_PAPER.md) covers the price sources and store
+links in detail.
 
 ## Export your collection
 
@@ -403,8 +460,8 @@ tracked game and names the opponent's deck — the Game Detail page shows it
 as the Opponent Deck Type, falling back to plain colors when there's no guess. The
 call runs in the background after the game ends (and only when at least three
 opponent cards were revealed), so tracking never waits on it. Normally this
-is one request; OpenAI reasoning models can retry once if their token budget
-produces an empty reply.
+is one request; OpenAI and Grok reasoning models can retry once if their token
+budget produces an empty reply.
 
 What leaves your machine is only the names of the cards your opponent
 revealed in that game — never your deck, your account, or your log. Nothing
@@ -413,10 +470,19 @@ database, and its mid-game deck label is a local guess that reuses names
 from earlier games.
 
 Configure it on the dashboard's **Settings** page (gear icon, top right — or
-the "Settings" menu-bar entry): enable, pick a provider (OpenAI, Anthropic, or
-Gemini), paste your key, optionally set a model. The Settings page also holds
-your Deck Finder creators, a tracker-status readout, and the Database Health
-link. The choice is saved to `settings.json` at the top level of the project
+the "Settings" menu-bar entry): enable, pick a provider (OpenAI (ChatGPT),
+Anthropic (Claude), Google (Gemini), or xAI (Grok)), paste your key, and
+optionally pick a model.
+
+The Model dropdown is never a fixed list that goes stale. Once a key is
+entered, the tracker asks that provider which models your key can use right
+now (listing models is free) and shows them newest first, so new models
+appear as soon as the provider releases them; **Refresh** asks again. Leave it
+on **Default** and the tracker uses a current, low-cost model for that
+provider, which moves forward with tracker updates. A link opens the
+provider's model page for comparing them, and you can type a model name
+instead. The Settings page also holds your Deck Finder creators, a
+tracker-status readout, and the Database Health link. The choice is saved to `settings.json` at the top level of the project
 folder (installed builds keep it in the app data folder), and your key is only
 ever sent to the provider you chose. Without a key the feature simply stays off.
 
@@ -476,6 +542,9 @@ Network requests are limited to the features that use them:
 - The dashboard checks GitHub Releases for updates, caching successful
   checks for a day.
 - Deck Finder requests the public decklist sites you browse.
+- Buy on Paper asks Scryfall for TCGplayer prices and downloads Card Kingdom's
+  and Mana Pool's public price lists at most once a day (it can be turned off
+  in Settings). Your list goes to a store only when you click **Buy**.
 - Enabled AI deck identification sends revealed opponent card names to your
   chosen provider after a tracked game, with the retry exception described above.
 
@@ -519,12 +588,12 @@ passed for that run.
 | `#/replay` | Replay (beta) list; `#/replay/<id>` plays a completed game and can export video |
 | `#/deckfinder` | Deck Finder: browse, export or save decklists from creators and sites |
 | `#/deck-manager` | Deck Manager (beta): saved collections, revisions, Trash and supported Arena transfers |
-| `#/settings` | Startup, in-game overlay, backup/restore, Deck AI, Deck Finder creators, collection export, tracker status |
+| `#/settings` | Startup, in-game overlay, Buy on Paper, backup/restore, Deck AI, Deck Finder creators, collection export, tracker status |
 | `#/audit` | Database health findings |
 
 JSON API: `GET /api/snapshot`, `/api/live`, `/api/overlay`, `/api/deck`,
 `/api/game`, `/api/card`, `/api/cards?q=`, `/api/games`, `/api/opponents`,
-`/api/opponent`, `/api/version` — analytics reads are GET requests. POST
+`/api/opponent`, `/api/paper-prices`, `/api/version` — analytics reads are GET requests. POST
 actions save game notes/tags
 (`/api/game/annotation`) and settings (`/api/settings/*`), run Deck Finder
 jobs (`/api/deckfinder/*`) or its terminal launcher
@@ -625,6 +694,7 @@ guidance lives.
 - [Log-format reference](docs/MTGA_LOG_FORMAT.md) — Arena events and parser behavior
 - [Card database discovery](docs/MTGA_INSTALL_DISCOVERY.md) — resolution and troubleshooting
 - [Replay data contract](docs/REPLAY_FORMAT.md) — capture, stream and playback fields
+- [Buy on Paper guide](docs/BUY_ON_PAPER.md) — price sources, store links and the off switch
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release
 
 ## License

@@ -1709,6 +1709,13 @@ export interface DeckAiProviderSettings {
   api_key: string;
   model: string;
   default_model: string;
+  /** The provider's public model page. */
+  models_url?: string;
+}
+
+export interface DeckAiModel {
+  id: string;
+  label: string;
 }
 
 export interface DeckAiSettings {
@@ -1998,6 +2005,17 @@ export async function saveDeckAiSettings(payload: {
   });
   const body = await deckFinderJson<{ deck_ai: DeckAiSettings }>(response);
   return body.deck_ai;
+}
+
+/** Models this key can use, asked of the provider. `apiKey` may be unsaved. */
+export async function fetchDeckAiModels(provider: string, apiKey: string): Promise<DeckAiModel[]> {
+  const response = await fetch('/api/settings/deck-ai/models', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider, api_key: apiKey }),
+  });
+  const body = await deckFinderJson<{ models?: DeckAiModel[] }>(response);
+  return body.models ?? [];
 }
 
 export async function setOverlayEnabled(enabled: boolean): Promise<OverlaySettings> {

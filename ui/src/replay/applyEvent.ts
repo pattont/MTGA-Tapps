@@ -127,6 +127,7 @@ function applyMove(draft: BoardDraft, event: MoveEvent): void {
     inferred: event.inferred || (event.reason !== 'token_create' && (prev?.inferred ?? false)),
     revealedAt: prev?.revealedAt ?? (card ? event.seq : null),
     ...(chosen ? { chosen } : {}),
+    ...(stays && prev.sick ? { sick: true } : {}),
   };
   draft.set(next);
   const list = draft.zone(zoneSeatOf(next), event.to);
@@ -282,6 +283,15 @@ export function applyEvent(state: BoardState, event: ReplayEvent): BoardState {
       const tapped = event.kind === 'tap';
       for (const obj of event.objs) {
         if (draft.get(obj) && draft.get(obj)?.tapped !== tapped) draft.update(obj, { tapped });
+      }
+      break;
+    }
+    case 'sick':
+    case 'unsick': {
+      const sick = event.kind === 'sick';
+      for (const obj of event.objs) {
+        const current = draft.get(obj);
+        if (current && current.zone === 'battlefield' && (current.sick ?? false) !== sick) draft.update(obj, { sick });
       }
       break;
     }

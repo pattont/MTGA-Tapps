@@ -412,3 +412,50 @@ def test_counter_type_facts_name_every_arena_counter():
 
     facts = CardDatabase._counter_type_facts(conn.cursor(), clean)
     assert facts == {"#counter:211": {"counter": "plan"}, "#counter:1": {"counter": "+1/+1"}}
+
+
+def test_exile_until_leaves_abilities_are_found_by_their_text():
+    import sqlite3 as _sqlite3
+
+    conn = _sqlite3.connect(":memory:")
+    conn.executescript(
+        """
+        CREATE TABLE Abilities (Id INTEGER, TextId INTEGER);
+        CREATE TABLE Localizations_enUS (LocId INTEGER, Formatted INTEGER, Loc TEXT);
+        INSERT INTO Abilities VALUES (1, 11), (2, 12), (3, 13);
+        INSERT INTO Localizations_enUS VALUES
+            (11, 0, 'When CARDNAME enters, exile target nonland permanent an opponent controls until CARDNAME leaves the battlefield.'),
+            (12, 0, 'Exile target creature. Its controller gains 3 life.'),
+            (13, 0, 'Exile all graveyards.');
+        """
+    )
+    ids = CardDatabase._exile_until_leaves_ability_ids(conn.cursor(), lambda text: str(text))
+    assert ids == {1}
+
+
+def test_cast_from_exile_abilities_are_found_by_their_text():
+    """Cards their owner may cast while exiled: Emrakul, the Exigent Doom's cycle
+    only after exiling itself from the hand, Eternal Scourge wherever it was
+    exiled from; conditional permissions stay out."""
+    import sqlite3 as _sqlite3
+
+    from mtga_tracker.card_database import CAST_FROM_EXILE_TEXT
+
+    conn = _sqlite3.connect(":memory:")
+    conn.executescript(
+        """
+        CREATE TABLE Abilities (Id INTEGER, TextId INTEGER);
+        CREATE TABLE Localizations_enUS (LocId INTEGER, Formatted INTEGER, Loc TEXT);
+        INSERT INTO Abilities VALUES (1, 11), (2, 12), (3, 13), (4, 14);
+        INSERT INTO Localizations_enUS VALUES
+            (11, 0, '{o3}, Exile this card from your hand: Target land gains "{oT}: Add {oCoC}" until this card is cast from exile. You may cast this card for as long as it remains exiled.'),
+            (12, 0, 'You may cast this card from exile.'),
+            (13, 0, 'You may cast this card from exile as long as you control a Lukka planeswalker.'),
+            (14, 0, 'Exile target nonland permanent. You may cast that card for as long as it remains exiled.');
+        """
+    )
+    found = {
+        keyword: CardDatabase._ability_ids_matching(conn.cursor(), str, pattern)
+        for keyword, pattern in CAST_FROM_EXILE_TEXT.items()
+    }
+    assert found == {"cast_from_exile": {2}, "cast_while_exiled": {1}}

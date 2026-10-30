@@ -306,6 +306,25 @@
   color: #ebe3ff;
 }
 
+.replay-label-tucked {
+  border-color: color-mix(in srgb, var(--replay, #2bb3a3) 60%, transparent);
+  background: rgb(8 12 16 / 88%);
+  color: #c9f5ee;
+  font-size: 0.62rem;
+  font-variant-numeric: tabular-nums;
+}
+/* Summoning sick: a purple sleep badge on the creature's upper left corner. */
+.replay-label-sick {
+  padding: 0 6px;
+  border-color: rgb(196 170 255 / 75%);
+  background: rgb(78 44 150 / 94%);
+  color: #f1eaff;
+  font-size: 0.6rem;
+  font-style: italic;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
 .replay-label-counters {
   border-color: rgb(240 198 108 / 40%);
   background: rgb(8 12 16 / 84%);
@@ -1539,6 +1558,21 @@
 /* Hover preview: what is tucked under the hovered permanent (heights match hoverStore.underListHeight). */
 .replay-preview-under {
   margin-top: 6px;
+}
+
+/* A status line under the preview image: a summoning-sick creature's, in the sleep badge's purple. */
+.replay-preview-note {
+  box-sizing: border-box;
+  height: 34px;
+  margin-top: 6px;
+  padding: 2px 8px;
+  overflow: hidden;
+  border-left: 3px solid rgb(150 110 235);
+  border-radius: 4px;
+  background: color-mix(in srgb, rgb(120 80 220) 12%, var(--panel));
+  color: var(--text);
+  font-size: 0.72rem;
+  line-height: 1.25;
 }
 
 .replay-preview-under-title {

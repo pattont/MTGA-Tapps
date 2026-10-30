@@ -291,11 +291,10 @@ class TrackerSummaryMixin:
         """
         diagnostics = deck_llm_diagnose()
         if not diagnostics.get("has_api_key"):
-            key_name = {
-                "gemini": "GEMINI_API_KEY",
-                "openai": "CHATGPT_API_KEY",
-                "claude": "CLAUDE_API_KEY",
-            }.get(diagnostics.get("provider") or "gemini", "GEMINI_API_KEY")
+            from .deck_llm import get_provider_info
+
+            info = get_provider_info(diagnostics.get("provider") or "gemini")
+            key_name = info.api_key_setting if info else "GEMINI_API_KEY"
             self._print_line(
                 f"   Opponent deck: (AI: no API key — set {key_name} in Settings or config.py)"
             )

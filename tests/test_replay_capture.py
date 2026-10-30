@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from test_tracker_combat_winner import make_tracker  # noqa: E402
 
-from mtga_tracker.replay_capture import INSERT_EVENT_SQL  # noqa: E402
+from mtga_tracker.replay_capture import INSERT_EVENT_SQL, REPLAY_VERSION  # noqa: E402
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 BASELINE_PATH = FIXTURE_DIR / "replay_capture_baseline.json"
@@ -319,6 +319,7 @@ def build_synthetic_game(start: Optional[datetime] = None) -> List[Tuple[str, da
     g.set(231, isTapped=True)
     g.emit((232, 231), (oic(212, 232), zt(232, HAND[P], STACK, "CastSpell")))
     g.move(232, 232, BF)
+    g.set(232, hasSummoningSickness=True)
     g.emit(
         (232,),
         (
@@ -357,7 +358,8 @@ def build_synthetic_game(start: Optional[datetime] = None) -> List[Tuple[str, da
     # Turn 4 (you): untap, draw, land, Grizzly Bears; Shock in response kills the Elves.
     g.turn_to(4, P)
     g.set(231, isTapped=None)
-    g.emit((231,))
+    g.set(232, hasSummoningSickness=None)
+    g.emit((231, 232))
     g.phase_to("Phase_Beginning", "Step_Draw")
     g.move(301, 240, HAND[P], grp=1001)
     g.emit((240,), (oic(301, 240), zt(240, LIB[P], HAND[P], "Draw")))
@@ -688,7 +690,7 @@ def test_every_row_of_a_recorded_game_is_classified(tmp_path):
         assert row["game_id"] and row["session_id"] == "" and row["match_id"] is None
         assert len(row["text"]) <= 24
     with sqlite3.connect(db) as conn:
-        assert conn.execute("SELECT replay_version FROM games").fetchall() == [(1,)]
+        assert conn.execute("SELECT replay_version FROM games").fetchall() == [(REPLAY_VERSION,)]
 
 
 def test_mulligans_and_opening_hands_by_instance_id(tmp_path):
@@ -831,6 +833,24 @@ def test_taps_and_untaps_are_batched_per_message(tmp_path):
     turn8 = [r for r in untaps if r["turn_number"] == 8]
     assert len(turn8) == 1 and turn8[0]["payload"] == {"object_ids": [300, 301, 215]}
     assert turn8[0]["amount"] == 3 and turn8[0]["text"] == "untap seat 2"
+
+
+def test_summoning_sickness_follows_arenas_flag(tmp_path):
+    _tracker, db = _played(tmp_path)
+    rows = event_rows(db)
+    sick = [r for r in rows if r["event_subtype"] in ("sick", "unsick")]
+    assert [(r["event_subtype"], r["turn_number"], r["payload"]) for r in sick] == [
+        ("sick", 2, {"object_ids": [212]}),
+        ("unsick", 4, {"object_ids": [212]}),
+    ]
+    assert all(r["visible"] == 0 and r["seat_id"] == P for r in sick)
+    # Keyed by the Elves' root id, after the move that put them onto the battlefield.
+    entry = next(
+        r
+        for r in rows
+        if r["event_subtype"] == "move" and r["object_id"] == 212 and r["zone_to"] == "battlefield"
+    )
+    assert entry["id"] < sick[0]["id"]
 
 
 def test_counters_pt_tokens_attach_identity_reveal_shuffle(tmp_path):
@@ -1179,6 +1199,21 @@ def test_exile_by_a_permanents_ability_records_the_host(tmp_path):
         (280, 318),
         (315, 312),
         (401, None),
+    ]
+
+
+def test_exile_by_an_ability_arena_already_deleted_still_records_the_host(tmp_path):
+    """Perilous Snare: Arena deletes the trigger in the same message that exiles
+    the card, so neither the message nor the snapshots hold the ability. The
+    source recorded when the trigger went on the stack names the host."""
+    tracker = started_tracker(tmp_path)
+    snare = obj(233, 2003, P, BF)
+    tracker.game_state.ability_instance_sources[384] = 233
+    caught = obj(286, 1008, O, EXILE)
+    tracker._handle_event(message(zt(286, BF, EXILE, "Exile", 384), objects=[snare, caught]))
+    rows = event_rows(tmp_path / "analytics.sqlite3", "zone_to = 'exile'")
+    assert [(r["object_id"], r["payload"].get("with"), r["payload"].get("by")) for r in rows] == [
+        (286, 233, 233)
     ]
 
 

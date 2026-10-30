@@ -3865,6 +3865,69 @@ def test_graveyard_to_hand_put_is_not_a_draw(capsys):
     assert tracker._seat_stats(1)["cards_drawn"] == 0
 
 
+def test_reused_instance_id_does_not_inherit_the_old_objects_seat(capsys):
+    """Arena reused the id of an undone activation for the opponent's hidden draw.
+
+    Giant's Boulder's ability (seat 2, the player) was 501 while it chose
+    targets; the activation was undone, never deleted, and the opponent's draw
+    was renumbered 404 -> 501. The draw is the opponent's, not "You: drew".
+    """
+    tracker = make_tracker()
+    g = tracker.game_state
+    g.player_seat_id = 2
+    g.opponent_seat_id = 1
+    g.turn_number = 10
+    g.active_player = 1
+    g.last_opponent_turn_number = 10
+    ability = {
+        "instanceId": 501,
+        "grpId": 76738,
+        "type": "GameObjectType_Ability",
+        "zoneId": 27,
+        "ownerSeatId": 2,
+        "controllerSeatId": 2,
+        "parentId": 351,
+        "objectSourceGrpId": 103555,
+    }
+    tracker._snapshot_game_objects([ability])
+    data = {
+        "zones": [
+            {"zoneId": 31, "type": "ZoneType_Hand", "ownerSeatId": 1},
+            {"zoneId": 32, "type": "ZoneType_Library", "ownerSeatId": 1},
+        ],
+        "annotations": [
+            {
+                "id": 1,
+                "affectedIds": [404],
+                "type": ["AnnotationType_ObjectIdChanged"],
+                "details": [
+                    {"key": "orig_id", "valueInt32": [404]},
+                    {"key": "new_id", "valueInt32": [501]},
+                ],
+            },
+            {
+                "id": 2,
+                "affectedIds": [501],
+                "type": ["AnnotationType_ZoneTransfer"],
+                "details": [
+                    {"key": "zone_src", "valueInt32": [32]},
+                    {"key": "zone_dest", "valueInt32": [31]},
+                    {"key": "category", "valueString": ["Draw"]},
+                ],
+            },
+        ],
+    }
+
+    tracker._process_game_events(data)
+
+    out = capsys.readouterr().out
+    assert "Opponent: drew a card" in out
+    assert "You: drew" not in out
+    assert tracker._seat_stats(1)["cards_drawn"] == 1
+    assert tracker._seat_stats(2)["cards_drawn"] == 0
+    assert 501 not in g.object_snapshots
+
+
 def test_mid_game_attach_shows_live_but_is_not_saved(capsys):
     """Joining a game past turn 1 tracks nothing to the DB."""
     tracker = make_tracker()

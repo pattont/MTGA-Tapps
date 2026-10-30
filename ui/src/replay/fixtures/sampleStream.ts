@@ -85,6 +85,7 @@ export function makeSampleStream(): ReplayStream {
   b.move('103', 'a1003', 'hand', 'battlefield', OPPONENT, 'play_land');
   b.cast('104', 'a1006', OPPONENT, 's3');
   b.resolve('104', 'a1006', OPPONENT, 's3', 'battlefield');
+  b.add('sick', { objs: ['104'] });
   b.add('life', { seat: OPPONENT, life: 19, delta: -1, source_obj: null }, { text: 'Opponent lost 1 life' });
 
   // Turn 4 (player): Delver, token, counters, scry, reveal, fizzle, combat.
@@ -123,6 +124,7 @@ export function makeSampleStream(): ReplayStream {
 
   // Turn 5 (opponent): Pacifism on the Aberration, burn, shuffle, concede.
   b.turnStart(5, OPPONENT);
+  b.add('unsick', { objs: ['104'] });
   b.phaseTo('Phase_Main1');
   b.cast('106', 'a1005', OPPONENT, 's7', ['215']);
   b.resolve('106', 'a1005', OPPONENT, 's7', 'battlefield');

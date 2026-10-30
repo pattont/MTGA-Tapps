@@ -108,7 +108,14 @@ function CardMeshImpl({ placement, cardInfo, sleeve, store, kit, registry, spawn
           <mesh geometry={kit.card} material={kit.removedMaterial} position-z={0.0016} raycast={noRaycast} />
         ) : null}
         {placement.inferred ? (
-          <mesh geometry={kit.inferred} material={kit.inferredMaterial} position-z={-0.002} raycast={noRaycast} />
+          // A face-down card is the group turned over: turn the outline back so its tag reads.
+          <mesh
+            geometry={kit.inferred}
+            material={kit.inferredMaterial}
+            position-z={-0.002}
+            rotation-y={placement.faceUp ? 0 : Math.PI}
+            raycast={noRaycast}
+          />
         ) : null}
       </group>
       <mesh ref={shadow} geometry={kit.shadow} material={flying ? kit.hoverShadowMaterial : kit.shadowMaterial} raycast={noRaycast} />

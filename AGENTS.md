@@ -28,7 +28,11 @@ Repo layout:
   completed behavior belongs in reference docs, and the README links only to current
   features and reference guides. `docs/RELEASING.md` covers releases. `CHANGELOG.md` tracks releases.
   The version comes from the git tag (setuptools-scm writes `_version.py`); there is no
-  hand-edited version string anywhere, and a release is cut by pushing a `v*` tag. Never
+  hand-edited version string anywhere, and a release is cut by pushing a `v*` tag.
+  Source runs from a git checkout read it live at import (`source_version.py`, one
+  `git describe`, setuptools-scm's format: `0.7.2.dev9+g<sha>[.dYYYYMMDD]`), so the dev
+  version follows each commit without a reinstall; frozen builds and the PyInstaller
+  spec still use `_version.py`. Never
   bump or invent a version in code. For pre-tag screenshots, the dashboard accepts
   `?screenshotVersion=<version>` before its hash route; this changes only the sidebar
   footer label, not the actual package version or update check.
@@ -116,7 +120,12 @@ Primary code paths:
   (Mono-X, guilds, shards/wedges, 4c names, 5c). The UI mirrors this in `ui/src/colorCombos.ts`.
 - `src/mtga_tracker/payload_codec.py` / `payload_dump.py`: zlib codec for the raw payload
   archive and the CLI to print archived payloads as readable JSON.
-- `src/mtga_tracker/deck_llm.py`: opt-in AI opponent-deck identification (OpenAI/Claude/Gemini).
+- `src/mtga_tracker/deck_llm.py`: opt-in AI opponent-deck identification (OpenAI/Claude/Gemini/Grok).
+  `PROVIDERS` is the one provider list (labels, setting names, default models, model-page
+  links); the Settings page, Qt dialog and console lines read it. Grok uses xAI's
+  OpenAI-style chat completions through the same code path as OpenAI. `list_models` fills
+  the Settings model dropdown (`POST /api/settings/deck-ai/models`, free list calls made
+  only when the Settings page asks, never by the tracker).
   Config resolution order: `settings.json` ("deck_ai" section) → `config.py` → env. One cheap
   call per completed game, fired from `_start_opponent_archetype_lookup` on a daemon thread —
   it must NEVER block live tracking. Reasoning-class OpenAI models (gpt-5/o-series) get
@@ -145,7 +154,13 @@ Primary code paths:
   and moves carry `by` (Arena's affector root) for recorded games.
   Flying creatures (card `keywords` `flying`, Arena ability id 8, matched by
   Abilities.Id since it has BaseId 0; tokens by grpId) hover `FLYING_LIFT`
-  above the felt with a further, darker shadow. Tokens never take the
+  above the felt with a further, darker shadow.
+  Summoning sickness is Arena's `hasSummoningSickness` object flag (creatures
+  only; already off for printed or granted haste), captured as silent
+  `sick`/`unsick` rows from `replay_version` 2; older games are estimated by
+  `replay_sickness.py` and say so in `limitations`. A sick battlefield card
+  gets a purple `Zzz` badge centered just above its top edge (clear of the
+  name) and a hover note. Tokens never take the
   `set|collector` image cache (Arena's token number names another card in the
   set); they carry `token_print` (`t<set>/<number>`, Scryfall's token set).
   The builder moves a `token_create` row ahead of earlier rows of its turn that
@@ -154,6 +169,26 @@ Primary code paths:
   and identical abilities next to each other on the stack show as one preview
   card (`stackView.groupStack`/`foldResolved`); counters the tracker records as
   `counter_<n>` are named from Arena's `Enums` CounterType at build time.
+  An exile's host (`with`) comes from Arena's affector; Arena usually deletes
+  the exiling ability in the same message, so capture falls back to
+  `ability_instance_sources`, and the builder (`_tuck_orphan_exiles`) repairs
+  older rows from the card facts' `exiles_until_leaves` (abilities whose text
+  exiles "until ... leaves the battlefield").
+  More than two cards exiled by a noncreature artifact or enchantment show as
+  a pile with an `N under` corner badge (`layout.pilesTucked`); hover lists them.
+  A move onto the battlefield printed after rows the card itself is the source
+  of at the same moment (its enters trigger) is moved ahead of them
+  (`_hoist_battlefield_entries`), and a silent move repeating the card's
+  previous move exactly is dropped (`_drop_repeated_moves`).
+  A card cast inside a message Arena only summarized reappears under a new id
+  no row moved; when one same-card copy sits in that seat's exile, the builder
+  renames it back and moves it out of exile, inferred (`_reconnect_lost_arrivals`,
+  `LOST_ARRIVAL_LIMITATION`). Exiled cards whose own text lets them be cast
+  from exile (card keywords `cast_from_exile`, `cast_while_exiled`, from
+  `card_database.CAST_FROM_EXILE_TEXT`) sit beside the hand like plotted cards.
+  The "inferred" outline turns with a face-down card so its tag never mirrors.
+  A token entry whose Arena id is a real card's (card facts `grp_ids`) is a
+  token copy of it and keeps the card's own image (`attach_card_facts`).
 - `ui/src/replay/`: the Replay page — pure reducer/layout/playback-clock/image-queue/prefs
   modules with tests, `export/` (pure video plan, Canvas 2D frame composer, WebCodecs +
   mp4-muxer encoder for the in-browser MP4 export; each codec is probed with one frame and
@@ -339,6 +374,8 @@ Primary code paths:
   row. Add to Arena and Save to collection sit below the description in a
   fieldset whose legend links to Deck Manager, styled in its orange accent; a
   right-aligned accent pill notes that Arena must be on Decks, filled in after that failure. The heading wraps on narrow screens.
+  The selected deck's card names use `CardLink previewOnly`: a hover image with
+  no link to the card page (images load only on hover).
   Stale hydration responses cannot replace a newer selection or clear its
   loading state. `ui/src/deckFinderImport.ts` parses import text for display,
   retaining separate Deck/Sideboard/Commander/Companion sections; clipboard
@@ -347,6 +384,8 @@ Primary code paths:
   Deck Finder reads Arena status (`/api/deck-manager/native`) only while a deck is
   open and the tab is visible (`usePageVisible`), and the saved library only when
   the collection picker first opens. Dashboard pollers skip hidden tabs.
+  Its slots-full state is only the last job's read, so it is a note, not a
+  disabled button; every job publishes its roster read before acting on it.
   `native_deck_bridge.availability()` locates Frida with `find_spec` and must not
   import it; only an attach loads its native library.
 - `src/mtga_deck_downloader/providers/youtube.py` + `scrapers/youtube.py` /
@@ -717,6 +756,11 @@ Arena logs are not a simple chronological event stream. Be careful with inferred
   the choice in `subtypes` (`SubType_Mountain`) and has no `color`. The tracker
   remembers the chooser (`GameState.land_type_choosers`) and reads the type from
   `subtypes`, so printed land types (Sacred Foundry) are never shown as a choice.
+- Arena reuses instance ids it never deleted (an ability whose activation was
+  undone): an `ObjectIdChanged` to such an id must not inherit the old object's
+  snapshot (`_record_object_id_change` replaces or drops it), or an opponent's
+  hidden draw reads as yours. A message with more than 50 objects or annotations
+  is logged only as "Message summarized because ...", with no details at all.
 - Arena's SBA death annotations reference instance ids that do NOT match declared
   attacker/blocker ids (verified against real logs) — combat deaths cannot be told apart
   from burn kills at SBA time, which is why lethal-damage deaths are excluded from
