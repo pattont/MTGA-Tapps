@@ -9,6 +9,7 @@
 mod arena;
 mod diag;
 mod dock;
+mod parent;
 mod settings;
 
 use std::sync::Mutex;
@@ -508,6 +509,10 @@ fn register_hotkeys(app: &AppHandle) {
 /// with a flag; the single-instance plugin hands those arguments here and
 /// the second instance exits. No tray of our own — one menu-bar icon.
 fn handle_request(app: &AppHandle, args: &[String]) {
+    // A tracker that reuses this overlay takes over as the process it lives with.
+    if let Some(pid) = parent::pid_from_args(args) {
+        parent::watch(pid);
+    }
     for arg in args {
         match arg.as_str() {
             "--open-settings" => {
@@ -990,6 +995,11 @@ pub fn run() {
             refresh_visibility(&handle);
             start_arena_poll(handle.clone());
             start_cursor_watch(handle.clone());
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            if let Some(pid) = parent::pid_from_args(&args) {
+                parent::watch(pid);
+            }
+            parent::start(handle.clone());
             diag::log("setup complete");
             Ok(())
         })

@@ -63,6 +63,14 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: postinstall nowait skipifsilent
 
+[UninstallRun]
+; Runs before any file is removed. A tracker or overlay still running would
+; keep its executable locked, so it would survive the uninstall and the overlay
+; would keep showing over Arena until the next reboot. Exit codes are ignored
+; (taskkill reports an error when nothing is running).
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM ""{#MyAppExeName}"""; Flags: runhidden waituntilterminated; RunOnceId: "StopTracker"
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM tapps-overlay.exe"; Flags: runhidden waituntilterminated; RunOnceId: "StopOverlay"
+
 [Code]
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin

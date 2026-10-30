@@ -403,6 +403,10 @@ Primary code paths:
   The manager recognizes an already-running Tauri singleton by its exact executable path;
   a successful second-instance handoff must not be treated as the overlay quitting or change
   `overlay.enabled` to false. Exit code 23 is reserved for an explicit **Quit overlay** action.
+  The tracker launches the overlay with `--parent-pid <its pid>` (and hands that pid to a reused
+  overlay through a second launch); `overlay/src-tauri/src/parent.rs` quits the overlay once that
+  process is gone, so a crashed, killed or uninstalled tracker never leaves it over Arena. The
+  Windows uninstaller also stops both executables (`[UninstallRun]` taskkill) before removing files.
   On macOS, `overlay/src-tauri/src/arena.rs` parses `lsappinfo` one property line at a time;
   macOS 27 returns extra properties even with `-only`, so never parse everything after the first
   equals sign or Arena will be treated as never frontmost and the overlay will hide itself.

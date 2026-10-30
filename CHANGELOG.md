@@ -88,6 +88,16 @@
   piles every night's games into one record. Settings → Sessions sets the break (1 to 12
   hours, or only when the app opens). A Best-of-3 match always stays in one session.
 
+### Fixes
+
+- The in-game overlay could outlive the tracker: after the tracker crashed, was
+  ended from Task Manager, or was uninstalled, the overlay kept showing over Arena
+  until the next restart. The overlay now quits on its own a few seconds after the
+  tracker that started it is gone, and the Windows uninstaller stops both before
+  removing their files.
+- When Windows Smart App Control blocks the overlay (error 4551), Settings and the
+  tracker menu now say so instead of showing the raw Windows error.
+
 ## 0.7.1
 
 ### Replay
