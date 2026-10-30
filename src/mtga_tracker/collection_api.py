@@ -132,8 +132,8 @@ def _run_export(
         progress("Using the last scan…")
 
     progress(f"Mapping {len(collection)} cards…")
-    metadata, arena_db_found = _load_metadata(db_path)
-    entries = ce.aggregate(collection, metadata)
+    metadata, rebalanced, arena_db_found = _load_metadata(db_path)
+    entries = ce.aggregate(collection, metadata, rebalanced=rebalanced)
     if not entries:
         raise _ExportError(
             "no_collection",
@@ -333,11 +333,12 @@ _ERROR_TEXT = {
 
 def _load_metadata(
     db_path: Optional[Path],
-) -> Tuple[Dict[int, Tuple[str, str, str]], bool]:
+) -> Tuple[Dict[int, Tuple[str, str, str]], Dict[int, int], bool]:
     """arena_id -> (name, set, collector) from Arena's card DB, plus a
     display-name fallback from the tracker's own recorded cards.
 
-    Returns (metadata, arena_db_found). Passing the Player.log path matters:
+    Returns (metadata, rebalanced, arena_db_found), where rebalanced maps each
+    Alchemy A- id to its original card's id. Passing the Player.log path matters:
     Arena announces its own install directory in the log head, which is the
     only discovery signal that works for every install location (custom
     drives, standalone installs) — without it, a non-default Windows install
@@ -354,11 +355,14 @@ def _load_metadata(
         log_path = None
 
     metadata: Dict[int, Tuple[str, str, str]] = {}
+    rebalanced: Dict[int, int] = {}
     arena_db_found = False
     try:
-        arena_index = CardDatabase(log_path=log_path).export_index_by_arena_id()
+        card_db = CardDatabase(log_path=log_path)
+        arena_index = card_db.export_index_by_arena_id()
         arena_db_found = bool(arena_index)
         metadata.update(arena_index)
+        rebalanced = card_db.rebalance_links_by_arena_id()
     except Exception:
         pass
 
@@ -368,7 +372,7 @@ def _load_metadata(
     try:
         conn = _readonly_conn(db_path)
     except sqlite3.Error:
-        return metadata, arena_db_found
+        return metadata, rebalanced, arena_db_found
     try:
         for arena_id, name in conn.execute(
             "SELECT DISTINCT arena_id, display_name FROM game_deck_cards WHERE arena_id IS NOT NULL"
@@ -383,7 +387,7 @@ def _load_metadata(
         pass
     finally:
         conn.close()
-    return metadata, arena_db_found
+    return metadata, rebalanced, arena_db_found
 
 
 def _resolve_db_path(db_path: Optional[Path]) -> Path:

@@ -398,6 +398,10 @@ Primary code paths:
   See `docs/BUY_ON_PAPER.md`.
 - `src/mtga_tracker/collection_api.py` / `collection_export.py` / `inventory.py`: explicit
   collection-export jobs, macOS/Windows process-memory readers, and local card metadata.
+  Arena's collection lists a card and its Alchemy `A-` version with the same count;
+  `CardDatabase.rebalance_links_by_arena_id` pairs them (`RebalancedCardGrpId` while live,
+  `DefunctRebalancedCardGrpId` after a revert) and `aggregate` counts each pair once, at
+  the larger quantity. Never sum the two.
 - `src/mtga_tracker/overlay_state.py` / `overlay_launcher.py`: library-composition odds
   and the separate overlay process manager; enabled by default when the binary is available.
   The manager recognizes an already-running Tauri singleton by its exact executable path;

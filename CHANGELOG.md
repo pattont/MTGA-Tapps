@@ -97,6 +97,10 @@
   removing their files.
 - When Windows Smart App Control blocks the overlay (error 4551), Settings and the
   tracker menu now say so instead of showing the raw Windows error.
+- Collection export counted Alchemy-rebalanced cards twice: since Arena reverted
+  its rebalances on 22 September 2026, cards such as Orcish Bowmasters exported
+  as 8 copies instead of 4. Arena gives you the rebalanced version of every card
+  you own, so the collection lists both; the export now counts the pair once.
 
 ## 0.7.1
 

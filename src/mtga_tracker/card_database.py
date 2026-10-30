@@ -1018,6 +1018,54 @@ class CardDatabase:
         self._export_index_by_arena_id = index
         return index
 
+    def rebalance_links_by_arena_id(self) -> Dict[int, int]:
+        """Map each Alchemy rebalanced (``A-``) GrpId to its original card's GrpId.
+
+        Owning a card on Arena also gives you its rebalanced version, so the
+        collection lists both ids with the same count. Arena links them through
+        ``RebalancedCardGrpId`` while a rebalance is live, and through
+        ``DefunctRebalancedCardGrpId`` after it is reverted (the 22 September
+        2026 revert). Returns an empty dict when the database or columns are
+        missing.
+        """
+        if getattr(self, "_rebalance_links", None) is not None:
+            return self._rebalance_links
+
+        links: Dict[int, int] = {}
+        db_path = self._resolve_mtga_db_path()
+        if db_path:
+            try:
+                conn = self._connect_mtga_db(db_path)
+                try:
+                    cur = conn.cursor()
+                    cur.execute('PRAGMA table_info("Cards")')
+                    columns = {str(row[1]) for row in cur.fetchall()}
+                    link_cols = [
+                        c
+                        for c in ("RebalancedCardGrpId", "DefunctRebalancedCardGrpId")
+                        if c in columns
+                    ]
+                    if "IsRebalanced" in columns and link_cols:
+                        select = ", ".join(f'c."{c}"' for c in link_cols)
+                        rows = cur.execute(
+                            f'SELECT c."GrpId", c."IsRebalanced", {select} FROM "Cards" c '
+                            'WHERE c."GrpId" IS NOT NULL'
+                        ).fetchall()
+                        for grp_id, is_rebalanced, *partners in rows:
+                            partner = next((int(p) for p in partners if p and int(p) > 0), 0)
+                            if not partner:
+                                continue
+                            if is_rebalanced:
+                                links.setdefault(int(grp_id), partner)
+                            else:
+                                links.setdefault(partner, int(grp_id))
+                finally:
+                    conn.close()
+            except Exception:
+                links = {}
+        self._rebalance_links = links
+        return links
+
     def get_card_ability_texts(self, grp_id: int) -> List[str]:
         """Return every localized ability text for a card (for role classification)."""
         if grp_id is None:
