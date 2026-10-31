@@ -1,7 +1,10 @@
 # In-app auto-update
 
-Status: proposal, researched 2026-10-11 against `auto-update` @ `7071c74`. Nothing is
-implemented yet. The three research reports this plan distills live in
+Status: implemented on `auto-update` and validated 2026-10-31 with a real
+0.7.5rc1 → rc2 update on macOS and Windows 11 from a signed test feed. Behavior now
+lives in AGENTS.md (updater code paths and invariant) and `docs/RELEASING.md`;
+this plan keeps the design record and the remaining work in §10 and
+[the checklist](auto-update/VALIDATION.md). Researched 2026-10-11. The three research reports this plan distills live in
 [`auto-update/`](auto-update/): the industry survey and trust model
 ([01](auto-update/01-industry-research.md)), the per-OS install and relaunch mechanics
 with the tested macOS swap helper ([02](auto-update/02-platform-mechanics.md),

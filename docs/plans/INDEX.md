@@ -9,7 +9,7 @@ implementation walkthroughs have been removed.
 | --- | --- |
 | [Linux support](linux_implementation.md) | Discovery, controller, overlay, packaging and desktop validation. |
 | [Install discovery](MTGA_INSTALL_DISCOVERY.md) | Editable overrides and evidence-driven platform fallbacks; [current behavior](../MTGA_INSTALL_DISCOVERY.md) is documented separately. |
-| [In-app auto-update](AUTO_UPDATE.md) | Built on `auto-update` (signed manifest, silent Inno / macOS swap hand-off, sidebar pill, Settings → Updates). Remaining: real-machine validation on the Mac Studio and Windows 11 per [the checklist](auto-update/VALIDATION.md), then the Linux hand-off and a beta channel. Research reports live in [`auto-update/`](auto-update/). |
+| [In-app auto-update](AUTO_UPDATE.md) | Built and validated 2026-10-31: a real 0.7.5rc1 → rc2 update ran end to end on macOS (bundle swap, relaunch, pre-update backup) and Windows 11 (silent installer hand-off) from a signed test feed. Remaining: confirm the first public updater release on both systems after it ships, the remaining [checklist](auto-update/VALIDATION.md) cases (in-game block, rollback, all-users UAC), portable self-update, the Linux hand-off and a beta channel. Research reports live in [`auto-update/`](auto-update/). |
 | [Opponent deck matching](opponent_deck_research.md) | Evidence-aware matching against cached decklists. The proposed thresholds and timings still need validation. |
 
 ## Smaller follow-ups
