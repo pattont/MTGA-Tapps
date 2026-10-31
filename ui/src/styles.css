@@ -3769,15 +3769,28 @@ button.sidebar-update:disabled {
   background: var(--update);
 }
 
+/* "Restarting…" is a status, not an action: neutral grey, not the update violet. */
 .sidebar-update-installing {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  gap: 8px;
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--muted) 8%, transparent);
+  color: var(--muted);
+  cursor: default;
 }
 
 .sidebar-update-installing svg {
-  width: 13px;
-  height: 13px;
+  width: 15px;
+  height: 15px;
+}
+
+/* The collapsed rail's restarting icon (model kind "none"). */
+.sidebar-update-mini-none {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--muted) 8%, transparent);
+  color: var(--muted);
 }
 
 .sidebar-update-spin {
