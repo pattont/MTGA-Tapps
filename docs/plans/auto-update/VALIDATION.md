@@ -28,6 +28,41 @@ fails goes back to the plan's §9 failure table.
    The signature check stays on, so this proves the real trust path. Note which route
    was used.
 
+## Launching a test build against the scratch feed
+
+Quit any running Tapps Tracker first (tray icon, then **Quit Tapps Tracker**). The
+app is single-instance, so a second launch exits and the already-running copy,
+which has no overrides, answers every check.
+
+macOS (Terminal):
+
+```bash
+MTGA_TRACKER_DATA_DIR="$HOME/tapps-updtest" \
+MTGA_TRACKER_UPDATE_MANIFEST_URL=https://github.com/pattont/MTGA-Tapps-updtest/releases/latest/download/latest.json \
+"/Applications/MTGA Tracker.app/Contents/MacOS/MTGA Tracker"
+```
+
+Windows (PowerShell; `set VAR=...` and `%VAR%` are Command Prompt syntax and do
+nothing here, and a quoted path needs `&` to run):
+
+```powershell
+Get-Process "MTGA Tracker" -ErrorAction SilentlyContinue   # must print nothing
+$env:MTGA_TRACKER_DATA_DIR = "$env:USERPROFILE\tapps-updtest"
+$env:MTGA_TRACKER_UPDATE_MANIFEST_URL = "https://github.com/pattont/MTGA-Tapps-updtest/releases/latest/download/latest.json"
+& "$env:LOCALAPPDATA\Programs\MTGA Tracker\MTGA Tracker.exe"
+```
+
+If the executable is elsewhere (an all-users install), the installer's registry
+entry names the folder:
+
+```powershell
+(Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{1F54E322-28D9-4929-8292-F5AAAA12CB5F}_is1','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{1F54E322-28D9-4929-8292-F5AAAA12CB5F}_is1' -ErrorAction SilentlyContinue).InstallLocation
+```
+
+Confirm the overrides took: Settings → Tracker → **Log DB** shows the
+`tapps-updtest` folder, and the first line of `<scratch>\logs\updater.log` reads
+"MTGA_TRACKER_UPDATE_MANIFEST_URL is set".
+
 ## 1. macOS (Mac Studio)
 
 Install rc.1 from the DMG into `/Applications`, launch it once so it is
