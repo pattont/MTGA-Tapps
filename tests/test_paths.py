@@ -211,3 +211,86 @@ def test_localization_line_yields_raw_dir_directly(tmp_path):
     log = tmp_path / "Player.log"
     log.write_text(head, encoding="utf-8")
     assert paths_mod.mtga_raw_dir_from_player_log(log) == raw
+
+
+def test_arena_probe_on_macos(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(paths_mod.platform, "system", lambda: "Darwin")
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=codes.pop(0), stdout="")
+
+    codes = [0, 1, 2]
+    assert paths_mod.arena_process_running(run=run) is True
+    assert paths_mod.arena_process_running(run=run) is False
+    assert paths_mod.arena_process_running(run=run) is None
+    assert calls[0] == ["/usr/bin/pgrep", "-x", "MTGA"]
+
+    def broken(*_args, **_kwargs):
+        raise OSError("no pgrep")
+
+    assert paths_mod.arena_process_running(run=broken) is None
+
+
+def test_arena_probe_on_windows_never_flashes_a_console(monkeypatch):
+    import subprocess
+    import sys
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(paths_mod.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
+    seen = []
+
+    def run(args, **kwargs):
+        seen.append(kwargs)
+        return SimpleNamespace(returncode=0, stdout=outputs.pop(0))
+
+    outputs = ['"MTGA.exe","1234","Console","1","500,000 K"\r\n', "INFO: No tasks are running.\r\n"]
+    assert paths_mod.arena_process_running(run=run) is True
+    assert paths_mod.arena_process_running(run=run) is False
+    assert seen[0]["creationflags"] == 0x08000000
+    assert (
+        paths_mod.arena_process_running(
+            run=lambda *a, **k: SimpleNamespace(returncode=1, stdout="")
+        )
+        is None
+    )
+
+
+def test_arena_probe_is_unknown_on_other_platforms(monkeypatch):
+    monkeypatch.setattr(paths_mod.platform, "system", lambda: "Linux")
+    assert paths_mod.arena_process_running(run=lambda *a, **k: None) is None
+
+
+def test_macos_bundle_location_issue(tmp_path):
+    bundle = tmp_path / "Applications" / "MTGA Tracker.app"
+    bundle.mkdir(parents=True)
+    assert paths_mod.macos_bundle_location_issue(bundle) is None
+    assert (
+        paths_mod.macos_bundle_location_issue(Path("/Volumes/MTGA Tracker/MTGA Tracker.app"))
+        == "dmg-mounted"
+    )
+    assert (
+        paths_mod.macos_bundle_location_issue(
+            Path("/private/var/folders/x/AppTranslocation/y/MTGA Tracker.app")
+        )
+        == "translocated"
+    )
+    assert paths_mod.macos_bundle_location_issue(bundle, access=lambda *_a: False) == "not-writable"
+
+
+def test_current_platform_key(monkeypatch):
+    import sys
+
+    for raw, key in (
+        ("darwin", "darwin"),
+        ("win32", "win32"),
+        ("linux", "linux"),
+        ("linux2", "linux"),
+    ):
+        monkeypatch.setattr(sys, "platform", raw)
+        assert paths_mod.current_platform_key() == key

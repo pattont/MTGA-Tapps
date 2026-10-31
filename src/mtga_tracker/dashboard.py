@@ -5900,6 +5900,42 @@ class DashboardHandler(BaseHTTPRequestHandler):
             status, body = handled or (404, {"error": "Unknown Deck Manager action."})
             _send_bytes(self, status, json.dumps(body).encode("utf-8"), "application/json; charset=utf-8", {"Cache-Control": "no-store"})
             return
+        if parsed.path.startswith("/api/update/"):
+            # In-app updates. Same guard as the Deck Manager: "install"
+            # restarts the app, so only the local dashboard may ask.
+            from . import update_api
+
+            origin = urlparse(self.headers.get("Origin") or "")
+            content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip()
+            if (
+                origin.hostname and origin.hostname not in {"localhost", "127.0.0.1", "::1"}
+            ) or content_type != "application/json":
+                _send_bytes(
+                    self,
+                    403,
+                    b'{"error":"Use the local dashboard to update."}',
+                    "application/json",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(length) if 0 < length <= 4096 else b""
+                payload = json.loads(raw.decode("utf-8")) if raw else {}
+            except (ValueError, UnicodeError):
+                payload = {}
+            handled = update_api.handle_post(
+                parsed.path, payload if isinstance(payload, dict) else {}
+            )
+            status, body = handled or (404, {"error": "Unknown update action."})
+            _send_bytes(
+                self,
+                status,
+                json.dumps(body).encode("utf-8"),
+                "application/json; charset=utf-8",
+                {"Cache-Control": "no-store"},
+            )
+            return
         if parsed.path.startswith("/api/deckfinder/"):
             # Deck Finder in the webapp: lazy import keeps the dashboard
             # stdlib-only until the page is actually opened.
@@ -6332,6 +6368,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if status == 200 and isinstance(body, dict) and "_file" in body:
                     self._send_export_file(Path(body["_file"]))
                     return
+                _send_bytes(
+                    self,
+                    status,
+                    json.dumps(body).encode("utf-8"),
+                    "application/json; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+        if request_path == "/api/update":
+            from . import update_api
+
+            handled = update_api.handle_get(request_path, parse_qs(parsed.query))
+            if handled is not None:
+                status, body = handled
                 _send_bytes(
                     self,
                     status,

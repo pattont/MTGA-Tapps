@@ -441,6 +441,41 @@ Primary code paths:
   `CardDatabase.rebalance_links_by_arena_id` pairs them (`RebalancedCardGrpId` while live,
   `DefunctRebalancedCardGrpId` after a revert) and `aggregate` counts each pair once, at
   the larger quantity. Never sum the two.
+- `src/mtga_tracker/updater.py` (the `UpdateManager` and `get_manager()`), with
+  `updater_manifest.py` (PEP 440 compare, strict manifest parser, `UPDATE_PUBLIC_KEYS`,
+  asset selection), `updater_download.py` / `updater_fetch.py` (manifest fetch, resumable
+  download, the check and download steps),
+  `updater_gate.py` (`busy_reasons`), `updater_handoff.py` (install sequence and
+  next-launch reconciliation), `updater_support.py`, `update_install.py` (per-OS
+  hand-off), `update_api.py` (HTTP glue) and `ed25519_verify.py` (verify-only RFC 8032):
+  in-app updates. A singleton `UpdateManager` (daemon thread, started
+  by `UnifiedLauncher.start_updater` from the menu app and `--no-gui`; never in Deck Finder
+  mode or the dashboard-only entry point; `MTGA_TRACKER_DISABLE_UPDATES=1` disables it;
+  `MTGA_TRACKER_UPDATE_MANIFEST_URL` points a test build at another signed manifest)
+  fetches the signed `latest.json` from GitHub's `releases/latest/download/` URL (not the
+  rate-limited API; drafts and prereleases are never served), verifies its Ed25519
+  signature with the embedded `UPDATE_PUBLIC_KEYS` BEFORE parsing, compares PEP 440
+  versions with `packaging`, downloads the platform asset to `<data dir>/updates/` with
+  resume and streaming SHA-256, and exposes `GET /api/update` plus
+  `POST /api/update/{check,download,install,skip,acknowledge}`. Source runs check too but only link out; only frozen builds install:
+  portable Windows zips, moved installs and translocated or DMG-mounted macOS
+  bundles link out. User preferences live in `settings.json` → `updates` (`check`,
+  `auto_download`, `auto_install`, `skipped_version`; a local-only section that backups
+  never carry); runtime state lives in `updates/state.json`. The install sequence
+  (`_perform_install`) is fixed: re-verify the hash → `pending.json` → mandatory
+  `pre-update` `.tappsbackup` (online backup API, keep 2) → stop tracker → release
+  dashboard read handles and checkpoint the WAL → stop the overlay without touching
+  `overlay.enabled` → `install_and_restart` (Windows: the downloaded Inno `setup.exe`
+  run silently with `/WAITPID`/`/RELAUNCH`; macOS: `ditto`-extracted staged bundle swapped
+  by a detached helper after the PID exits) → exit. `POST /api/update/install` answers
+  202 before any of that starts. The relaunch passes `--after-update --updated-from X`;
+  the new process retries both instance locks for up to 60 s, reconciles `pending.json`,
+  shows "Updated to X" once, and writes `updates/healthy-<version>`. `--update-failed`
+  records a failed hand-off. The gate (`busy_reasons`): a game in progress or seen/ended
+  within 120 s, a native deck transfer, a collection export, or a backup restore block
+  every install; Arena running blocks auto-install only (a manual restart confirms first).
+  See `docs/RELEASING.md` for the release side (`scripts/make_update_manifest.py`,
+  the `manifest` CI job, the `UPDATE_SIGNING_KEY` secret).
 - `src/mtga_tracker/overlay_state.py` / `overlay_launcher.py`: library-composition odds
   and the separate overlay process manager; enabled by default when the binary is available.
   The manager recognizes an already-running Tauri singleton by its exact executable path;
@@ -511,6 +546,16 @@ UI changes require vitest, tsc, lint, and a fresh `npm run build` (the dashboard
   `packaging/mtga_tracker.spec` and `packaging/entrypoint.py`, and embed the
   tag-derived package version in the artifact name. Never change the installer's `AppId`
   GUID — it is what makes newer setups upgrade in place.
+- The release workflow's `manifest` job (tags only, after both builds) writes `latest.json`,
+  signs it with the `UPDATE_SIGNING_KEY` secret (Ed25519; the matching public key is
+  embedded in `updater.py`, add a second key before rotating), writes `SHA256SUMS`, and
+  attaches them to the same draft; the macOS leg also publishes `MTGA-Tracker-<ver>-macos.zip`
+  made with `ditto` (plain `zip`/`zipfile` drop symlinks and break the signature). Tags
+  containing `-` are prereleases and never become `releases/latest`. Publishing the draft
+  is what makes the manifest live. `packaging/windows_installer.iss` honors `/WAITPID`,
+  `/RELAUNCH=1`, `/UPDATEDFROM` and `/RELAUNCHEXE` for the in-app updater; the first
+  updater-capable release must be installed by hand. Immutable releases are enabled on the
+  repository: a published release is fixed by a new version, never by replacing an asset.
 - The macOS bundle filename and executable remain `MTGA Tracker` for upgrade
   compatibility, while `CFBundleName`/`CFBundleDisplayName` are `Tapps Tracker`,
   the stable bundle identifier is `com.travispatton.mtgatracker`, and
@@ -578,6 +623,11 @@ Preserve these behaviors unless the user explicitly changes requirements:
 
 - Never stop or restart the active tracker or desktop app without explicit user approval. The
   user may be in a live game even when the latest persisted log line appears idle.
+- Never auto-install an update while Arena is running or within two minutes of a game, and
+  never restart the app for an update without either the user's click or their opted-in
+  automatic install (Settings → Updates). Opting in is the approval. Nothing is installed
+  until the download is complete and its size and SHA-256 match the signed manifest, and the
+  pre-update backup has been written.
 - The unified launcher is single-instance across source and installed launches for the same OS
   user. Acquire its OS-owned guard before starting the dashboard, tracker, or tray; keep the
   legacy Qt lock as a cross-version backstop, and never apply the guard to Deck Finder mode.
@@ -831,10 +881,18 @@ Important tables:
   `POST /api/db/reset` is destructive, requires `{"confirm": "RESET"}`, and backs up first.
   Other existing POSTs are `/api/settings/*` (settings and overlay actions),
   `/api/deckfinder/*` (fetch/variants/hydrate/surprise jobs),
-  `/api/deck-downloader/launch` (terminal launcher), and `/api/collection/export`
-  (explicit memory scan/export job). Do not describe the entire dashboard as read-only.
+  `/api/deck-downloader/launch` (terminal launcher), `/api/collection/export`
+  (explicit memory scan/export job), and `/api/update/*` (update check, download, install,
+  skip, acknowledge; `install` restarts the app and carries the Deck Manager-style Origin
+  and Content-Type guard). Do not describe the entire dashboard as read-only.
 - `schema_migrations`: numbered one-time migrations applied by `AnalyticsStore.apply_pending_migrations`
   (baseline is version 1; add new migrations there rather than ad-hoc ALTERs when possible).
+  Each pending migration runs in its own transaction together with its
+  `schema_migrations` row, so a failure rolls back exactly that migration and the next
+  launch retries it; never use `executescript` inside a migration (it commits first). A
+  database whose highest applied version exceeds what the build knows is opened anyway
+  (migrations are additive) and reported as `db_newer_than_app` by `/api/update`.
+  There is no downgrade path; the `pre-update` backup is the recovery path.
 
 When adding stats, persist both player and opponent perspectives when the log can support it.
 

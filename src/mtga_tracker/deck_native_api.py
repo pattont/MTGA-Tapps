@@ -28,17 +28,17 @@ def _key(db_path):
 
 
 def game_in_progress(db_path):
-    path = Path(db_path)
-    if not path.is_file():
-        return False
-    conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)
-    try:
-        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='live_status'").fetchone():
-            return False
-        row = conn.execute("SELECT in_game FROM live_status WHERE id=1").fetchone()
-        return bool(row and row[0])
-    finally:
-        conn.close()
+    """The live row's in_game flag, whatever the heartbeat's age (fail closed:
+    a database read error propagates)."""
+    from .live_api import game_activity
+
+    return bool(game_activity(db_path)["in_game"])
+
+
+def job_active():
+    """True while a native deck job (backup, move, restore, add) is running."""
+    with _LOCK:
+        return _ACTIVE is not None
 
 
 def status(db_path):

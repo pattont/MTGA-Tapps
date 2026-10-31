@@ -10,6 +10,13 @@ from typing import Any, Dict, Optional
 from .log_sanitize import scrub_raw_log
 from .payload_codec import compress_payload, decode_payload
 
+#: Set when a database records a migration this build does not know (an
+#: older app opened a database a newer one already migrated). The app still
+#: starts; the updater's status payload surfaces it as `db_newer_than_app`.
+DB_SCHEMA_STATUS: Dict[str, Any] = {"newer_than_app": False, "database": None, "app": None}
+#: The "newer than this app" warning prints once per process, not per connect.
+_SCHEMA_WARNING_PRINTED = False
+
 
 _PREVIOUS_TURN_DURATION_RE = re.compile(
     r"^Previous Turn \((You|Opponent)\): " r"(?:(\d+)h )?(?:(\d+)m )?(\d+)s$"
@@ -682,16 +689,9 @@ class AnalyticsStore:
         return renamed
 
     @staticmethod
-    def apply_pending_migrations(conn: sqlite3.Connection) -> None:
-        """Apply numbered one-time schema/data migrations in order.
-
-        The executescript baseline above is migration 1. Later migrations are
-        recorded in schema_migrations so each runs exactly once per database.
-        """
-        applied = {
-            int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
-        }
-        migrations = (
+    def migration_steps() -> tuple:
+        """(version, function) for every numbered migration, in order."""
+        return (
             (2, AnalyticsStore._migrate_v2_backfill_card_arena_ids),
             (3, AnalyticsStore._migrate_v3_backfill_summary_drawn_counts),
             (4, AnalyticsStore._migrate_v4_game_annotations),
@@ -735,18 +735,48 @@ class AnalyticsStore:
             (34, AnalyticsStore._migrate_v34_native_deck_transfers),
             (35, AnalyticsStore._migrate_v35_deck_collections),
         )
+
+    @staticmethod
+    def apply_pending_migrations(conn: sqlite3.Connection) -> None:
+        """Apply numbered one-time schema/data migrations in order.
+
+        The executescript baseline above is migration 1. Later migrations are
+        recorded in schema_migrations so each runs exactly once per database.
+        Each pending migration runs in its own transaction together with its
+        schema_migrations row, so a failure rolls back exactly that one step
+        (earlier steps stay applied, the failing one re-runs next launch).
+        Migrations must therefore never commit, use `with conn:`, or call
+        executescript (which commits first).
+        """
+        applied = {
+            int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
+        }
+        migrations = AnalyticsStore.migration_steps()
+        AnalyticsStore._check_schema_not_newer(applied, migrations)
+        # Close whatever implicit transaction the schema baseline left open so
+        # the explicit BEGIN below is the start of a fresh one.
+        conn.commit()
         ran: list = []
         for version, migrate in migrations:
             if version in applied:
                 continue
-            migrate(conn)
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) "
-                "VALUES (?, datetime('now'))",
-                (version,),
-            )
+            conn.execute("BEGIN")
+            try:
+                migrate(conn)
+                conn.execute(
+                    "INSERT OR IGNORE INTO schema_migrations(version, applied_at) "
+                    "VALUES (?, datetime('now'))",
+                    (version,),
+                )
+                conn.commit()
+            except BaseException:
+                try:
+                    conn.rollback()
+                except sqlite3.Error:
+                    pass
+                raise
+            applied.add(version)
             ran.append(version)
-        conn.commit()
         # The raw payload archive is a diagnostics/replay buffer, not history:
         # nothing in the app reads it back after a month. Keep 30 days.
         pruned = AnalyticsStore.prune_raw_payload_archive(conn)
@@ -765,6 +795,24 @@ class AnalyticsStore:
             conn.execute("PRAGMA optimize")
         except sqlite3.Error:
             pass
+
+    @staticmethod
+    def _check_schema_not_newer(applied, migrations) -> None:
+        """Downgrade guard: warn (never refuse) when the database carries a
+        migration this build does not know."""
+        known = max((version for version, _migrate in migrations), default=1)
+        newest = max(applied, default=1)
+        DB_SCHEMA_STATUS["database"] = newest
+        DB_SCHEMA_STATUS["app"] = known
+        DB_SCHEMA_STATUS["newer_than_app"] = newest > known
+        global _SCHEMA_WARNING_PRINTED
+        if newest > known and not _SCHEMA_WARNING_PRINTED:
+            _SCHEMA_WARNING_PRINTED = True
+            print(
+                f"Warning: this database was last migrated by a newer Tapps Tracker "
+                f"(schema {newest}, this app knows {known}). It will still open; "
+                "update the app to the newest release."
+            )
 
     @staticmethod
     def _migrate_v2_backfill_card_arena_ids(conn: sqlite3.Connection) -> None:
@@ -1455,51 +1503,66 @@ class AnalyticsStore:
     @staticmethod
     def _migrate_v33_managed_decks(conn: sqlite3.Connection) -> None:
         """Independent local deck library; never linked to tracked-game retention."""
-        conn.executescript("""
+        # Individual statements, not executescript: executescript commits
+        # first, which would break the per-migration transaction.
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS managed_decks (
                 id TEXT PRIMARY KEY, account_key TEXT, name TEXT NOT NULL,
                 format_name TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
                 tags_json TEXT NOT NULL DEFAULT '[]', current_revision_id TEXT NOT NULL,
                 created_at TEXT NOT NULL, updated_at TEXT NOT NULL, trashed_at TEXT
-            );
+            )
+        """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS managed_deck_revisions (
                 id TEXT PRIMARY KEY, deck_id TEXT NOT NULL REFERENCES managed_decks(id),
                 parent_revision_id TEXT, content_hash TEXT NOT NULL, payload_json TEXT NOT NULL,
                 source TEXT NOT NULL, completeness TEXT NOT NULL, created_at TEXT NOT NULL,
                 UNIQUE(deck_id, content_hash)
-            );
+            )
+        """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS managed_deck_cards (
                 revision_id TEXT NOT NULL REFERENCES managed_deck_revisions(id),
                 position INTEGER NOT NULL, section TEXT NOT NULL, quantity INTEGER NOT NULL,
                 name TEXT NOT NULL, arena_id INTEGER, set_code TEXT, collector_number TEXT,
                 PRIMARY KEY(revision_id, position)
-            );
+            )
+        """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS managed_deck_bindings (
                 account_key TEXT NOT NULL, arena_deck_id TEXT NOT NULL,
                 deck_id TEXT NOT NULL REFERENCES managed_decks(id),
                 observed_at TEXT NOT NULL, presence TEXT NOT NULL DEFAULT 'unknown',
                 PRIMARY KEY(account_key, arena_deck_id)
-            );
-            CREATE INDEX IF NOT EXISTS managed_deck_revisions_deck ON managed_deck_revisions(deck_id);
+            )
         """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS managed_deck_revisions_deck "
+            "ON managed_deck_revisions(deck_id)"
+        )
 
     @staticmethod
     def _migrate_v34_native_deck_transfers(conn: sqlite3.Connection) -> None:
         """Durable native intents survive process/request interruptions."""
-        conn.executescript("""
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS managed_deck_transfers (
                 id TEXT PRIMARY KEY, account_key TEXT NOT NULL, deck_id TEXT NOT NULL,
                 revision_id TEXT NOT NULL, arena_deck_id TEXT NOT NULL,
                 action TEXT NOT NULL CHECK(action IN ('store', 'restore')),
                 phase TEXT NOT NULL, baseline_ids_json TEXT NOT NULL,
                 error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS managed_deck_transfers_pending
-                ON managed_deck_transfers(phase, account_key);
-            CREATE UNIQUE INDEX IF NOT EXISTS managed_deck_transfers_active_account
-                ON managed_deck_transfers(account_key)
-                WHERE phase NOT IN ('complete','cancelled');
+            )
         """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS managed_deck_transfers_pending "
+            "ON managed_deck_transfers(phase, account_key)"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS managed_deck_transfers_active_account "
+            "ON managed_deck_transfers(account_key) "
+            "WHERE phase NOT IN ('complete','cancelled')"
+        )
 
     @staticmethod
     def _migrate_v35_deck_collections(conn: sqlite3.Connection) -> None:

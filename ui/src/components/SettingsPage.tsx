@@ -25,6 +25,17 @@ import {
   type TrackerInfoSettings,
 } from '../api';
 import { Section } from './Section';
+import { useSharedUpdateStatus } from './useUpdateStatus';
+import {
+  displayVersion,
+  isNewerVersion,
+  saveUpdateSettings,
+  updatePillModel,
+  updateReasonText,
+  type UpdateSettings,
+  type UpdateSettingsChange,
+  type UpdateStatus,
+} from '../updateStatus';
 import { saveBuyOnPaperEnabled } from '../buyOnPaperSetting';
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -293,6 +304,8 @@ export function SettingsPage() {
   const [platform, setPlatform] = useState<PlatformSettings | null>(null);
   const [startup, setStartup] = useState<StartupSettings | null>(null);
   const [overlay, setOverlay] = useState<OverlaySettings | null>(null);
+  // undefined while loading; null when the tracker predates the updater.
+  const [updates, setUpdates] = useState<UpdateSettings | null | undefined>(undefined);
   const [buyOnPaper, setBuyOnPaper] = useState<BuyOnPaperSettings | null>(null);
   const [sessions, setSessions] = useState<SessionSettings | null>(null);
 
@@ -307,6 +320,7 @@ export function SettingsPage() {
           setPlatform(settings.platform);
           setStartup(settings.startup);
           setOverlay(settings.overlay ?? null);
+          setUpdates(settings.updates ?? null);
           setBuyOnPaper(settings.buy_on_paper ?? { enabled: true, cache_bytes: 0 });
           setSessions(settings.sessions ?? null);
         }
@@ -364,6 +378,24 @@ export function SettingsPage() {
           <SessionsForm initial={sessions} />
         </Section>
       ) : null}
+
+      <Section
+        id="settings-updates"
+        title="Updates"
+        description="Tapps Tracker looks for a newer release on GitHub, downloads it in the background and verifies it against a signed manifest. Nothing installs until you choose Restart to update, unless you allow automatic installs below."
+      >
+        {error ? (
+          <p className="empty-state deckfinder-state">{error}</p>
+        ) : updates === undefined ? (
+          <p className="state-panel deckfinder-state" role="status" aria-busy="true">
+            Loading...
+          </p>
+        ) : updates === null ? (
+          <p className="settings-hint">This tracker does not report update settings.</p>
+        ) : (
+          <UpdatesForm initial={updates} />
+        )}
+      </Section>
 
       <Section
         id="settings-overlay"
@@ -541,6 +573,256 @@ function StartupForm({
           {startup.error}
         </p>
       ) : null}
+      {message ? (
+        <p className="backup-note backup-note-done startup-save-status" role="status">
+          {message}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="collection-export-status collection-export-fail" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function updateStateText(status: UpdateStatus | null): string {
+  if (!status) {
+    return 'Update status is not available right now.';
+  }
+  const latest = displayVersion(status.latest_version);
+  const newer =
+    status.latest_version !== null && isNewerVersion(status.latest_version, status.current_version);
+  switch (status.state) {
+    case 'idle':
+      // A finished check that found no manifest (no release published yet).
+      return status.last_check ? 'No release information was available.' : 'Not checked yet.';
+    case 'checking':
+      return 'Checking for updates…';
+    case 'up_to_date':
+      return 'Tapps Tracker is up to date.';
+    case 'available':
+      return status.skipped ? `${latest} is available (skipped).` : `${latest} is available.`;
+    case 'downloading':
+      return updatePillModel(status).label;
+    case 'ready':
+      return status.pending_install
+        ? `${latest} is downloaded and verified. It will install after this game.`
+        : `${latest} is downloaded and verified.`;
+    case 'installing':
+      return 'Restarting…';
+    case 'error':
+      return status.error?.message ? `Update failed: ${status.error.message}` : 'Update failed.';
+    case 'disabled':
+      return 'Automatic checks are off. Check now looks once.';
+    case 'unsupported':
+      return newer ? `${latest} is available.` : 'This copy cannot update itself.';
+    default:
+      return '';
+  }
+}
+
+function formatCheckTime(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toLocaleString();
+}
+
+function UpdatesForm({ initial }: { initial: UpdateSettings }) {
+  const controller = useSharedUpdateStatus();
+  const [updates, setUpdates] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const status = controller.status;
+
+  async function update(change: UpdateSettingsChange) {
+    setBusy(true);
+    setMessage(null);
+    setError(null);
+    try {
+      setUpdates(await saveUpdateSettings(change));
+      setMessage('Saved.');
+      void controller.refresh();
+    } catch (exc: unknown) {
+      setError(exc instanceof Error ? exc.message : 'The update setting could not be saved');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function skip(version: string | null) {
+    await controller.skip(version);
+    setUpdates((current) => ({ ...current, skipped_version: version }));
+  }
+
+  const automatic = updates.check && updates.supported;
+  const state = status?.state;
+  const working = busy || controller.busy;
+  const moving = state === 'checking' || state === 'downloading' || state === 'installing';
+  const latest = status?.latest_version ?? null;
+  const offerable = status !== null && latest !== null && isNewerVersion(latest, status.current_version);
+  const canDownload = status?.state === 'available' && status.can_install;
+  const canInstall = status?.state === 'ready' && status.can_install;
+  const skipped = Boolean(status?.skipped || updates.skipped_version);
+  const lastCheck = formatCheckTime(status?.last_check ?? null);
+
+  return (
+    <div className="settings-form update-settings">
+      <label className="settings-check">
+        <input
+          checked={updates.check}
+          disabled={busy}
+          type="checkbox"
+          onChange={(event) => void update({ check: event.target.checked })}
+        />
+        Check for updates automatically
+      </label>
+      <p className="settings-hint">
+        One small request to GitHub at startup and every few hours. No account, nothing about you or
+        your games is sent.
+      </p>
+
+      <label className="settings-check">
+        <input
+          checked={updates.auto_download}
+          disabled={busy || !automatic}
+          type="checkbox"
+          onChange={(event) => void update({ auto_download: event.target.checked })}
+        />
+        Download updates automatically
+      </label>
+      <p className="settings-hint">When off, the sidebar offers a Download button instead.</p>
+
+      <label className="settings-check">
+        <input
+          checked={updates.auto_install}
+          disabled={busy || !automatic}
+          type="checkbox"
+          onChange={(event) => void update({ auto_install: event.target.checked })}
+        />
+        Install updates automatically when no game is running
+      </label>
+      <p className="settings-hint">Only while MTG Arena is closed. Your game history is backed up first.</p>
+
+      {!updates.supported ? (
+        <p className="settings-hint update-unsupported" role="note">
+          {updateReasonText(status?.reason, updates.install_kind)}
+        </p>
+      ) : null}
+
+      <div className="update-status-row">
+        <dl className="settings-info update-status-versions">
+          <div className="settings-info-row">
+            <dt>Installed</dt>
+            <dd>{displayVersion(status?.current_version) || '—'}</dd>
+          </div>
+          <div className="settings-info-row">
+            <dt>Latest</dt>
+            <dd>
+              {latest ? (
+                status?.notes_url ? (
+                  <a href={status.notes_url} rel="noreferrer" target="_blank">
+                    {displayVersion(latest)}
+                  </a>
+                ) : (
+                  displayVersion(latest)
+                )
+              ) : (
+                '—'
+              )}
+            </dd>
+          </div>
+          {lastCheck ? (
+            <div className="settings-info-row">
+              <dt>Last checked</dt>
+              <dd>{lastCheck}</dd>
+            </div>
+          ) : null}
+        </dl>
+        <p className="settings-hint update-state" role="status">
+          {updateStateText(status)}
+        </p>
+        <div className="update-actions">
+          <button
+            className="deck-neutral-button"
+            disabled={working || moving}
+            type="button"
+            onClick={() => void controller.check()}
+          >
+            Check now
+          </button>
+          {canDownload ? (
+            <button
+              className="deck-export-button"
+              disabled={working}
+              type="button"
+              onClick={() => void controller.download()}
+            >
+              Download
+            </button>
+          ) : null}
+          {canInstall ? (
+            <button
+              className="deck-export-button"
+              disabled={working}
+              title={status?.needs_elevation ? 'Windows will ask for permission' : undefined}
+              type="button"
+              onClick={() => void controller.install()}
+            >
+              Restart to update
+            </button>
+          ) : null}
+          {status && !status.mandatory && offerable && !skipped && state !== 'installing' ? (
+            <button
+              className="deck-neutral-button"
+              disabled={working}
+              type="button"
+              onClick={() => void skip(latest)}
+            >
+              Skip this version
+            </button>
+          ) : null}
+          {skipped && !status?.mandatory ? (
+            <button
+              className="deck-neutral-button"
+              disabled={working}
+              type="button"
+              onClick={() => void skip(null)}
+            >
+              Un-skip
+            </button>
+          ) : null}
+        </div>
+        {controller.notice?.kind === 'game' ? (
+          <div className="update-actions">
+            <p className="collection-export-status collection-export-warning" role="status">
+              {controller.notice.text}
+            </p>
+            <button
+              className="deck-neutral-button"
+              disabled={working}
+              type="button"
+              onClick={() => void controller.installAfterGame()}
+            >
+              Install after this game
+            </button>
+          </div>
+        ) : controller.notice ? (
+          <p className="collection-export-status collection-export-warning" role="alert">
+            {controller.notice.text}
+          </p>
+        ) : null}
+        {status?.db_newer_than_app ? (
+          <p className="collection-export-status collection-export-warning" role="alert">
+            Database is newer than this version. Update Tapps Tracker before recording more games.
+          </p>
+        ) : null}
+      </div>
+
       {message ? (
         <p className="backup-note backup-note-done startup-save-status" role="status">
           {message}

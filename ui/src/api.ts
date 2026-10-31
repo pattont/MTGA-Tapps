@@ -1,4 +1,5 @@
 import type { ReplayAvailability, ReplayStream } from './replay/types';
+import type { UpdateSettings } from './updateStatus';
 
 export type { ReplayAvailability, ReplayStream } from './replay/types';
 
@@ -1780,6 +1781,8 @@ export interface TrackerSettings {
   platform: PlatformSettings;
   startup: StartupSettings;
   overlay: OverlaySettings;
+  /** Absent from trackers older than the in-app updater. */
+  updates?: UpdateSettings;
   /** Missing from trackers older than Buy on Paper. */
   buy_on_paper?: BuyOnPaperSettings;
   /** Missing from trackers older than the session break setting. */
@@ -2027,6 +2030,10 @@ export async function setOverlayEnabled(enabled: boolean): Promise<OverlaySettin
   const body = await deckFinderJson<{ overlay: OverlaySettings }>(response);
   return body.overlay;
 }
+
+// Settings → Updates and `/api/update` live in updateStatus.ts.
+export { saveUpdateSettings } from './updateStatus';
+export type { UpdateSettings, UpdateStatus } from './updateStatus';
 
 export async function saveStartupSettings(
   payload: Partial<Pick<StartupSettings, 'start_at_login' | 'open_dashboard_on_launch'>>,

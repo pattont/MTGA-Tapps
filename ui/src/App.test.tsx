@@ -632,6 +632,9 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
+    // This stub answers /api/update with the snapshot too: no update pill, no crash.
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/update', expect.anything()));
+    expect(document.querySelector('.sidebar-update, .sidebar-update-slot, .sidebar-just-updated')).toBeNull();
     expect(screen.getByRole('link', { name: 'Tapps Tracker – Go to overview' })).toHaveAttribute(
       'href',
       '#overview',
@@ -2238,6 +2241,10 @@ describe('App', () => {
       if (String(url).includes('/api/live')) {
         return new Response(JSON.stringify({ tracker: { state: 'idle' } }), { status: 200 });
       }
+      if (String(url).includes('/api/update')) {
+        // The sidebar's update poller; an idle tracker shows no pill.
+        return new Response(JSON.stringify({ state: 'up_to_date' }), { status: 200 });
+      }
       return responses.shift() ?? new Response('exhausted', { status: 500 });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -2268,6 +2275,10 @@ describe('App', () => {
       }
       if (String(url).includes('/api/live')) {
         return new Response(JSON.stringify({ tracker: { state: 'idle' } }), { status: 200 });
+      }
+      if (String(url).includes('/api/update')) {
+        // The sidebar's update poller; an idle tracker shows no pill.
+        return new Response(JSON.stringify({ state: 'up_to_date' }), { status: 200 });
       }
       return responses.shift() ?? new Response('exhausted', { status: 500 });
     });
@@ -2305,6 +2316,9 @@ describe('App', () => {
         return Promise.resolve(
           new Response(JSON.stringify({ tracker: { state: 'idle' } }), { status: 200 }),
         );
+      }
+      if (String(_url).includes('/api/update')) {
+        return Promise.resolve(new Response(JSON.stringify({ state: 'up_to_date' }), { status: 200 }));
       }
       callCount += 1;
       if (callCount === 1) {

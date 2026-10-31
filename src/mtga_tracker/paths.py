@@ -295,6 +295,67 @@ DATA_DIR_STR = str(DATA_DIR)
 LOGS_DIR_STR = str(LOGS_DIR)
 
 
+def current_platform_key() -> str:
+    """ "darwin", "win32", "linux", or sys.platform for anything else: the
+    one switch other modules use instead of inlining OS checks."""
+    if sys.platform.startswith("linux"):
+        return "linux"
+    return sys.platform
+
+
+def macos_bundle_location_issue(bundle, access=os.access) -> Optional[str]:
+    """Why a macOS .app at `bundle` cannot be replaced in place, or None:
+    "dmg-mounted" (running from the disk image under /Volumes),
+    "translocated" (Gatekeeper App Translocation), or "not-writable" (this
+    user cannot rename the bundle or its parent folder)."""
+    text = str(bundle)
+    if text.startswith("/Volumes/"):
+        return "dmg-mounted"
+    if "/AppTranslocation/" in text:
+        return "translocated"
+    if not access(str(Path(bundle).parent), os.W_OK) or not access(str(bundle), os.W_OK):
+        return "not-writable"
+    return None
+
+
+def arena_process_running(run=None) -> Optional[bool]:
+    """Whether MTG Arena is running: True, False, or None when the probe
+    itself failed (callers treat unknown as "running" for unattended work).
+
+    macOS asks `pgrep -x MTGA`; Windows asks `tasklist` with CREATE_NO_WINDOW
+    so a frozen GUI build never flashes a console. Other platforms (Arena
+    under Wine/Proton) are not validated yet and report None.
+    """
+    import subprocess
+
+    run = run or subprocess.run
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            result = run(["/usr/bin/pgrep", "-x", "MTGA"], capture_output=True, timeout=5)
+            if result.returncode == 0:
+                return True
+            if result.returncode == 1:
+                return False
+            return None
+        if system == "Windows":
+            from .overlay_launcher import _detached_kwargs
+
+            result = run(
+                ["tasklist", "/FI", "IMAGENAME eq MTGA.exe", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                **_detached_kwargs(),
+            )
+            if result.returncode != 0:
+                return None
+            return '"mtga.exe"' in str(result.stdout or "").lower()
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return None
+
+
 def raise_open_file_limit(target: int = 4096) -> Optional[int]:
     """Lift the process's soft open-file limit toward `target` (never above
     the hard limit). A macOS app launched from Finder or `open` starts with

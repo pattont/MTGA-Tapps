@@ -6,6 +6,7 @@ import errno
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import IO, Callable, Optional
 
@@ -112,3 +113,26 @@ class SingleInstanceGuard:
         self._close_mutex = None
         if handle is not None and close_mutex is not None:
             close_mutex(handle)
+
+
+def acquire_with_retry(
+    guard: "SingleInstanceGuard",
+    timeout: float = 60.0,
+    *,
+    interval: float = 0.5,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> bool:
+    """Retry `guard.acquire()` until it succeeds or `timeout` elapses.
+
+    A version relaunched by the updater (`--after-update`) can start before
+    the old process has fully exited; it waits for the old one's lock
+    instead of reporting "already running".
+    """
+    deadline = clock() + max(0.0, timeout)
+    while True:
+        if guard.acquire():
+            return True
+        if clock() >= deadline:
+            return False
+        sleep(interval)

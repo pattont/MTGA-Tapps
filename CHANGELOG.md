@@ -2,6 +2,23 @@
 
 ## 0.7.5
 
+### Updates
+
+- In-app updates. The tracker checks GitHub Releases for a newer version (every six
+  hours and shortly after start), downloads it in the background, verifies it against a
+  signed manifest, and then offers **Restart to update** in a banner at the top of the
+  dashboard, at the bottom left of the sidebar, and in the tray menu. Nothing installs
+  mid-game: the restart waits for the current game, with an "Install after this game"
+  option, and a pre-update backup of your game history is written to the data folder's
+  `backups` first. **Settings →
+  Updates** controls the check, the automatic download, and an opt-in fully automatic
+  install that only runs while Arena is closed. Windows installs upgrade silently through
+  the installer; macOS swaps the app bundle in place. The portable Windows zip and source
+  runs link to the release instead. **This release must be installed by hand; releases
+  after it update in place.**
+- Database migrations now run one transaction each, so a failed migration rolls back
+  only itself and is retried on the next launch.
+
 ### Buy on Paper
 
 - New **Buy on Paper** button in Deck Finder, a saved deck in Deck Manager, and

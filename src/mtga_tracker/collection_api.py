@@ -72,6 +72,12 @@ def _store_collection(collection: Dict[int, int]) -> None:
         _SCAN_CACHE["at"] = time.monotonic()
 
 
+def job_running() -> bool:
+    """True while an export job is scanning or writing (the updater waits)."""
+    with _JOBS_LOCK:
+        return any(job.get("state") == "running" for job in _JOBS.values())
+
+
 def start_export(db_path: Optional[Path], fmt: str, *, refresh: bool) -> str:
     """Kick off an export job; returns its id."""
     now = time.time()

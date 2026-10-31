@@ -539,8 +539,9 @@ Network requests are limited to the features that use them:
 - The dashboard and overlay fetch card art from Scryfall. The dashboard also
   uses Scryfall's batch API for missing mana costs; Archidekt collection
   exports use it for printing IDs and cache the results locally.
-- The dashboard checks GitHub Releases for updates, caching successful
-  checks for a day.
+- The tracker downloads a small signed update manifest from GitHub Releases
+  shortly after start and every six hours (off in **Settings → Updates**), and
+  downloads the new version from GitHub when one is available.
 - Deck Finder requests the public decklist sites you browse.
 - Buy on Paper asks Scryfall for TCGplayer prices and downloads Card Kingdom's
   and Mana Pool's public price lists at most once a day (it can be turned off
