@@ -18,9 +18,10 @@
   --draw: #8ab4f8;
   /* Teal is reserved for replay affordances only. */
   --replay: #2bb3a3;
-  /* Pink is reserved for the in-app update pill. */
-  --update: #e879a8;
-  --update-strong: #f5a6c6;
+  /* Violet is reserved for in-app updates (sidebar tile, banner, progress):
+     a hue none of the sidebar launchers use. */
+  --update: #a78bfa;
+  --update-strong: #c4b5fd;
   --on-play: #5fd4c4;
   --on-draw: #b79df7;
   --tie: #d48fe8;
@@ -56,8 +57,8 @@
   --success: #0d8040;
   --draw: #155fd0;
   --replay: #0f8f82;
-  --update: #c2185b;
-  --update-strong: #9c1250;
+  --update: #7c3aed;
+  --update-strong: #6d28d9;
   --on-play: #0b7d6e;
   --on-draw: #6b46c1;
   --tie: #9333b8;
@@ -3629,7 +3630,7 @@ tbody tr:hover {
 
 /* The update tile shares the launchers' shape (full width, 8 px corners,
    icon + label) so it reads as part of the stack; "Restart to update" is the
-   only solid tile, which keeps it apart from the outlined pink coffee tile. */
+   only solid tile, so it stands out from the outlined launchers. */
 .sidebar-update {
   display: flex;
   align-items: center;
