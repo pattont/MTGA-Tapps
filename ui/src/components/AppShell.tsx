@@ -49,7 +49,7 @@ import type { ThemeName } from '../theme';
 import { buyMeACoffeeUrl } from '../supportLink';
 import { CardSearch } from './CardSearch';
 import { CollapseToggle } from './CollapseToggle';
-import { UpdateIndicator, UpdateNotices } from './UpdateIndicator';
+import { UpdateBanner, UpdateIndicator, UpdateNotices } from './UpdateIndicator';
 import { UpdateStatusContext, useUpdateStatus } from './useUpdateStatus';
 
 interface AppShellProps {
@@ -524,6 +524,7 @@ export function AppShell({
             </a>
           </div>
         </header>
+        <UpdateBanner controller={update} />
         <UpdateStatusContext.Provider value={update}>{children}</UpdateStatusContext.Provider>
       </main>
       {showBackToTop ? (

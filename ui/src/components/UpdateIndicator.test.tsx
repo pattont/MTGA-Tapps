@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ARENA_RUNNING_CONFIRM, type UpdateStatus } from '../updateStatus';
 import { updateStatus } from '../test/updateFixtures';
-import { UpdateIndicator, UpdateNotices } from './UpdateIndicator';
+import { UpdateBanner, UpdateIndicator, UpdateNotices } from './UpdateIndicator';
 import { useUpdateStatus } from './useUpdateStatus';
 
 function Harness({ collapsed = false }: { collapsed?: boolean }) {
@@ -14,6 +14,11 @@ function Harness({ collapsed = false }: { collapsed?: boolean }) {
       <UpdateNotices controller={controller} />
     </div>
   );
+}
+
+function BannerHarness() {
+  const controller = useUpdateStatus();
+  return <UpdateBanner controller={controller} />;
 }
 
 function json(body: unknown, init: ResponseInit = {}) {
@@ -167,7 +172,7 @@ describe('UpdateIndicator', () => {
     render(<Harness />);
     const bar = await screen.findByRole('progressbar', { name: 'Update download progress' });
     expect(bar).toHaveAttribute('aria-valuenow', '42');
-    expect(screen.getByText('Downloading v0.6.6 — 42%')).toBeInTheDocument();
+    expect(screen.getByText('Downloading — 42%')).toBeInTheDocument();
   });
 
   it('starts a download when automatic download is off, and retries after an error', async () => {
@@ -285,5 +290,59 @@ describe('UpdateIndicator', () => {
       await vi.advanceTimersByTimeAsync(2_000);
     });
     expect(reload).toHaveBeenCalled();
+  });
+
+  it('refreshes at once when the tab is shown again', async () => {
+    const api = stubApi({ state: 'up_to_date' });
+    render(<Harness />);
+    await waitFor(() => expect(api.fetch).toHaveBeenCalledWith('/api/update', expect.anything()));
+    const before = api.fetch.mock.calls.filter(([url]) => url === '/api/update').length;
+    api.status = updateStatus({ state: 'ready' });
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    expect(await screen.findByRole('button', { name: 'Restart to update' })).toBeInTheDocument();
+    expect(api.fetch.mock.calls.filter(([url]) => url === '/api/update').length).toBeGreaterThan(before);
+  });
+});
+
+describe('UpdateBanner', () => {
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('shows a page banner when an update is ready, installs from it, and hides on Later', async () => {
+    const api = stubApi({ state: 'ready' });
+    const user = userEvent.setup();
+    const { unmount } = render(<BannerHarness />);
+    expect(await screen.findByText('Tapps Tracker v0.6.6 is ready to install')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Restart to update' }));
+    expect(api.posts.at(-1)).toMatchObject({ url: '/api/update/install', body: {} });
+    await user.click(screen.getByRole('button', { name: 'Later' }));
+    expect(screen.queryByText('Tapps Tracker v0.6.6 is ready to install')).toBeNull();
+    unmount();
+    // "Later" lasts for this version only.
+    render(<BannerHarness />);
+    await waitFor(() => expect(api.fetch).toHaveBeenCalled());
+    expect(screen.queryByRole('region', { name: 'Update available' })).toBeNull();
+  });
+
+  it('stays out of the way while downloading by itself, and for copies that link out', async () => {
+    stubApi({ state: 'downloading', progress: { received: 1, total: 2, fraction: 0.5 } });
+    const { unmount } = render(<BannerHarness />);
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Update available' })).toBeNull());
+    unmount();
+    stubApi({ state: 'available', can_install: false, reason: 'portable' });
+    render(<BannerHarness />);
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Update available' })).toBeNull());
+  });
+
+  it('asks for the download when automatic download is off', async () => {
+    const api = stubApi({ state: 'available', auto_download: false });
+    const user = userEvent.setup();
+    render(<BannerHarness />);
+    expect(await screen.findByText('Tapps Tracker v0.6.6 is available')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Download' }));
+    expect(api.posts.at(-1)).toMatchObject({ url: '/api/update/download' });
   });
 });

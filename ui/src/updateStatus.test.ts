@@ -90,12 +90,12 @@ describe('updatePillModel', () => {
         progress: { received: 48_234_496, total: 114_849_792, fraction: 0.4199 },
       }),
     );
-    expect(model).toMatchObject({ kind: 'progress', percent: 42, label: 'Downloading v0.6.6 — 42%' });
-    expect(model.title).toBe('46.0 MB of 109.5 MB');
+    expect(model).toMatchObject({ kind: 'progress', percent: 42, label: 'Downloading — 42%' });
+    expect(model.title).toBe('Downloading v0.6.6: 46.0 MB of 109.5 MB');
     expect(updatePillModel(updateStatus({ state: 'downloading', progress: { received: 1, total: 1, fraction: 1.7 } })).percent).toBe(100);
     expect(updatePillModel(updateStatus({ state: 'downloading', progress: null }))).toMatchObject({
       percent: undefined,
-      label: 'Downloading v0.6.6…',
+      label: 'Downloading update…',
     });
   });
 
@@ -135,6 +135,15 @@ describe('isNewerVersion', () => {
     expect(isNewerVersion('0.6.3', '0.6.3rc8')).toBe(true);
     expect(isNewerVersion('0.6.3rc8', '0.6.3')).toBe(false);
     expect(isNewerVersion('0.6.4', '0.6.10')).toBe(false);
+  });
+
+  it('orders pre-releases by kind and number, whatever the spelling', () => {
+    expect(isNewerVersion('0.7.5rc2', '0.7.5-rc.1')).toBe(true);
+    expect(isNewerVersion('0.7.5-rc.1', '0.7.5rc2')).toBe(false);
+    expect(isNewerVersion('0.7.5rc2', '0.7.5-rc.2')).toBe(false);
+    expect(isNewerVersion('0.7.5rc1', '0.7.5b3')).toBe(true);
+    expect(isNewerVersion('0.7.5a1', '0.7.5.dev9')).toBe(true);
+    expect(isNewerVersion('0.7.5', '0.7.5-rc.9')).toBe(true);
   });
 });
 

@@ -4,7 +4,7 @@ Run this on the Mac Studio (admin account, Arena installed) and the Windows 11
 machine before publishing the first updater-capable release. Everything here
 needs two builds: the **previous** release (the one users have, built from the
 `auto-update` branch so it carries the updater) and a **newer** one with a higher
-tag. Use a separate data directory for every run (`MTGA_DATA_DIR=<scratch>`), never
+tag. Use a separate data directory for every run (`MTGA_TRACKER_DATA_DIR=<scratch>`), never
 the real tracker database, and never while a match is in progress.
 
 Record outcomes inline (date, OS version, pass/fail, log excerpt). Anything that
@@ -96,3 +96,14 @@ Install rc.1 with the per-user setup (default), then:
 - [ ] Network off: Check now reports the error and a previously ready update stays
       ready and installable.
 - [ ] Kill the app during a download; relaunch resumes the `.part` file.
+
+## Notes from the first Mac run (2026-10-31)
+
+- `MTGA_DATA_DIR` is Arena's card-database folder, not the tracker's data folder.
+  Setting it to a scratch folder makes the card DB "not found" and leaves the
+  tracker on its real database. The tracker's own folder is `MTGA_TRACKER_DATA_DIR`.
+- The relaunched version inherits the old process's environment (the swap helper
+  and `open` pass it through), so test overrides carry across the update.
+- The pill was missed because it only lived at the bottom of the sidebar. The ready
+  state now also shows a banner at the top of every page, a background tab refreshes
+  the moment it is shown, and the first check runs 30 s after launch.

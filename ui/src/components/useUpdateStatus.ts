@@ -131,6 +131,24 @@ export function useUpdateStatus({ enabled = true }: { enabled?: boolean } = {}):
     return () => window.clearInterval(id);
   }, [enabled, fast, refresh]);
 
+  // A hidden tab skips polls, so catch up the moment it is shown or focused.
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+    const onVisible = () => {
+      if (!document.hidden) {
+        void refresh();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [enabled, refresh]);
+
   const installing = status?.state === 'installing';
   useEffect(() => {
     if (!enabled || !installing) {

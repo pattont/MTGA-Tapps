@@ -204,22 +204,30 @@ export function parseUpdateStatus(raw: unknown): UpdateStatus | null {
   };
 }
 
-function versionParts(value: string): { release: number[]; pre: boolean } | null {
+/** PEP 440 pre-release order: dev < a < b < rc < final. */
+const PRE_RANK: Record<string, number> = { dev: 0, a: 1, alpha: 1, b: 2, beta: 2, c: 3, rc: 3, pre: 3, preview: 3 };
+const FINAL_RANK = 4;
+
+function versionParts(value: string): { release: number[]; rank: number; preNumber: number } | null {
   const match = /^v?(\d+(?:\.\d+)*)(.*)$/i.exec(value.trim());
   if (!match) {
     return null;
   }
+  // "rc1", "-rc.1", "a2", "b1", ".dev3" sort before the final release; "+local" does not.
+  const pre = /^[.-]?(alpha|beta|preview|pre|dev|rc|a|b|c)[.-]?(\d*)/i.exec(match[2]);
   return {
     release: match[1].split('.').map(Number),
-    // "rc1", "a2", "b1", ".dev3" sort before the final release; "+local" does not.
-    pre: /^[.-]?(a|b|c|rc|alpha|beta|pre|preview|dev)/i.test(match[2]),
+    rank: pre ? PRE_RANK[pre[1].toLowerCase()] : FINAL_RANK,
+    preNumber: pre && pre[2] ? Number(pre[2]) : 0,
   };
 }
 
 /**
  * True when `latest` is a newer release than `current`. Compares every
- * numeric segment (four-part hotfix tags included) and ranks pre-releases
- * below their final release. Unparseable input falls back to inequality.
+ * numeric segment (four-part hotfix tags included), ranks pre-releases below
+ * their final release, and orders pre-releases by kind and number, so
+ * `0.7.5rc2` is newer than `0.7.5-rc.1`. Unparseable input falls back to
+ * inequality.
  */
 export function isNewerVersion(latest: string, current: string): boolean {
   const a = versionParts(latest);
@@ -235,7 +243,10 @@ export function isNewerVersion(latest: string, current: string): boolean {
       return left > right;
     }
   }
-  return b.pre && !a.pre;
+  if (a.rank !== b.rank) {
+    return a.rank > b.rank;
+  }
+  return a.preNumber > b.preNumber;
 }
 
 export function displayVersion(version: string | null | undefined): string {
@@ -357,11 +368,12 @@ export function updatePillModel(input: unknown): UpdatePillModel {
       const percent = progress ? Math.min(100, Math.max(0, Math.round(progress.fraction * 100))) : undefined;
       const title =
         progress && progress.total > 0
-          ? `${formatBytes(progress.received)} of ${formatBytes(progress.total)}`
+          ? `Downloading${named}: ${formatBytes(progress.received)} of ${formatBytes(progress.total)}`
           : `Downloading${named}`;
       return {
         ...base,
-        label: percent === undefined ? `Downloading${named}…` : `Downloading${named} — ${percent}%`,
+        // Short enough for one line in the sidebar; the version is in the title.
+        label: percent === undefined ? 'Downloading update…' : `Downloading — ${percent}%`,
         kind: 'progress',
         percent,
         title,

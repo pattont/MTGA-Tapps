@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { ArrowUpCircle, Download, RefreshCw, X } from 'lucide-react';
+import { ArrowUpCircle, Download, ExternalLink, RefreshCw, X } from 'lucide-react';
 import { displayVersion, updatePillModel, type UpdatePillModel } from '../updateStatus';
 import type { UpdateController } from './useUpdateStatus';
 
@@ -96,14 +96,15 @@ export function UpdateIndicator({
   let pill: ReactNode;
   if (model.kind === 'link') {
     pill = (
-      <a className="sidebar-update" href={model.href} rel="noreferrer" target="_blank" title={model.title}>
-        {model.label}
+      <a className="sidebar-update sidebar-update-link" href={model.href} rel="noreferrer" target="_blank" title={model.title}>
+        <ExternalLink aria-hidden="true" />
+        <span>{model.label}</span>
       </a>
     );
   } else if (model.kind === 'progress') {
     pill = (
       <div className="sidebar-update sidebar-update-progress" role="status" title={model.title}>
-        <span>{model.label}</span>
+        <span className="sidebar-update-label">{model.label}</span>
         {model.percent === undefined ? (
           <progress aria-label="Update download progress" className="sidebar-update-bar" />
         ) : (
@@ -135,7 +136,14 @@ export function UpdateIndicator({
         type="button"
         onClick={() => void activate()}
       >
-        {model.label}
+        {model.kind === 'retry' ? (
+          <RefreshCw aria-hidden="true" />
+        ) : model.kind === 'install' ? (
+          <ArrowUpCircle aria-hidden="true" />
+        ) : (
+          <Download aria-hidden="true" />
+        )}
+        <span>{model.label}</span>
       </button>
     );
   }
@@ -182,18 +190,23 @@ export function UpdateNotices({ controller }: { controller: UpdateController }) 
   return (
     <>
       {showJustUpdated && justUpdated ? (
-        <p className={`sidebar-just-updated${justUpdated.ok ? '' : ' sidebar-just-updated-failed'}`} role="status">
-          <span>
-            {justUpdated.ok
-              ? `Updated to ${displayVersion(justUpdated.to)}`
-              : `Update to ${displayVersion(justUpdated.to)} did not finish`}
+        <div className={`sidebar-just-updated${justUpdated.ok ? '' : ' sidebar-just-updated-failed'}`} role="status">
+          <span className="sidebar-just-updated-text">
+            <strong
+              title={
+                justUpdated.ok
+                  ? `Updated to ${displayVersion(justUpdated.to)}`
+                  : `Update to ${displayVersion(justUpdated.to)} did not finish`
+              }
+            >
+              {justUpdated.ok
+                ? `Updated to ${displayVersion(justUpdated.to)}`
+                : `Update to ${displayVersion(justUpdated.to)} did not finish`}
+            </strong>
             {justUpdated.notes_url ? (
-              <>
-                {' · '}
-                <a href={justUpdated.notes_url} rel="noreferrer" target="_blank">
-                  {justUpdated.ok ? "What's new" : 'Details'}
-                </a>
-              </>
+              <a href={justUpdated.notes_url} rel="noreferrer" target="_blank">
+                {justUpdated.ok ? "What's new" : 'Details'}
+              </a>
             ) : null}
           </span>
           <button
@@ -208,7 +221,7 @@ export function UpdateNotices({ controller }: { controller: UpdateController }) 
           >
             <X aria-hidden="true" />
           </button>
-        </p>
+        </div>
       ) : null}
       {status?.db_newer_than_app ? (
         <p className="sidebar-update-warning" role="alert" title="This database was written by a newer Tapps Tracker; update to the latest version.">
@@ -216,5 +229,91 @@ export function UpdateNotices({ controller }: { controller: UpdateController }) 
         </p>
       ) : null}
     </>
+  );
+}
+
+const BANNER_DISMISS_KEY = 'tapps-update-banner-dismissed';
+
+function readDismissedBanner(): string | null {
+  try {
+    return window.localStorage.getItem(BANNER_DISMISS_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A banner at the top of every page while an update needs the user: it has
+ * been downloaded and verified ("Restart to update"), or automatic download is
+ * off and it is waiting for a click. "Later" hides it until a newer version
+ * arrives; the sidebar tile and tray item stay.
+ */
+export function UpdateBanner({ controller }: { controller: UpdateController }) {
+  const [dismissed, setDismissed] = useState<string | null>(readDismissedBanner);
+  const { status, busy, notice } = controller;
+  if (!status || !status.can_install || !status.latest_version) {
+    return null;
+  }
+  const ready = status.state === 'ready';
+  const manualDownload = status.state === 'available' && !status.auto_download && !status.skipped;
+  if ((!ready && !manualDownload) || dismissed === status.latest_version) {
+    return null;
+  }
+  const version = displayVersion(status.latest_version);
+  const later = () => {
+    try {
+      window.localStorage.setItem(BANNER_DISMISS_KEY, status.latest_version ?? '');
+    } catch {
+      // Private mode: it simply comes back next visit.
+    }
+    setDismissed(status.latest_version);
+  };
+  return (
+    <section aria-label="Update available" className="update-banner" role="region">
+      <ArrowUpCircle aria-hidden="true" className="update-banner-icon" />
+      <div className="update-banner-text">
+        <strong>
+          {ready ? `Tapps Tracker ${version} is ready to install` : `Tapps Tracker ${version} is available`}
+        </strong>
+        <span>
+          {status.pending_install
+            ? 'It will install when your current game ends.'
+            : notice
+              ? notice.text
+              : ready
+                ? `The restart takes a few seconds; your game history is backed up first.${
+                    status.needs_elevation ? ' Windows will ask for permission.' : ''
+                  }`
+                : 'Download it now; you choose when to restart.'}
+          {status.notes_url ? (
+            <>
+              {' '}
+              <a href={status.notes_url} rel="noreferrer" target="_blank">
+                What&apos;s new
+              </a>
+            </>
+          ) : null}
+        </span>
+      </div>
+      <div className="update-banner-actions">
+        {notice?.kind === 'game' && !status.pending_install ? (
+          <button className="update-banner-primary" disabled={busy} type="button" onClick={() => void controller.installAfterGame()}>
+            Install after this game
+          </button>
+        ) : !status.pending_install ? (
+          <button
+            className="update-banner-primary"
+            disabled={busy}
+            type="button"
+            onClick={() => void (ready ? controller.install() : controller.download())}
+          >
+            {ready ? 'Restart to update' : 'Download'}
+          </button>
+        ) : null}
+        <button className="update-banner-later" type="button" onClick={later}>
+          Later
+        </button>
+      </div>
+    </section>
   );
 }

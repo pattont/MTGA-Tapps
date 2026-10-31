@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-FIRST_CHECK_DELAY_S = 90.0
+FIRST_CHECK_DELAY_S = 30.0
 CHECK_INTERVAL_S = 6 * 3600.0
 CHECK_JITTER = 0.10
 ERROR_RETRY_S = 3600.0

@@ -1028,11 +1028,15 @@ def test_scheduler_sleeps_while_ready_instead_of_spinning(tmp_path):
     assert armed.manager._tick() == updater.IDLE_WAKE_S
 
 
-def test_first_check_waits_ninety_seconds(tmp_path):
+def test_first_check_waits_thirty_seconds(tmp_path):
+    assert updater.FIRST_CHECK_DELAY_S == 30.0
     h = Harness(tmp_path)
     h.manager._started_at = h.clock()
     h.manager._next_check = h.clock() + updater.FIRST_CHECK_DELAY_S
-    assert h.manager._tick() == pytest.approx(updater.HEALTHY_AFTER_S)
+    # The worker sleeps until whichever comes first: the check or the health marker.
+    assert h.manager._tick() == pytest.approx(
+        min(updater.FIRST_CHECK_DELAY_S, updater.HEALTHY_AFTER_S)
+    )
     assert h.session.calls == []
     h.clock.advance(updater.FIRST_CHECK_DELAY_S)
     h.manager._tick()
