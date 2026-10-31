@@ -195,28 +195,6 @@ describe('Settings → Updates', () => {
     expect(scoped.queryByText('No release information was available.')).toBeNull();
   });
 
-  it('checks from the Tracker Version row and says when this is the latest version', async () => {
-    const api = stubSettings({ status: updateStatus({ state: 'up_to_date', latest_version: '0.6.5.3', last_check: '2026-10-18T10:00:00Z' }) });
-    const user = userEvent.setup();
-    render(<SettingsPage />);
-    const link = await screen.findByRole('button', { name: 'Check for updates' });
-    api.state.status = updateStatus({ state: 'up_to_date', latest_version: '0.6.5.3', last_check: '2026-10-18T11:00:00Z' });
-    await user.click(link);
-    expect(await screen.findByText("You're on the latest version")).toBeInTheDocument();
-    expect(api.posts.some((post) => post.url === '/api/update/check')).toBe(true);
-    expect(screen.getByRole('button', { name: 'Check again' })).toBeInTheDocument();
-  });
-
-  it('names the newer version when the check finds one', async () => {
-    const api = stubSettings({ status: updateStatus({ state: 'up_to_date', latest_version: '0.6.5.3', last_check: '2026-10-18T10:00:00Z' }) });
-    const user = userEvent.setup();
-    render(<SettingsPage />);
-    const link = await screen.findByRole('button', { name: 'Check for updates' });
-    api.state.status = updateStatus({ state: 'ready', latest_version: '0.6.6', last_check: '2026-10-18T11:00:00Z' });
-    await user.click(link);
-    expect(await screen.findByText('v0.6.6 is available')).toBeInTheDocument();
-  });
-
   it('copes with a tracker that has no update settings', async () => {
     stubSettings({ updates: null });
     render(<SettingsPage />);

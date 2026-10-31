@@ -88,102 +88,13 @@ const TRACKER_INFO_ROWS: Array<[keyof TrackerInfoSettings, string]> = [
   ['version', 'Tracker Version'],
 ];
 
-/** How long "Check for updates" waits for the tracker's answer. */
-const VERSION_CHECK_TIMEOUT_MS = 15_000;
-const VERSION_CHECK_POLL_MS = 1_000;
-
-/** The result line after a manual check, from the updater's status. */
-function versionCheckResult(status: UpdateStatus | null): { text: string; tone: 'ok' | 'update' | 'warn' } {
-  if (!status) {
-    return { text: 'Could not reach the tracker', tone: 'warn' };
-  }
-  const latest = status.latest_version;
-  const newer = latest !== null && isNewerVersion(latest, status.current_version);
-  switch (status.state) {
-    case 'available':
-    case 'downloading':
-    case 'ready':
-    case 'installing':
-      return { text: `${displayVersion(latest)} is available`, tone: 'update' };
-    case 'error':
-      return { text: status.error?.message || 'The update check failed', tone: 'warn' };
-    case 'idle':
-      return latest === null
-        ? { text: 'No release information was available', tone: 'warn' }
-        : { text: "You're on the latest version", tone: 'ok' };
-    default:
-      return newer
-        ? { text: `${displayVersion(latest)} is available`, tone: 'update' }
-        : { text: "You're on the latest version", tone: 'ok' };
-  }
-}
-
-/** A quiet "Check for updates" link at the end of the Tracker Version row. */
-function VersionCheck() {
-  const controller = useSharedUpdateStatus();
-  const [phase, setPhase] = useState<'idle' | 'checking' | 'done'>('idle');
-  const startedAt = useRef<string | null>(null);
-  const deadline = useRef(0);
-  const { status, refresh } = controller;
-
-  useEffect(() => {
-    if (phase !== 'checking') {
-      return;
-    }
-    // Done once the updater has stamped a newer check and left "checking".
-    if (status && status.state !== 'checking' && status.last_check !== startedAt.current) {
-      setPhase('done');
-      return;
-    }
-    if (Date.now() > deadline.current) {
-      setPhase('done');
-      return;
-    }
-    const id = window.setTimeout(() => void refresh(), VERSION_CHECK_POLL_MS);
-    return () => window.clearTimeout(id);
-  }, [phase, status, refresh]);
-
-  async function check() {
-    startedAt.current = status?.last_check ?? null;
-    deadline.current = Date.now() + VERSION_CHECK_TIMEOUT_MS;
-    setPhase('checking');
-    await controller.check();
-  }
-
-  const result = phase === 'done' ? versionCheckResult(status) : null;
-  return (
-    <span className="settings-version-check">
-      {result ? (
-        <span className={`settings-version-result settings-version-result-${result.tone}`} role="status">
-          {result.text}
-        </span>
-      ) : null}
-      <button
-        className="settings-version-check-button"
-        disabled={phase === 'checking'}
-        type="button"
-        onClick={() => void check()}
-      >
-        {phase === 'checking' ? 'Checking…' : result ? 'Check again' : 'Check for updates'}
-      </button>
-    </span>
-  );
-}
-
 function TrackerInfo({ info }: { info: TrackerInfoSettings }) {
   return (
     <dl className="settings-info">
       {TRACKER_INFO_ROWS.map(([key, label]) => (
         <div key={key} className="settings-info-row">
           <dt>{label}</dt>
-          {key === 'version' ? (
-            <dd className="settings-info-version">
-              <span>{info[key] ?? 'not found (start the tracker to detect it)'}</span>
-              <VersionCheck />
-            </dd>
-          ) : (
-            <dd>{info[key] ?? 'not found (start the tracker to detect it)'}</dd>
-          )}
+          <dd>{info[key] ?? 'not found (start the tracker to detect it)'}</dd>
         </div>
       ))}
     </dl>

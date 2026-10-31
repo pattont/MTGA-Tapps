@@ -5388,66 +5388,6 @@ tr.deck-change-row-out .card-link {
   font-size: 0.82rem;
 }
 
-/* Tracker Version: the version on the left, a quiet "Check for updates" on the right. */
-.settings-info-row dd.settings-info-version {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 4px 16px;
-}
-
-.settings-version-check {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: flex-end;
-  gap: 4px 12px;
-  margin-left: auto;
-  font-family: inherit;
-}
-
-.settings-version-check,
-.settings-version-check-button {
-  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-  font-size: 0.78rem;
-}
-
-.settings-version-check-button {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--muted);
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--muted) 45%, transparent);
-  text-underline-offset: 3px;
-  cursor: pointer;
-}
-
-.settings-version-check-button:hover:not(:disabled),
-.settings-version-check-button:focus-visible {
-  color: var(--text);
-  text-decoration-color: currentColor;
-}
-
-.settings-version-check-button:disabled {
-  cursor: progress;
-  text-decoration: none;
-}
-
-.settings-version-result-ok {
-  color: var(--success);
-}
-
-.settings-version-result-update {
-  color: var(--update-strong);
-  font-weight: 600;
-}
-
-.settings-version-result-warn {
-  color: var(--danger);
-}
-
 /* Buttons that are really links (e.g. "Open Database Health"). */
 a.settings-link-button {
   display: inline-flex;
