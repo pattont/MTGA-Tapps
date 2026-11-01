@@ -209,6 +209,21 @@ a {
   gap: 6px;
 }
 
+/* The sidebar is exactly one screen tall. On a short window the section list
+   scrolls inside it, so the launcher tiles at the bottom (Replay, Deck Finder,
+   Deck Manager, Buy me a coffee) stay visible on every page. The padding and
+   matching negative margin leave room for focus outlines inside the scroll box. */
+@media (min-width: 981px) {
+  .sidebar nav {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    margin: -4px;
+    padding: 4px;
+  }
+}
+
 .sidebar nav a {
   display: flex;
   align-items: center;
@@ -8167,4 +8182,102 @@ a.sidebar-deck-finder {
   font: inherit;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.78rem;
+}
+
+/* Short screens (laptops, 900 px tall or less): tighten the expanded sidebar so
+   the logo, Live Scoreboard, every section and the bottom buttons fit without
+   the section list having to scroll. Tall screens keep the roomier spacing. */
+@media (min-width: 981px) and (max-height: 900px) {
+  .sidebar {
+    gap: 12px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  .brand-row {
+    gap: 8px;
+    padding-bottom: 10px;
+  }
+
+  .mana-row {
+    margin-top: 6px;
+  }
+
+  /* Matches the smaller gap, like the -10px does for the 18px one. */
+  .sidebar-live-block {
+    margin: -6px 0;
+  }
+
+  .sidebar-live-link {
+    padding: 6px 10px;
+  }
+
+  .sidebar-live-rule {
+    margin-top: 4px;
+  }
+
+  .sidebar nav {
+    gap: 2px;
+  }
+
+  .sidebar nav a {
+    padding: 6px 10px;
+  }
+
+  .sidebar-bottom {
+    gap: 6px;
+  }
+
+  .sidebar-bottom .sidebar-replay,
+  .sidebar-bottom .sidebar-deck-finder {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+}
+
+/* Very short windows (700 px tall or less, e.g. 1080p at 150% scaling): slim
+   launcher buttons and a tighter list so every section still fits. */
+@media (min-width: 981px) and (max-height: 700px) {
+  .brand-row {
+    gap: 4px;
+    padding-bottom: 8px;
+  }
+
+  .brand-home p {
+    display: none;
+  }
+
+  .mana-row {
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  .mana-pip {
+    width: 20px;
+    height: 20px;
+  }
+
+  .sidebar nav a,
+  .sidebar-live-link {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+
+  .sidebar-bottom {
+    gap: 4px;
+  }
+
+  .sidebar-bottom .sidebar-replay,
+  .sidebar-bottom .sidebar-deck-finder {
+    padding-top: 2px;
+    padding-bottom: 2px;
+    font-size: 0.82rem;
+    line-height: 1.35;
+  }
+
+  .sidebar-bottom .sidebar-replay svg,
+  .sidebar-bottom .sidebar-deck-finder svg {
+    width: 13px;
+    height: 13px;
+  }
 }

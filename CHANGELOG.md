@@ -11,6 +11,13 @@
   their recorded timelines (mills and discards only for games recorded before
   replays). Revealed cards also count toward the opponent's colors and are sent to
   Deck AI with the cards they played.
+- The sidebar's bottom buttons (Replay, Deck Finder, Deck Manager and Buy me a
+  coffee) now stay on screen on every page. On a short window, pages with a long
+  section list, like the Overview, pushed the last of them off the bottom, most
+  noticeably in Firefox. On windows 900 px tall or less the sidebar is now more
+  compact, and at 700 px or less (such as a 1080p screen at 150% scaling) the
+  four buttons get slimmer, so every section still fits. On an even shorter
+  window the section list scrolls and the buttons stay put.
 
 ## 0.7.5
 
