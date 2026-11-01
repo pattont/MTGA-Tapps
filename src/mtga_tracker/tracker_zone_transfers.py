@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set
 
+from .revealed_cards import HIDDEN_ZONES, is_known_card_name, is_public_card_object
 from .state import CardEvent
 
 
@@ -244,6 +245,36 @@ class TrackerZoneTransferMixin:
         stats = self._seat_stats(owner_seat)
         if stats is not None:
             stats["cards_milled"] += 1
+        self._record_revealed_card(card_obj, owner_seat, "mill")
+
+    def _record_revealed_card(
+        self, card_obj: Dict[str, Any], owner_seat: Optional[int], kind: str
+    ) -> None:
+        """Remember a card made public without being played (milled,
+        discarded, or exiled from a hidden zone) for the Opponent Deck stats."""
+        g = self.game_state
+        if owner_seat is None or owner_seat not in (g.player_seat_id, g.opponent_seat_id):
+            return
+        if not is_public_card_object(card_obj, opponent=owner_seat == g.opponent_seat_id):
+            return
+        grp_id = card_obj["grpId"]
+        card_name = self.card_db.get_card_name(grp_id)
+        if not is_known_card_name(card_name):
+            return
+        type_category = self._get_card_type_category(card_obj.get("cardTypes") or [])
+        if type_category == "Other":
+            resolve_type = getattr(self.card_db, "get_card_type_category", None)
+            if callable(resolve_type):
+                type_category = resolve_type(grp_id) or "Other"
+        event = CardEvent(
+            str(card_name),
+            "player" if owner_seat == g.player_seat_id else "opponent",
+            timestamp=self._now(),
+            card_type_category=type_category,
+            source=kind,
+        )
+        event.turn_number = g.turn_number if g.turn_number > 0 else None
+        g.revealed_card_events.setdefault(int(owner_seat), []).append(event)
 
     def _handle_state_based_zone_transfer(
         self,
@@ -400,6 +431,8 @@ class TrackerZoneTransferMixin:
             stats = self._seat_stats(owner_seat)
             if stats is not None:
                 stats["cards_exiled"] += 1
+            if self._replay_zone_name(zone_src, zones_by_id) in HIDDEN_ZONES:
+                self._record_revealed_card(card_obj, owner_seat, "exile")
             exiler_seat = None
             if source_id is not None:
                 source_obj = self._lookup_object(source_id, game_objects_by_id)
@@ -426,6 +459,7 @@ class TrackerZoneTransferMixin:
             stats = self._seat_stats(owner_seat)
             if stats is not None:
                 stats["cards_discarded"] += 1
+            self._record_revealed_card(card_obj, owner_seat, "discard")
 
     def _count_token_creations(
         self,

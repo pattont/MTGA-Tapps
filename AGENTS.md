@@ -88,6 +88,12 @@ Primary code paths:
   board wipe / bounce / counter) from Arena rules text, cached per grpId. Roles feed the
   played/drawn interaction stats; behavioral stats (things actually destroyed, countered,
   bounced) come from game events and work without the Arena card DB.
+- `src/mtga_tracker/revealed_cards.py`: cards made public without being played — milled,
+  discarded, or exiled from the library/hand (never tokens, face-down or private cards).
+  The tracker records them per seat (`GameState.revealed_card_events`) and persists only
+  the opponent's into `game_card_summary` `milled_count`/`discarded_count`/`exiled_count`
+  (Opponent Revealed Cards; the player's own would skew deck-page games seen). Migration 36
+  backfills them from replay `move` rows, or from console text (mills/discards) for older games.
 - `src/mtga_tracker/events_backfill.py`: recomputes behavioral interaction stats for
   historical games from the `game_events` timeline (used by migration v19 — fills NULL
   columns only, never overwrites live-tracked values).

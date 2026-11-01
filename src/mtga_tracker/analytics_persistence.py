@@ -7,6 +7,7 @@ from collections import Counter
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from .revealed_cards import REVEAL_COLUMNS
 from .state import CardEvent
 
 
@@ -239,33 +240,38 @@ def persist_card_summary(
     *,
     refresh_display_name: Callable[[str], str],
     drawn_events: Optional[List[CardEvent]] = None,
+    revealed_events: Optional[List[CardEvent]] = None,
 ) -> None:
-    """Persist played- and drawn-card counts by participant.
+    """Persist played-, drawn- and revealed-card counts by participant.
 
     Played events keep their full display names (one row per display variant,
-    matching historical rows). Drawn events are matched to a played row by base
-    card name when possible so a card played and drawn stays one row; cards
-    drawn but never played get their own row with played_count = 0.
+    matching historical rows). Drawn and revealed events (milled, discarded,
+    exiled from a hidden zone; ``CardEvent.source`` names which) are matched to
+    an existing row by base card name when possible so a card played and drawn
+    stays one row; other cards get their own row with played_count = 0.
     """
     counts: Dict[str, Dict[str, object]] = {}
     base_to_display: Dict[str, str] = {}
     half_map = split_card_half_map(conn)
     # Names in this batch may introduce split cards not yet in the cards table.
-    for event in list(events) + list(drawn_events or []):
+    for event in list(events) + list(drawn_events or []) + list(revealed_events or []):
         batch_base = analytics_card_base_name(str(event.card_name or ""))
         if SPLIT_NAME_SEPARATOR in batch_base:
             for half in batch_base.split(SPLIT_NAME_SEPARATOR):
                 half = half.strip()
                 if half and half not in half_map:
                     half_map[half] = batch_base
+    count_columns = ("played_count", "drawn_count", *REVEAL_COLUMNS.values())
+
+    def new_row(event: CardEvent) -> Dict[str, object]:
+        row: Dict[str, object] = {column: 0 for column in count_columns}
+        row["type_category"] = event.card_type_category
+        return row
+
     for event in events:
         display_name = canonical_split_display(refresh_display_name(event.card_name), half_map)
         if display_name not in counts:
-            counts[display_name] = {
-                "played_count": 0,
-                "drawn_count": 0,
-                "type_category": event.card_type_category,
-            }
+            counts[display_name] = new_row(event)
         counts[display_name]["played_count"] = int(counts[display_name]["played_count"]) + 1
         if event.card_type_category and event.card_type_category != "Other":
             counts[display_name]["type_category"] = event.card_type_category
@@ -273,17 +279,20 @@ def persist_card_summary(
         if base_name and base_name not in base_to_display:
             base_to_display[base_name] = display_name
 
-    for event in drawn_events or []:
+    unplayed = [(event, "drawn_count") for event in drawn_events or []] + [
+        (event, REVEAL_COLUMNS[str(event.source)])
+        for event in revealed_events or []
+        if event.source in REVEAL_COLUMNS
+    ]
+    for event, column in unplayed:
         display_name = canonical_split_display(refresh_display_name(event.card_name), half_map)
         base_name = analytics_card_base_name(display_name)
         target_name = base_to_display.get(base_name, display_name)
         if target_name not in counts:
-            counts[target_name] = {
-                "played_count": 0,
-                "drawn_count": 0,
-                "type_category": event.card_type_category,
-            }
-        counts[target_name]["drawn_count"] = int(counts[target_name]["drawn_count"]) + 1
+            counts[target_name] = new_row(event)
+            if base_name:
+                base_to_display[base_name] = target_name
+        counts[target_name][column] = int(counts[target_name][column]) + 1
         if event.card_type_category and event.card_type_category != "Other":
             existing = counts[target_name].get("type_category")
             if not existing or existing == "Other":
@@ -303,14 +312,20 @@ def persist_card_summary(
                 display_name,
                 type_category,
                 played_count,
-                drawn_count
+                drawn_count,
+                discarded_count,
+                milled_count,
+                exiled_count
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(game_id, participant_id, display_name) DO UPDATE SET
                 card_id = excluded.card_id,
                 type_category = excluded.type_category,
                 played_count = excluded.played_count,
-                drawn_count = excluded.drawn_count
+                drawn_count = excluded.drawn_count,
+                discarded_count = excluded.discarded_count,
+                milled_count = excluded.milled_count,
+                exiled_count = excluded.exiled_count
             """,
             (
                 game_id,
@@ -318,8 +333,7 @@ def persist_card_summary(
                 card_id,
                 display_name,
                 type_category,
-                int(data["played_count"]),
-                int(data["drawn_count"]),
+                *(int(data[column]) for column in count_columns),
             ),
         )
 
