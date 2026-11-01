@@ -297,7 +297,7 @@ def _get_claude_model() -> str:
 
 def _build_prompt(card_names: List[str]) -> str:
     lines = "\n".join(f"  - {name}" for name in card_names[:80])  # cap for token safety
-    return f"""You are an expert on Magic: The Gathering Arena deck archetypes. A player was seen playing these cards in a single game (not necessarily their full deck):
+    return f"""You are an expert on Magic: The Gathering Arena deck archetypes. A player was seen with these cards in a single game, played or revealed (not necessarily their full deck):
 
 {lines}
 

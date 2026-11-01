@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- Game Detail's **Opponent Revealed Cards** now lists the opponent's milled and
+  discarded cards, and cards exiled from their library or hand, with Milled,
+  Discarded and Exiled counts. The tracker printed these cards but never saved them,
+  so the columns always read 0. Past games are filled in on the next launch from
+  their recorded timelines (mills and discards only for games recorded before
+  replays). Revealed cards also count toward the opponent's colors and are sent to
+  Deck AI with the cards they played.
+
 ## 0.7.5
 
 ### Updates

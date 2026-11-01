@@ -223,6 +223,10 @@ class GameState:
         #: (instance_id, category) pairs already counted as token losses.
         self.counted_token_losses: Set[tuple] = set()
         self.drawn_card_events: Dict[int, List[CardEvent]] = {1: [], 2: []}
+        #: Cards made public without being played, by owner seat: milled,
+        #: discarded, or exiled from the library/hand. CardEvent.source is
+        #: "mill", "discard" or "exile" (see revealed_cards.py).
+        self.revealed_card_events: Dict[int, List[CardEvent]] = {1: [], 2: []}
 
         self.game_start_time: Optional[datetime] = None
         self.game_end_time: Optional[datetime] = None

@@ -734,6 +734,7 @@ class AnalyticsStore:
             (33, AnalyticsStore._migrate_v33_managed_decks),
             (34, AnalyticsStore._migrate_v34_native_deck_transfers),
             (35, AnalyticsStore._migrate_v35_deck_collections),
+            (36, AnalyticsStore._migrate_v36_backfill_revealed_card_counts),
         )
 
     @staticmethod
@@ -1575,6 +1576,17 @@ class AnalyticsStore:
                          "REFERENCES managed_deck_collections(id)")
         conn.execute("CREATE INDEX IF NOT EXISTS managed_decks_collection "
                      "ON managed_decks(collection_id)")
+
+    @staticmethod
+    def _migrate_v36_backfill_revealed_card_counts(conn: sqlite3.Connection) -> None:
+        """Fill opponent milled/discarded/exiled card counts.
+
+        The columns existed since the baseline but were never written, so the
+        game page's Opponent Revealed Cards table missed every mill.
+        """
+        from .revealed_cards import backfill_revealed_card_counts
+
+        backfill_revealed_card_counts(conn)
 
     @staticmethod
     def _migrate_v15_purge_welcome_deck_duels(conn: sqlite3.Connection) -> None:

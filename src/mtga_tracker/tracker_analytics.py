@@ -1627,10 +1627,14 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
         return cache.get(game_id)
 
     def _opponent_card_names(self) -> List[str]:
-        """Distinct opponent card names seen this game, in observed order."""
+        """Distinct opponent card names seen this game: played cards in
+        observed order, then cards revealed by mills, discards and exiles."""
         names: List[str] = []
         seen = set()
-        for event in getattr(self, "opponent_cards", []) or []:
+        revealed = (getattr(self.game_state, "revealed_card_events", {}) or {}).get(
+            self.game_state.opponent_seat_id, []
+        )
+        for event in list(getattr(self, "opponent_cards", []) or []) + list(revealed or []):
             name = str(getattr(event, "card_name", "") or "").strip()
             if name and name not in seen:
                 seen.add(name)
@@ -1739,6 +1743,11 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
             self.opponent_cards,
             refresh_display_name=self._refresh_fallback_name_text,
             drawn_events=drawn_cards_by_seat.get(self.game_state.opponent_seat_id, []),
+            # Opponent only: see revealed_cards.py for why the player's
+            # own mills/discards stay out of the summary.
+            revealed_events=(getattr(self.game_state, "revealed_card_events", {}) or {}).get(
+                self.game_state.opponent_seat_id, []
+            ),
         )
         if self.game_state.submitted_deck_cards:
             persist_submitted_deck(
