@@ -75,3 +75,20 @@ export function shortFormatLabel(label: string | null | undefined): string {
     .replace('Best-of-3', 'BO3')
     .replace(' (Unranked)', '');
 }
+
+/** "Platinum 2 · 3/6", or Mythic with rank/percentile when available. */
+export function rankText(rank: {
+  rank_class: string;
+  rank_level: number;
+  rank_step: number;
+  rank_steps: number;
+  mythic_percentile: number | null;
+  mythic_rank: number | null;
+}): string {
+  if (rank.rank_class === 'Mythic') {
+    if (rank.mythic_rank) return `Mythic #${rank.mythic_rank}`;
+    if (rank.mythic_percentile != null) return `Mythic ${rank.mythic_percentile}%`;
+    return 'Mythic';
+  }
+  return `${rank.rank_class} ${rank.rank_level} · ${rank.rank_step}/${rank.rank_steps}`;
+}

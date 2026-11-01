@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { card } from './fixtures/streamBuilder';
+import { resetScryfallQueue } from '../scryfallQueue';
 import {
   IMAGE_CACHE_KEY,
   IMAGE_CACHE_LIMIT,
+  ImageLookupError,
   ImageQueue,
   TokenBucket,
   cardImageCandidates,
@@ -76,6 +78,19 @@ describe('cardImageCandidates', () => {
       `${API}/named?exact=Delver%20of%20Secrets&format=image&version=normal`,
     ]);
     expect(cardImageCandidates(dfc, 'large')[0]).toBe(CDN.replace('/normal/', '/large/'));
+  });
+
+  it("tries a card's exact printing before its Arena id, which Scryfall learns late", () => {
+    const hortimancer = card('Unflinching Hortimancer', 'Creature', { arena_id: 106248, print: 'fra/23' });
+    expect(cardImageCandidates(hortimancer, 'normal')).toEqual([
+      `${API}/fra/23?format=image&version=normal`,
+      `${API}/arena/106248?format=image&version=normal`,
+      `${API}/named?exact=Unflinching%20Hortimancer&format=image&version=normal`,
+    ]);
+    const back = card('Back', 'Creature', { arena_id: 7, print: 'fra/7★', back_face: true });
+    expect(cardImageCandidates(back, 'large')[0]).toBe(`${API}/fra/7%E2%98%85?format=image&version=large&face=back`);
+    const odd = card('Odd', 'Creature', { arena_id: 8, print: '../x?y' });
+    expect(cardImageCandidates(odd, 'normal')[0]).toBe(`${API}/arena/8?format=image&version=normal`);
   });
 
   it('asks for the back image of a back face', () => {
@@ -266,6 +281,60 @@ describe('ImageQueue', () => {
     const queued = queue.load('https://cards.scryfall.io/b');
     queue.cancelPending();
     await expect(queued).rejects.toThrow('cancelled');
+  });
+});
+
+describe('Scryfall lockouts', () => {
+  afterEach(() => {
+    resetScryfallQueue();
+    vi.unstubAllGlobals();
+  });
+
+  it('treats an unanswered request as retryable and never caches it', async () => {
+    let fail = true;
+    const fetchMock = vi.fn(async () => {
+      // Scryfall's lockout response has no CORS header: the browser sees a network error.
+      if (fail) throw new TypeError('Failed to fetch');
+      return okResponse(CDN);
+    });
+    const queue = new ImageQueue({ fetch: fetchMock, burst: 10 });
+    const url = `${API}/fra/23?format=image&version=normal`;
+    await expect(queue.load(url)).rejects.toMatchObject({ permanent: false });
+    fail = false;
+    await expect(queue.load(url)).resolves.toBe(CDN);
+  });
+
+  it('throws a retryable error from resolveCardImage, and null only when no card exists', async () => {
+    const hortimancer = card('Unflinching Hortimancer', 'Creature', { arena_id: 106248, print: 'fra/23' });
+    const missing = vi.fn(async () => ({ ok: false, status: 404, url: '' }) as Response);
+    await expect(resolveCardImage('a106248', hortimancer, new ImageQueue({ fetch: missing, burst: 10 }))).resolves.toBeNull();
+    const offline = vi.fn(async (url: string) => {
+      if (url.includes('/named?')) throw new TypeError('Failed to fetch');
+      return { ok: false, status: 404, url: '' } as Response;
+    });
+    const attempt = resolveCardImage('a106248', hortimancer, new ImageQueue({ fetch: offline, burst: 10 }));
+    await expect(attempt).rejects.toBeInstanceOf(ImageLookupError);
+    await expect(attempt).rejects.toMatchObject({ permanent: false });
+  });
+
+  it("holds name lookups to Scryfall's two per second by default", async () => {
+    vi.useFakeTimers();
+    const started: number[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        started.push(Date.now());
+        return okResponse(CDN);
+      }),
+    );
+    const queue = new ImageQueue({ burst: 10 });
+    const loads = ['A', 'B', 'C'].map((name) => queue.load(`${API}/named?exact=${name}&format=image&version=normal`));
+    await vi.advanceTimersByTimeAsync(2000);
+    await Promise.all(loads);
+    expect(started).toHaveLength(3);
+    expect(started[1] - started[0]).toBeGreaterThanOrEqual(500);
+    expect(started[2] - started[1]).toBeGreaterThanOrEqual(500);
+    vi.useRealTimers();
   });
 });
 

@@ -256,3 +256,33 @@ def test_settings_api_reads_and_saves_the_session_break(tmp_path, monkeypatch):
     code, body = settings_api.handle_post("/api/settings/sessions", {"break_hours": 7})
     assert code == 400
     assert settings.session_break_hours() == 6
+
+
+def test_tracker_info_reports_recorded_games(tmp_path, monkeypatch):
+    """The Settings page's Tracker card shows how many games are recorded,
+    and the collection export stays disabled until there is one."""
+    import sqlite3
+
+    from mtga_tracker import settings_api
+
+    monkeypatch.setattr(settings_api, "_deck_ai_summary", lambda: "disabled")
+    db = tmp_path / "tracker.sqlite3"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE games (id TEXT, started_at TEXT)")
+    info = settings_api._tracker_info(db)
+    assert (info["games"], info["first_game_at"], info["last_game_at"]) == (0, None, None)
+    # No live_status table yet: the paths stay unknown, the count still reads.
+    assert info["monitoring"] is None
+
+    with sqlite3.connect(db) as conn:
+        conn.executemany(
+            "INSERT INTO games VALUES (?, ?)",
+            [("a", "2026-03-01T10:00:00"), ("b", "2026-10-30T21:15:00")],
+        )
+    info = settings_api._tracker_info(db)
+    assert info["games"] == 2
+    assert info["first_game_at"] == "2026-03-01T10:00:00"
+    assert info["last_game_at"] == "2026-10-30T21:15:00"
+
+    missing = settings_api._tracker_info(tmp_path / "missing.sqlite3")
+    assert missing["games"] is None

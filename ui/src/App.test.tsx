@@ -422,6 +422,7 @@ const gameDetail = {
     identified_draws: 9,
     land_draws: 7,
     land_draw_pct: 70,
+    flood_reasons: ['7 of 10 post-opening draws were lands'],
     is_flood: true,
   },
   participant_stats: [
@@ -1257,9 +1258,11 @@ describe('App', () => {
     });
 
     expect(await screen.findByRole('heading', { name: 'Deck AI' })).toBeInTheDocument();
-    // Backup & restore sits above Deck AI and asks for a folder before it can back up.
+    // Backup & restore sits under Your data, after the feature cards, and
+    // asks for a folder before it can back up.
     const headings = screen.getAllByRole('heading').map((node) => node.textContent);
-    expect(headings.indexOf('Backup & restore')).toBeLessThan(headings.indexOf('Deck AI'));
+    expect(headings.indexOf('Deck AI')).toBeLessThan(headings.indexOf('Your data'));
+    expect(headings.indexOf('Your data')).toBeLessThan(headings.indexOf('Backup & restore'));
     expect(await screen.findByText('never backed up')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Back up now' })).toBeDisabled();
     // Sessions: the break defaults to four hours and saves on change.
@@ -1270,7 +1273,7 @@ describe('App', () => {
     expect(await screen.findByText('Saved. It applies from the next match.')).toBeInTheDocument();
     expect(settings.sessions.break_hours).toBe(8);
     expect(screen.getByRole('heading', { name: 'Deck Finder Creators' })).toBeInTheDocument();
-    expect(await screen.findByLabelText(/Enable AI deck identification/)).toBeChecked();
+    expect(await screen.findByRole('switch', { name: 'Deck AI' })).toHaveAttribute('aria-checked', 'true');
     // Deck AI: the saved provider's models load into a dropdown, keeping the
     // saved model even when the provider no longer lists it.
     const provider = screen.getByLabelText('Provider') as HTMLSelectElement;
@@ -1312,16 +1315,14 @@ describe('App', () => {
         { name: '@SlothMtg', short_name: 'Sloth' },
       ]);
     });
-    expect(screen.getByRole('heading', { name: 'Database Health' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open Database Health' })).toHaveAttribute(
-      'href',
-      '#/audit',
-    );
+    // Database Health is a small link in the Tracker card, not its own section.
+    expect(screen.queryByRole('heading', { name: 'Database Health' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Database health' })).toHaveAttribute('href', '#/audit');
     // Collection export section renders on a supported platform.
     expect(
       screen.getByRole('heading', { name: 'Export MTGA Collection' }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Export to .csv' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /Moxfield \(\.csv\)/ })).toBeInTheDocument();
     // Startup sits immediately above the overlay and saves both switches independently.
     expect(screen.getByRole('heading', { name: 'Startup' })).toBeInTheDocument();
     expect(headings.indexOf('Startup')).toBeLessThan(headings.indexOf('In-game overlay'));
@@ -1351,13 +1352,14 @@ describe('App', () => {
     );
     // The in-game overlay toggle drives /api/settings/overlay and reflects the answer.
     expect(screen.getByRole('heading', { name: 'In-game overlay' })).toBeInTheDocument();
-    expect(screen.getByText('Overlay is off')).toBeInTheDocument();
+    const overlaySwitch = screen.getByRole('switch', { name: 'In-game overlay' });
+    expect(overlaySwitch).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByText(/^Nothing runs\./)).toBeInTheDocument();
     expect(screen.getByText('⌥⇧T')).toBeInTheDocument();
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Turn on' }));
+      fireEvent.click(overlaySwitch);
     });
-    expect(await screen.findByText('Overlay is on')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Turn off' })).toBeInTheDocument();
+    await waitFor(() => expect(overlaySwitch).toHaveAttribute('aria-checked', 'true'));
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/settings/overlay',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ enabled: true }) }),
@@ -1454,7 +1456,13 @@ describe('App', () => {
     window.location.hash = '#/deck/Boros%20Mouse';
     render(<App />);
 
-    await user.click(await screen.findByRole('button', { name: 'Copy Arena Deck' }));
+    const copy = await screen.findByRole('button', { name: 'Copy Arena Deck' });
+    // Buy on Paper sits at the top, just left of Copy Arena Deck, not down in the Deck List.
+    const buy = screen.getByRole('button', { name: 'Buy on Paper' });
+    expect(buy.nextElementSibling).toBe(copy);
+    expect(buy.closest('#deck-cards')).toBeNull();
+
+    await user.click(copy);
 
     expect(writeText).toHaveBeenCalledWith(deckDetail.deck_export.text);
     expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument();
@@ -1992,6 +2000,58 @@ describe('App', () => {
     expect(screen.getByText('Mana Screw Evidence')).toHaveClass('badge-screw');
     expect(screen.getByText('3 consecutive nonland draws while stuck on 1 land')).toBeInTheDocument();
     expect(screen.queryByText('Flood evidence')).not.toBeInTheDocument();
+  });
+
+  it('shows an unusual land streak with a normal land count as a land streak, not flood', async () => {
+    const streakDetail = {
+      ...gameDetail,
+      draw_quality: {
+        total_draws: 20,
+        identified_draws: 20,
+        land_draws: 6,
+        land_draw_pct: 30,
+        opening_lands: 3,
+        total_cards_seen: 27,
+        lands_seen: 9,
+        land_seen_pct: 33.3,
+        expected_land_rate: 40,
+        expected_lands_seen: 10.8,
+        longest_land_streak: 6,
+        max_lands_in_eight: 6,
+        longest_low_land_drought: 0,
+        low_land_drought_lands: null,
+        flood_reasons: [],
+        is_flood: false,
+        streak_reasons: ['6 land draws in a row (about a 4% chance in 20 draws)'],
+        is_land_streak: true,
+        screw_reasons: [],
+        is_screw: false,
+      },
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) =>
+        new Response(JSON.stringify(String(url).startsWith('/api/game') ? streakDetail : snapshot), {
+          status: 200,
+        }),
+      ),
+    );
+    window.location.hash = '#/game/game-1';
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: /Game 6\/4\/26/i })).toBeInTheDocument();
+    const drawStatus = screen.getByText('Draw Status').closest('.metric-card');
+    expect(within(drawStatus as HTMLElement).getByText('Land streak')).toBeInTheDocument();
+    expect(screen.queryByText('Flood')).not.toBeInTheDocument();
+    expect(screen.queryByText('Flood evidence')).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/6 land draws in a row \(about a 4% chance in 20 draws\) · Not flood: 9 lands seen, about 10\.8 expected/),
+    ).toBeInTheDocument();
+    screen
+      .getAllByText('Land streak')
+      .filter((element) => element.classList.contains('badge'))
+      .forEach((badge) => expect(badge).toHaveClass('badge-streak'));
   });
 
   it('renders sortable head-to-head history for an opponent route', async () => {

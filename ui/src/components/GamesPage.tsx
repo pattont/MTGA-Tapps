@@ -11,6 +11,8 @@ import { normalizeQuickFilterId, quickFilterPredicate } from '../quickFilters';
 import { FormatQuickFilters } from './FormatQuickFilters';
 import { gameRouteHash, gamesRouteHash } from '../routes';
 import { Badge } from './Badge';
+import { DrawStatusBadge } from './DrawStatusBadge';
+import { drawStatusSortValue } from '../drawStatus';
 import { ColorPips } from './ColorPips';
 import { DeckLink } from './DeckLink';
 import { ReplayLink } from './ReplayLink';
@@ -73,15 +75,8 @@ const columns: Column<AllGamesRow>[] = [
   {
     key: 'is_flood',
     header: 'Draw Status',
-    render: (row) =>
-      row.is_flood ? (
-        <Badge tone="flood">Flood</Badge>
-      ) : row.is_screw ? (
-        <Badge tone="screw">Mana Screw</Badge>
-      ) : (
-        'Normal'
-      ),
-    sortValue: (row) => (row.is_flood ? 2 : row.is_screw ? 1 : 0),
+    render: (row) => <DrawStatusBadge row={row} />,
+    sortValue: drawStatusSortValue,
     center: true,
   },
   {

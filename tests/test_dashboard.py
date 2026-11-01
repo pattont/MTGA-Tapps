@@ -1680,7 +1680,7 @@ def test_game_detail_does_not_treat_unidentified_draws_as_nonland_drought(tmp_pa
     assert quality["is_screw"] is False
 
 
-def test_game_detail_marks_four_consecutive_land_draws_as_flood(tmp_path):
+def test_game_detail_adds_an_unusual_land_streak_to_a_high_land_count(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -1703,11 +1703,14 @@ def test_game_detail_marks_four_consecutive_land_draws_as_flood(tmp_path):
 
     assert quality["land_draw_pct"] == 50.0
     assert quality["longest_land_streak"] == 5
+    # 6 of 11 cards seen were lands (4.4 expected), and five in a row was a
+    # 4% chance in 10 draws: the streak backs up the flood.
     assert quality["is_flood"] is True
-    assert "5 consecutive land draws" in quality["flood_reasons"]
+    assert quality["is_land_streak"] is True
+    assert "5 land draws in a row (about a 4% chance in 10 draws)" in quality["flood_reasons"]
 
 
-def test_game_detail_marks_six_lands_in_eight_draws_as_flood(tmp_path):
+def test_game_detail_does_not_call_a_likely_land_cluster_flood(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -1731,8 +1734,12 @@ def test_game_detail_marks_six_lands_in_eight_draws_as_flood(tmp_path):
     assert quality["land_draw_pct"] == 30.0
     assert quality["longest_land_streak"] == 2
     assert quality["max_lands_in_eight"] == 6
-    assert quality["is_flood"] is True
-    assert "6 lands in an 8-draw window" in quality["flood_reasons"]
+    # 7 lands seen against 8.4 expected, and six lands in some 8 of 20 draws
+    # is about a 23% chance: neither flood nor an unusual streak.
+    assert quality["land_window_probability_pct"] == 22.9
+    assert quality["is_flood"] is False
+    assert quality["is_land_streak"] is False
+    assert quality["flood_reasons"] == []
 
 
 def test_game_detail_rejects_unknown_game(tmp_path):

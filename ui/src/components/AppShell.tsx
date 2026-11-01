@@ -11,7 +11,6 @@ import {
   Circle,
   Crown,
   Clock,
-  Database,
   FileText,
   GitBranch,
   Hand,
@@ -123,7 +122,6 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   'settings-tracker': Info,
   'settings-deck-ai': Bot,
   'settings-creators': Users,
-  'settings-db-health': Database,
 };
 
 function NavIcon({ id }: { id: string }) {

@@ -178,21 +178,29 @@ describe('Settings → Updates', () => {
     await waitFor(() => expect(api.posts).toEqual([{ url: '/api/update/install', body: {} }]));
   });
 
-  it('says when a check found no release information, and keeps up to date for up_to_date', async () => {
+  it('calls a check that found no update file up to date, not an error', async () => {
     const api = stubSettings({
-      status: updateStatus({ state: 'idle', latest_version: null, last_check: '2026-10-18T10:00:00Z' }),
+      status: updateStatus({ state: 'idle', latest_version: null, last_check: null }),
     });
     const user = userEvent.setup();
     render(<SettingsPage />);
     const scoped = within(await updatesSection());
-    expect(await scoped.findByText('No release information was available.')).toBeInTheDocument();
-    expect(scoped.queryByText('Tapps Tracker is up to date.')).toBeNull();
-    expect(scoped.queryByRole('button', { name: 'Skip this version' })).toBeNull();
+    expect(await scoped.findByText('Not checked yet.')).toBeInTheDocument();
 
-    api.state.status = updateStatus({ state: 'up_to_date', latest_version: '0.6.5.3' });
+    // The newest release predates the updater, so the check finds no update file.
+    api.state.status = updateStatus({ state: 'idle', latest_version: null, last_check: '2026-10-18T10:00:00Z' });
     await user.click(scoped.getByRole('button', { name: 'Check now' }));
     expect(await scoped.findByText('Tapps Tracker is up to date.')).toBeInTheDocument();
-    expect(scoped.queryByText('No release information was available.')).toBeNull();
+    expect(scoped.queryByText(/No release information/)).toBeNull();
+    expect(scoped.queryByRole('button', { name: 'Skip this version' })).toBeNull();
+  });
+
+  it('tags a checked copy with no update file as up to date', async () => {
+    stubSettings({ status: updateStatus({ state: 'idle', latest_version: null, last_check: '2026-10-18T10:00:00Z' }) });
+    render(<SettingsPage />);
+    const scoped = within(await updatesSection());
+    expect(await scoped.findByText('Tapps Tracker is up to date.')).toBeInTheDocument();
+    expect(scoped.getByText('Up to date', { selector: '.settings-badge' })).toBeInTheDocument();
   });
 
   it('copes with a tracker that has no update settings', async () => {

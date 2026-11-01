@@ -319,6 +319,35 @@ def test_run_scan_cli_writes_result(tmp_path, monkeypatch):
     assert json.loads(out.read_text()) == {"90573": 4, "91234": 3}
 
 
+def test_frozen_scan_helper_runs_through_the_tracker_binary(tmp_path, monkeypatch):
+    """A frozen build's sys.executable is the tracker binary, which rejected
+    ``-m mtga_tracker.collection_export`` as an unknown argument, so every
+    macOS export from the packaged app failed after the password prompt. The
+    frozen helper command must reach run_scan_cli through app.main."""
+    from mtga_tracker import app, collection_api
+
+    db = tmp_path / "tracker.sqlite3"
+    sqlite3.connect(db).close()
+    out = tmp_path / "out.json"
+    monkeypatch.setattr(collection_api.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(collection_api.sys, "executable", "/Applications/MTGA Tracker")
+    command = collection_api._scan_helper_command(str(db), str(out))
+    assert command[0] == "/Applications/MTGA Tracker"
+    assert "-m" not in command
+
+    monkeypatch.setattr(ce, "scan_collection", lambda *_a, **_k: {90573: 4})
+    assert app.main(command[1:]) == 0
+    assert json.loads(out.read_text()) == {"90573": 4}
+
+
+def test_source_scan_helper_uses_python_module(monkeypatch):
+    from mtga_tracker import collection_api
+
+    monkeypatch.delattr(collection_api.sys, "frozen", raising=False)
+    command = collection_api._scan_helper_command("db", "out")
+    assert command[1:] == ["-m", "mtga_tracker.collection_export", "--scan-json", "db", "out"]
+
+
 def test_windows_readable_regions_survives_null_base_address():
     """ctypes reads a NULL c_void_p back as None; the first VirtualQueryEx at
     address 0 reports a NULL-based region, which crashed the whole Windows
@@ -633,3 +662,24 @@ def test_resolve_scryfall_ids_one_failed_batch_does_not_strand_the_rest(tmp_path
     ids = ce.resolve_scryfall_ids(entries, cache_path=tmp_path / "c.json", fetch=flaky_fetch)
     # Batch 2 of pass 1 resolved 25; the failed batch's 75 retried in pass 2+.
     assert len(ids) >= 25
+
+
+def test_export_refuses_to_scan_before_any_game_is_recorded(tmp_path, monkeypatch):
+    """With no recorded games the scan has no known cards to find the
+    collection by, so it fails after the password prompt. Refuse up front."""
+    from mtga_tracker import collection_api
+
+    db = tmp_path / "tracker.sqlite3"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE games (id TEXT, started_at TEXT)")
+    monkeypatch.setattr(collection_api, "_cached_collection", lambda: None)
+
+    def no_scan(*_args, **_kwargs):
+        raise AssertionError("the scan must not start without a recorded game")
+
+    monkeypatch.setattr(collection_api, "_scan", no_scan)
+    with pytest.raises(collection_api._ExportError) as raised:
+        collection_api._run_export("job", db, "json", refresh=True, progress=lambda _m: None)
+    assert raised.value.code == "no_games"
+    assert collection_api.recorded_game_count(db) == 0
+    assert collection_api.recorded_game_count(tmp_path / "missing.sqlite3") is None

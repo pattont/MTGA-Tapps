@@ -163,6 +163,10 @@ Primary code paths:
   name) and a hover note. Tokens never take the
   `set|collector` image cache (Arena's token number names another card in the
   set); they carry `token_print` (`t<set>/<number>`, Scryfall's token set).
+  A card the cache misses carries `print` (`<set>/<number>`), tried before the
+  Arena id (Scryfall maps a new set's Arena ids late). Replay image lookups use
+  `scryfallFetch` (named/search held to 2/s), and an unanswered lookup is
+  retried after a minute instead of leaving the generated face for good.
   The builder moves a `token_create` row ahead of earlier rows of its turn that
   name the token (Mobilize attackers print before their creation).
   Identical tokens and lands stack in one battlefield slot (`layout.stackKey`),
@@ -182,13 +186,19 @@ Primary code paths:
   previous move exactly is dropped (`_drop_repeated_moves`).
   A card cast inside a message Arena only summarized reappears under a new id
   no row moved; when one same-card copy sits in that seat's exile, the builder
-  renames it back and moves it out of exile, inferred (`_reconnect_lost_arrivals`,
+  renames it back and moves it out of exile, not marked inferred (`_reconnect_lost_arrivals`,
   `LOST_ARRIVAL_LIMITATION`). Exiled cards whose own text lets them be cast
   from exile (card keywords `cast_from_exile`, `cast_while_exiled`, from
   `card_database.CAST_FROM_EXILE_TEXT`) sit beside the hand like plotted cards.
   The "inferred" outline turns with a face-down card so its tag never mirrors.
+  Labels are DOM over the canvas, so a label of a card behind a hand card is
+  hidden by its screen outline and depth (`projection.handOccluders`/`isCovered`),
+  live and in the video export.
   A token entry whose Arena id is a real card's (card facts `grp_ids`) is a
   token copy of it and keeps the card's own image (`attach_card_facts`).
+  A draw whose card next leaves the other seat's hand was that seat's
+  (`_reassign_misread_draws`, older rows from the reused-id bug), and a
+  mulligan's bottomed cards are dealt into the opening hand (`_add_bottomed`).
 - `ui/src/replay/`: the Replay page — pure reducer/layout/playback-clock/image-queue/prefs
   modules with tests, `export/` (pure video plan, Canvas 2D frame composer, WebCodecs +
   mp4-muxer encoder for the in-browser MP4 export; each codec is probed with one frame and
@@ -202,10 +212,33 @@ Primary code paths:
   900 px.
   On Live Scoreboard, the header replay link matches the other pills, the
   between-game waiting status sits beside the format on the right, and Today's
-  Games uses compact 20 px replay icons and one-letter W/L/D result pills
+  Games uses compact 20 px replay icons and one-letter W/L/D results in filled rounded
+  squares (the Stream Kit recent-games style)
   (full word on hover and for screen readers) to preserve space for deck names.
   A tiny teal Play / purple Draw `Badge` (`participants.went_first`) follows the deck
   name; the name truncates first and unknown turn order shows nothing.
+- `ui/stream.html` + `ui/src/stream/`: the Stream Kit, OBS/Streamlabs browser-source
+  widgets (`overlay`, `deck`, `record`, `games`, `matchup`, `spotlight`) built as a second Vite entry and
+  served by the dashboard at `/stream.html?widget=<id>`. No app shell, no `styles.css`,
+  transparent page (`stream/stream.css`, sized in em from `--sk-scale`). Every option
+  lives in the URL (`stream/options.ts`: `streamUrl` writes only the widget's own
+  non-default options), so the tracker stores nothing; Settings → Streaming
+  (`StreamKitSettings.tsx`) builds the links and keeps its choices in localStorage.
+  `overlay` is the in-game panel plus its sideboard (right/left/below/off) with the
+  overlay's background slider (`opacity`, not the shared `bg`); `stream/overlayView.ts`
+  mirrors `overlay/src/model.ts` and its CSS mirrors `overlay/src/styles.css` in px under
+  `zoom`, so change both when the in-game panel changes. Credits sit top right, never on
+  a line of their own.
+  Widgets read only existing endpoints: `overlay` and `deck` poll `/api/overlay` with its ETag (`stream/useOverlay.ts`),
+  `record`/`games`/`matchup` poll `/api/live?events=0` (skips the event feed; `games`
+  lists its `games`, Live Scoreboard's Today's Games, capped by `count`), `spotlight`
+  polls `/api/live?since=`. The spotlight never replays history: `stream/spotlight.ts`
+  catches up silently until a poll brings nothing newer, and resets on a new tracker
+  session or after an error. `demo=1` uses `stream/demo.ts` and makes no requests;
+  `preview=1` paints a checkerboard. Widgets stop polling while the page is hidden.
+  Game widgets hide between games unless `idle=show`. The dashboard listens on
+  127.0.0.1 only; a LAN listener for two-PC streaming is planned in
+  `docs/plans/STREAMING.md`, which also holds the later streaming phases.
 - `ui/src/supportLink.ts`: the Buy Me a Coffee username for the pink (`--coffee`) sidebar
   tile below Deck Manager (expanded and collapsed). Empty hides the tile; it opens
   `buymeacoffee.com/<username>` in a new tab and is covered by `ui/src/SupportLink.test.tsx`.
@@ -220,6 +253,21 @@ Primary code paths:
   startup behavior, the session break, overlay control, platform capabilities, and resolved tracker paths. The menu
   "Tracker Settings" action opens this dashboard page. `settings_dialog.py` retains
   the PyQt Deck AI settings implementation.
+  `ui/src/components/SettingsPage.tsx` layout: a full-width Tracker card (MetricCard
+  tiles for games captured, last game, version and Deck AI from `_tracker_info`, then
+  the paths, with a small Database health link on the Log DB row; there is no
+  Database Health section), then `SettingsGroup`s General (Startup stacked over
+  Sessions, beside Updates), Features (overlay, Buy on Paper, Deck AI, creators),
+  Streaming (the full-width Stream Kit card) and
+  Your data (Backup beside Export at 60/40, `columns="split"`, stacking under 1240px).
+  Two-column groups drop to one under 940px of group width (container queries).
+  Each card's state tag is `Section`'s `badge`; forms report saves upward
+  (`onChange`/`onSaved`) so the tags stay current. The overlay, Buy on Paper and Deck AI
+  use a `FeatureSwitch` (role="switch") in that slot, and the page owns their saves.
+  The Deck AI switch saves only on/off with the last saved provider, keys and models
+  (its form has no enable checkbox; Save keeps the switch's state), and a "No API key"
+  tag sits beside it while it is on without a key. A finished update check that found
+  no update file (the newest release predates the updater) reads as up to date.
 - `src/mtga_tracker/deck_manager.py` / `deck_manager_api.py`: general local deck library,
   `#/deck-manager` and `/api/deck-manager/*`, using the same selected `--db` as analytics.
   The collection uses a full-page responsive tile grid; details/revision editing and
@@ -405,7 +453,7 @@ Primary code paths:
 - `ui/src/components/BuyPaperDialog.tsx` + `cardPrices.ts` / `paperDeck.ts` /
   `paperVendors.ts` / `scryfallQueue.ts` / `storePrices.ts`: Buy on Paper (no
   schema). A green button sits between Source and Export to Arena in Deck Finder,
-  in the Deck Manager deck dialog header, and in the deck page's Deck List section heading.
+  in the Deck Manager deck dialog header, and at the top of the deck page, left of Copy Arena Deck.
   Prices are Scryfall TCGplayer-market prices: one collection pass, then batched
   `(!"A" or !"B")` searches sorted by `usd`, with basics searched separately.
   Scryfall allows 2 requests per second on search/collection and locks the caller
@@ -441,6 +489,15 @@ Primary code paths:
   `CardDatabase.rebalance_links_by_arena_id` pairs them (`RebalancedCardGrpId` while live,
   `DefunctRebalancedCardGrpId` after a revert) and `aggregate` counts each pair once, at
   the larger quantity. Never sum the two.
+  On macOS the scan runs elevated through osascript: source runs use
+  `python -m mtga_tracker.collection_export`, frozen builds run the tracker executable
+  with `--collection-scan` (`app.main` routes it before the single-instance guard),
+  because the bundled binary has no `-m`.
+  The scan needs known cards from recorded games: the Settings page disables the
+  export while `_tracker_info` reports `games == 0` (null keeps it enabled), and
+  `_run_export` refuses a fresh scan with `no_games` before any prompt.
+  The Settings card picks the format with one radio group (Moxfield CSV, Archidekt,
+  card list, JSON) and one Export collection button, disabled until a format is chosen.
 - `src/mtga_tracker/updater.py` (the `UpdateManager` and `get_manager()`), with
   `updater_manifest.py` (PEP 440 compare, strict manifest parser, `UPDATE_PUBLIC_KEYS`,
   asset selection), `updater_download.py` / `updater_fetch.py` (manifest fetch, resumable
@@ -644,8 +701,17 @@ Preserve these behaviors unless the user explicitly changes requirements:
 - Do not show normal single-item stack resolves if they add noise; show stack details when another item is added above an existing item or a spell/ability does not resolve normally.
 - Opening hand should be captured whenever a full visible hand is available before gameplay begins, then persisted to `game_opening_hand_cards`.
 - SQLite analytics should support future dashboards. Prefer structured tables over stuffing summary text into one blob.
-- Game Detail marks Flood for more than 50% post-opening land draws, statistically unusual
-  total lands, at least four consecutive land draws, or at least six lands within eight draws.
+- Game Detail marks Flood from the land count only: more than 50% post-opening land draws
+  (at least six draws), a land share clearly above the deck's expected rate (opening hand
+  included), or a total land count with at most a 10% chance. A run of land draws (at least
+  four in a row, or six lands in eight draws) is a separate **Land streak** finding, flagged
+  only when a streak that long had at most a 10% chance over the game's draws at the deck's
+  land rate (`land_run_probability`/`land_window_probability` in `draw_quality.py`; long
+  games make runs likely). A land streak adds to Flood only when the game also saw more
+  lands than expected; otherwise rows carry `is_land_streak` and show a dashed "Land streak"
+  badge (status order: Flood, Mana Screw, Land streak, Normal; `ui/src/drawStatus.ts`).
+  The deck page's Normal / Flood / Screw split counts land-streak games as Normal.
+  Flood impact (whether the lands hurt) is a plan, not a feature: `docs/plans/FLOOD_IMPACT.md`.
 - The homepage Recent Games table uses that same Flood calculation, shows total turns, and
   combines Lands Seen with a whole-number percentage rounded upward; it does not show
   player/opponent average-turn columns. Its deck colors, and those in All Games and opponent

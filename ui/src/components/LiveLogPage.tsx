@@ -6,7 +6,7 @@ import {
   type LiveNow,
   type LivePayload,
 } from '../api';
-import { formatDuration, outcomeLabel, outcomeShortLabel, outcomeTone, shortFormatLabel } from '../format';
+import { formatDuration, outcomeLabel, outcomeShortLabel, outcomeTone, rankText, shortFormatLabel } from '../format';
 import { Badge } from './Badge';
 import { CardLink } from './CardLink';
 import { ColorPips } from './ColorPips';
@@ -67,16 +67,6 @@ function gameClock(startedAt: string | null, nowMs: number): string | null {
 
 function recordText(wins: number, losses: number): string {
   return `${wins}–${losses}`;
-}
-
-/** "Platinum 2 · 3/6", or Mythic with rank/percentile when available. */
-function rankText(rank: NonNullable<LiveNow['rank']>): string {
-  if (rank.rank_class === 'Mythic') {
-    if (rank.mythic_rank) return `Mythic #${rank.mythic_rank}`;
-    if (rank.mythic_percentile != null) return `Mythic ${rank.mythic_percentile}%`;
-    return 'Mythic';
-  }
-  return `${rank.rank_class} ${rank.rank_level} · ${rank.rank_step}/${rank.rank_steps}`;
 }
 
 /** Expected lands among the cards seen, from the submitted decklist. */

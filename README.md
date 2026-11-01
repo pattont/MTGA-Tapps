@@ -50,6 +50,11 @@ your next draw is a land, and cards left in your library — opening into a
 panel with your whole decklist and the chance of drawing each card next. On
 from the first launch, in every game mode, and it reads only the tracker.
 
+**Stream Kit.** Transparent OBS and Streamlabs widgets for streamers: the whole
+in-game overlay with its sideboard, your deck with draw odds, the session record,
+today's games, the current matchup, and a spotlight of each
+card as it's cast. See [Stream Kit](#stream-kit-obs-widgets).
+
 **Deck analytics.** Every deck gets a drill-down page tinted with its signature
 card's art: per-game combat and resource averages for both players, turn-pace
 and draw-quality summaries, card performance, mulligan results, decklist
@@ -63,7 +68,8 @@ every mulligan (including the card you bottomed) for you — and how many times
 your opponent mulliganed, which Arena reports for both seats — drawn cards
 with the turn they arrived, draw-quality analysis with statistically-grounded
 flood/screw detection (expected lands come from your actual decklist, not a
-generic ratio), a life-total chart, per-seat combat summaries, and the
+generic ratio; a run of lands is only flagged when it was unlikely for the game's
+length, and is not flood unless the land count was high too), a life-total chart, per-seat combat summaries, and the
 complete event timeline. Scry totals for both seats show how many cards were
 kept on top or bottomed, with the choices recorded in the timeline.
 
@@ -135,13 +141,11 @@ into any folder you choose. Point it at a folder your cloud client syncs and
 your history follows you to another computer; **Merge** brings two
 computers' games together.
 
-**Startup controls.** In **Settings → Startup**, Windows and macOS launches can
-start Tapps Tracker automatically when you sign in. **Open dashboard
-on launch** is independent, so the tracker can start quietly in the system
-tray or menu bar and begin tracking before you queue. Both settings apply on
-the next launch; `--no-browser` remains a one-run command-line override.
-Starting Tapps Tracker again while it is already running exits cleanly instead
-of creating a second tracker or database writer.
+**Startup and updates.** Start with Windows or macOS, quietly in the tray or
+menu bar, so tracking is ready before you queue. New versions of the installed
+app download in the background, are checked against a signed manifest, and
+install when you click **Restart to update**: never mid-game, and only after a
+backup of your history. Both live in [Settings](#settings).
 
 **The long game.** Match-level records (a Bo3 counts once, like the ladder
 does), win-rate trends, How Games End with per-reason percentages — concedes,
@@ -151,16 +155,27 @@ breakdowns, and a database health audit that can repair its own
 inconsistencies. Historical backfills recover stats where the recorded
 events contain enough evidence; unavailable values remain blank.
 
-## Startup and overlay settings
+## Settings
 
-In **Settings → Startup**, choose whether Tapps Tracker starts when you sign in
-and whether it opens the dashboard on launch. These are independent: tracking
-can start quietly in the menu bar or system tray while the dashboard remains
-available there. The **In-game overlay** card has a **Turn off** button that
-stops the overlay and keeps it disabled across tracker launches; **Turn on**
-enables it again. You can use the tracker and dashboard without the overlay.
+Open **Settings** from the gear at the top right of the dashboard or from the
+menu-bar / tray icon. A **Tracker** card at the top shows your game count,
+version and file locations. Below it:
 
-![Startup and in-game overlay settings, including the overlay Turn off button](docs/images/startup-gameoverlay.png)
+- **General**: **Startup** (start with Windows or macOS, and whether to open the
+  dashboard), **Sessions** (how long a break starts a new session; four hours by
+  default) and **Updates** (automatic checks, downloads and installs, plus
+  **Check now**).
+- **Features**: on/off switches for the [in-game overlay](#in-game-overlay),
+  [Buy on Paper](#buy-on-paper) and [Deck AI](#ai-deck-identification-optional),
+  and the creators [Deck Finder](#deck-finder) follows.
+- **Streaming**: the [Stream Kit](#stream-kit-obs-widgets) widget links.
+- **Your data**: [backup & restore](#backup--restore) and
+  [collection export](#export-your-collection).
+
+Running Tapps Tracker again while it's already open does nothing, so you never
+get two copies tracking at once.
+
+![Settings: Startup, Sessions, Updates, the in-game overlay, Buy on Paper, Deck AI and Deck Finder creators](docs/images/general-settings.png)
 
 ## In-game overlay
 
@@ -206,6 +221,26 @@ Scryfall), never Arena's memory or screen. The macOS shell supports Arena's
 fullscreen Space. On Windows, use windowed or borderless mode if exclusive
 fullscreen covers the overlay. It is a separate ~5 MB
 native app (Tauri) shipped inside the tracker.
+
+## Stream Kit (OBS widgets)
+
+Six transparent widgets for OBS and Streamlabs:
+
+- **Full overlay**: the in-game overlay as one source, with its sideboard beside or
+  below it and a background slider.
+- **Deck tracker**: copies left and next-draw odds for each card.
+- **Session record**: wins, losses, win rate, rank, and today's record with this deck.
+- **Recent games**: today's games under the session record (the last 1 to 25).
+- **Matchup**: opponent, colors, likely deck, head-to-head, play or draw, Bo3 game.
+- **Card spotlight**: a large image of each card as it's cast.
+
+In **Settings → Streaming**, pick the options, copy a widget's link and paste it
+into a **Browser** source at the size shown; **Preview** shows it with sample data.
+Widgets appear only when there's something to show, and nothing runs until one is
+open. They work on the computer that runs the tracker (not yet from a second
+streaming PC). Thanks to MrNaosu for the idea.
+
+![Settings → Streaming: the six Stream Kit widgets with their options and links](docs/images/stream-kit.png)
 
 ## Screenshots
 
@@ -347,7 +382,7 @@ screens:
 
 - **Deck Finder** — in the selected deck's title row.
 - **Deck Manager** — in a saved deck's header.
-- **Deck page** — in the Deck List section heading, using the newest list you
+- **Deck page** — at the top, beside Copy Arena Deck, using the newest list you
   played (a Brawl commander included).
 
 ![Buy on Paper dialog comparing store totals, with board and basic-land options](docs/images/buy-on-paper.png)
@@ -401,8 +436,9 @@ Arena's log does not provide the full collection, so the Settings page can
 read it straight out of the running game's memory and export it as `.json`, `.csv`,
 `.txt`, or an Archidekt-format `.csv` — ready to import into
 [Moxfield](https://moxfield.com), [Archidekt](https://archidekt.com), and
-similar sites. Open Arena's Decks tab once so the collection is loaded, pick a
-format, and the file downloads when the scan finishes (a copy also lands in
+similar sites. The scan finds your collection by the cards the tracker has seen
+you play, so it unlocks after your first recorded game. Open Arena's Decks tab
+once so the collection is loaded, pick a format, and the file downloads when the scan finishes (a copy also lands in
 the tracker's data folder). On macOS an administrator prompt appears, since
 reading another app's memory needs elevated access; the game itself is never
 modified. The memory scan and export files stay local; Archidekt printing-ID
@@ -470,9 +506,9 @@ database, and its mid-game deck label is a local guess that reuses names
 from earlier games.
 
 Configure it on the dashboard's **Settings** page (gear icon, top right — or
-the "Settings" menu-bar entry): enable, pick a provider (OpenAI (ChatGPT),
-Anthropic (Claude), Google (Gemini), or xAI (Grok)), paste your key, and
-optionally pick a model.
+the "Settings" menu-bar entry): turn on the switch beside **Deck AI**, pick a
+provider (OpenAI (ChatGPT), Anthropic (Claude), Google (Gemini), or xAI (Grok)),
+paste your key, and optionally pick a model.
 
 The Model dropdown is never a fixed list that goes stale. Once a key is
 entered, the tracker asks that provider which models your key can use right
@@ -481,8 +517,7 @@ appear as soon as the provider releases them; **Refresh** asks again. Leave it
 on **Default** and the tracker uses a current, low-cost model for that
 provider, which moves forward with tracker updates. A link opens the
 provider's model page for comparing them, and you can type a model name
-instead. The Settings page also holds your Deck Finder creators, a
-tracker-status readout, and the Database Health link. The choice is saved to `settings.json` at the top level of the project
+instead. The choice is saved to `settings.json` at the top level of the project
 folder (installed builds keep it in the app data folder), and your key is only
 ever sent to the provider you chose. Without a key the feature simply stays off.
 
@@ -536,7 +571,7 @@ the optional collection-export action separately reads Arena's process memory.
 
 Network requests are limited to the features that use them:
 
-- The dashboard and overlay fetch card art from Scryfall. The dashboard also
+- The dashboard, overlay and Stream Kit widgets fetch card art from Scryfall. The dashboard also
   uses Scryfall's batch API for missing mana costs; Archidekt collection
   exports use it for printing IDs and cache the results locally.
 - The tracker downloads a small signed update manifest from GitHub Releases
@@ -589,12 +624,13 @@ passed for that run.
 | `#/replay` | Replay (beta) list; `#/replay/<id>` plays a completed game and can export video |
 | `#/deckfinder` | Deck Finder: browse, export or save decklists from creators and sites |
 | `#/deck-manager` | Deck Manager (beta): saved collections, revisions, Trash and supported Arena transfers |
-| `#/settings` | Startup, in-game overlay, Buy on Paper, backup/restore, Deck AI, Deck Finder creators, collection export, tracker status |
+| `#/settings` | Tracker status, startup, sessions, updates, overlay, Buy on Paper, Deck AI, creators, Stream Kit, backup/restore, collection export |
+| `/stream.html?widget=` | A Stream Kit widget (links built in Settings → Streaming) |
 | `#/audit` | Database health findings |
 
 JSON API: `GET /api/snapshot`, `/api/live`, `/api/overlay`, `/api/deck`,
 `/api/game`, `/api/card`, `/api/cards?q=`, `/api/games`, `/api/opponents`,
-`/api/opponent`, `/api/paper-prices`, `/api/version` — analytics reads are GET requests. POST
+`/api/opponent`, `/api/paper-prices`, `/api/update`, `/api/version` — analytics reads are GET requests. POST
 actions save game notes/tags
 (`/api/game/annotation`) and settings (`/api/settings/*`), run Deck Finder
 jobs (`/api/deckfinder/*`) or its terminal launcher

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import math
 import sqlite3
 from dataclasses import dataclass
@@ -202,6 +203,84 @@ def max_lands_in_window(flags, window_size: int = 8) -> Optional[int]:
     )
 
 
+#: A land streak is flagged only when a streak that long had at most this
+#: chance of happening somewhere in the game's draws (same bar as the
+#: land-count flood rule).
+UNUSUAL_STREAK_PCT = 10.0
+#: Streaks shorter than these never count, however short the game.
+MIN_STREAK_RUN = 4
+MIN_STREAK_WINDOW_LANDS = 6
+STREAK_WINDOW = 8
+
+
+@functools.lru_cache(maxsize=4096)
+def land_run_probability(draws: int, run: int, land_rate: float) -> float:
+    """Chance of at least one run of `run` lands somewhere in `draws` draws.
+
+    Each draw is a land with probability `land_rate` (the deck's land share).
+    Long games make long runs likely: four lands in a row is about a 1 in 5
+    chance over 15 draws of a 40% land deck, but 2 in 5 over 36 draws.
+    """
+    if run <= 0:
+        return 1.0
+    if draws < run or land_rate <= 0.0:
+        return 0.0
+    if land_rate >= 1.0:
+        return 1.0
+    # by_run[r]: chance the current run is r lands long and no full run yet.
+    by_run = [1.0] + [0.0] * (run - 1)
+    hit = 0.0
+    for _ in range(draws):
+        next_run = [0.0] * run
+        for length, chance in enumerate(by_run):
+            if not chance:
+                continue
+            next_run[0] += chance * (1.0 - land_rate)
+            if length + 1 >= run:
+                hit += chance * land_rate
+            else:
+                next_run[length + 1] += chance * land_rate
+        by_run = next_run
+    return hit
+
+
+@functools.lru_cache(maxsize=4096)
+def land_window_probability(
+    draws: int, lands: int, land_rate: float, window: int = STREAK_WINDOW
+) -> float:
+    """Chance that some `window` consecutive draws hold at least `lands` lands."""
+    if draws < window or lands <= 0:
+        return 1.0 if lands <= 0 else 0.0
+    if land_rate <= 0.0:
+        return 0.0
+    if land_rate >= 1.0:
+        return 1.0 if lands <= window else 0.0
+    # State: the last window-1 draws as bits (1 = land).
+    keep = (1 << (window - 1)) - 1
+    states = {0: 1.0}
+    hit = 0.0
+    for index in range(draws):
+        next_states: dict = {}
+        full = index >= window - 1
+        for bits, chance in states.items():
+            held = bin(bits).count("1")
+            for is_land, step in ((1, land_rate), (0, 1.0 - land_rate)):
+                weight = chance * step
+                if full and held + is_land >= lands:
+                    hit += weight
+                    continue
+                key = ((bits << 1) | is_land) & keep
+                next_states[key] = next_states.get(key, 0.0) + weight
+        states = next_states
+    return hit
+
+
+def _chance_label(probability_pct: float) -> str:
+    if probability_pct < 1.0:
+        return "under a 1% chance"
+    return f"about a {probability_pct:.0f}% chance"
+
+
 def longest_low_land_drought(flags, opening_lands: int, land_ceiling: int = 2):
     """Return the longest known nonland run while at most land_ceiling lands were seen."""
     lands_seen = opening_lands
@@ -359,10 +438,36 @@ def draw_quality_metrics(
         flood_reasons.append(
             f"Only a {flood_probability_pct:g}% chance of seeing at least {flood_lands_seen} lands"
         )
-    if longest_streak >= 4:
-        flood_reasons.append(f"{longest_streak} consecutive land draws")
-    if max_lands_eight is not None and max_lands_eight >= 6:
-        flood_reasons.append(f"{max_lands_eight} lands in an 8-draw window")
+    # Land streaks are their own finding, not flood by themselves: a long game
+    # makes a run of lands likely even when the land count is normal. A streak
+    # counts only when one that long was unlikely for this many draws, and it
+    # adds to Flood only when the game also saw more lands than expected.
+    streak_rate = round(expected_land_rate, 4)
+    streak_draws = len(natural_land_flags)
+    streak_probability_pct = None
+    window_probability_pct = None
+    streak_reasons = []
+    if longest_streak >= MIN_STREAK_RUN:
+        streak_probability_pct = round(
+            100.0 * land_run_probability(streak_draws, longest_streak, streak_rate), 1
+        )
+        if streak_probability_pct <= UNUSUAL_STREAK_PCT:
+            streak_reasons.append(
+                f"{longest_streak} land draws in a row "
+                f"({_chance_label(streak_probability_pct)} in {streak_draws} draws)"
+            )
+    if max_lands_eight is not None and max_lands_eight >= MIN_STREAK_WINDOW_LANDS:
+        window_probability_pct = round(
+            100.0 * land_window_probability(streak_draws, max_lands_eight, streak_rate), 1
+        )
+        if window_probability_pct <= UNUSUAL_STREAK_PCT:
+            streak_reasons.append(
+                f"{max_lands_eight} lands in {STREAK_WINDOW} draws "
+                f"({_chance_label(window_probability_pct)} in {streak_draws} draws)"
+            )
+    statistical_flood = bool(flood_reasons)
+    if streak_reasons and flood_lands_seen > expected_flood_lands_seen:
+        flood_reasons.extend(streak_reasons)
 
     screw_reasons = []
     if drought >= 3 and drought_lands is not None:
@@ -404,6 +509,13 @@ def draw_quality_metrics(
         "low_land_drought_lands": drought_lands,
         "flood_reasons": flood_reasons,
         "is_flood": bool(flood_reasons),
+        # True when the land count alone is flood; False when only an
+        # unusual streak on top of an above-expected count made it flood.
+        "statistical_flood": statistical_flood,
+        "land_streak_probability_pct": streak_probability_pct,
+        "land_window_probability_pct": window_probability_pct,
+        "streak_reasons": streak_reasons,
+        "is_land_streak": bool(streak_reasons),
         "screw_reasons": screw_reasons,
         "is_screw": bool(screw_reasons),
     }

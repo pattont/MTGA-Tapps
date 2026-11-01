@@ -83,6 +83,11 @@ export class MotionRegistry {
     return this.entries.get(obj)?.pose ?? null;
   }
 
+  /** The mesh group drawn for an object, or null when it has none. */
+  object(obj: string): Object3D | null {
+    return this.entries.get(obj)?.group ?? null;
+  }
+
   /** First registration places the mesh at `spawn` (or the target when snapping); `hover` marks a flying creature. */
   set(obj: string, group: Object3D, shadow: Object3D | null, target: Pose, spawn: Pose | null, hover = false): void {
     let entry = this.entries.get(obj);

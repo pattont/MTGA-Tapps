@@ -121,6 +121,11 @@ export interface ReplayCard {
    * never get `image_url`: their Arena number names another card in the set.
    */
   token_print?: string | null;
+  /**
+   * A card's Scryfall `set/number` ("fra/23") when the server had no direct
+   * image link; looked up before the Arena id, which Scryfall learns late.
+   */
+  print?: string | null;
 }
 
 export interface ReplayTurn {

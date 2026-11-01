@@ -297,10 +297,11 @@ a {
   gap: 10px;
 }
 
-/* Right-aligned page action on a filter row (e.g. Copy Arena Deck). */
+/* Right-aligned page actions on a filter row (e.g. Buy on Paper, Copy Arena Deck). */
 .filter-bar-trailing {
   display: inline-flex;
   align-items: center;
+  gap: 10px;
   margin-left: auto;
 }
 
@@ -2261,6 +2262,13 @@ tbody tr:hover {
 .badge-screw {
   border-color: color-mix(in srgb, var(--accent-strong) 55%, var(--border));
   color: var(--accent-strong);
+}
+
+/* A land streak is a softer finding than flood: same blue, dashed and muted. */
+.badge-streak {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--draw) 45%, var(--border));
+  color: color-mix(in srgb, var(--draw) 70%, var(--muted));
 }
 
 /* "All opponents" pill + table footer */
@@ -5256,83 +5264,136 @@ tr.deck-change-row-out .card-link {
   line-height: 1.5;
 }
 
-/* In-game overlay card on the Settings page: one status row (dot, title,
-   one sentence, the action) over a row of hotkey chips. The dot and title
-   take the sidebar's Live Scoreboard colours: green on, muted off. */
-.overlay-card {
-  display: grid;
-  margin: 12px 16px 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel);
-  box-shadow: var(--shadow);
-  max-width: 720px;
-}
-
-.overlay-card-main {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+/* Feature cards on the Settings page (In-game overlay, Buy on Paper): the
+   on/off switch sits beside the title, so the body is plain text. The status
+   dot takes the sidebar's Live Scoreboard colours: green running, amber on
+   but stopped. */
+.settings-switch {
+  display: inline-flex;
   align-items: center;
-  gap: 14px;
-  padding: 16px 18px;
+  gap: 7px;
+  min-height: 24px;
+  padding: 2px 9px 2px 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
 }
 
-.overlay-card-dot {
+.settings-switch-track {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-strong);
+  transition: background 0.15s ease;
+}
+
+.settings-switch-thumb {
+  position: absolute;
+  top: 1px;
+  left: 1px;
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: var(--subtle);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--subtle) 18%, transparent);
+  background: var(--muted);
+  transition: transform 0.15s ease, background 0.15s ease;
 }
 
-.overlay-card-on .overlay-card-dot {
-  background: var(--success);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 22%, transparent);
-}
-
-.overlay-card-stopped .overlay-card-dot {
-  background: var(--accent);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
-}
-
-.overlay-card-text {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.overlay-card-title {
-  margin: 0;
-  font-size: 1.02rem;
-  font-weight: 700;
+.settings-switch:hover {
+  border-color: color-mix(in srgb, var(--text) 30%, var(--border));
   color: var(--text);
 }
 
-.overlay-card-on .overlay-card-title {
+.settings-switch[aria-checked='true'] {
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+  background: color-mix(in srgb, var(--success) 10%, transparent);
   color: var(--success);
 }
 
-.overlay-card-detail {
+.settings-switch[aria-checked='true'] .settings-switch-track {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--success) 35%, var(--panel-strong));
+}
+
+.settings-switch[aria-checked='true'] .settings-switch-thumb {
+  background: var(--success);
+  transform: translateX(12px);
+}
+
+.settings-switch:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+.settings-switch:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-switch-track,
+  .settings-switch-thumb {
+    transition: none;
+  }
+}
+
+.feature-body {
+  display: grid;
+  gap: 10px;
+  margin: 12px 16px 16px;
+}
+
+.feature-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
   margin: 0;
-  color: var(--muted);
-  font-size: 0.85rem;
+  color: var(--text);
+  font-size: 0.88rem;
   line-height: 1.45;
 }
 
-.overlay-card-actions {
-  display: flex;
-  gap: 8px;
+.feature-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--subtle);
 }
 
-.overlay-card-keys {
+.feature-status-on .feature-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent);
+}
+
+.feature-status-stopped .feature-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.feature-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.feature-keys {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 18px;
-  padding: 11px 18px;
+  margin: 0;
+  padding-top: 10px;
   border-top: 1px solid var(--border);
-  background: var(--row-alt-bg);
-  border-radius: 0 0 8px 8px;
   color: var(--muted);
   font-size: 0.8rem;
 }
@@ -5359,20 +5420,6 @@ tr.deck-change-row-out .card-link {
 .overlay-key-note {
   white-space: normal;
   color: var(--subtle);
-}
-
-.overlay-card-error {
-  margin: 0 18px 14px;
-}
-
-@media (max-width: 640px) {
-  .overlay-card-main {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .overlay-card-actions {
-    grid-column: 2;
-  }
 }
 
 /* Tracker info block on the Settings page. */
@@ -5402,6 +5449,214 @@ tr.deck-change-row-out .card-link {
   font-size: 0.82rem;
 }
 
+/* Settings page layout: the Tracker card spans the page, then labelled
+   groups lay their cards out in two equal columns that grow with the window.
+   Columns follow the group's own width (a container query), so a narrow
+   window or the sidebar's width drops them to one. Cards in a row share its
+   height. */
+.settings-group {
+  container-type: inline-size;
+  margin-top: 22px;
+}
+
+.settings-group-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 10px 2px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings-group-heading::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+
+.settings-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-grid > .dashboard-section,
+.settings-stack > .dashboard-section {
+  margin-top: 0;
+}
+
+/* Cards stacked in one column of a group (Startup over Sessions); the last
+   one stretches so the column ends level with its neighbour. */
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-stack > .dashboard-section:last-child {
+  flex: 1;
+}
+
+.settings-grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* Inside a column the form uses the card's full width. */
+.settings-grid-2 .settings-form {
+  max-width: none;
+}
+
+@container (max-width: 940px) {
+  .settings-grid-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Your data: Backup & restore beside Export, 60/40. The backup table needs
+   the room, so the pair stacks sooner than the two-column groups. */
+.settings-grid-split {
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+}
+
+.settings-grid-split .backup-card {
+  max-width: none;
+}
+
+/* Keep each backup row on one line: dates and sizes don't wrap, and Open
+   location shrinks to its folder icon (its label stays for screen readers
+   and the tooltip). */
+.settings-grid-split .backup-table td {
+  white-space: nowrap;
+}
+
+.settings-grid-split .backup-row-actions {
+  flex-wrap: nowrap;
+}
+
+.settings-grid-split .backup-row-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@container (max-width: 1240px) {
+  .settings-grid-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-grid-split .backup-row-label {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+  }
+}
+
+/* Deck Finder Creators: the short-name sites side by side. */
+.settings-creator-sites {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 14px 12px;
+}
+
+/* Status tag beside a section title (Settings): readable while collapsed. */
+.section-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.settings-badge {
+  min-height: 20px;
+  padding: 1px 8px;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.settings-badge-on {
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  color: var(--success);
+}
+
+.settings-badge-off {
+  background: transparent;
+  color: var(--muted);
+}
+
+.settings-badge-update {
+  border-color: color-mix(in srgb, var(--update) 50%, var(--border));
+  background: color-mix(in srgb, var(--update) 12%, transparent);
+  color: var(--update);
+}
+
+.settings-badge-warn {
+  border-color: color-mix(in srgb, var(--accent-strong) 50%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-strong);
+}
+
+/* Tracker card: the Overview's metric tiles, set into the card. */
+.settings-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  margin: 12px 16px 0;
+}
+
+.settings-tiles .metric-card {
+  min-height: 0;
+  padding: 12px 16px;
+  background: var(--surface);
+  box-shadow: none;
+}
+
+.settings-tiles .metric-card-icon svg {
+  width: 26px;
+  height: 26px;
+}
+
+/* Paths under the tiles; Log DB carries the small Database health link. */
+.settings-paths .settings-info-row {
+  grid-template-columns: 150px minmax(0, 1fr) auto;
+}
+
+.settings-quiet-link {
+  color: var(--subtle);
+  font-size: 0.76rem;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--subtle) 45%, transparent);
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
+.settings-quiet-link:hover,
+.settings-quiet-link:focus-visible {
+  color: var(--text);
+  text-decoration-color: currentColor;
+}
+
+.settings-standalone-hint {
+  margin: 12px 16px 16px;
+}
+
+@media (max-width: 640px) {
+  .settings-info-row,
+  .settings-paths .settings-info-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+}
+
 /* Buttons that are really links (e.g. "Open Database Health"). */
 a.settings-link-button {
   display: inline-flex;
@@ -5422,6 +5677,8 @@ a.settings-link-button {
   gap: 14px;
   /* Use the section's full width, not the narrow settings-form column. */
   margin: 12px 16px 16px;
+  /* Format choices: two columns in a narrow card, four in a row with room. */
+  container-type: inline-size;
 }
 
 .collection-export-lead {
@@ -5454,19 +5711,122 @@ a.settings-link-button {
   font-weight: 700;
 }
 
-.collection-export-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 2px;
+.collection-export-formats {
+  min-width: 0;
+  margin: 2px 0 0;
+  padding: 0;
+  border: 0;
 }
 
-/* Roughly double the natural width of the deck-finder default, but the same
-   height — wider call-to-action buttons that don't stretch across the box. */
-.collection-export-buttons .deck-export-button {
+.collection-export-legend {
+  margin-bottom: 8px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.collection-export-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@container (min-width: 820px) {
+  .collection-export-choices {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@container (max-width: 380px) {
+  .collection-export-choices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.collection-export-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  cursor: pointer;
+}
+
+.collection-export-choice:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.collection-export-choice:has(input:checked) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-strong));
+}
+
+.collection-export-choice:has(input:focus-visible) {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+.collection-export-formats:disabled .collection-export-choice {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.collection-export-choice input {
   flex: 0 0 auto;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.collection-export-choice-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.collection-export-choice-label {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.collection-export-choice-note {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.collection-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+/* One call to action: muted until a format is chosen, then filled gold. */
+.collection-export-run.deck-export-button {
   min-width: 180px;
   justify-content: center;
+}
+
+.collection-export-run.deck-export-button:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.collection-export-run.deck-export-button:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+.collection-export-hint {
+  color: var(--subtle);
+  font-size: 0.85rem;
 }
 
 .collection-export-status {
@@ -7189,7 +7549,27 @@ a.sidebar-deck-finder {
   flex: none;
   justify-content: center;
   width: 26px;
-  padding-inline: 0;
+  height: 26px;
+  min-height: 0;
+  padding: 0;
+  /* A filled rounded square, like the Stream Kit's recent games, not an
+     outlined pill. */
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+  font-weight: 800;
+}
+
+.live-game-outcome.badge-win {
+  background: color-mix(in srgb, var(--success) 20%, transparent);
+}
+
+.live-game-outcome.badge-loss {
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
+}
+
+.live-game-outcome.badge-draw {
+  background: color-mix(in srgb, var(--tie) 20%, transparent);
 }
 
 .live-game-item .live-game-row {
@@ -7416,6 +7796,16 @@ a.sidebar-deck-finder {
   margin: 0;
 }
 
+/* Installed / Latest sit flush with the form, with a narrow label column. */
+.update-status-row .update-status-versions {
+  gap: 4px;
+  margin: 0;
+}
+
+.update-status-versions .settings-info-row {
+  grid-template-columns: 110px minmax(0, 1fr);
+}
+
 .update-actions {
   display: flex;
   flex-wrap: wrap;
@@ -7620,4 +8010,161 @@ a.sidebar-deck-finder {
 .buy-paper-compare-note { margin: 8px 0 0; color: var(--subtle); font-size: 0.74rem; line-height: 1.4; }
 
 /* Settings: the Buy on Paper card reuses the overlay card. */
-.buy-paper-settings-note { margin: 0; }
+
+/* Settings → Streaming: Stream Kit links (the widgets themselves are styled
+   in stream/stream.css, a separate page). */
+.stream-kit {
+  display: grid;
+  gap: 16px;
+  /* The intro continues the card's description, at the same spacing. */
+  margin: 6px 16px 16px;
+}
+
+.stream-kit .settings-hint {
+  margin: 0;
+}
+
+/* The two intro paragraphs read as one block, spaced like the card's
+   description above them. */
+.stream-kit-intro {
+  display: grid;
+  gap: 6px;
+}
+
+.stream-kit-intro .settings-hint {
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.stream-kit-idle-note strong {
+  color: var(--accent);
+}
+
+.stream-kit-shared {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px 20px;
+}
+
+.stream-kit-shared .settings-field {
+  min-width: 170px;
+}
+
+.stream-kit-shared .settings-check {
+  min-height: 36px;
+}
+
+.stream-kit-widgets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@container (max-width: 760px) {
+  .stream-kit-widgets {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.stream-kit-widget {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.stream-kit-thanks {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.stream-kit-thanks svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--coffee, #f06aa0);
+  fill: currentColor;
+}
+
+.stream-kit-thanks strong {
+  color: var(--text);
+}
+
+.stream-kit-widget-overlay {
+  grid-column: 1 / -1;
+}
+
+.stream-kit-range output {
+  margin-left: 4px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.stream-kit-range input {
+  width: 100%;
+  min-height: 36px;
+  accent-color: var(--accent);
+}
+
+.stream-kit-widget-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stream-kit-widget h4 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.stream-kit-size {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stream-kit-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr));
+  gap: 10px;
+}
+
+.stream-kit .settings-field select {
+  width: 100%;
+  min-width: 0;
+}
+
+.stream-kit-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.stream-kit-link input {
+  flex: 1 1 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+}

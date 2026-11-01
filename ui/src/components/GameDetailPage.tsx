@@ -36,6 +36,7 @@ import { DeckLink } from './DeckLink';
 import { ReplayLink } from './ReplayLink';
 import { ManaCost } from './ManaCost';
 import { Badge } from './Badge';
+import { LAND_STREAK_HINT } from '../drawStatus';
 import {
   bucketCombatGroups,
   CombatGroupColumns,
@@ -239,17 +240,6 @@ function longestLandRun(flags: boolean[]): number {
   return longest;
 }
 
-function maxLandsInEight(flags: boolean[]): number | null {
-  if (flags.length < 8) {
-    return null;
-  }
-  let maximum = 0;
-  for (let index = 0; index <= flags.length - 8; index += 1) {
-    maximum = Math.max(maximum, flags.slice(index, index + 8).filter(Boolean).length);
-  }
-  return maximum;
-}
-
 function calculateLowLandDrought(
   flags: Array<boolean | null>,
   openingLands: number,
@@ -422,7 +412,6 @@ export function GameDetailPage({
     (_, index) => landByPosition.get(index + 1) ?? null,
   );
   const longestLandStreak = detail.draw_quality.longest_land_streak ?? longestLandRun(drawLandFlags);
-  const maxLandsInEightDraws = detail.draw_quality.max_lands_in_eight ?? maxLandsInEight(drawLandFlags);
   const openingLands = detail.draw_quality.opening_lands ?? detail.opening_hand.filter(isLandCard).length;
   const lowLandDroughtFallback = calculateLowLandDrought(knownDrawLandFlags, openingLands);
   const longestLowLandDrought =
@@ -440,27 +429,12 @@ export function GameDetailPage({
   const expectedLandRateEstimated = detail.draw_quality.land_rate_source === 'estimate';
   const expectedLandsSeen =
     detail.draw_quality.expected_lands_seen ?? (totalCardsSeen * expectedLandRate) / 100;
-  const isFlood =
-    detail.draw_quality.is_flood ||
-    longestLandStreak >= 4 ||
-    (maxLandsInEightDraws !== null && maxLandsInEightDraws >= 6);
-  const fallbackFloodReasons = [
-    ...(detail.draw_quality.land_draw_pct !== null &&
-    detail.draw_quality.land_draw_pct > 50 &&
-    detail.draw_quality.total_draws >= 6
-      ? [
-          `${detail.draw_quality.land_draws} of ${detail.draw_quality.total_draws} post-opening draws were lands`,
-        ]
-      : []),
-    ...(longestLandStreak >= 4 ? [`${longestLandStreak} consecutive land draws`] : []),
-    ...(maxLandsInEightDraws !== null && maxLandsInEightDraws >= 6
-      ? [`${maxLandsInEightDraws} lands in an 8-draw window`]
-      : []),
-  ];
-  const floodReasons =
-    detail.draw_quality.flood_reasons && detail.draw_quality.flood_reasons.length > 0
-      ? detail.draw_quality.flood_reasons
-      : fallbackFloodReasons;
+  // The server decides flood: a land streak alone is not flood (it is shown
+  // as its own Land streak finding unless the land count was also high).
+  const isFlood = detail.draw_quality.is_flood;
+  const floodReasons = detail.draw_quality.flood_reasons ?? [];
+  const streakReasons = detail.draw_quality.streak_reasons ?? [];
+  const isLandStreak = Boolean(detail.draw_quality.is_land_streak);
   const isScrew = Boolean(detail.draw_quality.is_screw) || longestLowLandDrought >= 3;
   const fallbackScrewReasons =
     longestLowLandDrought >= 3 && lowLandDroughtLands !== null
@@ -481,7 +455,9 @@ export function GameDetailPage({
         ? 'Flood'
         : isScrew
           ? 'Mana Screw'
-          : 'Normal';
+          : isLandStreak
+            ? 'Land streak'
+            : 'Normal';
   const playerStats = detail.participant_stats.find((row) => row.role === 'player');
   const opponentStats = detail.participant_stats.find((row) => row.role === 'opponent');
   /** Display view: folds drawn counts into played cells and derives rates.
@@ -801,6 +777,11 @@ export function GameDetailPage({
               <h2>Game {formatDateTime(detail.game.started_at)}</h2>
               {isFlood ? <Badge tone="flood">Flood</Badge> : null}
               {!isFlood && isScrew ? <Badge tone="screw">Mana Screw</Badge> : null}
+              {!isFlood && !isScrew && isLandStreak ? (
+                <Badge tone="streak" title={LAND_STREAK_HINT}>
+                  Land streak
+                </Badge>
+              ) : null}
             </div>
             <p>
               {detail.player.deck_name ? <DeckLink deckName={detail.player.deck_name} /> : 'Unknown deck'} ·{' '}
@@ -921,7 +902,7 @@ export function GameDetailPage({
       <Section
         id="game-draw-quality"
         title="Draw Quality"
-        description="Flood tracks excess lands and concentrated land streaks. Mana screw tracks statistically low land access and three or more known nonland draws while stuck on one or two lands."
+        description="Flood means more lands than this deck should see. A land streak is a run of lands that was unlikely for this many draws; it counts as flood only when the land count was also above expected. Mana screw tracks statistically low land access and three or more known nonland draws while stuck on one or two lands."
       >
         <section className="metric-grid metric-grid-deck draw-quality-grid" aria-label="Game draw quality">
           {/* One line: card totals first, then the land information. */}
@@ -953,6 +934,15 @@ export function GameDetailPage({
           <p className="draw-quality-reason">
             <Badge tone="screw">Mana Screw Evidence</Badge>
             <span>{screwReasons.join(' · ')}</span>
+          </p>
+        ) : null}
+        {!isFlood && isLandStreak && streakReasons.length > 0 ? (
+          <p className="draw-quality-reason">
+            <Badge tone="streak">Land streak</Badge>
+            <span>
+              {streakReasons.join(' · ')} · Not flood: {formatNumber(landsSeen)} lands seen, about{' '}
+              {expectedLandsSeen.toFixed(1)} expected
+            </span>
           </p>
         ) : null}
       </Section>

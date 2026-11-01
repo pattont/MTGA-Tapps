@@ -18,7 +18,7 @@ import { sceneArrows, seatAnchor, sleeveNeon } from '../scene/arrows';
 import type { ArrowEnd } from '../scene/arrows';
 import { sceneLabels, seatNumber } from '../scene/labels';
 import type { MotionRegistry } from '../scene/motionRegistry';
-import { projectToScreen } from '../scene/projection';
+import { handOccluders, isCovered, projectToScreen } from '../scene/projection';
 import type { ScreenPoint } from '../scene/projection';
 import { STACK_KIND_LABELS, effectExits, foldResolved, stackView } from '../scene/stackView';
 import type { TextureStore } from '../scene/textureStore';
@@ -63,6 +63,8 @@ export function buildFrameInput(
   const h = layout.sceneHeight;
 
   const labels: FrameLabel[] = [];
+  // Labels are drawn over the rendered scene: skip the ones a hand card covers.
+  const occluders = handOccluders(board, registry, camera, w, h);
   for (const label of sceneLabels(board, cards)) {
     let { x, y, z } = label;
     if (label.obj) {
@@ -73,7 +75,7 @@ export function buildFrameInput(
       z += pose.z;
     }
     const p = projectToScreen(camera, x, y, z, w, h, point);
-    if (!p.visible) continue;
+    if (!p.visible || isCovered(p.x, p.y, p.depth ?? 0, label.obj, occluders)) continue;
     labels.push({ x: p.x, y: p.y, text: label.text, tone: label.tone, emphasis: label.emphasis });
   }
 

@@ -1,5 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Bot, CalendarClock, Gamepad2, Tag } from 'lucide-react';
+import { Badge } from './Badge';
 import { BackupCard } from './BackupCard';
+import { MetricCard } from './MetricCard';
 import {
   collectionDownloadUrl,
   fetchCollectionExportJob,
@@ -17,6 +20,7 @@ import {
   type BuyOnPaperSettings,
   type SessionSettings,
   type DeckAiModel,
+  type DeckAiProviderSettings,
   type DeckAiSettings,
   type DeckFinderCreator,
   type DeckFinderCreatorSettings,
@@ -24,6 +28,8 @@ import {
   type StartupSettings,
   type TrackerInfoSettings,
 } from '../api';
+import { formatDateTime } from '../format';
+import { StreamKitSettings } from './StreamKitSettings';
 import { Section } from './Section';
 import { useSharedUpdateStatus } from './useUpdateStatus';
 import {
@@ -80,32 +86,215 @@ function saveLabel(status: SaveStatus, idle: string): string {
   return idle;
 }
 
-const TRACKER_INFO_ROWS: Array<[keyof TrackerInfoSettings, string]> = [
+const TRACKER_PATH_ROWS: Array<[keyof TrackerInfoSettings, string]> = [
   ['monitoring', 'Monitoring'],
   ['card_db', 'Local Card DB'],
   ['log_db', 'Log DB'],
-  ['deck_ai', 'Deck AI'],
-  ['version', 'Tracker Version'],
 ];
 
-function TrackerInfo({ info }: { info: TrackerInfoSettings }) {
+function parseDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** "Today", "Yesterday", "3 days ago", then a short date. */
+function dayLabel(date: Date, now: Date = new Date()): string {
+  const midnight = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const days = Math.round((midnight(now) - midnight(date)) / 86_400_000);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${days} days ago`;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function deckAiProvider(deckAi: DeckAiSettings): DeckAiProviderSettings | undefined {
+  return deckAi.providers.find((entry) => entry.key === deckAi.provider);
+}
+
+function TrackerOverview({ info, deckAi }: { info: TrackerInfoSettings; deckAi: DeckAiSettings | null }) {
+  const status = useSharedUpdateStatus().status;
+  const first = parseDate(info.first_game_at);
+  const last = parseDate(info.last_game_at);
+  const games = info.games;
+  const latest = status?.latest_version ?? null;
+  const versionDetail =
+    status?.state === 'up_to_date'
+      ? 'Up to date'
+      : latest && (status?.state === 'available' || status?.state === 'downloading' || status?.state === 'ready')
+        ? `${displayVersion(latest)} available`
+        : undefined;
+  const provider = deckAi ? deckAiProvider(deckAi) : undefined;
+  const deckAiOn = Boolean(deckAi?.enabled && provider?.api_key.trim());
+
   return (
-    <dl className="settings-info">
-      {TRACKER_INFO_ROWS.map(([key, label]) => (
-        <div key={key} className="settings-info-row">
-          <dt>{label}</dt>
-          <dd>{info[key] ?? 'not found (start the tracker to detect it)'}</dd>
-        </div>
-      ))}
-    </dl>
+    <>
+      <div className="settings-tiles">
+        <MetricCard
+          icon={<Gamepad2 />}
+          label="Games captured"
+          value={games == null ? '—' : games.toLocaleString()}
+          detail={
+            first
+              ? `since ${first.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}`
+              : games === 0
+                ? 'Play a game with the tracker running'
+                : undefined
+          }
+        />
+        <MetricCard
+          icon={<CalendarClock />}
+          label="Last game"
+          value={last ? dayLabel(last) : '—'}
+          detail={last ? formatDateTime(info.last_game_at as string) : undefined}
+        />
+        <MetricCard icon={<Tag />} label="Tracker version" value={displayVersion(info.version) || info.version} detail={versionDetail} />
+        <MetricCard
+          icon={<Bot />}
+          label="Deck AI"
+          value={!deckAi ? '—' : deckAiOn ? 'On' : deckAi.enabled ? 'No API key' : 'Off'}
+          detail={deckAi?.enabled && provider ? `${provider.label} · ${provider.model || provider.default_model}` : undefined}
+        />
+      </div>
+      <dl className="settings-info settings-paths">
+        {TRACKER_PATH_ROWS.map(([key, label]) => (
+          <div key={key} className="settings-info-row">
+            <dt>{label}</dt>
+            <dd>{info[key] ?? 'not found (start the tracker to detect it)'}</dd>
+            {key === 'log_db' ? (
+              <a className="settings-quiet-link" href="#/audit">
+                Database health
+              </a>
+            ) : null}
+          </div>
+        ))}
+      </dl>
+    </>
   );
 }
 
-const EXPORT_FORMATS: Array<[CollectionExportFormat, string]> = [
-  ['json', 'Export to .json'],
-  ['csv', 'Export to .csv'],
-  ['txt', 'Export to .txt'],
-  ['archidekt', 'Export for Archidekt (.csv)'],
+type BadgeTone = 'on' | 'off' | 'update' | 'warn';
+
+function StatusBadge({ tone, children }: { tone: BadgeTone; children: string }) {
+  return <Badge className={`settings-badge settings-badge-${tone}`}>{children}</Badge>;
+}
+
+function startupBadge(startup: StartupSettings | null) {
+  if (!startup?.available) return undefined;
+  return startup.start_at_login ? (
+    <StatusBadge tone="on">Starts at sign-in</StatusBadge>
+  ) : (
+    <StatusBadge tone="off">Manual start</StatusBadge>
+  );
+}
+
+function sessionsBadge(sessions: SessionSettings | null) {
+  if (!sessions) return undefined;
+  return (
+    <StatusBadge tone="off">
+      {sessions.break_hours ? `${sessions.break_hours} h break` : 'One per launch'}
+    </StatusBadge>
+  );
+}
+
+/** The update state when there is one; otherwise why this copy can't update itself. */
+function UpdatesBadge({ settings }: { settings: UpdateSettings }) {
+  const status = useSharedUpdateStatus().status;
+  if (!settings.check) return <StatusBadge tone="off">Off</StatusBadge>;
+  switch (status?.state) {
+    case 'ready':
+      return <StatusBadge tone="update">{settings.supported ? 'Ready to install' : 'Update available'}</StatusBadge>;
+    case 'available':
+    case 'downloading':
+      return <StatusBadge tone="update">Update available</StatusBadge>;
+    case 'up_to_date':
+      return <StatusBadge tone="on">Up to date</StatusBadge>;
+    case 'idle':
+      // Checked, and no release has an update file yet: nothing newer.
+      if (status.last_check) return <StatusBadge tone="on">Up to date</StatusBadge>;
+      break;
+    case 'error':
+      return <StatusBadge tone="warn">Check failed</StatusBadge>;
+    default:
+      break;
+  }
+  if (settings.supported) return null;
+  const kind = status?.install_kind ?? settings.install_kind;
+  const reason = status?.reason;
+  if (reason === 'source' || kind === 'source') return <StatusBadge tone="off">Update with git</StatusBadge>;
+  if (reason === 'portable' || kind === 'windows-portable') return <StatusBadge tone="off">Portable copy</StatusBadge>;
+  return <StatusBadge tone="off">Manual install</StatusBadge>;
+}
+
+/** On/off switch beside a feature card's title; it saves as soon as it flips. */
+function FeatureSwitch({
+  label,
+  checked,
+  busy,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  busy: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <button
+      aria-checked={checked}
+      aria-label={label}
+      className="settings-switch"
+      disabled={busy}
+      role="switch"
+      type="button"
+      onClick={() => onChange(!checked)}
+    >
+      <span aria-hidden="true" className="settings-switch-track">
+        <span className="settings-switch-thumb" />
+      </span>
+      {checked ? 'On' : 'Off'}
+    </button>
+  );
+}
+
+/** The Deck AI switch, and a warning beside it when it is on without a key. */
+function deckAiBadge(deckAi: DeckAiSettings | null, busy: boolean, onChange: (next: boolean) => void) {
+  if (!deckAi) return undefined;
+  const noKey = deckAi.enabled && !deckAiProvider(deckAi)?.api_key.trim();
+  return (
+    <>
+      <FeatureSwitch busy={busy} checked={deckAi.enabled} label="Deck AI" onChange={onChange} />
+      {noKey ? <StatusBadge tone="warn">No API key</StatusBadge> : null}
+    </>
+  );
+}
+
+function creatorCount(creators: DeckFinderCreatorSettings): number {
+  return creators.moxfield.length + creators.aetherhub.length + creators.tcgplayer.length + (creators.youtube?.length ?? 0);
+}
+
+function creatorsBadge(creators: DeckFinderCreatorSettings | null) {
+  if (!creators) return undefined;
+  const count = creatorCount(creators);
+  return <StatusBadge tone="off">{`${count} creator${count === 1 ? '' : 's'}`}</StatusBadge>;
+}
+
+/** A labelled band of settings cards laid out in equal columns. */
+/** columns 'split' is a wide card beside a narrower one (60/40). */
+function SettingsGroup({ title, columns, children }: { title: string; columns: 1 | 2 | 'split'; children: ReactNode }) {
+  return (
+    <div className="settings-group">
+      <h2 className="settings-group-heading">{title}</h2>
+      <div className={`settings-grid settings-grid-${columns}`}>{children}</div>
+    </div>
+  );
+}
+
+// Most-used first. The descriptions say what each file is for.
+const EXPORT_FORMATS: Array<{ format: CollectionExportFormat; label: string; note: string }> = [
+  { format: 'csv', label: 'Moxfield (.csv)', note: "Moxfield's collection import" },
+  { format: 'archidekt', label: 'Archidekt (.csv)', note: 'Exact printings, by Scryfall ID' },
+  { format: 'txt', label: 'Card list (.txt)', note: 'Pastes into most sites' },
+  { format: 'json', label: 'JSON (.json)', note: 'Every field, for scripts' },
 ];
 
 function formatDuration(seconds: number | null): string | null {
@@ -126,10 +315,14 @@ function triggerDownload(fileName: string): void {
   link.remove();
 }
 
-function CollectionExport({ platform }: { platform: PlatformSettings }) {
+function CollectionExport({ platform, games }: { platform: PlatformSettings; games: number | null }) {
   const [job, setJob] = useState<CollectionExportJob | null>(null);
   const [running, setRunning] = useState(false);
+  const [format, setFormat] = useState<CollectionExportFormat | null>(null);
   const pollRef = useRef<number | null>(null);
+  // The scan finds the collection by cards the tracker has seen you play, so
+  // it can't work before the first recorded game. Unknown (null) stays enabled.
+  const needsGame = games === 0;
   const deliveredRef = useRef<string | null>(null);
 
   useEffect(
@@ -222,19 +415,47 @@ function CollectionExport({ platform }: { platform: PlatformSettings }) {
         </li>
       </ul>
 
-      <div className="collection-export-buttons">
-        {EXPORT_FORMATS.map(([format, label]) => (
-          <button
-            key={format}
-            className="deck-export-button"
-            type="button"
-            disabled={running}
-            onClick={() => runExport(format)}
-          >
-            {label}
-          </button>
-        ))}
+      <fieldset className="collection-export-formats" disabled={running || needsGame}>
+        <legend className="collection-export-legend">File format</legend>
+        <div className="collection-export-choices">
+          {EXPORT_FORMATS.map((choice) => (
+            <label key={choice.format} className="collection-export-choice">
+              <input
+                type="radio"
+                name="collection-export-format"
+                value={choice.format}
+                checked={format === choice.format}
+                onChange={() => setFormat(choice.format)}
+              />
+              <span className="collection-export-choice-text">
+                <span className="collection-export-choice-label">{choice.label}</span>
+                <span className="collection-export-choice-note">{choice.note}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      <div className="collection-export-actions">
+        <button
+          className="deck-export-button collection-export-run"
+          type="button"
+          disabled={running || needsGame || format === null}
+          onClick={() => format && runExport(format)}
+        >
+          Export collection
+        </button>
+        {format === null && !needsGame ? (
+          <span className="collection-export-hint">Choose a format to export.</span>
+        ) : null}
       </div>
+
+      {needsGame ? (
+        <p className="collection-export-status collection-export-warning" role="note">
+          Play a game with the tracker running first. The export finds your collection by the cards
+          it has seen you play.
+        </p>
+      ) : null}
 
       {job && job.state === 'running' ? (
         <p className="collection-export-status" role="status" aria-busy="true">
@@ -308,6 +529,60 @@ export function SettingsPage() {
   const [updates, setUpdates] = useState<UpdateSettings | null | undefined>(undefined);
   const [buyOnPaper, setBuyOnPaper] = useState<BuyOnPaperSettings | null>(null);
   const [sessions, setSessions] = useState<SessionSettings | null>(null);
+  // The overlay, Buy on Paper and Deck AI switches sit in their card titles,
+  // so the page owns saving them.
+  const [overlayBusy, setOverlayBusy] = useState(false);
+  const [overlayError, setOverlayError] = useState<string | null>(null);
+  const [buyOnPaperBusy, setBuyOnPaperBusy] = useState(false);
+  const [buyOnPaperError, setBuyOnPaperError] = useState<string | null>(null);
+  const [deckAiBusy, setDeckAiBusy] = useState(false);
+  const [deckAiError, setDeckAiError] = useState<string | null>(null);
+
+  async function changeOverlay(enabled: boolean) {
+    setOverlayBusy(true);
+    setOverlayError(null);
+    try {
+      setOverlay(await setOverlayEnabled(enabled));
+    } catch (exc: unknown) {
+      setOverlayError(exc instanceof Error ? exc.message : 'The overlay could not be changed');
+    } finally {
+      setOverlayBusy(false);
+    }
+  }
+
+  async function changeBuyOnPaper(enabled: boolean) {
+    setBuyOnPaperBusy(true);
+    setBuyOnPaperError(null);
+    try {
+      setBuyOnPaper(await saveBuyOnPaperEnabled(enabled));
+    } catch (exc: unknown) {
+      setBuyOnPaperError(exc instanceof Error ? exc.message : 'Buy on Paper could not be changed');
+    } finally {
+      setBuyOnPaperBusy(false);
+    }
+  }
+
+  // The switch saves only on/off, with the provider, keys and models as last
+  // saved; unsaved edits in the form stay in the form for its Save button.
+  async function changeDeckAi(enabled: boolean) {
+    if (!deckAi) return;
+    setDeckAiBusy(true);
+    setDeckAiError(null);
+    try {
+      setDeckAi(
+        await saveDeckAiSettings({
+          enabled,
+          provider: deckAi.provider,
+          keys: Object.fromEntries(deckAi.providers.map((entry) => [entry.key, entry.api_key])),
+          models: Object.fromEntries(deckAi.providers.map((entry) => [entry.key, entry.model])),
+        }),
+      );
+    } catch (exc: unknown) {
+      setDeckAiError(exc instanceof Error ? exc.message : 'Deck AI could not be changed');
+    } finally {
+      setDeckAiBusy(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -335,161 +610,174 @@ export function SettingsPage() {
     };
   }, []);
 
+  // Every card shows the load error, or a spinner until its settings arrive.
+  function settingsBody<T>(value: T | null, render: (loaded: T) => ReactNode): ReactNode {
+    if (error) return <p className="empty-state deckfinder-state">{error}</p>;
+    if (value === null) {
+      return (
+        <p className="state-panel deckfinder-state" role="status" aria-busy="true">
+          Loading...
+        </p>
+      );
+    }
+    return render(value);
+  }
+
   return (
     <>
       <Section
         id="settings-tracker"
         title="Tracker"
-        description="What this tracker is watching and writing. Detected when the tracker starts and refreshed on every restart."
+        description="What this tracker watches and records. Refreshed every time it starts."
       >
-        {error ? (
-          <p className="empty-state deckfinder-state">{error}</p>
-        ) : trackerInfo === null ? (
-          <p className="state-panel deckfinder-state" role="status" aria-busy="true">
-            Loading...
-          </p>
-        ) : (
-          <TrackerInfo info={trackerInfo} />
-        )}
+        {settingsBody(trackerInfo, (info) => (
+          <TrackerOverview info={info} deckAi={deckAi} />
+        ))}
       </Section>
 
-      <Section
-        id="settings-startup"
-        title="Startup"
-        description="Choose whether Tapps Tracker starts when you sign in and whether a launch opens the dashboard in your browser."
-      >
-        {error ? (
-          <p className="empty-state deckfinder-state">{error}</p>
-        ) : startup === null ? (
-          <p className="state-panel deckfinder-state" role="status" aria-busy="true">
-            Loading...
-          </p>
-        ) : (
-          <StartupForm initial={startup} platform={platform} />
-        )}
-      </Section>
+      <SettingsGroup title="General" columns={2}>
+        <div className="settings-stack">
+          <Section
+            id="settings-startup"
+            title="Startup"
+            badge={startupBadge(startup)}
+            description="When Tapps Tracker starts, and whether it opens the dashboard."
+          >
+            {settingsBody(startup, (loaded) => (
+              <StartupForm initial={loaded} platform={platform} onChange={setStartup} />
+            ))}
+          </Section>
 
-      {sessions ? (
-        <Section
-          id="settings-sessions"
-          title="Sessions"
-          description="A session is one sitting of play: its record shows on the Live Scoreboard and in the Overview's Sessions table."
-        >
-          <SessionsForm initial={sessions} />
-        </Section>
-      ) : null}
-
-      <Section
-        id="settings-updates"
-        title="Updates"
-        description="Tapps Tracker looks for a newer release on GitHub, downloads it in the background and verifies it against a signed manifest. Nothing installs until you choose Restart to update, unless you allow automatic installs below."
-      >
-        {error ? (
-          <p className="empty-state deckfinder-state">{error}</p>
-        ) : updates === undefined ? (
-          <p className="state-panel deckfinder-state" role="status" aria-busy="true">
-            Loading...
-          </p>
-        ) : updates === null ? (
-          <p className="settings-hint">This tracker does not report update settings.</p>
-        ) : (
-          <UpdatesForm initial={updates} />
-        )}
-      </Section>
-
-      <Section
-        id="settings-overlay"
-        title="In-game overlay"
-        description="A small always-on-top window beside Arena with your library, per-card draw odds and land drops. It runs as its own small process, shows only while Arena is up, and reads only this tracker's local API — never the game."
-      >
-        {error ? (
-          <p className="empty-state deckfinder-state">{error}</p>
-        ) : overlay === null ? (
-          <p className="state-panel deckfinder-state" role="status" aria-busy="true">
-            Loading...
-          </p>
-        ) : (
-          <OverlayForm initial={overlay} platform={platform} />
-        )}
-      </Section>
-
-      <Section
-        id="settings-buy-on-paper"
-        title="Buy on Paper"
-        description="Price a deck in paper and open it at a card store, from Deck Finder, Deck Manager and deck pages."
-      >
-        {error ? (
-          <p className="empty-state deckfinder-state">{error}</p>
-        ) : buyOnPaper === null ? (
-          <p className="state-panel deckfinder-state" role="status" aria-busy="true">
-            Loading...
-          </p>
-        ) : (
-          <BuyOnPaperForm initial={buyOnPaper} />
-        )}
-      </Section>
-
-      <Section
-        id="settings-backup"
-        title="Backup & restore"
-        description="Everything the tracker knows — games, settings, Deck Finder creators, overlay preferences — in one file. Back up into a folder a sync client mirrors and restore it on another computer; restore the newer one back when you come home."
-      >
-        <BackupCard />
-      </Section>
-
-      <Section
-        id="settings-deck-ai"
-        title="Deck AI"
-        description="Names your opponent's deck after each game: one small request to the provider you pick, in the background, carrying only the names of the cards they revealed (at least three) — never your deck, account, or log. The answer becomes the game's Opponent Deck Type. The key lives in settings.json and goes nowhere else."
-      >
-        {error ? (
-          <p className="empty-state deckfinder-state">{error}</p>
-        ) : deckAi === null ? (
-          <p className="state-panel deckfinder-state" role="status" aria-busy="true">
-            Loading settings...
-          </p>
-        ) : (
-          <DeckAiForm initial={deckAi} />
-        )}
-      </Section>
-
-      <Section
-        id="settings-creators"
-        title="Deck Finder Creators"
-        description="Which creators Deck Finder follows on Moxfield, Aetherhub, TCGplayer, and YouTube. One creator per line, with an optional short name after a pipe. For YouTube, enter a channel URL or @handle — “@SlothMtg | Sloth” adds “(Sloth)” to imported deck names."
-      >
-        {error ? null : creators === null ? (
-          <p className="state-panel deckfinder-state" role="status" aria-busy="true">
-            Loading creators...
-          </p>
-        ) : (
-          <CreatorsForm initial={creators} />
-        )}
-      </Section>
-
-      {platform?.collection_export ? (
-        <Section
-          id="settings-collection-export"
-          title="Export MTGA Collection"
-          description="Read your full card collection from the running game and export it for Moxfield, Archidekt, and similar sites."
-        >
-          <CollectionExport platform={platform} />
-        </Section>
-      ) : null}
-
-      <Section
-        id="settings-db-health"
-        title="Database Health"
-        description="Audit the tracker database for incomplete or suspicious games, review findings, and reset data if something went wrong."
-      >
-        <div className="settings-form">
-          <div>
-            <a className="deck-export-button settings-link-button" href="#/audit">
-              Open Database Health
-            </a>
-          </div>
+          {sessions ? (
+            <Section
+              id="settings-sessions"
+              title="Sessions"
+              badge={sessionsBadge(sessions)}
+              description="One sitting of play, shown on the Live Scoreboard and in the Overview."
+            >
+              <SessionsForm initial={sessions} onChange={setSessions} />
+            </Section>
+          ) : null}
         </div>
-      </Section>
+
+        <Section
+          id="settings-updates"
+          title="Updates"
+          badge={updates ? <UpdatesBadge settings={updates} /> : undefined}
+          description="New releases from GitHub, verified before they install. Nothing installs until you choose Restart to update."
+        >
+          {error ? (
+            <p className="empty-state deckfinder-state">{error}</p>
+          ) : updates === undefined ? (
+            <p className="state-panel deckfinder-state" role="status" aria-busy="true">
+              Loading...
+            </p>
+          ) : updates === null ? (
+            <p className="settings-hint settings-standalone-hint">This tracker does not report update settings.</p>
+          ) : (
+            <UpdatesForm initial={updates} onChange={setUpdates} />
+          )}
+        </Section>
+      </SettingsGroup>
+
+      <SettingsGroup title="Features" columns={2}>
+        <Section
+          id="settings-overlay"
+          title="In-game overlay"
+          badge={
+            !overlay ? undefined : overlay.available ? (
+              <FeatureSwitch busy={overlayBusy} checked={overlay.enabled} label="In-game overlay" onChange={(next) => void changeOverlay(next)} />
+            ) : (
+              <StatusBadge tone="off">Not in this build</StatusBadge>
+            )
+          }
+          description="Your library, draw odds and land drops in a small window beside Arena. It reads only this tracker, never the game."
+        >
+          {settingsBody(overlay, (loaded) => (
+            <OverlayDetails
+              busy={overlayBusy}
+              error={overlayError}
+              overlay={loaded}
+              platform={platform}
+              onStart={() => void changeOverlay(true)}
+            />
+          ))}
+        </Section>
+
+        <Section
+          id="settings-buy-on-paper"
+          title="Buy on Paper"
+          badge={
+            buyOnPaper ? (
+              <FeatureSwitch busy={buyOnPaperBusy} checked={buyOnPaper.enabled} label="Buy on Paper" onChange={(next) => void changeBuyOnPaper(next)} />
+            ) : undefined
+          }
+          description="Price a deck in paper and open it at a card store, from Deck Finder, Deck Manager and deck pages."
+        >
+          {settingsBody(buyOnPaper, (loaded) => (
+            <BuyOnPaperDetails error={buyOnPaperError} settings={loaded} />
+          ))}
+        </Section>
+
+        <Section
+          id="settings-deck-ai"
+          title="Deck AI"
+          badge={deckAiBadge(deckAi, deckAiBusy, (next) => void changeDeckAi(next))}
+          description="Names your opponent's deck after each game, shown as the game's Opponent Deck Type."
+        >
+          {settingsBody(deckAi, (loaded) => (
+            <>
+              {deckAiError ? (
+                <p className="collection-export-status collection-export-fail" role="alert">
+                  {deckAiError}
+                </p>
+              ) : null}
+              <DeckAiForm enabled={loaded.enabled} initial={loaded} onSaved={setDeckAi} />
+            </>
+          ))}
+        </Section>
+
+        <Section
+          id="settings-creators"
+          title="Deck Finder Creators"
+          badge={creatorsBadge(creators)}
+          description="Creators Deck Finder follows. One per line, with an optional short name after a pipe."
+        >
+          {settingsBody(creators, (loaded) => (
+            <CreatorsForm initial={loaded} onSaved={setCreators} />
+          ))}
+        </Section>
+      </SettingsGroup>
+
+      <SettingsGroup title="Streaming" columns={1}>
+        <Section
+          id="settings-streaming"
+          title="Stream Kit"
+          description="Widgets for OBS and Streamlabs that show viewers your overlay, deck, record, recent games, matchup and the cards being cast."
+        >
+          <StreamKitSettings />
+        </Section>
+      </SettingsGroup>
+
+      <SettingsGroup title="Your data" columns={platform?.collection_export ? 'split' : 1}>
+        <Section
+          id="settings-backup"
+          title="Backup & restore"
+          description="Games, settings, Deck Finder creators and overlay preferences in one file, to keep safe or move to another computer."
+        >
+          <BackupCard />
+        </Section>
+
+        {platform?.collection_export ? (
+          <Section
+            id="settings-collection-export"
+            title="Export MTGA Collection"
+            description="Read your card collection from the running game for Moxfield, Archidekt and similar sites."
+          >
+            <CollectionExport platform={platform} games={trackerInfo?.games ?? null} />
+          </Section>
+        ) : null}
+      </SettingsGroup>
     </>
   );
 }
@@ -497,9 +785,11 @@ export function SettingsPage() {
 function StartupForm({
   initial,
   platform,
+  onChange,
 }: {
   initial: StartupSettings;
   platform: PlatformSettings | null;
+  onChange?: (next: StartupSettings) => void;
 }) {
   const [startup, setStartup] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -520,7 +810,9 @@ function StartupForm({
     setMessage(null);
     setError(null);
     try {
-      setStartup(await saveStartupSettings(change));
+      const saved = await saveStartupSettings(change);
+      setStartup(saved);
+      onChange?.(saved);
       setMessage('Saved. The change applies the next time Tapps Tracker launches.');
     } catch (exc: unknown) {
       setError(exc instanceof Error ? exc.message : 'The startup setting could not be saved');
@@ -596,8 +888,9 @@ function updateStateText(status: UpdateStatus | null): string {
     status.latest_version !== null && isNewerVersion(status.latest_version, status.current_version);
   switch (status.state) {
     case 'idle':
-      // A finished check that found no manifest (no release published yet).
-      return status.last_check ? 'No release information was available.' : 'Not checked yet.';
+      // A finished check that found no update file: the newest published
+      // release predates the updater, so nothing newer can be installed.
+      return status.last_check ? 'Tapps Tracker is up to date.' : 'Not checked yet.';
     case 'checking':
       return 'Checking for updates…';
     case 'up_to_date':
@@ -631,7 +924,13 @@ function formatCheckTime(value: string | null): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toLocaleString();
 }
 
-function UpdatesForm({ initial }: { initial: UpdateSettings }) {
+function UpdatesForm({
+  initial,
+  onChange,
+}: {
+  initial: UpdateSettings;
+  onChange?: (next: UpdateSettings) => void;
+}) {
   const controller = useSharedUpdateStatus();
   const [updates, setUpdates] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -644,7 +943,9 @@ function UpdatesForm({ initial }: { initial: UpdateSettings }) {
     setMessage(null);
     setError(null);
     try {
-      setUpdates(await saveUpdateSettings(change));
+      const saved = await saveUpdateSettings(change);
+      setUpdates(saved);
+      onChange?.(saved);
       setMessage('Saved.');
       void controller.refresh();
     } catch (exc: unknown) {
@@ -837,88 +1138,56 @@ function UpdatesForm({ initial }: { initial: UpdateSettings }) {
   );
 }
 
-function OverlayForm({
-  initial,
+function OverlayDetails({
+  overlay,
   platform,
+  busy,
+  error,
+  onStart,
 }: {
-  initial: OverlaySettings;
+  overlay: OverlaySettings;
   platform: PlatformSettings | null;
+  busy: boolean;
+  error: string | null;
+  onStart: () => void;
 }) {
-  const [overlay, setOverlay] = useState(initial);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function setEnabled(enabled: boolean) {
-    setBusy(true);
-    setError(null);
-    try {
-      setOverlay(await setOverlayEnabled(enabled));
-    } catch (exc: unknown) {
-      setError(exc instanceof Error ? exc.message : 'The overlay could not be changed');
-    } finally {
-      setBusy(false);
-    }
-  }
-
   const macos = platform?.system === 'macos';
-  // One card, one sentence, one action. "Off" is the whole story for people
-  // who never want the overlay: no process runs and none will start.
+  // One sentence of state under the title's switch. "Off" is the whole story
+  // for people who never want the overlay: no process runs and none will start.
   const state = !overlay.available
-    ? {
-        tone: 'unavailable',
-        title: 'Not in this build',
-        detail: 'Release builds ship the overlay. From a checkout, run scripts/build_overlay.sh first.',
-      }
+    ? { tone: 'off', text: 'Release builds ship the overlay. From a checkout, run scripts/build_overlay.sh first.' }
     : overlay.running
-      ? { tone: 'on', title: 'Overlay is on', detail: 'Running now, and it starts with the tracker. It shows itself when Arena is up.' }
+      ? { tone: 'on', text: 'Running now. It shows itself when Arena is up.' }
       : overlay.enabled
-        ? { tone: 'stopped', title: 'Overlay is on', detail: 'Not running right now — it starts with the tracker next time.' }
-        : { tone: 'off', title: 'Overlay is off', detail: 'Nothing runs. Turn it on to launch it now and with the tracker from then on.' };
+        ? { tone: 'stopped', text: 'Not running right now. It starts with the tracker next time.' }
+        : { tone: 'off', text: 'Nothing runs. Turn it on to launch it now and with the tracker from then on.' };
 
   return (
-    <div className={`overlay-card overlay-card-${state.tone}`}>
-      <div className="overlay-card-main">
-        <span aria-hidden="true" className="overlay-card-dot" />
-        <div className="overlay-card-text">
-          <p className="overlay-card-title" role="status">
-            {state.title}
-          </p>
-          <p className="overlay-card-detail">{state.detail}</p>
-        </div>
-        {overlay.available ? (
-          <div className="overlay-card-actions">
-            {overlay.running ? (
-              <button className="deck-neutral-button" disabled={busy} type="button" onClick={() => void setEnabled(false)}>
-                Turn off
-              </button>
-            ) : (
-              <>
-                <button className="deck-export-button" disabled={busy} type="button" onClick={() => void setEnabled(true)}>
-                  {overlay.enabled ? 'Start now' : 'Turn on'}
-                </button>
-                {overlay.enabled ? (
-                  <button className="deck-neutral-button" disabled={busy} type="button" onClick={() => void setEnabled(false)}>
-                    Turn off
-                  </button>
-                ) : null}
-              </>
-            )}
-          </div>
+    <div className="feature-body">
+      <p className={`feature-status feature-status-${state.tone}`} role="status">
+        <span aria-hidden="true" className="feature-dot" />
+        {state.text}
+        {overlay.available && overlay.enabled && !overlay.running ? (
+          <button className="deck-export-button" disabled={busy} type="button" onClick={onStart}>
+            Start now
+          </button>
         ) : null}
-      </div>
+      </p>
       {overlay.available ? (
-        <div className="overlay-card-keys">
+        <div className="feature-keys">
           <span className="overlay-key">
             Deck panel <kbd>{macos ? '⌥⇧T' : 'Alt+Shift+T'}</kbd>
           </span>
           <span className="overlay-key">
             Hide / show <kbd>{macos ? '⌥⇧H' : 'Alt+Shift+H'}</kbd>
           </span>
-          <span className="overlay-key overlay-key-note">Looks and behaviour: the overlay's ⚙ menu. Also in the menu bar: Start / Stop Overlay.</span>
+          <span className="overlay-key overlay-key-note">
+            Looks and behaviour: the overlay's ⚙ menu. Also in the menu bar: Start / Stop Overlay.
+          </span>
         </div>
       ) : null}
       {error ? (
-        <p className="collection-export-status collection-export-fail overlay-card-error" role="alert">
+        <p className="collection-export-status collection-export-fail" role="alert">
           {error}
         </p>
       ) : null}
@@ -935,7 +1204,13 @@ function sessionBreakLabel(hours: number): string {
   return `After ${hours} hour${hours === 1 ? '' : 's'} without a game`;
 }
 
-function SessionsForm({ initial }: { initial: SessionSettings }) {
+function SessionsForm({
+  initial,
+  onChange,
+}: {
+  initial: SessionSettings;
+  onChange?: (next: SessionSettings) => void;
+}) {
   const [settings, setSettings] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -946,7 +1221,9 @@ function SessionsForm({ initial }: { initial: SessionSettings }) {
     setMessage(null);
     setError(null);
     try {
-      setSettings(await saveSessionSettings(hours));
+      const saved = await saveSessionSettings(hours);
+      setSettings(saved);
+      onChange?.(saved);
       setMessage('Saved. It applies from the next match.');
     } catch (exc: unknown) {
       setError(exc instanceof Error ? exc.message : 'The session setting could not be saved');
@@ -986,59 +1263,29 @@ function SessionsForm({ initial }: { initial: SessionSettings }) {
   );
 }
 
-function BuyOnPaperForm({ initial }: { initial: BuyOnPaperSettings }) {
-  const [settings, setSettings] = useState(initial);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function setEnabled(enabled: boolean) {
-    setBusy(true);
-    setError(null);
-    try {
-      setSettings(await saveBuyOnPaperEnabled(enabled));
-    } catch (exc: unknown) {
-      setError(exc instanceof Error ? exc.message : 'Buy on Paper could not be changed');
-    } finally {
-      setBusy(false);
-    }
-  }
-
+function BuyOnPaperDetails({ settings, error }: { settings: BuyOnPaperSettings; error: string | null }) {
   const stored = settings.cache_bytes > 0 ? ` Saved price lists use ${formatMegabytes(settings.cache_bytes)}.` : '';
   return (
-    <div className={`overlay-card overlay-card-${settings.enabled ? 'on' : 'off'}`}>
-      <div className="overlay-card-main">
-        <span aria-hidden="true" className="overlay-card-dot" />
-        <div className="overlay-card-text">
-          <p className="overlay-card-title" role="status">
-            {settings.enabled ? 'Buy on Paper is on' : 'Buy on Paper is off'}
-          </p>
-          <p className="overlay-card-detail">
-            {settings.enabled
-              ? <>Decks show a Buy on Paper button. To price cards, the tracker downloads Card Kingdom’s and
-                Mana Pool’s public price lists (about 120 MB together) the first time you open it each day,
-                and keeps a small summary in its data folder. TCGplayer prices come from Scryfall.{stored}</>
-              : 'No button and no price downloads. The saved price lists have been deleted.'}
-          </p>
-        </div>
-        <div className="overlay-card-actions">
-          {settings.enabled ? (
-            <button aria-label="Turn off Buy on Paper" className="deck-neutral-button" disabled={busy} type="button" onClick={() => void setEnabled(false)}>
-              Turn off
-            </button>
-          ) : (
-            <button aria-label="Turn on Buy on Paper" className="deck-export-button" disabled={busy} type="button" onClick={() => void setEnabled(true)}>
-              Turn on
-            </button>
-          )}
-        </div>
-      </div>
+    <div className="feature-body">
       {settings.enabled ? (
-        <p className="overlay-card-keys buy-paper-settings-note">
-          Turning it off hides the button, stops any download in progress and deletes the saved price lists.
+        <>
+          <p className="feature-text" role="status">
+            Decks show a Buy on Paper button. To price cards, the tracker downloads Card Kingdom’s and
+            Mana Pool’s public price lists (about 120 MB together) the first time you open it each day,
+            and keeps a small summary in its data folder. TCGplayer prices come from Scryfall.{stored}
+          </p>
+          <p className="feature-keys">
+            Turning it off hides the button, stops any download in progress and deletes the saved price
+            lists.
+          </p>
+        </>
+      ) : (
+        <p className="feature-text" role="status">
+          No button and no price downloads. The saved price lists have been deleted.
         </p>
-      ) : null}
+      )}
       {error ? (
-        <p className="collection-export-status collection-export-fail overlay-card-error" role="alert">
+        <p className="collection-export-status collection-export-fail" role="alert">
           {error}
         </p>
       ) : null}
@@ -1054,8 +1301,16 @@ interface ModelList {
   error?: string;
 }
 
-function DeckAiForm({ initial }: { initial: DeckAiSettings }) {
-  const [enabled, setEnabled] = useState(initial.enabled);
+function DeckAiForm({
+  enabled,
+  initial,
+  onSaved,
+}: {
+  /** On/off belongs to the switch in the card title; Save keeps it as it is. */
+  enabled: boolean;
+  initial: DeckAiSettings;
+  onSaved?: (next: DeckAiSettings) => void;
+}) {
   const [provider, setProvider] = useState(initial.provider);
   const [keys, setKeys] = useState<Record<string, string>>(() =>
     Object.fromEntries(initial.providers.map((entry) => [entry.key, entry.api_key])),
@@ -1140,6 +1395,15 @@ function DeckAiForm({ initial }: { initial: DeckAiSettings }) {
     setStatus('saving');
     try {
       await saveDeckAiSettings({ enabled, provider, keys, models });
+      onSaved?.({
+        enabled,
+        provider,
+        providers: initial.providers.map((entry) => ({
+          ...entry,
+          api_key: keys[entry.key] ?? '',
+          model: models[entry.key] ?? '',
+        })),
+      });
       setStatus('saved');
       window.setTimeout(() => setStatus('idle'), 1800);
     } catch {
@@ -1154,15 +1418,6 @@ function DeckAiForm({ initial }: { initial: DeckAiSettings }) {
 
   return (
     <div className="settings-form">
-      <label className="settings-check">
-        <input
-          checked={enabled}
-          type="checkbox"
-          onChange={(event) => setEnabled(event.target.checked)}
-        />
-        Enable AI deck identification
-      </label>
-
       <label className="settings-field">
         <span>Provider</span>
         <select value={provider} onChange={(event) => changeProvider(event.target.value)}>
@@ -1251,6 +1506,11 @@ function DeckAiForm({ initial }: { initial: DeckAiSettings }) {
         )}
         .
       </p>
+      <p className="settings-hint">
+        One small request after each game, in the background, carrying only the names of the cards
+        your opponent revealed (at least three) — never your deck, account or log. The key is kept
+        in settings.json and goes nowhere else.
+      </p>
 
       <div>
         <button
@@ -1266,7 +1526,13 @@ function DeckAiForm({ initial }: { initial: DeckAiSettings }) {
   );
 }
 
-function CreatorsForm({ initial }: { initial: DeckFinderCreatorSettings }) {
+function CreatorsForm({
+  initial,
+  onSaved,
+}: {
+  initial: DeckFinderCreatorSettings;
+  onSaved?: (next: DeckFinderCreatorSettings) => void;
+}) {
   const [drafts, setDrafts] = useState<Record<string, string>>(() => ({
     moxfield: creatorLines(initial.moxfield),
     aetherhub: creatorLines(initial.aetherhub),
@@ -1278,12 +1544,14 @@ function CreatorsForm({ initial }: { initial: DeckFinderCreatorSettings }) {
   async function save() {
     setStatus('saving');
     try {
-      await saveDeckFinderCreators({
+      const saved = {
         moxfield: parseCreatorLines(drafts.moxfield ?? ''),
         aetherhub: parseCreatorLines(drafts.aetherhub ?? ''),
         tcgplayer: parseCreatorLines(drafts.tcgplayer ?? ''),
         youtube: parseCreatorLines(drafts.youtube ?? ''),
-      });
+      };
+      await saveDeckFinderCreators(saved);
+      onSaved?.({ ...initial, ...saved });
       setStatus('saved');
       window.setTimeout(() => setStatus('idle'), 1800);
     } catch {
@@ -1291,27 +1559,39 @@ function CreatorsForm({ initial }: { initial: DeckFinderCreatorSettings }) {
     }
   }
 
+  // Size each editor to its content so nothing scrolls out of view; the
+  // side-by-side sites share the tallest one's height so they line up.
+  const lineRows = (key: string) => Math.max((drafts[key] ?? '').split('\n').length + 1, 3);
+  const siteRows = Math.max(...CREATOR_SITES.filter(([key]) => key !== 'youtube').map(([key]) => lineRows(key)));
+
+  function creatorField(key: string, label: string) {
+    const value = drafts[key] ?? '';
+    const rows = key === 'youtube' ? lineRows(key) : siteRows;
+    return (
+      <label key={key} className="settings-field">
+        <span>{label}</span>
+        <textarea
+          placeholder={key === 'youtube' ? '@HelloGoodGame | HGG\n@SlothMtg | Sloth' : 'CreatorName | Short name'}
+          rows={rows}
+          spellCheck={false}
+          value={value}
+          onChange={(event) => setDrafts((current) => ({ ...current, [key]: event.target.value }))}
+        />
+      </label>
+    );
+  }
+
   return (
     <div className="settings-form">
-      {CREATOR_SITES.map(([key, label]) => {
-        const value = drafts[key] ?? '';
-        // Size the editor to its content so nothing scrolls out of view.
-        const rows = Math.max(value.split('\n').length + 1, 3);
-        return (
-          <label key={key} className="settings-field">
-            <span>{label}</span>
-            <textarea
-              placeholder={key === 'youtube' ? '@HelloGoodGame | HGG\n@SlothMtg | Sloth' : 'CreatorName | Short name'}
-              rows={rows}
-              spellCheck={false}
-              value={value}
-              onChange={(event) =>
-                setDrafts((current) => ({ ...current, [key]: event.target.value }))
-              }
-            />
-          </label>
-        );
-      })}
+      {/* Short creator names sit side by side; YouTube's channel links need the full width. */}
+      <div className="settings-creator-sites">
+        {CREATOR_SITES.filter(([key]) => key !== 'youtube').map(([key, label]) => creatorField(key, label))}
+      </div>
+      {CREATOR_SITES.filter(([key]) => key === 'youtube').map(([key, label]) => creatorField(key, label))}
+      <p className="settings-hint">
+        For YouTube, enter a channel URL or @handle: “@SlothMtg | Sloth” adds “(Sloth)” to imported
+        deck names.
+      </p>
       <div>
         <button
           className="deck-export-button"

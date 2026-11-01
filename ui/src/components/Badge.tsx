@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 interface BadgeProps {
-  tone?: 'neutral' | 'win' | 'loss' | 'draw' | 'screw' | 'play' | 'drawside' | 'mull' | 'flood';
+  tone?: 'neutral' | 'win' | 'loss' | 'draw' | 'screw' | 'play' | 'drawside' | 'mull' | 'flood' | 'streak';
   children: ReactNode;
   className?: string;
   /** Full text for a shortened badge, shown on hover. */
