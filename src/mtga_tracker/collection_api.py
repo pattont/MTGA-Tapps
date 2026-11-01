@@ -132,6 +132,10 @@ def _run_export(
 
     collection = None if refresh else _cached_collection()
     if collection is None:
+        if recorded_game_count(db_path) == 0:
+            # The scan finds the collection by matching cards the tracker has
+            # already seen; with no games it has nothing to match against.
+            raise _ExportError("no_games", _ERROR_TEXT["no_games"])
         collection = _scan(db_path, progress)
         _store_collection(collection)
     else:
@@ -240,11 +244,7 @@ def _scan_macos_elevated(db_path: Optional[Path], progress) -> Dict[int, int]:
     resolved_db = str(_resolve_db_path(db_path))
     out_fd, out_name = tempfile.mkstemp(prefix="mtga-collection-", suffix=".json")
     os.close(out_fd)
-    python = sys.executable or "python3"
-    inner = (
-        f"{_sh_quote(python)} -m mtga_tracker.collection_export "
-        f"--scan-json {_sh_quote(resolved_db)} {_sh_quote(out_name)}"
-    )
+    inner = " ".join(_sh_quote(part) for part in _scan_helper_command(resolved_db, out_name))
     env_prefix = ""
     src_root = _module_src_root()
     if src_root:
@@ -329,6 +329,7 @@ def _parse_helper_error(stderr: str) -> str:
 
 
 _ERROR_TEXT = {
+    "no_games": "Play a game with the tracker running first — the export finds your collection by the cards it has seen you play.",
     "arena_not_running": "MTG Arena isn't running — launch it and open the Decks tab, then try again.",
     "permission_denied": "The administrator prompt was cancelled — the scan can't run without it.",
     "no_collection": "Couldn't find your collection in Arena's memory — open the Decks tab in Arena so it loads, then try again.",
@@ -402,11 +403,38 @@ def _resolve_db_path(db_path: Optional[Path]) -> Path:
     return DATA_DIR / "mtga_tracker.sqlite3"
 
 
+def recorded_game_count(db_path: Optional[Path]) -> Optional[int]:
+    """How many games the tracker database holds; None when it can't be read."""
+    import sqlite3
+
+    try:
+        conn = _readonly_conn(db_path)
+    except sqlite3.Error:
+        return None
+    try:
+        return int(conn.execute("SELECT COUNT(*) FROM games").fetchone()[0])
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+
 def _readonly_conn(db_path: Optional[Path]):
     import sqlite3
 
     resolved = _resolve_db_path(db_path)
     return sqlite3.connect(f"file:{Path(resolved).as_posix()}?mode=ro", uri=True)
+
+
+def _scan_helper_command(db_path: str, out_path: str) -> List[str]:
+    """argv for the elevated scan helper. A frozen build's sys.executable is
+    the tracker binary itself, which has no ``-m``; it takes the scan flag."""
+    from .collection_export import COLLECTION_SCAN_FLAG
+
+    scan_args = ["--scan-json", db_path, out_path]
+    if getattr(sys, "frozen", False):
+        return [sys.executable, COLLECTION_SCAN_FLAG, *scan_args]
+    return [sys.executable or "python3", "-m", "mtga_tracker.collection_export", *scan_args]
 
 
 def _module_src_root() -> Optional[str]:

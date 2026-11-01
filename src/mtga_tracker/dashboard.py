@@ -2996,6 +2996,8 @@ def dashboard_snapshot(
             row["is_flood"] = quality["is_flood"]
             row["screw_reasons"] = quality["screw_reasons"]
             row["is_screw"] = quality["is_screw"]
+            row["streak_reasons"] = quality["streak_reasons"]
+            row["is_land_streak"] = quality["is_land_streak"]
             row["deck_colors"] = recent_deck_colors.get(str(participant_id)) or deck_color_map.get(
                 str(row.get("deck_name") or ""), ""
             )
@@ -3516,6 +3518,7 @@ def deck_detail(
             quality = recent_quality.get(participant_id) or draw_quality_metrics([], [], 0, 60)
             row["is_flood"] = quality["is_flood"]
             row["is_screw"] = quality["is_screw"]
+            row["is_land_streak"] = quality["is_land_streak"]
         _attach_replay_availability(conn, recent_rows)
 
     for row in recent_rows:
@@ -5195,6 +5198,7 @@ def all_games(
         quality = qualities.get(participant_id) or draw_quality_metrics([], [], 0, 60)
         row["is_flood"] = quality["is_flood"]
         row["is_screw"] = quality["is_screw"]
+        row["is_land_streak"] = quality["is_land_streak"]
         row["cards_seen"] = quality["total_cards_seen"]
         row["lands_seen"] = quality["lands_seen"]
         row["land_seen_pct"] = quality["land_seen_pct"]
@@ -5581,7 +5585,11 @@ def render_dashboard_html(snapshot: Dict[str, Any]) -> str:
             "Draw Status": (
                 "Flood"
                 if row.get("is_flood")
-                else ("Mana Screw" if row.get("is_screw") else "Normal")
+                else (
+                    "Mana Screw"
+                    if row.get("is_screw")
+                    else ("Land streak" if row.get("is_land_streak") else "Normal")
+                )
             ),
             "Mulligan(s)": row["mulligans"],
             "Total Turns": row["total_turns"],

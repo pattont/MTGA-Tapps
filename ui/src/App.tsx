@@ -24,6 +24,8 @@ import {
 } from './api';
 import { lazy, Suspense } from 'react';
 import { Badge } from './components/Badge';
+import { DrawStatusBadge } from './components/DrawStatusBadge';
+import { drawStatusSortValue } from './drawStatus';
 import { ReplayListPage } from './components/ReplayListPage';
 import { ReplayLink } from './components/ReplayLink';
 import { CardDetailPage } from './components/CardDetailPage';
@@ -175,6 +177,7 @@ function groupRecentGames(rows: RecentGameWithDrawQuality[]): RecentGameWithDraw
       lands_seen: sumOrNull(games.map((game) => game.lands_seen)),
       is_flood: games.some((game) => game.is_flood),
       is_screw: games.some((game) => game.is_screw),
+      is_land_streak: games.some((game) => game.is_land_streak),
     });
     const cards = matchRow.cards_seen;
     const lands = matchRow.lands_seen;
@@ -708,15 +711,8 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
   {
     key: 'is_flood',
     header: 'Draw Status',
-    render: (row) =>
-      row.is_flood ? (
-        <Badge tone="flood">Flood</Badge>
-      ) : row.is_screw ? (
-        <Badge tone="screw">Mana Screw</Badge>
-      ) : (
-        'Normal'
-      ),
-    sortValue: (row) => (row.is_flood ? 2 : row.is_screw ? 1 : 0),
+    render: (row) => <DrawStatusBadge row={row} />,
+    sortValue: drawStatusSortValue,
     center: true,
   },
   {

@@ -12,6 +12,7 @@ export function Section({
   title,
   description,
   headingAction,
+  badge,
   children,
   collapsible = true,
 }: {
@@ -21,6 +22,8 @@ export function Section({
   description?: string;
   /** Optional action aligned beside the collapse control. */
   headingAction?: ReactNode;
+  /** Small status tag beside the title, visible even while collapsed. */
+  badge?: ReactNode;
   children: ReactNode;
   collapsible?: boolean;
 }) {
@@ -32,7 +35,7 @@ export function Section({
       <section className="dashboard-section" id={id}>
         <div className="section-heading">
           <div>
-            {title ? <h3>{title}</h3> : null}
+            {title ? <SectionTitle title={title} badge={badge} /> : null}
             {description ? <p className="section-description">{description}</p> : null}
           </div>
           {headingAction}
@@ -48,7 +51,7 @@ export function Section({
       id={id}
     >
       <div className="section-heading">
-        {title ? <h3>{title}</h3> : <span aria-hidden="true" />}
+        {title ? <SectionTitle title={title} badge={badge} /> : <span aria-hidden="true" />}
         <div className="section-heading-actions">
           {headingAction}
           <button
@@ -69,5 +72,16 @@ export function Section({
         {children}
       </div>
     </section>
+  );
+}
+
+// Always the same wrapper, so the heading isn't remounted when a badge
+// appears after its data loads.
+function SectionTitle({ title, badge }: { title: string; badge?: ReactNode }) {
+  return (
+    <div className="section-title-row">
+      <h3>{title}</h3>
+      {badge}
+    </div>
   );
 }

@@ -193,7 +193,7 @@ def test_ramped_lands_count_as_seen_but_not_as_flood():
     assert quality["flood_lands_seen"] == 3
     assert quality["flood_cards_seen"] == 8
     assert quality["is_flood"] is False
-    assert not any("consecutive land draws" in r for r in quality["flood_reasons"])
+    assert not any("in a row" in r for r in quality["flood_reasons"])
 
     # The same three lands drawn naturally WOULD read as flood.
     natural = [
@@ -236,3 +236,80 @@ def test_ramped_lands_protect_against_screw():
     assert protected["screw_probability_pct"] > screwed["screw_probability_pct"]
     # Flood, by contrast, would not see that fetched land at all.
     assert protected["flood_lands_seen"] == protected["lands_seen"] - 1
+
+
+def _game(opening_lands: int, opening_spells: int, draw_flags):
+    land = {"display_name": "Swamp", "type_category": "Land"}
+    spell = {"display_name": "Spell", "type_category": "Creature"}
+    opener = [dict(land) for _ in range(opening_lands)] + [
+        dict(spell) for _ in range(opening_spells)
+    ]
+    drawn = [
+        {**(land if is_land else spell), "draw_position": position}
+        for position, is_land in enumerate(draw_flags, start=1)
+    ]
+    return opener, drawn
+
+
+def test_land_run_probability_grows_with_the_number_of_draws():
+    from mtga_tracker.draw_quality import land_run_probability, land_window_probability
+
+    # Four lands in a row from a 40% land deck: unusual in 8 draws, routine in 36.
+    assert land_run_probability(8, 4, 0.4) == pytest.approx(0.087, abs=0.001)
+    assert land_run_probability(15, 4, 0.4) == pytest.approx(0.187, abs=0.001)
+    assert land_run_probability(36, 4, 0.4) == pytest.approx(0.426, abs=0.001)
+    assert land_run_probability(3, 4, 0.4) == 0.0
+    # Every run of 8 lands is also a window of 8 holding 8 lands.
+    assert land_window_probability(20, 8, 0.4) == pytest.approx(land_run_probability(20, 8, 0.4))
+    assert land_window_probability(20, 6, 0.4) == pytest.approx(0.229, abs=0.001)
+
+
+def test_a_likely_land_run_in_a_long_game_is_not_flood():
+    """The reported case: 13 of 43 cards were lands (17.2 expected) with four
+    lands in a row, which is ordinary over 36 draws."""
+    from mtga_tracker.draw_quality import draw_quality_metrics
+
+    flags = [True, True, True, True] + [False, False, True, False, False] * 6 + [False, False]
+    assert len(flags) == 36 and sum(flags) == 10
+    opener, drawn = _game(3, 4, flags)
+    quality = draw_quality_metrics(opener, drawn, 36, 60, deck_lands=24)
+
+    assert quality["lands_seen"] == 13
+    assert quality["expected_lands_seen"] == 17.2
+    assert quality["longest_land_streak"] == 4
+    assert quality["land_streak_probability_pct"] == pytest.approx(42.6, abs=0.1)
+    assert quality["is_land_streak"] is False
+    assert quality["is_flood"] is False
+    assert quality["flood_reasons"] == []
+
+
+def test_an_unusual_run_with_a_normal_land_count_is_a_land_streak_not_flood():
+    from mtga_tracker.draw_quality import draw_quality_metrics
+
+    # Six lands in a row early, then almost none: 9 of 27 cards seen were lands.
+    flags = [True] * 6 + [False] * 14
+    opener, drawn = _game(3, 4, flags)
+    quality = draw_quality_metrics(opener, drawn, 20, 60, deck_lands=24)
+
+    assert quality["lands_seen"] == 9
+    assert quality["expected_lands_seen"] == 10.8
+    assert quality["is_land_streak"] is True
+    assert quality["streak_reasons"] == ["6 land draws in a row (about a 4% chance in 20 draws)"]
+    assert quality["is_flood"] is False
+    assert quality["flood_reasons"] == []
+
+
+def test_an_unusual_run_adds_to_flood_when_the_land_count_is_high():
+    from mtga_tracker.draw_quality import draw_quality_metrics
+
+    # Same run, and the rest of the game ordinary: 11 of 27 cards were lands
+    # (10.8 expected), not enough for any land-count rule on its own.
+    flags = [True] * 6 + [False, False, False, True] * 3 + [False, False]
+    opener, drawn = _game(2, 5, flags)
+    quality = draw_quality_metrics(opener, drawn, 20, 60, deck_lands=24)
+
+    assert quality["flood_lands_seen"] > quality["expected_lands_seen"]
+    assert quality["statistical_flood"] is False
+    assert quality["is_land_streak"] is True
+    assert quality["is_flood"] is True
+    assert quality["flood_reasons"] == quality["streak_reasons"]

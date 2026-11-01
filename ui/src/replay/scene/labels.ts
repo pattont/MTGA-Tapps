@@ -323,8 +323,14 @@ export function sceneLabels(layout: Layout, cards: Readonly<Record<CardKey, Repl
     const chip = parts.length ? parts.join(' · ') : null;
     const landTone = placement.chosen ? LAND_TYPE_TONES[placement.chosen.split(' ')[0]] : undefined;
     if (placement.stackCount) {
-      // How many identical tokens the stack holds, in the lower left corner.
-      const [dx, dy] = frame.at(-frame.halfWidth + 0.14 * s, -frame.half + 0.1 * s);
+      // How many identical cards the stack holds. Lands show it centered just
+      // above the top edge, clear of the name and of the hand in front of the
+      // player's lands; tokens in the lower left corner, since their top
+      // middle holds the sleep badge.
+      const [dx, dy] =
+        placement.row === 'lands'
+          ? frame.at(0, frame.half + 0.08 * s)
+          : frame.at(-frame.halfWidth + 0.14 * s, -frame.half + 0.1 * s);
       labels.push({
         id: `stack:${placement.obj}`,
         text: `\u00d7${placement.stackCount}`,

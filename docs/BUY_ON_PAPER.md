@@ -5,7 +5,7 @@ or deck builder. The button sits beside the Arena export on three screens:
 
 - **Deck Finder**: in the selected deck's title row, next to Export to Arena.
 - **Deck Manager**: in a saved deck's dialog header, next to Copy deck list.
-- **Deck page**: in the heading of the Deck List & Card Performance section.
+- **Deck page**: at the top right, to the left of Copy Arena Deck.
   It uses the newest submitted decklist, including a Brawl commander.
 
 The dialog works like Moxfield's Buy dialog, without selling or a paper

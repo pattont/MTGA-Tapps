@@ -49,16 +49,22 @@ export const VISIBLE_PRIORITY = 3;
 export const UNKNOWN_CARD: CardKey = 'unknown';
 /** Hover previews jump ahead of background loads in the shared queue. */
 export const PREVIEW_PRIORITY = 10;
+/**
+ * Waits before looking a card up again after Scryfall did not answer (its
+ * rate-limit lockout lasts a minute); the generated face stands in meanwhile.
+ */
+export const RETRY_DELAYS_MS = [65_000, 180_000];
 
 export type ImageLoader = (url: string) => Promise<TexImageSource>;
 type Timer = ReturnType<typeof setTimeout>;
 
 interface FaceEntry {
-  status: 'idle' | 'queued' | 'loading' | 'done';
+  status: 'idle' | 'queued' | 'loading' | 'waiting' | 'done';
   priority: number;
   texture: Texture | null;
   url: string | null;
   timer: Timer | null;
+  retries: number;
 }
 
 export interface TextureStoreOptions {
@@ -66,6 +72,7 @@ export interface TextureStoreOptions {
   loadImage?: ImageLoader;
   maxConcurrent?: number;
   placeholderDelayMs?: number;
+  retryDelaysMs?: readonly number[];
 }
 
 export function loadDecodedImage(url: string): Promise<HTMLImageElement> {
@@ -106,6 +113,7 @@ export class TextureStore {
   private readonly loadImage: ImageLoader;
   private readonly maxConcurrent: number;
   private readonly placeholderDelay: number;
+  private readonly retryDelays: readonly number[];
   private readonly faces = new Map<CardKey, FaceEntry>();
   private readonly generated = new Map<CardKey, Texture>();
   private readonly generatedUrls = new Map<CardKey, string | null>();
@@ -129,6 +137,7 @@ export class TextureStore {
     this.loadImage = opts.loadImage ?? loadDecodedImage;
     this.maxConcurrent = opts.maxConcurrent ?? MAX_CONCURRENT_IMAGES;
     this.placeholderDelay = opts.placeholderDelayMs ?? PLACEHOLDER_DELAY_MS;
+    this.retryDelays = opts.retryDelaysMs ?? RETRY_DELAYS_MS;
   }
 
   readonly subscribe = (listener: () => void): (() => void) => {
@@ -196,7 +205,11 @@ export class TextureStore {
     if (now) return now;
     const card = key ? this.cards[key] : undefined;
     if (key && card && !isUnknownCard(key, card)) {
-      return resolveCardImage(key, card, this.queue, { size: 'large', priority: PREVIEW_PRIORITY });
+      try {
+        return await resolveCardImage(key, card, this.queue, { size: 'large', priority: PREVIEW_PRIORITY });
+      } catch {
+        return null;
+      }
     }
     if (!name) return null;
     try {
@@ -228,7 +241,7 @@ export class TextureStore {
       if (!card || isUnknownCard(key, card)) continue;
       let entry = this.faces.get(key);
       if (!entry) {
-        entry = { status: 'idle', priority, texture: null, url: null, timer: null };
+        entry = { status: 'idle', priority, texture: null, url: null, timer: null, retries: 0 };
         this.faces.set(key, entry);
       }
       entry.priority = priority;
@@ -283,7 +296,7 @@ export class TextureStore {
       texture.needsUpdate = true;
       this.finish(entry, texture);
     } catch {
-      if (!this.disposed) this.useGenerated(key, entry);
+      if (!this.disposed && !this.retryLater(key, entry)) this.useGenerated(key, entry);
     } finally {
       this.active -= 1;
       this.pump();
@@ -300,6 +313,24 @@ export class TextureStore {
 
   private useGenerated(key: CardKey, entry: FaceEntry): void {
     this.finish(entry, this.generatedTexture(key));
+  }
+
+  /** Shows the generated face and queues the card again later; false once out of retries. */
+  private retryLater(key: CardKey, entry: FaceEntry): boolean {
+    const delay = this.retryDelays[entry.retries];
+    if (delay === undefined) return false;
+    entry.retries += 1;
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.status = 'waiting';
+    entry.texture = this.generatedTexture(key);
+    this.changed();
+    entry.timer = setTimeout(() => {
+      entry.timer = null;
+      if (this.disposed || entry.status !== 'waiting') return;
+      entry.status = 'queued';
+      this.pump();
+    }, delay);
+    return true;
   }
 
   private generatedTexture(key: CardKey): Texture {

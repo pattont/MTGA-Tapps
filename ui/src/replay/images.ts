@@ -8,6 +8,7 @@
  * rate-limited and is cached by the browser.
  */
 import { frontFaceName } from '../manaCosts';
+import { scryfallFetch } from '../scryfallQueue';
 import { createTokenFaceCanvas } from './materials';
 import type { CancelTimer, ScheduleFn } from './player';
 import type { CardKey, ReplayCard } from './types';
@@ -63,6 +64,11 @@ export function cardImageCandidates(card: ReplayCard, size: ImageSize): string[]
   }
   // A back face shares its card with the front; Scryfall serves its picture with face=back.
   const face = card.back_face ? '&face=back' : '';
+  // The exact printing ("fra/23"): Scryfall learns a new set's Arena ids late.
+  const printed = !card.is_token && card.print ? /^([a-z0-9]+)\/([^/?#\s]+)$/i.exec(card.print) : null;
+  if (printed) {
+    urls.push(`${API_BASE}/${printed[1]}/${encodeURIComponent(printed[2])}?format=image&version=${size}${face}`);
+  }
   if (card.arena_id) {
     urls.push(`${API_BASE}/arena/${card.arena_id}?format=image&version=${size}${face}`);
   }
@@ -115,6 +121,7 @@ export function searchImageUrl(url: string, body: unknown): string | null {
 }
 
 export type ImageResolver = (url: string) => Promise<string>;
+export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
 
 function isSearchUrl(url: string): boolean {
   try {
@@ -126,30 +133,42 @@ function isSearchUrl(url: string): boolean {
 
 /**
  * HEAD (falling back to GET) through the redirect; returns the final CDN URL.
- * Token searches are one GET whose JSON names the image instead.
+ * Token searches are one GET whose JSON names the image instead. A request
+ * that never got an answer is a retryable failure: Scryfall's rate-limit
+ * lockout carries no CORS header, so the browser reports it as a network error.
  */
-export function scryfallResolver(fetchImpl: typeof fetch = fetch): ImageResolver {
+export function scryfallResolver(fetchImpl: FetchFn = scryfallFetch): ImageResolver {
   return async (url) => {
     if (!isRateLimitedUrl(url)) return url;
-    if (isSearchUrl(url)) {
-      const response = await fetchImpl(url, { headers: { Accept: 'application/json' } });
-      if (!response.ok) {
-        throw new ImageLookupError(`Scryfall token search failed (${response.status})`, isPermanentStatus(response.status));
-      }
-      const found = searchImageUrl(url, await response.json());
-      if (!found) throw new ImageLookupError('Scryfall token search found no image', true);
-      return found;
+    try {
+      return await lookUp(fetchImpl, url);
+    } catch (error) {
+      if (error instanceof ImageLookupError) throw error;
+      throw new ImageLookupError(`Scryfall could not be reached: ${String(error)}`, false);
     }
-    let response = await fetchImpl(url, { method: 'HEAD', redirect: 'follow' });
-    if (response.status === 405) {
-      response = await fetchImpl(url, { redirect: 'follow' });
-      void response.body?.cancel();
-    }
-    if (!response.ok) {
-      throw new ImageLookupError(`Scryfall image lookup failed (${response.status})`, isPermanentStatus(response.status));
-    }
-    return response.url || url;
   };
+}
+
+/** One lookup: the final CDN URL, or the search's first image. */
+async function lookUp(fetchImpl: FetchFn, url: string): Promise<string> {
+  if (isSearchUrl(url)) {
+    const response = await fetchImpl(url, { headers: { Accept: 'application/json' } });
+    if (!response.ok) {
+      throw new ImageLookupError(`Scryfall token search failed (${response.status})`, isPermanentStatus(response.status));
+    }
+    const found = searchImageUrl(url, await response.json());
+    if (!found) throw new ImageLookupError('Scryfall token search found no image', true);
+    return found;
+  }
+  let response = await fetchImpl(url, { method: 'HEAD', redirect: 'follow' });
+  if (response.status === 405) {
+    response = await fetchImpl(url, { redirect: 'follow' });
+    void response.body?.cancel();
+  }
+  if (!response.ok) {
+    throw new ImageLookupError(`Scryfall image lookup failed (${response.status})`, isPermanentStatus(response.status));
+  }
+  return response.url || url;
 }
 
 /** Scryfall asks for 50–100 ms between API requests; 8/s keeps clear of it. */
@@ -219,7 +238,8 @@ export interface ImageQueueOptions {
   limiter?: TokenBucket;
   now?: () => number;
   schedule?: ScheduleFn;
-  fetch?: typeof fetch;
+  /** Defaults to `scryfallFetch`, which holds the name and search lookups to Scryfall's 2 per second. */
+  fetch?: FetchFn;
   resolve?: ImageResolver;
 }
 
@@ -256,7 +276,7 @@ export class ImageQueue {
     this.limiter =
       opts.limiter ?? new TokenBucket({ ratePerSecond: opts.ratePerSecond, burst: opts.burst, now: opts.now });
     this.schedule = opts.schedule ?? defaultSchedule;
-    this.resolver = opts.resolve ?? scryfallResolver(opts.fetch ?? ((...args) => fetch(...args)));
+    this.resolver = opts.resolve ?? scryfallResolver(opts.fetch ?? scryfallFetch);
   }
 
   get inFlight(): number {
@@ -343,7 +363,7 @@ export class ImageQueue {
       (reason: unknown) => {
         const error = reason instanceof Error ? reason : new Error(String(reason));
         // Only "no such card" is final; rate limits and outages get another try later.
-        if (!(error instanceof ImageLookupError) || error.permanent) this.failed.set(task.url, error);
+        if (error instanceof ImageLookupError && error.permanent) this.failed.set(task.url, error);
         task.reject(error);
       },
     ).finally(() => {
@@ -424,7 +444,11 @@ class ResolvedImageCache {
 
 export const resolvedImageCache = new ResolvedImageCache();
 
-/** Final image URL for a card, or null when only a generated face will do. */
+/**
+ * Final image URL for a card, or null when Scryfall has no image for it (only
+ * a generated face will do). Throws a retryable ImageLookupError when a lookup
+ * went unanswered, so the caller can try again later.
+ */
 export async function resolveCardImage(
   key: CardKey,
   card: ReplayCard,
@@ -438,15 +462,18 @@ export async function resolveCardImage(
   const cacheKey = size === 'normal' ? base : `${base}@large`;
   const cached = resolvedImageCache.get(cacheKey);
   if (cached) return cached;
+  let retryable = false;
   for (const url of cardImageCandidates(card, size)) {
     try {
       const finalUrl = await queue.load(url, opts.priority ?? 0);
       resolvedImageCache.set(cacheKey, finalUrl);
       return finalUrl;
-    } catch {
+    } catch (error) {
       // Try the next candidate.
+      if (!(error instanceof ImageLookupError && error.permanent)) retryable = true;
     }
   }
+  if (retryable) throw new ImageLookupError('Scryfall did not answer every lookup; try again later', false);
   return null;
 }
 

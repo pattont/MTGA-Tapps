@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable, Optional, TextIO
 
 from .analytics import AnalyticsStore
+from .collection_export import COLLECTION_SCAN_FLAG
 from .dashboard import DEFAULT_DB_PATH, create_dashboard_server
 from .deck_downloader_launcher import DECK_FINDER_FLAG
 from .log_parser import MTGALogParser
@@ -341,6 +342,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         from .deck_downloader_launcher import run_deck_finder
 
         return run_deck_finder([arg for arg in arguments if arg != DECK_FINDER_FLAG])
+    if COLLECTION_SCAN_FLAG in arguments:
+        # The macOS collection export runs this same binary elevated as its
+        # memory-scan helper. Like Deck Finder mode, it bypasses the
+        # single-instance guard: the tracker that requested it is running.
+        from .collection_export import run_scan_cli
+
+        return run_scan_cli([arg for arg in arguments if arg != COLLECTION_SCAN_FLAG])
 
     parser = argparse.ArgumentParser(description="Run the MTGA tracker and dashboard together.")
     parser.add_argument("--log-path", type=Path, help="Path to MTGA Player.log.")

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import type { Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
@@ -35,6 +36,16 @@ export function manaFontWoff2(): Plugin {
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [manaFontWoff2(), react()],
+  build: {
+    rollupOptions: {
+      // stream.html is the Stream Kit: OBS browser-source widgets, a separate
+      // page with no app shell and a transparent background.
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        stream: fileURLToPath(new URL('./stream.html', import.meta.url)),
+      },
+    },
+  },
   server: {
     proxy: {
       '/api': 'http://127.0.0.1:8765',

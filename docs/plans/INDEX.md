@@ -11,6 +11,8 @@ implementation walkthroughs have been removed.
 | [Install discovery](MTGA_INSTALL_DISCOVERY.md) | Editable overrides and evidence-driven platform fallbacks; [current behavior](../MTGA_INSTALL_DISCOVERY.md) is documented separately. |
 | [In-app auto-update](AUTO_UPDATE.md) | Built and validated 2026-10-31: a real 0.7.5rc1 → rc2 update ran end to end on macOS (bundle swap, relaunch, pre-update backup) and Windows 11 (silent installer hand-off) from a signed test feed. Remaining: confirm the first public updater release on both systems after it ships, the remaining [checklist](auto-update/VALIDATION.md) cases (in-game block, rollback, all-users UAC), portable self-update, the Linux hand-off and a beta channel. Research reports live in [`auto-update/`](auto-update/). |
 | [Opponent deck matching](opponent_deck_research.md) | Evidence-aware matching against cached decklists. The proposed thresholds and timings still need validation. |
+| [Streaming](STREAMING.md) | Phase 1, the Stream Kit (OBS browser-source widgets served by the dashboard), is built; it needs a live check in OBS during real games. Planned after it: a local Twitch chat bot with a static shareable deck page, vertical clip export from replays, and a Twitch panel extension only if streamers ask for one. |
+| [Flood impact](FLOOD_IMPACT.md) | Estimate whether extra lands hurt a game from what the player did (lands tapped, lands stuck in hand) and the deck's own history, never from printed card costs. Needs a hand review of real games first; may not ship if it doesn't hold up. |
 
 ## Smaller follow-ups
 

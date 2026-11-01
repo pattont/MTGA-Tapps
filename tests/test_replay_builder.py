@@ -904,6 +904,30 @@ def test_token_print_is_the_scryfall_token_set(monkeypatch):
     assert replay_builder.default_token_print(2) is None
 
 
+def test_a_card_without_a_cached_image_names_its_printing():
+    """Scryfall learns a new set's Arena ids late, so a card the image cache
+    does not know names its set and number for the page to look up."""
+    stream = {
+        "cards": {
+            "a106248": {"name": "Unflinching Hortimancer", "arena_id": 106248},
+            "a91556": {"name": "Lifecreed Duo", "arena_id": 91556},
+        }
+    }
+    cached = {91556: "https://cards.scryfall.io/normal/front/c/a/ca.jpg"}
+    attach_image_urls(stream, resolver=cached.get, token_printer=str, printer=lambda a: f"x/{a}")
+    hortimancer, duo = stream["cards"]["a106248"], stream["cards"]["a91556"]
+    assert (hortimancer["image_url"], hortimancer["print"]) == (None, "x/106248")
+    assert duo["image_url"] == cached[91556] and "print" not in duo
+
+
+def test_print_is_the_scryfall_set_and_number(monkeypatch):
+    from mtga_tracker import replay_builder
+
+    monkeypatch.setitem(replay_builder._image_state, "index", {106248: ("U", "FRA", "23")})
+    assert replay_builder.default_print(106248) == "fra/23"
+    assert replay_builder.default_print(2) is None
+
+
 def test_counters_recorded_by_number_get_arena_names():
     from mtga_tracker.replay_builder import attach_counter_names
 
@@ -1370,10 +1394,11 @@ def test_a_card_arenas_log_lost_track_of_returns_from_exile():
     events = stream["events"]
     assert not any("555" in json.dumps({k: v for k, v in e.items() if k != "log"}) for e in events)
     back = next(e for e in events if e["kind"] == "move" and e["from"] == "exile")
+    # The card and where it went are known, so it carries no "inferred" tag.
     assert (back["obj"], back["to"], back["inferred"], back["turn"]) == (
         "283",
         "battlefield",
-        True,
+        False,
         15,
     )
     # Arena's flag came with its first sighting: it was sick from its arrival.
@@ -1393,3 +1418,53 @@ def test_an_ambiguous_lost_arrival_is_inferred_with_the_card_its_rows_name():
     arrival = next(e for e in stream["events"] if e["kind"] == "move" and e["obj"] == "555")
     assert (arrival["from"], arrival["inferred"], arrival["card"]) == ("limbo", True, "a106225")
     assert stream["limitations"] == []
+
+
+def test_an_opponent_draw_saved_as_yours_goes_back_to_their_hand():
+    """Arena reused an undone ability's id for the opponent's hidden draw; an
+    older tracker kept the ability's seat, so the row says you drew it."""
+    r = _Rows()
+    r.turn_row(9, PLAYER)
+    r.move(290, "library", "hand", "draw", PLAYER, arena_id=9001, name="Forest")
+    r.turn_row(10, OPPONENT)
+    r.move(
+        404,
+        "library",
+        "hand",
+        "draw",
+        PLAYER,
+        arena_id=76738,
+        visible=1,
+        text="[4:11] You: drew a card",
+    )
+    r.turn_row(16, OPPONENT)
+    r.move(404, "hand", "stack", "cast", OPPONENT, arena_id=9101, name="Lightning Bolt")
+    stream = build_recorded(_game_rows(r.rows))
+    assert validate_stream(stream) == []
+    draw = _by_log(stream, "drew a card")
+    assert draw["log"]["text"] == "[4:11] Opponent: drew a card"
+    assert (draw["obj"], draw["owner"], draw["card"]) == ("404", OPPONENT, None)
+    assert "a76738" not in stream["cards"]
+    # Your own draw, whose next move is from your hand, is left alone.
+    forest = next(e for e in stream["events"] if e.get("obj") == "290")
+    assert forest["owner"] == PLAYER
+
+
+def test_a_card_bottomed_for_a_mulligan_starts_in_the_opening_hand():
+    """Capture saves the kept cards as the opening hand, then the bottomed card
+    leaving the hand once turn 1 has begun."""
+    r = _Rows()
+    r.add("mulligan", seat_id=PLAYER, amount=6, payload={"from_size": 7, "to_size": 6})
+    for obj in range(281, 287):
+        r.move(obj, "library", "hand", "draw", PLAYER, arena_id=9001, name="Forest", opening=True)
+    r.turn_row(1, PLAYER)
+    r.move(280, "hand", "library", "put", PLAYER, arena_id=9002, name="Island", by=PLAYER)
+    r.move(281, "hand", "battlefield", "play_land", PLAYER, arena_id=9001, name="Forest")
+    stream = build_recorded(_game_rows(r.rows))
+    assert validate_stream(stream) == []
+    start = stream["events"][0]
+    assert start["seats_hand_sizes"][str(PLAYER)] == 7
+    dealt = [e["obj"] for e in stream["events"] if e["kind"] == "move" and e["turn"] == 0]
+    assert "280" in dealt
+    bottom = next(e for e in stream["events"] if e.get("obj") == "280" and e["turn"] == 1)
+    assert (bottom["from"], bottom["to"]) == ("hand", "library")

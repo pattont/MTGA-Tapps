@@ -48,6 +48,8 @@ import { fetchManaCosts, playedManaStats, seedManaCosts, type CardManaInfo } fro
 import { makeOpponentColorColumns } from '../opponentColorColumns';
 import { ManaCost } from './ManaCost';
 import { Badge } from './Badge';
+import { DrawStatusBadge } from './DrawStatusBadge';
+import { drawStatusSortValue } from '../drawStatus';
 import {
   bucketCombatGroups,
   CombatGroupColumns,
@@ -462,15 +464,8 @@ const gameColumns: Column<DeckGameRow>[] = [
   {
     key: 'is_flood',
     header: 'Draw Status',
-    render: (row) =>
-      row.is_flood ? (
-        <Badge tone="flood">Flood</Badge>
-      ) : row.is_screw ? (
-        <Badge tone="screw">Mana Screw</Badge>
-      ) : (
-        'Normal'
-      ),
-    sortValue: (row) => (row.is_flood ? 2 : row.is_screw ? 1 : 0),
+    render: (row) => <DrawStatusBadge row={row} />,
+    sortValue: drawStatusSortValue,
   },
   {
     key: 'outcome',
@@ -814,6 +809,14 @@ export function DeckDetailPage({
     </button>
   );
 
+  // Page actions at the top right: Buy on Paper first, then the Arena copy.
+  const deckActions = (
+    <>
+      <BuyPaperButton className="deck-export-button" disabled={!buySections?.length} onOpen={setBuyingOpener} />
+      {copyDeckButton}
+    </>
+  );
+
   const metrics = [
     { label: 'Games', value: String(detail.summary.games), icon: <Swords /> },
     { label: 'Record', value: `${detail.summary.wins}–${detail.summary.losses}`, icon: <Trophy /> },
@@ -1043,7 +1046,7 @@ export function DeckDetailPage({
         <FilterBar
           filters={filters}
           hideDeck
-          trailing={copyDeckButton}
+          trailing={deckActions}
           onChange={onFiltersChange}
           options={{
             decks: [],
@@ -1058,7 +1061,7 @@ export function DeckDetailPage({
         />
       ) : (
         <div className="filter-bar" role="group" aria-label="Deck actions">
-          <div className="filter-bar-trailing">{copyDeckButton}</div>
+          <div className="filter-bar-trailing">{deckActions}</div>
         </div>
       )}
 
@@ -1259,13 +1262,6 @@ export function DeckDetailPage({
       <Section
         id="deck-cards"
         title="Deck List & Card Performance"
-        headingAction={
-          <BuyPaperButton
-            className="deck-export-button"
-            disabled={!buySections?.length}
-            onOpen={setBuyingOpener}
-          />
-        }
         description={
           deckExport.available
             ? 'Latest captured main deck and sideboard counts, with tracked performance for each card.'

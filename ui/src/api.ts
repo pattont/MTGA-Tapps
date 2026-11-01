@@ -274,6 +274,9 @@ export interface RecentGameRow {
   is_flood: boolean;
   screw_reasons?: string[];
   is_screw?: boolean;
+  /** An unusual run of land draws that was not flood by itself. */
+  streak_reasons?: string[];
+  is_land_streak?: boolean;
   /** Opponent's revealed WUBRG colors (e.g. "UR"); empty when nothing colored was seen. */
   opp_colors?: string;
   /** Your deck's WUBRG colors (same derivation as the Decks table). */
@@ -478,6 +481,7 @@ export interface DeckGameRow {
   outcome: string | null;
   is_flood?: boolean;
   is_screw?: boolean;
+  is_land_streak?: boolean;
   duration_seconds: number | null;
   total_turns: number | null;
   player_avg_turn_seconds: number | null;
@@ -846,6 +850,13 @@ export interface GameDrawQuality {
   low_land_drought_lands?: number | null;
   flood_reasons?: string[];
   is_flood: boolean;
+  /** False when only an unusual streak on top of a high land count made it flood. */
+  statistical_flood?: boolean;
+  land_streak_probability_pct?: number | null;
+  land_window_probability_pct?: number | null;
+  /** An unusual run of land draws, given this many draws and the deck's land share. */
+  streak_reasons?: string[];
+  is_land_streak?: boolean;
   screw_reasons?: string[];
   is_screw?: boolean;
 }
@@ -1745,6 +1756,10 @@ export interface TrackerInfoSettings {
   log_db: string | null;
   deck_ai: string;
   version: string;
+  /** Recorded games; null when the database couldn't be read (older trackers omit it). */
+  games?: number | null;
+  first_game_at?: string | null;
+  last_game_at?: string | null;
 }
 
 export interface PlatformSettings {

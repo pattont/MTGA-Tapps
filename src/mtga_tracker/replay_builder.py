@@ -405,6 +405,68 @@ def _drop_repeated_moves(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+_DRAW_ACTOR = re.compile(r"^(\[[^\]]*\]\s*)?(You|Opponent)(: drew\b)")
+
+
+def _hand_seat(row: Dict[str, Any]) -> Optional[int]:
+    """The seat whose hand a move row's card is in: its owner, else its controller."""
+    return _int(_payload(row).get("owner")) or _int(row.get("controller_seat"))
+
+
+def _reassign_misread_draws(rows: List[Dict[str, Any]], player_seat: int) -> List[Dict[str, Any]]:
+    """Give a draw back to the seat whose hand the card actually went to.
+
+    Arena can reuse an instance id it never deleted (an ability whose activation
+    was undone) for the next card drawn. Trackers before 0.7.5 kept the old
+    object's seat for it, so an opponent's hidden draw was saved as yours. A card
+    only ever leaves its owner's hand, so when the drawn card's next move takes it
+    out of the other seat's hand, the draw was that seat's.
+    """
+    out = list(rows)
+    for index, row in enumerate(out):
+        obj = _obj(row.get("object_id"))
+        if (
+            obj is None
+            or row.get("event_subtype") != "move"
+            or _zone(row.get("zone_from")) != "library"
+            or _zone(row.get("zone_to")) != "hand"
+        ):
+            continue
+        drawn_by = _hand_seat(row) or _int(row.get("seat_id"))
+        later = next(
+            (
+                other
+                for other in out[index + 1 :]
+                if other.get("event_subtype") == "move" and _obj(other.get("object_id")) == obj
+            ),
+            None,
+        )
+        if later is None or _zone(later.get("zone_from")) != "hand":
+            continue
+        holder = _hand_seat(later)
+        if holder is None or drawn_by is None or holder == drawn_by:
+            continue
+        if "owner" not in _payload(later) and _int(later.get("seat_id")) not in (None, holder):
+            # Seat and controller disagree with no owner stated: not sure whose hand.
+            continue
+        fixed = dict(row)
+        fixed["seat_id"] = holder
+        fixed["controller_seat"] = holder
+        fixed["actor_role"] = "player" if holder == player_seat else "opponent"
+        # The id's old object named some other card; the draw itself was hidden.
+        fixed["arena_id"] = None
+        payload = _payload(row)
+        if "owner" in payload:
+            fixed["payload_json"] = json.dumps({**payload, "owner": holder})
+        if isinstance(row.get("text"), str):
+            label = "You" if holder == player_seat else "Opponent"
+            fixed["text"] = _DRAW_ACTOR.sub(
+                lambda match: f"{match.group(1) or ''}{label}{match.group(3)}", row["text"], 1
+            )
+        out[index] = fixed
+    return out
+
+
 _UNTIL_LEAVES = re.compile(r"\buntil\b.*\bleaves the battlefield\b", re.IGNORECASE)
 
 
@@ -476,7 +538,7 @@ _ON_BATTLEFIELD_KINDS = frozenset(
 #: Added to ``limitations`` when the builder reconnects a card Arena's log lost track of.
 LOST_ARRIVAL_LIMITATION = (
     "Arena's log left out the details of some very large updates; a card that "
-    "arrived during one is shown arriving later, marked inferred."
+    "arrived during one is shown arriving just before it is first used."
 )
 
 
@@ -578,8 +640,10 @@ def _reconnect_lost_arrivals(rows: List[Dict[str, Any]]) -> Tuple[List[Dict[str,
     row ever moved, and the card it was stays in exile. When exactly one card
     with that Arena id sits in the same seat's exile (put there with no host)
     and no row names it again, the new id is that card: its rows are renamed and
-    a silent inferred ``exile → battlefield`` move goes before its first row,
-    with Arena's ``sick`` flag when the first sickness row for it says so.
+    a silent ``exile → battlefield`` move goes before its first row,
+    with Arena's ``sick`` flag when the first sickness row for it says so. The
+    move is not marked inferred: the card and where it went are known, only the
+    moment is not, and later rows place it.
     Returns the rows and whether anything was reconnected.
     """
     lost = _lost_arrivals(rows)
@@ -642,7 +706,6 @@ def _reconnect_lost_arrivals(rows: List[Dict[str, Any]]) -> Tuple[List[Dict[str,
                         if k in ("name", "type", "power", "toughness")
                     },
                     "reason": "unknown",
-                    "inferred": True,
                 }
             ),
         }
@@ -838,6 +901,7 @@ class RecordedBuilder:
             elif kind == "mulligan":
                 mulligan_rows.append(row)
                 consumed.add(id(row))
+        self._add_bottomed(rows, first_turn, opening_rows, mulligan_rows)
 
         player = self.participants.get("player") or {}
         opponent = self.participants.get("opponent") or {}
@@ -897,6 +961,56 @@ class RecordedBuilder:
                         bottomed=[],
                     )
         return consumed
+
+    def _add_bottomed(
+        self,
+        rows: List[Dict[str, Any]],
+        first_turn: int,
+        opening_rows: Dict[int, List[Dict[str, Any]]],
+        mulligan_rows: List[Dict[str, Any]],
+    ) -> None:
+        """Put the cards a mulligan bottoms back into the opening hand.
+
+        Capture records only the cards kept, then the bottoming as a move from
+        hand to library once turn 1 has begun. Without the bottomed card in the
+        hand that move leaves the hand one card short for the rest of the game.
+        """
+        to_bottom: Dict[int, int] = {}
+        for row in mulligan_rows:
+            payload = _payload(row)
+            drop = (_int(payload.get("from_size")) or 7) - (_int(payload.get("to_size")) or 7)
+            seat = self._seat(row, self.player_seat)
+            if drop > 0 and seat is not None:
+                to_bottom[seat] = max(to_bottom.get(seat, 0), drop)
+        if not to_bottom:
+            return
+        dealt = {
+            _obj(row.get("object_id")) for seat_rows in opening_rows.values() for row in seat_rows
+        }
+        end = next(
+            (
+                i
+                for i, row in enumerate(rows)
+                if i > first_turn and row.get("event_subtype") == "turn"
+            ),
+            len(rows),
+        )
+        seen: Set[str] = set()
+        for row in rows[:end]:
+            obj = _obj(row.get("object_id"))
+            if obj is None or obj in seen or obj in dealt:
+                continue
+            seen.add(obj)
+            seat = self._seat(row, self.player_seat)
+            if (
+                row.get("event_subtype") == "move"
+                and _zone(row.get("zone_from")) == "hand"
+                and _zone(row.get("zone_to")) == "library"
+                and to_bottom.get(seat, 0) > 0
+                and 0 < len(opening_rows.get(seat, [])) < 7
+            ):
+                opening_rows.setdefault(seat, []).append(row)
+                to_bottom[seat] -= 1
 
     def _synthesize_hands(
         self, rows: List[Dict[str, Any]], player: Dict[str, Any], opponent: Dict[str, Any]
@@ -1015,6 +1129,7 @@ class RecordedBuilder:
         rows = _link_renamed_attackers(rows)
         rows = _drop_echoed_activations(rows)
         rows = _drop_repeated_moves(rows)
+        rows = _reassign_misread_draws(rows, self.player_seat)
         rows = _tuck_orphan_exiles(rows, self.rows.get("card_facts"))
         rows, self.reconnected = _reconnect_lost_arrivals(rows)
         self.learned_arena = {obj: arena for obj, (_, arena, _) in _lost_arrivals(rows).items()}
@@ -1419,6 +1534,8 @@ _image_state: Dict[str, Any] = {"cache_mtime": None, "cache": {}, "index": None}
 image_resolver_override: Optional[ImageResolver] = None
 #: Same, for a token's Scryfall ``set/number`` (``default_token_print``).
 token_print_override: Optional[ImageResolver] = None
+#: Same, for a card's Scryfall ``set/number`` (``default_print``).
+print_override: Optional[ImageResolver] = None
 
 
 def _scryfall_cache_path() -> Path:
@@ -1439,12 +1556,11 @@ def _arena_printing(arena_id: int) -> Optional[Tuple[str, str, str]]:
     return _image_state["index"].get(int(arena_id))
 
 
-def default_token_print(arena_id: int) -> Optional[str]:
-    """A token's Scryfall ``set/number``, from Arena's card DB; None when unknown.
+def default_print(arena_id: int) -> Optional[str]:
+    """A card's Scryfall ``set/number`` (``fra/23``), from Arena's card DB; None when unknown.
 
-    Arena files a token under its card set's code with the token's own number
-    (the Mobilize Warrior is TDM 13), and Scryfall numbers that set's tokens
-    the same way under the set code with a leading "t": ``ttdm/13``.
+    Scryfall knows a new set's cards by set and number before it learns their
+    Arena ids, and that lookup is not held to the 2 per second of its name search.
     """
     with _image_lock:
         entry = _arena_printing(arena_id)
@@ -1453,7 +1569,18 @@ def default_token_print(arena_id: int) -> Optional[str]:
     _name, set_code, collector = entry
     if not set_code or not collector:
         return None
-    return f"t{set_code.lower()}/{collector}"
+    return f"{set_code.lower()}/{collector}"
+
+
+def default_token_print(arena_id: int) -> Optional[str]:
+    """A token's Scryfall ``set/number``, from Arena's card DB; None when unknown.
+
+    Arena files a token under its card set's code with the token's own number
+    (the Mobilize Warrior is TDM 13), and Scryfall numbers that set's tokens
+    the same way under the set code with a leading "t": ``ttdm/13``.
+    """
+    card_print = default_print(arena_id)
+    return f"t{card_print}" if card_print else None
 
 
 def default_image_url(arena_id: int) -> Optional[str]:
@@ -1502,9 +1629,11 @@ def attach_image_urls(
     stream: Dict[str, Any],
     resolver: Optional[ImageResolver] = None,
     token_printer: Optional[ImageResolver] = None,
+    printer: Optional[ImageResolver] = None,
 ) -> None:
     resolve = resolver or image_resolver_override or default_image_url
     token_print = token_printer or token_print_override or default_token_print
+    card_print = printer or print_override or default_print
     for entry in (stream.get("cards") or {}).values():
         arena_id = entry.get("arena_id")
         if not arena_id or entry.get("image_url"):
@@ -1527,6 +1656,12 @@ def attach_image_urls(
         if url and entry.get("back_face"):
             url = url.replace("/front/", "/back/")
         entry["image_url"] = url
+        if not url and not entry.get("print"):
+            # The page looks the printing up instead (a new set's cards are not cached yet).
+            try:
+                entry["print"] = card_print(int(arena_id))
+            except Exception:  # noqa: BLE001 - images are best effort
+                entry["print"] = None
 
 
 CardFactsLoader = Callable[[], Dict[str, Dict[str, Any]]]

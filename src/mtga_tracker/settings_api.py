@@ -140,24 +140,43 @@ def _tracker_info(db_path: Optional[Path]) -> Dict[str, Any]:
         "log_db": _tilde(db_path),
         "deck_ai": _deck_ai_summary(),
         "version": tracker_version,
+        # None when the database can't be read; 0 is a real "nothing yet".
+        "games": None,
+        "first_game_at": None,
+        "last_game_at": None,
     }
     if db_path is not None and Path(db_path).is_file():
-        try:
-            import sqlite3
+        import sqlite3
 
+        try:
             db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
-            with sqlite3.connect(db_uri, uri=True) as conn:
+            conn = sqlite3.connect(db_uri, uri=True)
+        except Exception:
+            return info
+        try:
+            try:
+                count, first, last = conn.execute(
+                    "SELECT COUNT(*), MIN(started_at), MAX(started_at) FROM games"
+                ).fetchone()
+                info["games"] = int(count)
+                info["first_game_at"] = first
+                info["last_game_at"] = last
+            except sqlite3.Error:
+                pass
+            try:
                 row = conn.execute(
                     "SELECT log_path, card_db_path, db_path, tracker_version "
                     "FROM live_status WHERE id = 1"
                 ).fetchone()
+            except sqlite3.Error:
+                row = None
             if row is not None:
                 info["monitoring"] = _tilde(row[0])
                 info["card_db"] = _tilde(row[1])
                 info["log_db"] = _tilde(row[2]) or info["log_db"]
                 info["version"] = row[3] or info["version"]
-        except Exception:
-            pass
+        finally:
+            conn.close()
     return info
 
 

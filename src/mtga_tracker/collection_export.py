@@ -1000,6 +1000,11 @@ WRITERS: Dict[str, Tuple[Callable[..., None], str]] = {
 
 # --- Elevated helper CLI (macOS) --------------------------------------------
 
+# A frozen build's sys.executable is the tracker binary, which can't run
+# ``-m``; the elevated helper invokes it with this flag instead and app.main
+# routes the remaining arguments to run_scan_cli.
+COLLECTION_SCAN_FLAG = "--collection-scan"
+
 
 def run_scan_cli(argv: Optional[Sequence[str]] = None) -> int:
     """``python -m mtga_tracker.collection_export --scan-json <db> <out>``.

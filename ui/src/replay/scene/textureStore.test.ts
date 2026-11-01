@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { card } from '../fixtures/streamBuilder';
-import { ImageQueue, resolvedImageCache, scryfallRateLimiter } from '../images';
+import { ImageLookupError, ImageQueue, resolvedImageCache, scryfallRateLimiter } from '../images';
 import { TextureStore, UNKNOWN_CARD, VISIBLE_PRIORITY } from './textureStore';
 
 const cards = {
@@ -131,6 +131,33 @@ describe('TextureStore', () => {
     await flush();
     expect(store.isDisposed).toBe(true);
     expect(dispose).toHaveBeenCalled();
+  });
+
+  it('shows the generated face while Scryfall is not answering, then retries the card', async () => {
+    vi.useFakeTimers();
+    const { pending, loadImage } = deferred();
+    const art = 'https://cards.scryfall.io/normal/front/6/3/hortimancer.jpg';
+    let online = false;
+    const resolve = vi.fn(async (url: string) => {
+      if (!online) throw new ImageLookupError('Failed to fetch', false);
+      return url.includes('/fra/23?') ? art : url;
+    });
+    const store = new TextureStore(
+      { a106248: card('Unflinching Hortimancer', 'Creature', { arena_id: 106248, print: 'fra/23' }) },
+      { loadImage, queue: new ImageQueue({ resolve, burst: 10 }), retryDelaysMs: [1000] },
+    );
+    store.request(new Map([['a106248', VISIBLE_PRIORITY]]));
+    await vi.advanceTimersByTimeAsync(10);
+    const placeholder = store.face('a106248');
+    expect(placeholder).not.toBeNull();
+    online = true;
+    await vi.advanceTimersByTimeAsync(1000);
+    pending.get(art)!(document.createElement('canvas'));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(store.face('a106248')).not.toBe(placeholder);
+    expect(store.resolvedUrl('a106248')).toBe(art);
+    store.dispose();
+    vi.useRealTimers();
   });
 
   it('defaults to a queue on the app-wide Scryfall rate limiter', () => {

@@ -223,6 +223,21 @@ describe('tapped cards and token stacks', () => {
     // The stacked tokens carry no labels of their own.
     expect(labels.some((l) => l.obj === 't2' || l.obj === 't3')).toBe(false);
   });
+
+  it('shows a land stack\u2019s count centered above its top edge, a token stack\u2019s in its corner', () => {
+    const stream = makeTokenStream();
+    const layout = layoutBoard(buildTimeline(stream).final, { mirrorOpponent: false, hindsight: true, playerSeat: 1 });
+    const token = layout.cards.find((c) => c.obj === 't1')!;
+    const land = { ...token, obj: 'l1', row: 'lands' as const, tapped: false, rotZ: 0, counters: {} };
+    const labels = sceneLabels({ ...layout, cards: [{ ...token, tapped: false, rotZ: 0 }, land] }, stream.cards);
+    const landCount = labels.find((l) => l.id === 'stack:l1')!;
+    const tokenCount = labels.find((l) => l.id === 'stack:t1')!;
+    const half = (CARD_HEIGHT * land.scale) / 2;
+    expect(landCount.x).toBeCloseTo(0);
+    expect(landCount.y).toBeGreaterThan(half);
+    expect(tokenCount.x).toBeLessThan(0);
+    expect(tokenCount.y).toBeLessThan(0);
+  });
 });
 
 describe('counter chips', () => {

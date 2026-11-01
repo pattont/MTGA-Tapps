@@ -4,25 +4,22 @@
 
 ### Updates
 
-- In-app updates. The tracker checks GitHub Releases for a newer version (every six
-  hours and shortly after start), downloads it in the background, verifies it against a
-  signed manifest, and then offers **Restart to update** in a banner at the top of the
-  dashboard, at the bottom left of the sidebar, and in the tray menu. Nothing installs
-  mid-game: the restart waits for the current game, with an "Install after this game"
-  option, and a pre-update backup of your game history is written to the data folder's
-  `backups` first. **Settings →
-  Updates** controls the check, the automatic download, and an opt-in fully automatic
-  install that only runs while Arena is closed. Windows installs upgrade silently through
-  the installer; macOS swaps the app bundle in place. The portable Windows zip and source
-  runs link to the release instead. **This release must be installed by hand; releases
-  after it update in place.**
+- In-app updates. The tracker checks GitHub Releases shortly after start and every six
+  hours, downloads a new version in the background, verifies it against a signed
+  manifest, then offers **Restart to update** in a dashboard banner, the sidebar and the
+  tray menu. Nothing installs mid-game ("Install after this game" waits for it), and your
+  game history is backed up to the data folder's `backups` first. **Settings → Updates**
+  controls checking, downloading, and an opt-in automatic install that runs only while
+  Arena is closed. Windows upgrades through the installer and macOS swaps the app in
+  place; the portable Windows zip and source runs link to the release instead.
+  **Install this release by hand; later releases update in place.**
 - Database migrations now run one transaction each, so a failed migration rolls back
   only itself and is retried on the next launch.
 
 ### Buy on Paper
 
 - New **Buy on Paper** button in Deck Finder, a saved deck in Deck Manager, and
-  a deck page's Deck List section. It prices every card and updates the total
+  the top of a deck page, beside Copy Arena Deck. It prices every card and updates the total
   as you untick cards or boards you already own. Then choose TCGplayer, Card
   Kingdom or Mana Pool to open the list in that store. StarCityGames and
   CoolStuffInc are listed as coming soon. Arena-only cards are marked and left
@@ -44,6 +41,22 @@
   no cost to you, which helps support its development. The other stores still
   open plain links.
 
+### Stream Kit
+
+- New **Settings → Streaming**: six widgets to add to OBS or Streamlabs as Browser
+  sources. Pick the options, copy a link and paste it in. Widgets are transparent,
+  appear only when there's something to show, and **Preview** shows them with sample
+  data. Nothing runs unless a widget is open, so it costs nothing if you don't stream.
+- **Full overlay**: the in-game overlay as one source, with the sideboard beside or
+  below it and the overlay's background slider.
+- **Deck tracker**: copies left and next-draw odds for each card.
+- **Session record**: wins, losses, win rate, rank, and today's record with this deck.
+- **Recent games**: today's games under the session record, from the last game only
+  up to the last 25.
+- **Matchup**: opponent, colors, likely deck, head-to-head, play or draw, Bo3 game.
+- **Card spotlight**: a large image of each card as it's cast, for a few seconds.
+- Thanks to MrNaosu for the idea.
+
 ### Deck Finder
 
 - **Add to Arena** no longer stays greyed out after you free deck slots in
@@ -54,6 +67,10 @@
 
 ### Replay
 
+- A pile of identical lands shows its count ("×2") centered just above the pile
+  instead of in its lower corner, so it no longer lands on top of your hand.
+  Any other badge of a card behind your hand is now hidden, in the replay and in
+  exported videos.
 - Creatures with flying hover just above the table, casting a soft shadow
   beside them. Flying tokens and creatures given a flying counter hover too.
 - Summoning-sick creatures carry a purple "Zzz" badge above the card until
@@ -67,17 +84,16 @@
   Eternal Scourge or Squee wherever they were exiled from.
 - Arena writes a very large update to its log as a summary with no details.
   A card cast during one used to show up later as an unknown face-down card
-  while its old copy stayed in exile. It now returns from exile as itself
-  (marked inferred), and the replay notes the gap. Earlier games are fixed too.
+  while its old copy stayed in exile. It now returns from exile as itself, just
+  before it is first used, and the replay's notes (hover the Recorded badge)
+  mention the gap. Earlier games are fixed too.
 - The "inferred" tag under a face-down card reads normally instead of
   mirrored.
 - A card that also had a token copy made of it during the game (Emrakul, the
   Exigent Doom copied by Three Steps Ahead) shows its own art, not a token's
   from the same set.
 - Exported videos end on the same Victory / Defeat card as the replay, with
-  final life totals, turns and length. The ending was missing because each
-  frame could be drawn a step before the table caught up. That also made
-  frames show the previous action.
+  final life totals, turns and length, and no frame shows the previous action.
 - The export dialog gives its file size as an upper limit and says the
   browser's encoder decides the final size. Firefox keeps its own quality
   whatever the Quality setting, so its files can be much smaller than the
@@ -131,11 +147,18 @@
 
 ### Live Scoreboard
 
-- Today's Games marks each game with a tiny teal Play or purple Draw pill beside the
-  deck name.
+- Today's Games shows each result as a filled W, L or D square and marks each game with
+  a small teal Play or purple Draw tag beside the deck name.
 
 ### Dashboard
 
+- **A run of lands is no longer flood by itself.** Four lands in a row is about a 1 in 5
+  chance over 15 draws and 2 in 5 over 36, so long games were marked Flood with a normal
+  land count. Flood now comes from the land count against your decklist. A run of lands
+  (or six lands in eight draws) is flagged only when it was unlikely for that many draws,
+  and shows as its own dashed **Land streak** label unless the game also saw more lands
+  than expected, in which case it backs up the Flood. The game page explains the
+  streak's odds and the land count beside it.
 - In Deck Finder, hovering a card in the selected deck shows the card's image, so
   you can size up a card before adding the deck. Images load only on hover.
 - A pink Buy me a coffee button sits below Deck Manager in the sidebar, for anyone who
@@ -146,6 +169,19 @@
   after your last game opens a new session, so leaving the app running for days no longer
   piles every night's games into one record. Settings → Sessions sets the break (1 to 12
   hours, or only when the app opens). A Best-of-3 match always stays in one session.
+- Settings is laid out in groups instead of one long column: a Tracker card (games
+  captured, last game, version, Deck AI, file locations), then **General** (Startup,
+  Sessions, Updates), **Features** (In-game overlay, Buy on Paper, Deck AI, Deck Finder
+  Creators), **Streaming** and **Your data** (Backup & restore, Export MTGA Collection),
+  in columns that stack on narrow windows. Each card's title shows its state (Up to
+  date, 4 h break, 10 creators), and the overlay, Buy on Paper and Deck AI turn on and
+  off with a switch there. Database Health is now a link beside the database path.
+- Export MTGA Collection lists its four file formats (Moxfield, Archidekt, card list,
+  JSON) as choices with a line on what each is for, and has one **Export collection**
+  button that lights up once you pick one.
+- Export MTGA Collection stays disabled until the tracker has recorded a game, and says
+  why: the scan finds your collection by the cards it has seen you play, so before the
+  first game it could only fail.
 
 ### Deck AI
 
@@ -155,6 +191,7 @@
 - The Model field is now a dropdown of the models your key can use, loaded from the
   provider when you open Settings or enter a key. A link beside it opens the
   provider's own model page. If the list can't load, you can still type a model name.
+- Deck AI turns on and off with a switch beside its title instead of a checkbox.
 - Providers are labelled **OpenAI (ChatGPT)**, **Anthropic (Claude)**,
   **Google (Gemini)** and **xAI (Grok)**.
 - New default models: GPT-6 Luna for OpenAI, Claude Haiku 5.5 for Anthropic and
@@ -168,7 +205,18 @@
 - An opponent's draw could be logged as yours ("You: drew a card"), counted in your
   draws and shown as an unknown card in your hand in the replay. Arena had reused the
   id of an ability you started and then cancelled, and the tracker still remembered
-  that ability under it.
+  that ability under it. Replays of games already recorded this way now give the
+  draw back to the opponent, so the blank card no longer sits in your hand.
+- In replays of games where you mulliganed, your hand count ran one card short all
+  game: the card you put on the bottom was never dealt into the opening hand. It now
+  is, and leaves for the bottom of your library on turn 1.
+- Replays of games with cards from a brand-new set could show some cards (lands
+  included) as plain name-only frames. Scryfall doesn't know a new set's cards by
+  their Arena id yet, so each one fell back to a name search, which Scryfall limits
+  to two a second. The replay asked faster than that, Scryfall locked it out for a
+  minute, and those cards never tried again. Replays now ask by set and number
+  first (the exact printing, so basic lands show the art you saw in Arena), pace
+  name searches to Scryfall's limit, and retry a card after a lockout.
 - The in-game overlay could outlive the tracker: after the tracker crashed, was
   ended from Task Manager, or was uninstalled, the overlay kept showing over Arena
   until the next restart. The overlay now quits on its own a few seconds after the
@@ -180,6 +228,10 @@
   its rebalances on 22 September 2026, cards such as Orcish Bowmasters exported
   as 8 copies instead of 4. Arena gives you the rebalanced version of every card
   you own, so the collection lists both; the export now counts the pair once.
+- Collection export always failed in the macOS app right after the administrator
+  password prompt. The app started its memory-scan helper with a Python option the
+  packaged app doesn't accept; it now uses a flag of its own. Running from source
+  was unaffected. Thanks to @marcosswald for finding and fixing this (#34).
 
 ## 0.7.1
 

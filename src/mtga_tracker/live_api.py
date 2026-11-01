@@ -638,7 +638,11 @@ def _events_payload(
     return events, events[-1]["id"]
 
 
-def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
+def build_live_payload(
+    db_path: Path, since: int = 0, include_events: bool = True
+) -> Dict[str, Any]:
+    """The Live Scoreboard payload. include_events=False skips the event feed
+    (stream widgets that show only the scoreboard ask for that)."""
     db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
     now = datetime.now()
     with _open_readonly(db_uri) as conn:
@@ -735,7 +739,10 @@ def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
                 ),
             }
 
-        events, seq = _events_payload(conn, feed_game_id, since)
+        if include_events:
+            events, seq = _events_payload(conn, feed_game_id, since)
+        else:
+            events, seq = [], since
         return {
             "tracker": {
                 "state": state,
@@ -949,7 +956,8 @@ def handle_get(
             since = max(0, int(since_raw))
         except (TypeError, ValueError):
             since = 0
-        return 200, build_live_payload(db_path, since)
+        include_events = query.get("events", ["1"])[0] != "0"
+        return 200, build_live_payload(db_path, since, include_events=include_events)
     except FileNotFoundError as exc:
         return 404, {"error": str(exc)}
     except Exception as exc:  # pragma: no cover - defensive surface

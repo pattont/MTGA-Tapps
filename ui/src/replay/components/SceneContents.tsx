@@ -17,8 +17,8 @@ import type { SceneLabel } from '../scene/labels';
 import type { Pose } from '../scene/motion';
 import { spawnPose } from '../scene/motion';
 import type { MotionRegistry } from '../scene/motionRegistry';
-import { positionArrows, positionLabels } from '../scene/projection';
-import type { ScreenPoint } from '../scene/projection';
+import { handOccluders, positionArrows, positionLabels } from '../scene/projection';
+import type { ScreenOccluder, ScreenPoint } from '../scene/projection';
 import type { TextureStore } from '../scene/textureStore';
 import type { CardKey, ReplayCard } from '../types';
 import type { ViewZoom } from '../scene/viewZoom';
@@ -143,13 +143,35 @@ function Animator({ registry, kit, layout }: { registry: MotionRegistry; kit: Sc
 }
 
 /** Writes label transforms straight into the DOM on rendered frames (no React). */
-function LabelProjector({ labels, root, registry }: { labels: readonly SceneLabel[]; root: RefObject<HTMLDivElement | null>; registry: MotionRegistry }) {
+function LabelProjector({
+  labels,
+  root,
+  registry,
+  layout,
+}: {
+  labels: readonly SceneLabel[];
+  root: RefObject<HTMLDivElement | null>;
+  registry: MotionRegistry;
+  layout: Layout;
+}) {
   const invalidate = useThree((s) => s.invalidate);
   const point = useRef<ScreenPoint>({ x: 0, y: 0, visible: false });
+  const occluders = useRef<ScreenOccluder[]>([]);
   useLayoutEffect(() => invalidate(), [labels, invalidate]);
   useFrame((state) => {
     if (root.current) {
-      positionLabels(root.current, labels, state.camera, state.size, (obj) => registry.pose(obj), point.current, (obj) => registry.stretchOf(obj));
+      // Labels are DOM over the canvas: hide the ones a hand card covers.
+      handOccluders(layout, registry, state.camera, state.size.width, state.size.height, occluders.current);
+      positionLabels(
+        root.current,
+        labels,
+        state.camera,
+        state.size,
+        (obj) => registry.pose(obj),
+        point.current,
+        (obj) => registry.stretchOf(obj),
+        occluders.current,
+      );
     }
   });
   return null;
@@ -271,7 +293,7 @@ export function SceneContents(props: SceneContentsProps) {
         />
       ))}
       <Animator registry={registry} kit={kit} layout={layout} />
-      <LabelProjector labels={labels} root={labelRoot} registry={registry} />
+      <LabelProjector labels={labels} root={labelRoot} registry={registry} layout={layout} />
       <ArrowProjector
         arrows={arrows}
         root={arrowRoot}

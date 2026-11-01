@@ -375,6 +375,22 @@ def test_handle_get_routes_and_parses_since(tmp_path):
     assert [event["text"] for event in body["events"]] == ["You: Casts [Llanowar Elves]"]
 
 
+def test_handle_get_events_zero_skips_the_feed(tmp_path):
+    """Stream widgets that show only the scoreboard ask for events=0."""
+    store = _store(tmp_path)
+    _log_line(store, "hello", live=_live())
+    _game_event(store, "G1", "You: Casts [Llanowar Elves]", "cast", turn=1, actor="player")
+    store.close()
+    db = tmp_path / "tracker.sqlite3"
+
+    status, body = live_api.handle_get("/api/live", {"events": ["0"], "since": ["7"]}, db)
+    assert status == 200
+    assert body["events"] == []
+    assert body["seq"] == 7
+    assert body["now"]["opponent_name"] == "Villain#12345"
+    assert body["session"]["wins"] == 2
+
+
 def test_settings_tracker_info_reads_live_status_paths(monkeypatch, tmp_path):
     import os
     from pathlib import Path

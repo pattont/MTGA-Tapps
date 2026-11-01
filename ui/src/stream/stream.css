@@ -1,0 +1,997 @@
+/*
+ * Stream Kit widgets. The page stays transparent so OBS shows the scene
+ * behind it; everything is sized in em from --sk-scale, so the `scale`
+ * option resizes a widget without blurring it.
+ */
+
+html,
+body {
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+html.sk-preview body {
+  min-height: 100vh;
+  background-color: #2b2f36;
+  background-image:
+    linear-gradient(45deg, #353a42 25%, transparent 25%),
+    linear-gradient(-45deg, #353a42 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #353a42 75%),
+    linear-gradient(-45deg, transparent 75%, #353a42 75%);
+  background-size: 24px 24px;
+  background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+}
+
+html.sk-preview .sk {
+  max-width: 440px;
+}
+
+html.sk-preview .sk:has(.sko) {
+  max-width: none;
+}
+
+.sk {
+  --sk-text: #f4f2ec;
+  --sk-muted: rgba(244, 242, 236, 0.66);
+  --sk-win: #63d297;
+  --sk-loss: #f07373;
+  --sk-play: #2bb3a3;
+  --sk-draw: #a184e8;
+  box-sizing: border-box;
+  padding: 0.4em;
+  color: var(--sk-text);
+  font-family: Inter, 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: calc(15px * var(--sk-scale, 1));
+  line-height: 1.3;
+  -webkit-font-smoothing: antialiased;
+}
+
+.sk *,
+.sk *::before,
+.sk *::after {
+  box-sizing: border-box;
+}
+
+.sk-panel {
+  border-radius: 0.7em;
+  padding: 0.7em 0.85em;
+}
+
+.sk-bg-solid .sk-panel {
+  background: rgba(15, 17, 23, 0.93);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: 0 0.3em 1.2em rgba(0, 0, 0, 0.45);
+}
+
+.sk-bg-glass .sk-panel {
+  background: rgba(15, 17, 23, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(10px);
+}
+
+.sk-bg-none .sk-panel {
+  padding-left: 0.2em;
+  padding-right: 0.2em;
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.95),
+    0 0 6px rgba(0, 0, 0, 0.8);
+}
+
+.sk-title {
+  overflow: hidden;
+  font-size: 1.15em;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sk-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25em 0.9em;
+  color: var(--sk-muted);
+  font-size: 0.85em;
+}
+
+.sk-sub strong {
+  color: var(--sk-text);
+}
+
+.sk-label {
+  color: var(--sk-muted);
+  font-size: 0.8em;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sk-win {
+  color: var(--sk-win);
+}
+
+.sk-loss {
+  color: var(--sk-loss);
+}
+
+.sk-tag {
+  border-radius: 999px;
+  padding: 0 0.55em;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--sk-text);
+  font-size: 0.85em;
+  font-weight: 600;
+}
+
+.sk-brand {
+  margin-left: auto;
+  color: var(--sk-muted);
+  font-size: 0.68em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
+.sk-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35em;
+  margin-top: 0.45em;
+}
+
+.sk-chip {
+  border-radius: 999px;
+  padding: 0.12em 0.6em;
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 0.8em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sk-chip-rank {
+  background: rgba(230, 184, 74, 0.2);
+  color: #f2cf7a;
+}
+
+.sk-chip-play {
+  background: rgba(43, 179, 163, 0.22);
+  color: #6ad8ca;
+}
+
+.sk-chip-draw {
+  background: rgba(161, 132, 232, 0.22);
+  color: #c4b0f5;
+}
+
+.color-pips {
+  display: inline-flex;
+  gap: 0.15em;
+  vertical-align: middle;
+}
+
+.color-pip {
+  display: block;
+}
+
+/* Deck tracker */
+
+.sk-head {
+  margin-bottom: 0.5em;
+}
+
+.sk-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sk-row {
+  display: grid;
+  grid-template-columns: 1.5em minmax(0, 1fr) auto 2.8em;
+  align-items: center;
+  gap: 0.45em;
+  border-left: 0.2em solid var(--sk-type, #8b929c);
+  padding: 0.12em 0 0.12em 0.4em;
+  font-size: 0.92em;
+}
+
+.sk-row + .sk-row {
+  margin-top: 0.12em;
+}
+
+.sk-row-out {
+  opacity: 0.35;
+}
+
+.sk-row-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-align: right;
+}
+
+.sk-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sk-row-cost .mana-cost {
+  display: inline-flex;
+  gap: 0.08em;
+  font-size: 0.78em;
+}
+
+.sk-row-odds {
+  color: var(--sk-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.sk-rows-gap {
+  height: 0.45em;
+}
+
+.sk-type-creature { --sk-type: #6fbf73; }
+.sk-type-walker { --sk-type: #e6b84a; }
+.sk-type-instant { --sk-type: #5aa9e6; }
+.sk-type-sorcery { --sk-type: #e2685b; }
+.sk-type-ench { --sk-type: #b98be0; }
+.sk-type-artifact { --sk-type: #a8b0ba; }
+.sk-type-land { --sk-type: #b59a6d; }
+
+.sk-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  margin-top: 0.6em;
+}
+
+.sk-foot-note {
+  color: var(--sk-muted);
+  font-size: 0.7em;
+}
+
+.sk-waiting {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+}
+
+/* Session record */
+
+.sk-record-main {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55em;
+}
+
+.sk-big {
+  font-size: 2em;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.sk-dash {
+  margin: 0 0.08em;
+  color: var(--sk-muted);
+}
+
+.sk-rate {
+  color: var(--sk-muted);
+  font-size: 1.15em;
+  font-weight: 700;
+}
+
+/* Recent games: Live Scoreboard's Today's Games rows. */
+
+.sk-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.sk-games-head {
+  display: flex;
+  align-items: center;
+  gap: 1.2em;
+  margin-bottom: 0.4em;
+}
+
+.sk-games {
+  /* As wide as its longest row, not the whole source; a deck name longer
+     than the source still ends in an ellipsis. */
+  width: fit-content;
+  max-width: 100%;
+}
+
+.sk-games-record {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  font-variant-numeric: tabular-nums;
+}
+
+.sk-games-record strong {
+  font-size: 1.35em;
+  font-weight: 800;
+}
+
+.sk-games-rate {
+  color: var(--sk-muted);
+  font-weight: 700;
+}
+
+.sk-games-head + .sk-games-head {
+  margin-top: 0.2em;
+  padding-top: 0.5em;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sk-games-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sk-game {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  min-height: 3.1em;
+  padding: 0.3em 0;
+}
+
+.sk-game + .sk-game {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sk-result {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 1.6em;
+  height: 1.6em;
+  border-radius: 0.35em;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 0.85em;
+  font-weight: 800;
+}
+
+.sk-result-win {
+  background: rgba(99, 210, 151, 0.2);
+  color: var(--sk-win);
+}
+
+.sk-result-loss {
+  background: rgba(240, 115, 115, 0.2);
+  color: var(--sk-loss);
+}
+
+.sk-result-draw {
+  color: var(--sk-muted);
+}
+
+.sk-game-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sk-game-deck {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sk-turn-order {
+  /* Right-aligned, so the tags line up down the list. */
+  flex: none;
+  margin-left: auto;
+  min-width: 4.4em;
+  text-align: center;
+  border-radius: 999px;
+  padding: 0.05em 0.5em;
+  font-size: 0.68em;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sk-game-meta {
+  overflow: hidden;
+  color: var(--sk-muted);
+  font-size: 0.8em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sk-bg-none .sk-game + .sk-game {
+  border-top-color: rgba(255, 255, 255, 0.18);
+}
+
+/* Matchup */
+
+.sk-vs {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  min-width: 0;
+}
+
+.sk-vs .sk-brand {
+  align-self: flex-start;
+  padding-left: 0.6em;
+}
+
+.sk-opp {
+  overflow: hidden;
+  font-size: 1.15em;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sk-arch {
+  margin-top: 0.15em;
+  overflow: hidden;
+  font-size: 1.05em;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Card spotlight */
+
+.sk-spot {
+  opacity: 0;
+  transform: translateY(0.6em) scale(0.98);
+  transition:
+    opacity 0.35s ease,
+    transform 0.35s ease;
+}
+
+.sk-spot-in {
+  opacity: 1;
+  transform: none;
+}
+
+.sk-spot-caption {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  margin-bottom: 0.4em;
+  padding-top: 0.4em;
+  padding-bottom: 0.4em;
+  font-weight: 700;
+}
+
+.sk-spot-card,
+.sk-spot-fallback {
+  display: block;
+  width: 100%;
+  aspect-ratio: 488 / 680;
+  border-radius: 4.75% / 3.5%;
+  box-shadow: 0 0.4em 1.6em rgba(0, 0, 0, 0.55);
+}
+
+.sk-spot-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1em;
+  background: rgba(15, 17, 23, 0.93);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 1.3em;
+  font-weight: 700;
+  text-align: center;
+}
+
+/* No widget chosen */
+
+.sk-help p {
+  margin: 0.4em 0 0;
+  color: var(--sk-muted);
+}
+
+.sk-help code {
+  color: var(--sk-text);
+}
+
+/*
+ * Full overlay: the in-game overlay's panel (overlay/src/styles.css), in the
+ * same pixel sizes, enlarged as a whole by `zoom` so `scale` keeps text sharp.
+ * The background is the overlay's own slider (--tint-alpha); the shared
+ * `bg` option does not apply here.
+ */
+
+.sko {
+  --text: #edf2f7;
+  --muted: #9aa7b5;
+  --subtle: #728092;
+  --border: #303a45;
+  --panel-strong: #1f2730;
+  --accent: #d7aa49;
+  --accent-strong: #f0c66c;
+  --success: #7bd88f;
+  --danger: #f28b82;
+  --hairline: rgba(255, 255, 255, 0.09);
+  --band: 58px;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  zoom: var(--sk-scale, 1);
+  color: var(--text);
+  font-size: 12px;
+  line-height: normal;
+}
+
+.sko-side-left {
+  flex-direction: row-reverse;
+  justify-content: flex-end;
+}
+
+.sko-side-below {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.sko .panel {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: 301px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgba(24, 28, 34, var(--tint-alpha));
+}
+
+.sko .head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--hairline);
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.sko .head .deck {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.sko .head .deck b {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+}
+
+.sko .deck-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sko .color-pips {
+  flex: none;
+  gap: 2px;
+}
+
+.sko .head .deck > span {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sko .head .turn {
+  color: var(--subtle);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  text-align: center;
+}
+
+.sko .head .turn b {
+  display: block;
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.sko .lands {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--hairline);
+  background: linear-gradient(90deg, rgba(123, 216, 143, 0.07), transparent);
+}
+
+.sko .lands .t {
+  color: var(--success);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.sko .lands .t small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.sko .odd {
+  min-width: 40px;
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--panel-strong);
+  line-height: 1.1;
+  text-align: center;
+}
+
+.sko .odd small {
+  display: block;
+  color: var(--subtle);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.sko .odd b {
+  color: var(--success);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sko .odd.now b {
+  color: var(--accent-strong);
+}
+
+.sko .tools {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--muted);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.sko .seg {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+
+.sko .seg span {
+  padding: 1px 7px;
+}
+
+.sko .seg span + span {
+  border-left: 1px solid var(--border);
+}
+
+.sko .seg span.on {
+  background: rgba(215, 170, 73, 0.16);
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.sko .tools .lib {
+  margin-left: 6px;
+}
+
+.sko .tools .lib b {
+  color: var(--text);
+}
+
+.sko .tools .pd {
+  margin-left: auto;
+  padding: 3px 7px 2px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  line-height: 1;
+}
+
+.sko .tools .pd.play {
+  border-color: rgba(95, 212, 196, 0.5);
+  background: rgba(95, 212, 196, 0.12);
+  color: #5fd4c4;
+}
+
+.sko .tools .pd.draw {
+  border-color: rgba(183, 157, 247, 0.5);
+  background: rgba(183, 157, 247, 0.12);
+  color: #b79df7;
+}
+
+.sko .tools .pd.over {
+  border-color: rgba(242, 106, 212, 0.55);
+  background: rgba(242, 106, 212, 0.14);
+  color: #f26ad4;
+}
+
+/* One darker band behind every row's numbers, as in the overlay. */
+.sko .list {
+  position: relative;
+  padding-bottom: 2px;
+}
+
+.sko .list::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--band);
+  background: rgba(0, 0, 0, 0.28);
+  content: '';
+}
+
+.sko .list > * {
+  position: relative;
+}
+
+.sko .row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 7px;
+  padding-left: 9px;
+  border-top: 1px solid var(--hairline);
+  line-height: 1.15;
+}
+
+.sko .list > .row:first-child {
+  border-top: 0;
+}
+
+.sko .row.dim {
+  opacity: 0.36;
+}
+
+.sko .row.sub {
+  padding-left: 23px;
+}
+
+.sko .row .body,
+.sko .sb-row .body {
+  display: flex;
+  flex-direction: column;
+  align-self: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sko .row .body {
+  padding: 5px 0;
+}
+
+.sko .row .right {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: var(--band);
+  padding: 4px;
+}
+
+.sko .row.side-row .right {
+  min-height: calc(15px + 2px + 10.5px + 8px);
+}
+
+.sko .row .nm {
+  overflow: hidden;
+  font-size: 14.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sko .row .cnt {
+  color: var(--muted);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.sko .row .cnt b,
+.sko .sb-row .cnt b {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.sko .chev {
+  margin-left: 2px;
+  vertical-align: -1px;
+  color: var(--subtle);
+}
+
+.sko .nm.land { color: #7bd88f; }
+.sko .nm.creature { color: #e8b86d; }
+.sko .nm.instant { color: #8ab4f8; }
+.sko .nm.sorcery { color: #b79df7; }
+.sko .nm.ench { color: #d48fe8; }
+.sko .nm.artifact { color: #b8c4d0; }
+.sko .nm.walker { color: #f0a58f; }
+.sko .nm.other { color: var(--muted); }
+
+.sko.names-white .row:not(.fold-row) .nm,
+.sko.names-white .sb-row .nm {
+  color: var(--text);
+}
+
+.sko .mana {
+  display: flex;
+  align-items: center;
+  height: 11px;
+  font-size: 10px;
+}
+
+.sko .mana .mana-cost {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.sko .pct {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1;
+  text-align: center;
+}
+
+.sko .pct.hot { color: var(--accent-strong); }
+.sko .pct.warm { color: var(--text); }
+.sko .pct.cold { color: var(--muted); }
+
+.sko .grp {
+  padding: 6px 8px 4px;
+  border-top: 1px solid var(--hairline);
+  color: var(--subtle);
+  font-size: 8.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.sko .note {
+  padding: 6px 6px 2px;
+  color: var(--subtle);
+  font-size: 10px;
+}
+
+/* The credit sits in the header's top-right corner, above the turn, where
+   the in-game overlay has its buttons: no extra line. */
+.sko .corner {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.sko .corner .sk-brand {
+  margin: 0;
+  font-size: 8.5px;
+  line-height: 1;
+}
+
+.sko .empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 20px 24px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.sko .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 12px;
+  border: 1px solid rgba(215, 170, 73, 0.45);
+  border-radius: 999px;
+  background: var(--panel-strong);
+  color: var(--accent-strong);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sko .pill.off {
+  border-color: rgba(242, 139, 130, 0.5);
+  color: var(--danger);
+}
+
+.sko .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* The sideboard: open beside the panel, level with its foot like the
+   in-game flyout, or under it. */
+.sko .sideboard {
+  flex: none;
+  width: 184px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgba(24, 28, 34, var(--tint-alpha));
+}
+
+.sko-side-below .sideboard {
+  width: 301px;
+}
+
+.sko .sb-head {
+  padding: 6px 8px 3px;
+  color: var(--subtle);
+  font-size: 8.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.sko .sb-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--hairline);
+}
+
+.sko .sb-row .nm {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sko .sb-row .cnt {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Background at 0: text only, with a shadow to read over the game. The
+   odds boxes and tags keep their own ground. */
+.sko.no-bg .panel,
+.sko.no-bg .sideboard {
+  background: transparent;
+  text-shadow:
+    0 1px 2px rgb(0 0 0 / 85%),
+    0 0 6px rgb(0 0 0 / 60%);
+}
+
+.sko.no-bg .head,
+.sko.no-bg .lands,
+.sko.no-bg .list::before {
+  background: none;
+}
