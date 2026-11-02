@@ -11,6 +11,18 @@
   their recorded timelines (mills and discards only for games recorded before
   replays). Revealed cards also count toward the opponent's colors and are sent to
   Deck AI with the cards they played.
+- Export video no longer fails in Firefox with "The first chunk for your media
+  track must have a timestamp of 0". Firefox's video encoder stamps its first
+  frame slightly late, which the MP4 writer refused; the video now starts from
+  whichever frame arrives first.
+- Export video shows the file's size as it is made, with a projected total
+  ("6.0 MB so far, about 24 MB in all"), so a long export no longer looks
+  stuck. The dialog's size is now labelled as a ceiling: the table is mostly
+  still, so files usually come out well under it. When a finished video is
+  much smaller than the estimate, the dialog says the video is complete and
+  why. In Firefox on Windows, whose VP9 encoder sets its own quality and size
+  whatever it is asked, the Quality menu is greyed out and the dialog says
+  so, rather than offering a size estimate that can't hold.
 - The sidebar's bottom buttons (Replay, Deck Finder, Deck Manager and Buy me a
   coffee) now stay on screen on every page. On a short window, pages with a long
   section list, like the Overview, pushed the last of them off the bottom, most

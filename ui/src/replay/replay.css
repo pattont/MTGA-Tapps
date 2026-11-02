@@ -1511,6 +1511,11 @@
   font-size: 0.82rem;
 }
 
+.replay-export-grid select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .replay-export-check {
   grid-column: 1 / -1;
   display: flex !important;

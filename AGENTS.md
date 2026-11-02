@@ -212,7 +212,10 @@ Primary code paths:
   export driver waits for the canvas's own reconciler to commit each clock step
   (`state.seq === clock.snapshot.seq`) before drawing, or frames lag an action and
   the closing hold misses the ending card; Firefox's VP9 ignores bitrate, so sizes
-  are shown as upper limits), and `components/` holding the `@react-three/fiber` scene (lazy-loaded
+  are shown as upper limits, and its encoder can stamp the first chunk a frame late, so the
+  muxer uses `firstTimestampBehavior: 'offset'`; the dialog's size is the bitrate ceiling, so
+  progress shows the encoded size so far and its projection, and `sizeNote` explains a smaller file; in Firefox only, the dialog probes the codec
+  (`encoderCodec`) and greys out Quality when it is VP9 (`qualityIgnored`)), and `components/` holding the `@react-three/fiber` scene (lazy-loaded
   route `#/replay/<id>`, list at `#/replay`). Teal `--replay` is reserved for replay
   affordances; everything replay-related carries `replay-wide-only` and is hidden below
   900 px.

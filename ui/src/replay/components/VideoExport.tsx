@@ -6,7 +6,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_TARGET_WIDTH, LOG_PX, frameLayout } from '../export/frameComposer';
-import { estimateBytes } from '../export/mp4Encoder';
+import { encoderCodec, estimateBytes, projectedBytes, qualityIgnored, sizeNote } from '../export/mp4Encoder';
 import type { VideoQuality } from '../export/mp4Encoder';
 import { buildVideoPlan } from '../export/videoPlan';
 import { openingEndIndex } from '../scrub';
@@ -16,7 +16,7 @@ import { PLAYBACK_SPEEDS } from '../player';
 import type { Pacing, PlaybackSpeed } from '../player';
 import type { ReplayPrefs } from '../prefs';
 import type { ReplayStream } from '../types';
-import type { ExportProgress } from './ExportDriver';
+import type { ExportProgress, ExportResult } from './ExportDriver';
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
@@ -40,6 +40,31 @@ const QUALITIES: ReadonlyArray<{ value: VideoQuality; label: string }> = [
   { value: 'balanced', label: 'Balanced' },
   { value: 'best', label: 'Best quality' },
 ];
+
+/**
+ * True once the encoder Firefox would use for this size is known to ignore
+ * the Quality choice. Other browsers skip the check.
+ */
+function useQualityLocked(width: number, height: number, fps: number): boolean {
+  const key = `${width}x${height}@${fps}`;
+  const [locked, setLocked] = useState<{ key: string; value: boolean } | null>(null);
+  useEffect(() => {
+    if (!/firefox/i.test(navigator.userAgent)) return;
+    let live = true;
+    encoderCodec(width, height, fps).then(
+      (codec) => {
+        if (live) setLocked({ key, value: qualityIgnored(codec, navigator.userAgent) });
+      },
+      () => {
+        // No usable encoder: the export itself reports that.
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [key, width, height, fps]);
+  return locked?.key === key && locked.value;
+}
 
 function OptionsForm({
   stream,
@@ -71,6 +96,7 @@ function OptionsForm({
     const layout = frameLayout(size.width, size.height, targetWidth, includeLog);
     return { layout, bytes: estimateBytes(layout.width, layout.height, plan.fps, quality, plan.seconds) };
   }, [stageSize, targetWidth, includeLog, quality, plan]);
+  const qualityLocked = useQualityLocked(estimate.layout.width, estimate.layout.height, plan.fps);
   return (
     <>
       <p className="replay-export-lead">
@@ -114,7 +140,12 @@ function OptionsForm({
         </label>
         <label>
           <span>Quality</span>
-          <select value={quality} onChange={(event) => setQuality(event.target.value as VideoQuality)}>
+          <select
+            value={quality}
+            disabled={qualityLocked}
+            title={qualityLocked ? "Firefox's VP9 encoder sets its own quality" : undefined}
+            onChange={(event) => setQuality(event.target.value as VideoQuality)}
+          >
             {QUALITIES.map((item) => (
               <option key={item.value} value={item.value}>
                 {item.label}
@@ -128,14 +159,22 @@ function OptionsForm({
         </label>
       </div>
       <p className="replay-export-estimate" aria-live="polite">
-        About {formatClock(plan.seconds)} of video at 30 fps, {estimate.layout.width}×{estimate.layout.height}, up to
-        about {formatBytes(estimate.bytes)}
+        About {formatClock(plan.seconds)} of video at 30 fps, {estimate.layout.width}×{estimate.layout.height}
+        {qualityLocked ? '' : `, at most about ${formatBytes(estimate.bytes)}`}
         {plan.truncated ? ' (capped at 20 minutes; raise the speed for the whole game)' : ''}.
       </p>
-      <p className="replay-export-note">
-        The browser&apos;s encoder has the last word on size: it spends less on still moments, and some (Firefox) keep
-        their own quality whatever is chosen here.
-      </p>
+      {qualityLocked ? (
+        <p className="replay-export-note">
+          Firefox&apos;s VP9 encoder sets its own quality and file size, so Quality can&apos;t be changed here and the
+          size shows as the export runs. Chrome and Edge follow the Quality setting.
+        </p>
+      ) : (
+        <p className="replay-export-note">
+          That&apos;s a ceiling, not a forecast: the table is mostly still, and the encoder spends less on still frames,
+          so most files come out well under it. Chrome and Edge follow the Quality setting; Firefox often sets its own
+          quality, and its files are usually much smaller.
+        </p>
+      )}
       <div className="replay-export-actions">
         <button
           type="button"
@@ -152,11 +191,28 @@ function OptionsForm({
   );
 }
 
+/** "6.2 MB so far, about 24.0 MB in all" while frames are rendered. */
+function sizeSoFar(progress: ExportProgress): string {
+  if (!progress.bytes) return '';
+  const projected = projectedBytes(progress.bytes, progress.done, progress.total);
+  return ` · ${formatBytes(progress.bytes)} so far${projected ? `, about ${formatBytes(projected)} in all` : ''}`;
+}
+
 const PHASE_TEXT: Record<ExportProgress['phase'], string> = {
   art: 'Loading card art…',
   frames: 'Rendering frames',
   encoding: 'Finishing the file…',
 };
+
+function DoneSizeNote({ result }: { result: ExportResult }) {
+  const note = sizeNote(result.blob.size, result.estimateBytes, result.codec, navigator.userAgent);
+  if (!note) return null;
+  return (
+    <p className="replay-export-note">
+      {note}
+    </p>
+  );
+}
 
 export function VideoExportPanel({
   controller,
@@ -212,7 +268,7 @@ export function VideoExportPanel({
             <p className="replay-export-lead">
               {state.progress ? PHASE_TEXT[state.progress.phase] : 'Starting…'}
               {state.progress?.phase === 'frames'
-                ? ` ${state.progress.done} / ${state.progress.total} · ${Math.round((100 * state.progress.done) / state.progress.total)}%`
+                ? ` ${state.progress.done} / ${state.progress.total} · ${Math.round((100 * state.progress.done) / state.progress.total)}%${sizeSoFar(state.progress)}`
                 : ''}
             </p>
             <progress
@@ -236,6 +292,7 @@ export function VideoExportPanel({
               {state.result.width}×{state.result.height} · {codecName(state.result.codec)} ·{' '}
               {formatBytes(state.result.blob.size)}
             </p>
+            <DoneSizeNote result={state.result} />
             <div className="replay-export-actions">
               <a className="replay-btn replay-btn-primary" href={state.url} download={state.result.fileName}>
                 Download again

@@ -4,7 +4,7 @@
  * Frames are pushed one canvas at a time with explicit timestamps, so the
  * export can run faster than real time. Nothing leaves the machine.
  */
-import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
+import { ArrayBufferTarget, Muxer, type MuxerOptions } from 'mp4-muxer';
 
 export type VideoQuality = 'small' | 'balanced' | 'best';
 
@@ -19,6 +19,8 @@ export interface Mp4EncoderOptions {
 export interface Mp4Encoder {
   /** Codec string actually in use (for the done message). */
   readonly codec: string;
+  /** Bytes of video encoded so far. */
+  readonly bytes: number;
   /** Encodes one frame; resolves once the encoder has room for the next. */
   addFrame(source: CanvasImageSource, index: number): Promise<void>;
   /** Flushes and muxes; resolves with the MP4. */
@@ -58,6 +60,45 @@ export function estimateBytes(width: number, height: number, fps: number, qualit
   return Math.round((bitrateFor(width, height, fps, quality) / 8) * seconds);
 }
 
+/**
+ * The final size projected from what is encoded so far, or null while too
+ * little is done to say (the first key frame alone would inflate it).
+ */
+export function projectedBytes(bytes: number, done: number, total: number): number | null {
+  if (total <= 0 || done <= 0 || bytes <= 0) return null;
+  if (done >= total) return bytes;
+  if (done < Math.max(60, total * 0.05)) return null;
+  return Math.round((bytes * total) / done);
+}
+
+/**
+ * Firefox's VP9 encoder (what Firefox on Windows ends up with) ignores the
+ * bitrate and every other quality control, so the Quality choice and the
+ * size estimate mean nothing there. Its H.264 encoder (Firefox on a Mac)
+ * does follow the bitrate.
+ */
+export function qualityIgnored(codec: string, userAgent: string): boolean {
+  return codec.startsWith('vp09') && /firefox/i.test(userAgent);
+}
+
+/**
+ * A note for the finished export when its size needs explaining: always for
+ * an encoder that sets its own quality, otherwise when the file is well
+ * under the estimate (any encoder spends less than the ceiling on a mostly
+ * still table). Null when the size is close to the estimate.
+ */
+export function sizeNote(actual: number, estimate: number, codec: string, userAgent: string): string | null {
+  if (qualityIgnored(codec, userAgent)) {
+    return "The video is complete. Firefox's VP9 encoder sets its own quality and size, so the Quality setting has no effect in Firefox.";
+  }
+  if (!(estimate > 0) || actual >= estimate * 0.75) return null;
+  return `The video is complete. It's smaller than the ${formatMegabytes(estimate)} estimate because the table is mostly still, and the encoder needs fewer bytes for still frames.`;
+}
+
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / 1_000_000).toFixed(1)} MB`;
+}
+
 /** Pending encodes allowed before addFrame waits (keeps memory bounded). */
 const MAX_QUEUE = 8;
 /** An encoder that accepts frames but outputs nothing for this long is treated as stalled. */
@@ -90,6 +131,24 @@ export function chunkMetadata(
   return {
     ...meta,
     decoderConfig: { codec: config.codec, codedWidth: config.width, codedHeight: config.height, colorSpace: BT709 },
+  };
+}
+
+/**
+ * Muxer setup. Frames go in from timestamp 0, but some encoders (Firefox's)
+ * stamp their first chunk one frame later, and mp4-muxer's default rejects
+ * any first chunk not at 0. 'offset' starts the track at whatever comes first.
+ */
+export function muxerOptions(
+  target: ArrayBufferTarget,
+  container: 'avc' | 'vp9',
+  opts: Pick<Mp4EncoderOptions, 'width' | 'height' | 'fps'>,
+): MuxerOptions<ArrayBufferTarget> {
+  return {
+    target,
+    video: { codec: container, width: opts.width, height: opts.height, frameRate: opts.fps },
+    fastStart: 'in-memory',
+    firstTimestampBehavior: 'offset',
   };
 }
 
@@ -176,24 +235,40 @@ async function pickConfig(opts: Mp4EncoderOptions): Promise<{ container: 'avc' |
   throw new Error('This browser cannot encode H.264 or VP9 video.');
 }
 
+const codecChoices = new Map<string, Promise<string>>();
+
+/**
+ * The codec an export of this size would use, found the same way the export
+ * finds it (one probe frame per candidate) and remembered per size, so the
+ * dialog can tell before the export starts.
+ */
+export function encoderCodec(width: number, height: number, fps: number): Promise<string> {
+  const key = `${width}x${height}@${fps}`;
+  let choice = codecChoices.get(key);
+  if (!choice) {
+    choice = pickConfig({ width, height, fps }).then(({ config }) => config.codec);
+    choice.catch(() => codecChoices.delete(key));
+    codecChoices.set(key, choice);
+  }
+  return choice;
+}
+
 export async function createMp4Encoder(opts: Mp4EncoderOptions): Promise<Mp4Encoder> {
   if (!supportsVideoExport()) throw new Error('Video export needs a browser with WebCodecs.');
   if (opts.width % 2 || opts.height % 2) throw new Error('Video dimensions must be even.');
   const { container, config } = await pickConfig(opts);
   const target = new ArrayBufferTarget();
-  const muxer = new Muxer({
-    target,
-    video: { codec: container, width: opts.width, height: opts.height, frameRate: opts.fps },
-    fastStart: 'in-memory',
-  });
+  const muxer = new Muxer(muxerOptions(target, container, opts));
   let failure: Error | null = null;
   let chunks = 0;
+  let bytes = 0;
   let haveConfig = false;
   const encoder = new VideoEncoder({
     output: (chunk, meta) => {
       const muxMeta = chunkMetadata(container, config, meta, haveConfig);
       if (muxMeta?.decoderConfig) haveConfig = true;
       chunks += 1;
+      bytes += chunk.byteLength;
       try {
         muxer.addVideoChunk(chunk, muxMeta);
       } catch (error) {
@@ -222,6 +297,9 @@ export async function createMp4Encoder(opts: Mp4EncoderOptions): Promise<Mp4Enco
 
   return {
     codec: config.codec,
+    get bytes() {
+      return bytes;
+    },
     async addFrame(source, index) {
       if (failure) throw failure;
       if (closed) throw new Error('Encoder closed.');

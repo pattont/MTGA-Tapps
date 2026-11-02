@@ -14,7 +14,7 @@ import { composeFrame, frameLayout } from '../export/frameComposer';
 import type { FrameLayout } from '../export/frameComposer';
 import { buildFrameInput } from '../export/frameInput';
 import type { FrameSource } from '../export/frameInput';
-import { createMp4Encoder } from '../export/mp4Encoder';
+import { createMp4Encoder, estimateBytes } from '../export/mp4Encoder';
 import type { VideoQuality } from '../export/mp4Encoder';
 import { exportFileName } from '../export/videoPlan';
 import type { VideoPlan } from '../export/videoPlan';
@@ -39,6 +39,8 @@ export interface ExportProgress {
   phase: 'art' | 'frames' | 'encoding';
   done: number;
   total: number;
+  /** Bytes encoded so far. */
+  bytes?: number;
 }
 
 export interface ExportResult {
@@ -48,6 +50,8 @@ export interface ExportResult {
   codec: string;
   width: number;
   height: number;
+  /** The size the dialog estimated (the bitrate ceiling), to explain a smaller file. */
+  estimateBytes: number;
 }
 
 /** What the viewer hands the scene to run an export. */
@@ -165,14 +169,22 @@ export function ExportDriver(props: ExportDriverProps) {
           }
           await encoder.addFrame(canvas, f);
           if (f % REPORT_EVERY === 0) {
-            onProgress({ phase: 'frames', done: f + 1, total });
+            onProgress({ phase: 'frames', done: f + 1, total, bytes: encoder.bytes });
             await sleep(0);
           }
         }
-        onProgress({ phase: 'encoding', done: total, total });
+        onProgress({ phase: 'encoding', done: total, total, bytes: encoder.bytes });
         const blob = await encoder.finish();
         if (cancelled) return;
-        onDone({ blob, fileName: exportFileName(stream), seconds: plan.seconds, codec: encoder.codec, width: layout.width, height: layout.height });
+        onDone({
+          blob,
+          fileName: exportFileName(stream),
+          seconds: plan.seconds,
+          codec: encoder.codec,
+          width: layout.width,
+          height: layout.height,
+          estimateBytes: estimateBytes(layout.width, layout.height, plan.fps, job.quality, plan.seconds),
+        });
       } finally {
         registry.fixedStep = null;
         capture.current = null;
