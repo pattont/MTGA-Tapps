@@ -49,6 +49,12 @@ export function deckColors(cards: Array<{ mana_cost: string | null }>): string {
   return ['W', 'U', 'B', 'R', 'G'].filter((c) => letters.has(c)).join('');
 }
 
+/** "{2}{W/U}{G}" → ["2", "W/U", "G"], as the overlay splits a cost. */
+export function manaSymbols(cost: string | null | undefined): string[] {
+  if (!cost) return [];
+  return Array.from(cost.matchAll(/\{([^}]+)\}/g), (match) => match[1]);
+}
+
 export function oddsTone(percent: number): 'hot' | 'warm' | 'cold' {
   if (percent >= 10) return 'hot';
   if (percent >= 5) return 'warm';

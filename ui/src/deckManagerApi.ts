@@ -26,10 +26,32 @@ export interface ManagedDeck {
   native_arena_ids?: string[];
   /** WUBRG letters scored from the main deck; "C" colorless, "" unknown. */
   colors?: string;
+  /** Tile art from local data: a Scryfall image-server URL and the printing's `set/number`. */
+  art_url?: string | null;
+  art_print?: string | null;
+  /** Arena's last edit / last game for this deck, from a full backup; null when unknown. */
+  arena_modified?: string | null;
+  arena_played?: string | null;
+  /** Wins and losses in tracked games, over every Arena deck this saved deck has been; null when never played. */
+  record?: DeckRecord | null;
 }
+
+/** Wins and losses in the games the tracker recorded: in total, by ranked/unranked queue, and on the play/draw. */
+export interface DeckRecord {
+  wins: number;
+  losses: number;
+  ranked?: { wins: number; losses: number };
+  unranked?: { wins: number; losses: number };
+  play?: { wins: number; losses: number };
+  draw?: { wins: number; losses: number };
+}
+
+/** Arena card-DB facts per card name; any field can be missing. */
+export interface CardFacts { mana_cost?: string; mana_value?: number; type?: string }
 
 export interface ManagedDeckDetail extends ManagedDeck {
   revision_id: string;
+  card_info?: Record<string, CardFacts>;
   deck: { name: string; format_name: string; cards: ManagedCard[]; import_text: string | null; source: string; completeness: string };
   revisions: { id: string; created_at: string; source: string; content_hash: string }[];
 }
@@ -39,6 +61,8 @@ export interface DeckCollection { id: string; name: string; }
 export interface DeckLibrary {
   collections?: DeckCollection[];
   decks: ManagedDeck[];
+  /** Tracked-game records by Arena deck id, for the Arena tab. */
+  records?: Record<string, DeckRecord>;
   capabilities: { arena_transfers: boolean; native_section: boolean; capacity: number | null; message: string };
 }
 
@@ -73,6 +97,13 @@ export interface ArenaDeck {
   art_card?: string | null;
   art_card_id?: number | null;
   colors?: string;
+  /** When the deck was last edited / played in Arena; null when never or unknown. */
+  arena_modified?: string | null;
+  arena_played?: string | null;
+  art_url?: string | null;
+  art_print?: string | null;
+  /** Starred in Arena's deck list. */
+  is_favorite?: boolean;
 }
 export interface NativeDeckStatus {
   available: boolean;
@@ -88,23 +119,38 @@ export interface NativeDeckStatus {
   refreshed_at?: string;
   pending_transfers?: { id: string; action: string; phase: string; deck_id: string }[];
 }
-export type NativeDeckAction = 'connect' | 'backup' | 'store' | 'restore' | 'reconcile' | 'add';
+export type NativeDeckAction = 'connect' | 'backup' | 'store' | 'restore' | 'reconcile' | 'add' | 'favorite';
 export interface NativeDeckJob {
   state: 'running' | 'done' | 'error';
   detail: string;
   progress?: { completed: number; total: number | null };
   action?: NativeDeckAction;
   cancel?: boolean;
-  result?: { count: number; action: NativeDeckAction; cancelled?: boolean };
+  result?: { count: number; action: NativeDeckAction; cancelled?: boolean; favorite?: boolean };
 }
 export const fetchNativeDeckStatus = (signal?: AbortSignal) => request<NativeDeckStatus>('/native', undefined, signal);
-/** `collection_id` is where a store (move out of Arena) saves the decks; null is Unsorted. */
-export const startNativeDeckJob = (action: NativeDeckAction, decks: { id: string; revision?: string }[] = [], collection_id?: string | null) =>
-  request<{ job_id: string }>('/native/run', { action, decks, request_id: crypto.randomUUID(), ...(action === 'store' ? { confirm: 'MOVE' } : {}), ...(action === 'store' && collection_id !== undefined ? { collection_id } : {}) });
+/** One Arena deck's cards from the last time Deck Manager read Arena; never contacts Arena. */
+export interface ArenaDeckCards { id: string; name: string; format_name: string; refreshed_at?: string; cards: ManagedCard[]; card_info?: Record<string, CardFacts> }
+export const fetchArenaDeck = (id: string, signal?: AbortSignal) =>
+  request<ArenaDeckCards>(`/native/deck?${new URLSearchParams({ id })}`, undefined, signal);
+/**
+ * `collection_id` is where a store (move out of Arena) saves the decks; null is Unsorted.
+ * `trash` sends each verified backup to Trash once Arena has removed the deck.
+ */
+export const startNativeDeckJob = (action: NativeDeckAction, decks: { id: string; revision?: string; favorite?: boolean }[] = [], collection_id?: string | null, options: { trash?: boolean } = {}) =>
+  request<{ job_id: string }>('/native/run', {
+    action, decks, request_id: crypto.randomUUID(), ...(action === 'store' ? { confirm: 'MOVE' } : {}),
+    ...(action === 'store' && collection_id !== undefined ? { collection_id } : {}),
+    ...(action === 'store' && options.trash ? { trash: true } : {}),
+  });
 export const cancelNativeDeckJob = (job_id: string) => request<{ state: string; cancel: boolean }>('/native/cancel', { job_id });
 export const fetchNativeDeckJob = (id: string, signal?: AbortSignal) => request<NativeDeckJob>(`/native/job?${new URLSearchParams({ id })}`, undefined, signal);
-export const addDeckToArena = (text: string, name: string, format_name: string, saved_deck_id?: string, collection_id?: string) =>
-  request<{ job_id: string }>('/native/run', { action: 'add', decks: [], request_id: crypto.randomUUID(), import: { text, name, format_name, ...(saved_deck_id ? { saved_deck_id } : {}), ...(collection_id ? { collection_id } : {}) } });
+/** `renameIfTaken` numbers the name ("Name (1)") when Arena already has a deck called that. */
+export const addDeckToArena = (text: string, name: string, format_name: string, saved_deck_id?: string, collection_id?: string, options: { renameIfTaken?: boolean } = {}) =>
+  request<{ job_id: string }>('/native/run', { action: 'add', decks: [], request_id: crypto.randomUUID(), import: {
+    text, name, format_name, ...(saved_deck_id ? { saved_deck_id } : {}), ...(collection_id ? { collection_id } : {}),
+    ...(options.renameIfTaken ? { rename_if_taken: true } : {}),
+  } });
 
 export const saveDeckCollection = (name: string, id?: string) =>
   request<DeckCollection>('/collections/save', { name, id });

@@ -1,7 +1,7 @@
 import { RefreshCw, X } from 'lucide-react';
 import type { NativeDeckAction, NativeDeckJob, NativeDeckStatus } from '../deckManagerApi';
 import { formatDateTime } from '../format';
-import { loadLabel } from '../deckManagerLabels';
+import { ARENA_LOADED_NOTICE, loadLabel } from '../deckManagerLabels';
 import { DeckTransferProgress } from './DeckTransferProgress';
 
 type Tone = 'ok' | 'warn' | 'idle' | 'busy';
@@ -13,6 +13,7 @@ const RUNNING: Record<NativeDeckAction, string> = {
   restore: 'Restoring decks to Arena…',
   add: 'Adding the deck to Arena…',
   reconcile: 'Checking the interrupted transfer…',
+  favorite: 'Updating Arena’s favorites…',
 };
 
 function arenaState(native: NativeDeckStatus | null, job: string | null): { tone: Tone; title: string; detail: string } {
@@ -41,9 +42,37 @@ function arenaState(native: NativeDeckStatus | null, job: string | null): { tone
   };
 }
 
+function chipLabel(native: NativeDeckStatus | null, busy: boolean) {
+  if (busy) return 'Working with Arena…';
+  if (!native) return 'Checking Arena…';
+  if (!native.available) return 'Arena not connected';
+  if (native.pending_transfers?.length) return 'Transfer interrupted';
+  if (native.in_game) return 'In a game';
+  if (!native.connected) return 'Arena not loaded';
+  if (!native.deck_screen_open) return 'Arena not on Decks';
+  const count = native.limit ? `${native.decks.length}/${native.limit}` : `${native.decks.length} decks`;
+  const time = native.refreshed_at
+    ? ` · ${new Date(native.refreshed_at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : '';
+  return `Arena ${count}${native.limit_reached ? ' full' : ''}${time}`;
+}
+
+/** One-line Arena summary for the tab row; the full explanation is its tooltip. */
+export function ArenaStatusChip({ native, running }: { native: NativeDeckStatus | null; running: boolean }) {
+  // Not loaded yet: the green Load Arena decks button beside it says it all.
+  if (!running && native?.available && !native.connected && !native.in_game && !native.pending_transfers?.length) return null;
+  const state = arenaState(native, running ? 'Working with Arena…' : null);
+  const tone = state.tone === 'ok' && native?.limit_reached ? 'warn' : state.tone;
+  return (
+    <span className={`deck-manager-chip deck-manager-status-${tone}`} title={[state.title, state.detail].filter(Boolean).join('. ')}>
+      <span className="deck-manager-status-dot" aria-hidden="true" />
+      {chipLabel(native, running)}
+    </span>
+  );
+}
+
 /**
- * The page's single status panel: what Deck Manager last learned from Arena,
- * what is running, and the result of the last action.
+ * The page's status banner: shown only when something needs attention (a
+ * warning, a running job, or the result of the last action).
  */
 export function DeckManagerStatus({ native, jobAction, jobDetail, progress, error, notice, showMessages, busy, onReconcile, onDismiss }: {
   native: NativeDeckStatus | null;
@@ -60,23 +89,42 @@ export function DeckManagerStatus({ native, jobAction, jobDetail, progress, erro
   const running = jobDetail ? RUNNING[jobAction ?? 'connect'] : null;
   const state = arenaState(native, running);
   const message = showMessages ? error || notice : '';
+  if (state.tone !== 'warn' && state.tone !== 'busy' && !message) return null;
+  // A result is the banner's own headline, never a second box under it. After a
+  // load or rescan the usual title already says it, so its text isn't repeated.
+  const result = !error && message ? message : '';
+  const headline = result && result !== ARENA_LOADED_NOTICE && (state.tone === 'ok' || state.tone === 'idle');
+  const tone = headline ? 'ok' : state.tone;
+  const title = headline ? result : state.title;
+  // Arena's summary still fits under a result; "not loaded yet" advice doesn't.
+  const detail = headline && state.tone === 'idle' ? '' : state.detail;
+  // While a warning or a job holds the headline, the result is a plain line below it.
+  const note = result && !headline && result !== ARENA_LOADED_NOTICE ? result : '';
+  const dismiss = <button type="button" className="deck-manager-status-dismiss" aria-label="Dismiss message" onClick={onDismiss}><X size={16} /></button>;
   return (
-    <section className={`deck-manager-status deck-manager-status-${state.tone}`} aria-label="Arena status">
+    <section className={`deck-manager-status deck-manager-status-${tone}`} aria-label="Arena status">
       <div className="deck-manager-status-main">
         <span className="deck-manager-status-dot" aria-hidden="true" />
-        <div className="deck-manager-status-copy">
-          <strong>{state.title}</strong>
-          {state.detail ? <span>{state.detail}</span> : null}
+        <div className="deck-manager-status-copy" role={headline ? 'status' : undefined}>
+          <strong>{title}</strong>
+          {detail ? <span>{detail}</span> : null}
         </div>
         {!running && native?.available && native.pending_transfers?.length
           ? <button className="deck-manager-add" disabled={busy || native.in_game} onClick={onReconcile}><RefreshCw size={16} /> Reconcile transfers</button>
           : null}
+        {result && !note ? dismiss : null}
       </div>
-      {running && showMessages ? <DeckTransferProgress detail={jobDetail} progress={progress} /> : null}
-      {message ? (
-        <div className={error ? 'deck-manager-status-message deck-manager-error' : 'deck-manager-status-message deck-manager-notice'} role={error ? 'alert' : 'status'}>
-          <span>{message}</span>
-          <button type="button" className="deck-manager-status-dismiss" aria-label="Dismiss message" onClick={onDismiss}><X size={16} /></button>
+      {running && showMessages ? <DeckTransferProgress detail={jobDetail} progress={progress} showDetail={false} /> : null}
+      {note ? (
+        <div className="deck-manager-status-message deck-manager-status-note" role="status">
+          <span>{note}</span>
+          {dismiss}
+        </div>
+      ) : null}
+      {error ? (
+        <div className="deck-manager-status-message deck-manager-error" role="alert">
+          <span>{error}</span>
+          {dismiss}
         </div>
       ) : null}
     </section>

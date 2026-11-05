@@ -13,7 +13,7 @@ def fake_exports(calls, refresh=lambda account: True):
         open=lambda: {"account_id": "account"},
         createprepared=lambda account, arena_id: calls.append("create") or {},
         remove=lambda account, snapshot: calls.append("remove") or True,
-        roster=lambda account: calls.append("roster")
+        roster=lambda account, refresh: calls.append("roster")
         or {"account_id": account, "roster_refreshed": True},
         refreshscreen=lambda account, select: calls.append(("refreshscreen", select))
         or refresh(account),

@@ -179,6 +179,7 @@ class GameState:
         self.logged_tap_untap_events: Set[tuple] = set()
         self.ability_instance_action_texts: Dict[int, str] = {}
         self.logged_identity_changes: Set[tuple] = set()
+        self.logged_reveal_ids: Set[int] = set()
         self.logged_unhandled_annotations: Set[tuple] = set()
         self.pending_modal_requests: Dict[tuple, Dict[str, Any]] = {}
         self.logged_modal_choices: Set[tuple] = set()
@@ -188,7 +189,6 @@ class GameState:
         self.combat_phase_active = False
         self.current_combat_attackers: Dict[int, Dict] = {}
         self.current_combat_blockers: Dict[int, Dict[str, Any]] = {}
-        self.combat_damage_events: List[Dict] = []
         self.reported_block_pairs: Set[tuple] = set()
         self.reported_attack_keys: Set[tuple] = set()
         self.recent_combat_returns: List[Dict[str, Any]] = []

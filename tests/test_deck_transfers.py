@@ -58,8 +58,11 @@ class Arena:
         self.full = False
         self.on_decks = True
         self.after_write = None
+        # Whether each roster read asked Arena's server first.
+        self.roster_refreshes = []
 
-    def roster(self):
+    def roster(self, refresh=True):
+        self.roster_refreshes.append(refresh)
         return {
             "roster_refreshed": True,
             "decks": copy.deepcopy(list(self.decks.values())),
@@ -367,6 +370,97 @@ def test_background_bulk_backup_reads_actual_roster_without_deletes(tmp_path, mo
         assert conn.execute("SELECT COUNT(*) FROM games").fetchone()[0] == 0
 
 
+def test_favorite_job_stars_one_arena_deck_and_publishes_the_new_roster(tmp_path, monkeypatch):
+    arena = Arena()
+    deck_id = arena.source["arena_id"]
+
+    def favorite(arena_id, value):
+        arena.calls.append(("favorite", arena_id, value))
+        attributes = arena.decks[arena_id]["summary"]["Attributes"]
+        attributes[:] = [a for a in attributes if a["key"] != "IsFavorite"]
+        attributes.append({"key": "IsFavorite", "value": "true" if value else "false"})
+        return {"arena_id": arena_id, "is_favorite": value, "changed": True}
+
+    arena.favorite = favorite
+
+    @contextmanager
+    def attach():
+        yield arena
+
+    monkeypatch.setattr(api.nb, "attach", attach)
+    monkeypatch.setattr(api, "_art_lookup", lambda: ({}, None))
+    db = tmp_path / "library.db"
+    try:
+        result = api.execute(
+            db, "favorite", [{"id": deck_id, "favorite": True}], str(uuid.uuid4()), lambda _: None
+        )
+        assert result == {"count": 1, "action": "favorite", "cancelled": False, "favorite": True}
+        assert arena.calls == [("favorite", deck_id, True)]
+        assert api.status(db)["decks"][0]["is_favorite"] is True
+        # A deck Arena no longer has is refused before any change.
+        with pytest.raises(dm.DeckManagerError, match="no longer in Arena"):
+            api.execute(
+                db,
+                "favorite",
+                [{"id": str(uuid.uuid4()), "favorite": False}],
+                str(uuid.uuid4()),
+                lambda _: None,
+            )
+        assert len(arena.calls) == 1
+    finally:
+        with api._LOCK:
+            api._STATUS.pop(api._key(db), None)
+
+
+def test_a_plain_load_reads_arenas_own_copy_and_changes_start_from_the_server(
+    tmp_path, monkeypatch
+):
+    arena = Arena()
+    deck_id = arena.source["arena_id"]
+    arena.favorite = lambda arena_id, value: {
+        "arena_id": arena_id,
+        "is_favorite": value,
+        "changed": True,
+    }
+
+    @contextmanager
+    def attach():
+        yield arena
+
+    monkeypatch.setattr(api.nb, "attach", attach)
+    monkeypatch.setattr(api, "_art_lookup", lambda: ({}, None))
+    db = tmp_path / "library.db"
+    try:
+        api.execute(db, "connect", [], str(uuid.uuid4()), lambda _: None)
+        # Load / Rescan Arena: no server round trip.
+        assert arena.roster_refreshes == [False]
+        api.execute(
+            db, "favorite", [{"id": deck_id, "favorite": True}], str(uuid.uuid4()), lambda _: None
+        )
+        # A change starts from, and is confirmed against, the server's list.
+        assert arena.roster_refreshes == [False, True, True]
+    finally:
+        with api._LOCK:
+            api._STATUS.pop(api._key(db), None)
+
+
+@pytest.mark.parametrize(
+    "decks",
+    [
+        [],
+        [{"id": str(uuid.uuid4())}],
+        [{"id": str(uuid.uuid4()), "favorite": "yes"}],
+        [{"id": str(uuid.uuid4()), "favorite": True}, {"id": str(uuid.uuid4()), "favorite": True}],
+    ],
+)
+def test_favorite_job_needs_exactly_one_deck_and_a_true_or_false_star(tmp_path, decks):
+    with pytest.raises(dm.DeckManagerError):
+        api.start(
+            tmp_path / "db",
+            {"action": "favorite", "decks": decks, "request_id": str(uuid.uuid4())},
+        )
+
+
 def test_native_move_endpoint_requires_confirmation_before_starting_job(tmp_path):
     status, _ = api.handle_post(
         "/api/deck-manager/native/run",
@@ -412,6 +506,79 @@ def test_store_saves_into_the_chosen_collection_including_an_earlier_backup(conn
     assert arena.decks == {}
     assert saved(conn)["id"] == deck_id
     assert saved(conn)["collection_id"] == target
+
+
+def test_store_to_trash_trashes_the_backup_only_after_arena_confirms_removal(conn):
+    arena = Arena()
+    remove = arena.remove
+
+    def checked(snapshot):
+        # The verified backup stays out of Trash until Arena's removal is confirmed.
+        assert saved(conn)["trashed_at"] is None
+        remove(snapshot)
+
+    arena.remove = checked
+    dt.transfer(
+        conn,
+        arena,
+        "store",
+        {"id": arena.source["arena_id"], "trash": True},
+        str(uuid.uuid4()),
+        arena.roster(),
+        lambda _: "Forest",
+    )
+    assert arena.decks == {}
+    assert dt.pending(conn) == []
+    assert saved(conn)["trashed_at"]
+
+
+def test_store_to_trash_keeps_the_backup_out_of_trash_when_removal_fails(conn):
+    arena = Arena()
+
+    def fails(_snapshot):
+        raise RuntimeError("Arena refused")
+
+    arena.remove = fails
+    with pytest.raises(RuntimeError):
+        dt.transfer(
+            conn,
+            arena,
+            "store",
+            {"id": arena.source["arena_id"], "trash": True},
+            str(uuid.uuid4()),
+            arena.roster(),
+            lambda _: "Forest",
+        )
+    assert saved(conn)["trashed_at"] is None
+
+
+def test_native_move_endpoint_passes_the_trash_choice_to_each_deck(tmp_path, monkeypatch):
+    import time
+
+    captured = {}
+
+    def fake_execute(_db, action, selections, _request, _progress, _cancelled):
+        captured["selections"] = selections
+        return {"count": len(selections), "action": action}
+
+    monkeypatch.setattr(api, "execute", fake_execute)
+    deck_id = str(uuid.uuid4())
+    status, _ = api.handle_post(
+        "/api/deck-manager/native/run",
+        {
+            "action": "store",
+            "decks": [{"id": deck_id}],
+            "request_id": str(uuid.uuid4()),
+            "confirm": "MOVE",
+            "trash": True,
+        },
+        tmp_path / "db",
+    )
+    deadline = time.monotonic() + 5
+    while api._ACTIVE and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert status == 202
+    assert captured["selections"] == [{"id": deck_id, "trash": True}]
 
 
 def test_store_refuses_a_missing_collection_before_removing_from_arena(conn):
@@ -625,14 +792,91 @@ def test_native_text_import_rejects_full_slots_before_parser_call(conn):
     assert arena.calls == []
 
 
-def test_public_arena_roster_exposes_art_without_another_native_call():
+def test_public_arena_roster_names_the_tile_card_without_another_native_call(monkeypatch):
     arena = Arena()
+    names = {123: "Forest", 77: "Llanowar Elves", 999: "Unrelated card"}
+    monkeypatch.setattr(api, "_art_lookup", lambda: ({456: [999, 123]}, names.get))
+    # DeckArtId is an art id: it resolves to the deck's own card that uses that art.
     arena.source["summary"]["DeckArtId"] = 456
-    report = api._public_roster(arena.roster())
-    assert report["decks"][0]["art_card_id"] == 456
-    del arena.source["summary"]["DeckArtId"]
-    assert api._public_roster(arena.roster())["decks"][0]["art_card_id"] == 123
+    deck_row = api._public_roster(arena.roster())["decks"][0]
+    assert (deck_row["art_card_id"], deck_row["art_card"]) == (123, "Forest")
+    # DeckTileId names the tile card directly.
+    arena.source["summary"]["DeckTileId"] = 77
+    deck_row = api._public_roster(arena.roster())["decks"][0]
+    assert (deck_row["art_card_id"], deck_row["art_card"]) == (77, "Llanowar Elves")
+    # Without the card DB an art id is never shown as a card; the first card stands in.
+    monkeypatch.setattr(api, "_art_lookup", lambda: ({}, None))
+    del arena.source["summary"]["DeckTileId"]
+    deck_row = api._public_roster(arena.roster())["decks"][0]
+    assert (deck_row["art_card_id"], deck_row["art_card"]) == (123, None)
     assert arena.calls == []
+
+
+def test_arena_dates_and_favorites_reach_the_roster_and_saved_backups(conn, tmp_path, monkeypatch):
+    from mtga_tracker import deck_manager_api as library_api
+
+    arena = Arena()
+    monkeypatch.setattr(api, "_art_lookup", lambda: ({}, None))
+    arena.source["summary"]["Attributes"] += [
+        {"key": "LastUpdated", "value": '"2026-10-12T02:12:37.02715-04:00"'},
+        {"key": "LastPlayed", "value": '"0001-01-01T00:00:00"'},
+    ]
+    deck_row = api._public_roster(arena.roster())["decks"][0]
+    assert deck_row["is_favorite"] is False
+    # UTC text; Arena's year-one placeholder means never played.
+    assert (deck_row["arena_modified"], deck_row["arena_played"]) == (
+        "2026-10-12T06:12:37+00:00",
+        None,
+    )
+    arena.source["summary"]["Attributes"].append({"key": "IsFavorite", "value": "true"})
+    assert api._public_roster(arena.roster())["decks"][0]["is_favorite"] is True
+    store(conn, arena)
+    listed = dm.list_decks(conn)[0]
+    assert (listed["arena_modified"], listed["arena_played"]) == ("2026-10-12T06:12:37+00:00", None)
+    status, detail = library_api.handle_get(
+        "/api/deck-manager/deck", {"id": [listed["id"]]}, tmp_path / "tracker.db"
+    )
+    assert status == 200 and detail["arena_modified"] == "2026-10-12T06:12:37+00:00"
+    assert dm.arena_time('"2026-08-30T23:36:26.305182-04:00"') == "2026-08-31T03:36:26+00:00"
+    assert dm.arena_time('"now"') is None and dm.arena_time(None) is None
+
+
+def test_arena_deck_cards_come_from_the_last_read_and_stay_out_of_status(tmp_path, monkeypatch):
+    arena = Arena()
+    monkeypatch.setattr(api, "_art_lookup", lambda: ({}, None))
+    monkeypatch.setattr(api, "_resolve_names", lambda: {123: "Forest"}.get)
+    db = tmp_path / "tracker.db"
+    roster = api._public_roster(arena.roster())
+    with api._LOCK:
+        api._STATUS[api._key(db)] = roster
+    try:
+        polled = api.status(db)
+        assert "_cards" not in polled
+        deck_id = arena.source["arena_id"]
+        status, payload = api.handle_get("/api/deck-manager/native/deck", {"id": [deck_id]}, db)
+        assert status == 200
+        assert payload["name"] == "Offline native fixture"
+        assert [(c["section"], c["quantity"], c["name"]) for c in payload["cards"]] == [
+            ("Deck", 60, "Forest")
+        ]
+        assert api.handle_get("/api/deck-manager/native/deck", {"id": ["missing"]}, db)[0] == 404
+    finally:
+        with api._LOCK:
+            api._STATUS.pop(api._key(db), None)
+    assert arena.calls == []
+
+
+def test_a_blank_import_name_is_numbered_past_names_arena_already_has(conn):
+    arena = imported_arena()
+    taken = arena.source["name"]
+    selection = {**finder_selection(), "name": taken, "rename_if_taken": True}
+    report = dt.add_import(
+        conn, arena, selection, str(uuid.uuid4()), arena.roster(), lambda _: "Forest"
+    )
+    assert sorted(d["name"] for d in report["decks"]) == [taken, f"{taken} (1)"]
+    assert saved(conn)["name"] == f"{taken} (1)"
+    assert dt.unique_name("Deck", ["deck", "Deck (1)", "Deck (2)"]) == "Deck (3)"
+    assert dt.unique_name("Fresh", ["Deck"]) == "Fresh"
 
 
 def test_failed_preparation_is_cancelled_without_creation_and_new_request_can_proceed(conn):
@@ -982,7 +1226,7 @@ def test_job_failures_show_the_adapters_reason_and_fit_the_action():
     assert (
         api._failure_message(RPCException(f"Error: {reason}\n    at x (/s.js:1)"), "add") == reason
     )
-    assert "Refresh Arena" in api._failure_message(OSError("gone"), "connect")
+    assert "Rescan Arena" in api._failure_message(OSError("gone"), "connect")
     assert "reconcile" in api._failure_message(OSError("gone"), "store")
     assert api._failure_message(KeyError("Saved deck not found."), "restore") == (
         "Saved deck not found."

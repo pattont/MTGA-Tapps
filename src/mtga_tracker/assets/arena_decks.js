@@ -669,9 +669,16 @@ async function promiseCall(account, start, extract, write=false) {
 async function refreshCache(account) {
   await promiseCall(account,()=>invoke(findMethod('.DecksManager','ForceRefreshCachedDecks',[]),root()),()=>true);
 }
-async function roster(account) {
-  await refreshCache(account);
-  return promiseCall(account,()=>invoke(findMethod('.DecksManager','GetAllDecks',[]),root()),result=>{
+// refresh=false reads the list Arena already holds (it loads every deck at
+// login and updates its copy on each edit; only one Arena session can be signed
+// in, so nothing else changes it). It falls back to asking the server when that
+// copy is empty or a deck's cards aren't loaded yet.
+async function roster(account, refresh=true) {
+  // Milliseconds per step, for the job's timing line.
+  const started=Date.now();
+  if (refresh) await refreshCache(account);
+  const refreshed=Date.now();
+  const read=()=>promiseCall(account,()=>invoke(findMethod('.DecksManager','GetAllDecks',[]),root()),result=>{
     if (result.isNull()) throw new Error('Arena returned no roster. No transfer can proceed.');
     const names=pileNames(),service=serviceCalls(root());
     const decks=list(result).map(p=>deckSnapshot(p.readPointer()));
@@ -681,6 +688,15 @@ async function roster(account) {
       limit_reached:service.limit_reached,pile_names:names,
       decks:decks.filter(d=>!d.is_net_deck),roster_refreshed:true};
   });
+  let report=await read();
+  if (!refresh && (!report.decks.length || report.decks.some(d=>!d.contents_loaded))) {
+    await refreshCache(account);
+    refresh=true;
+    report=await read();
+  }
+  report.roster_refreshed=refresh;
+  report.timing_ms={refresh:refreshed-started,read:Date.now()-refreshed};
+  return report;
 }
 function requestFullDeck(id) {
   const guid=parseGuid(id),handle=handleNew(guid,0);
@@ -889,6 +905,41 @@ async function removeDeck(account,snapshot) {
     return true;
   },true);
 }
+// Arena's star button: WrapperDeckUtilities.setFavoriteInternal sets the
+// summary's IsFavorite attribute, then saves with DecksManager.UpdateDeck(deck,
+// DeckActionType.Updated). Its coroutine loads the full deck first, and so does
+// this, so the save carries every pile. Only the star may change: the deck is
+// read back after the save and its name, piles and skins compared.
+const DECK_ACTION_UPDATED=6;
+function favoriteAttribute(snapshot) {
+  const pair=(snapshot.summary.Attributes||[]).find(a=>a.key==='IsFavorite');
+  return Boolean(pair) && String(pair.value).replace(/"/g,'').toLowerCase()==='true';
+}
+function sameContents(left,right) {
+  const piles=deck=>JSON.stringify((deck.piles||[]).map(p=>[p.pile,p.entries.map(c=>[c.id,c.quantity]).sort()]).sort());
+  return left.name===right.name && piles(left)===piles(right) && JSON.stringify(left.skins)===JSON.stringify(right.skins);
+}
+async function setFavorite(account,id,value) {
+  if (typeof id!=='string' || !/^[0-9a-f-]{36}$/.test(id) || typeof value!=='boolean') throw new Error('Invalid favorite request.');
+  const before=await fullDeck(account,id);
+  if (!before.contents_loaded || !before.piles || before.piles.length!==4) throw new Error('Arena has not loaded all deck piles.');
+  if (favoriteAttribute(before)===value) return {arena_id:id,is_favorite:value,changed:false};
+  await promiseCall(account,()=>{
+    const deck=cachedDecks(root()).find(d=>guidText(fieldAt(ref(d,'_summary'),'DeckId'))===id);
+    if (!deck || !sameSourceSnapshot(deckSnapshot(deck),before)) throw new Error('The deck changed in Arena. Refresh and try again.');
+    const flag=Memory.alloc(1); flag.writeU8(value ? 1 : 0);
+    invoke(findMethod('Wizards.Mtga.Decks.Client_DeckSummary','set_IsFavorite',['System.Boolean']),ref(deck,'_summary'),[flag]);
+    const kind=Memory.alloc(4); kind.writeS32(DECK_ACTION_UPDATED);
+    return invoke(findMethod('.DecksManager','UpdateDeck',['Wizards.Mtga.Decks.Client_Deck','Wizards.Arena.Enums.Deck.DeckActionType']),root(),[deck,kind]);
+  },summary=>{
+    if (summary.isNull() || guidText(fieldAt(summary,'DeckId'))!==id) throw new Error('Arena did not confirm the change. Refresh to check it.');
+    return true;
+  },true);
+  await refreshCache(account);
+  const after=await fullDeck(account,id);
+  if (favoriteAttribute(after)!==value || !sameContents(before,after)) throw new Error('Arena did not save the change as expected. Refresh to check it.');
+  return {arena_id:id,is_favorite:value,changed:true};
+}
 // Arena's Decks screen draws its grid once when it opens, so a deck created or
 // removed through the service stays hidden until the screen is reopened. This
 // starts the screen's own load routine, as Arena does after its own delete: it
@@ -961,4 +1012,4 @@ async function refreshScreen(account,selectId=null) {
   return true;
 }
 rpc.exports={open:openConnection,roster,archive:archiveDecks,fetchdeck:fullDeck,create:createDeck,remove:removeDeck,prepareimport:prepareImport,preparecreate:prepareCreate,createprepared:createPrepared,
-  refreshscreen:refreshScreen,close(){return onUnityThread(releaseConnection);}};
+  favorite:setFavorite,refreshscreen:refreshScreen,close(){return onUnityThread(releaseConnection);}};

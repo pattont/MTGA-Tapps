@@ -295,3 +295,44 @@ def test_abandoned_install_and_quit_is_reported_then_quits(monkeypatch, tmp_path
     controller.updates = SimpleNamespace(status=lambda: {"state": "installing", "error": None})
     controller._on_update_exit()
     assert quits == [True, True] and len(warnings) == 1
+
+
+def test_ctrl_c_quits_through_the_event_loop(monkeypatch):
+    import gc
+    import os
+    import signal
+    import time
+
+    from PyQt6.QtWidgets import QApplication
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    application = QApplication.instance() or QApplication([])
+    quits = []
+    monkeypatch.setattr(application, "quit", lambda: quits.append(True))
+    assert menu_app._install_ctrl_c_quit(application) is not None
+    # run_menu_app drops the return value; the sockets must survive that.
+    gc.collect()
+    restore = application._mtga_ctrl_c[-1]
+    try:
+        # No KeyboardInterrupt: the signal only wakes the event loop.
+        os.kill(os.getpid(), signal.SIGINT)
+        deadline = time.monotonic() + 2
+        while not quits and time.monotonic() < deadline:
+            application.processEvents()
+            time.sleep(0.01)
+    finally:
+        restore()
+    assert quits == [True]
+    assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+
+
+def test_ctrl_c_handler_is_skipped_in_frozen_builds(monkeypatch):
+    import signal
+
+    from PyQt6.QtWidgets import QApplication
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    application = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(menu_app.sys, "frozen", True, raising=False)
+    assert menu_app._install_ctrl_c_quit(application) is None
+    assert signal.getsignal(signal.SIGINT) is signal.default_int_handler

@@ -33,6 +33,8 @@ export interface DeckRow {
   deck_visual: DeckVisual;
   /** WUBRG letters from the newest decklist's casting costs (e.g. "WR"). */
   colors?: string;
+  /** Start of the newest game with this deck (within the current filters). */
+  last_played?: string | null;
 }
 
 export interface FormatRow {
@@ -694,6 +696,8 @@ export interface DeckDetail {
   faced_commanders?: CommanderRow[];
   /** WUBRG letters from the newest decklist's casting costs (e.g. "B"). */
   deck_colors?: string;
+  /** Start of the newest game ever played with this deck (ignores page filters). */
+  last_played?: string | null;
   deck_export: DeckExport;
   summary: Summary;
   profile: DeckProfile;

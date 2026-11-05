@@ -37,6 +37,17 @@ pub enum Density {
     Compact,
 }
 
+/// The session record at the foot of the panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionRecord {
+    Off,
+    /// One line: record and win rate, Play / Draw win rates on the right.
+    Scoreboard,
+    /// Record over a win/loss bar, then the Play and Draw records.
+    Split,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Hotkeys {
@@ -100,6 +111,7 @@ pub struct Settings {
     pub lands: Lands,
     pub density: Density,
     pub name_color: NameColor,
+    pub session_record: SessionRecord,
     pub follow_arena: bool,
     pub hide_when_arena_not_in_front: bool,
     pub api_url: String,
@@ -130,6 +142,7 @@ impl Default for Settings {
             lands: Lands::Grouped,
             density: Density::Comfortable,
             name_color: NameColor::Type,
+            session_record: SessionRecord::Scoreboard,
             follow_arena: true,
             hide_when_arena_not_in_front: true,
             api_url: "http://127.0.0.1:8765".into(),
@@ -213,6 +226,9 @@ mod tests {
         // Missing fields take defaults (a file from an older version keeps working).
         assert_eq!(fixed.dock, Dock::Left);
         assert_eq!(fixed.lands, Lands::Grouped);
+        assert_eq!(fixed.session_record, SessionRecord::Scoreboard);
+        let off: Settings = serde_json::from_str(r#"{"sessionRecord": "off"}"#).unwrap();
+        assert_eq!(off.session_record, SessionRecord::Off);
     }
 
     #[test]

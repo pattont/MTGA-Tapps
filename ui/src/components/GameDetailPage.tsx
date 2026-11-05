@@ -815,6 +815,15 @@ export function GameDetailPage({
         </div>
       </div>
 
+      <div className="game-detail-actions replay-wide-only" role="group" aria-label="Game actions">
+        <ReplayLink
+          availability={detail.game.replay}
+          gameId={detail.game.game_id}
+          returnHash={currentGameHash}
+          variant="button"
+        />
+      </div>
+
       {(detail.player.commanders?.length ?? 0) > 0 || (detail.opponent.commanders?.length ?? 0) > 0 ? (
         <CommanderVersus
           opponent={detail.opponent.commanders ?? []}
@@ -872,14 +881,6 @@ export function GameDetailPage({
         </div>
       ) : null}
 
-      <div className="game-detail-actions replay-wide-only" role="group" aria-label="Game actions">
-        <ReplayLink
-          availability={detail.game.replay}
-          gameId={detail.game.game_id}
-          returnHash={currentGameHash}
-          variant="button"
-        />
-      </div>
       <section className="metric-grid metric-grid-deck" aria-label="Game metrics">
         {metricCards.map((metric) => (
           <MetricCard key={metric.label} icon={metric.icon} label={metric.label} value={metric.value} />

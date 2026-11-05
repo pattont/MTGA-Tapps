@@ -17,20 +17,45 @@ _BUILT = 0.0
 COLOR_SECTIONS = ("Deck", "Commander", "Companion")
 
 
-def _index():
-    global _INDEX, _BUILT
-    with _LOCK:
-        if _INDEX is None or time.monotonic() - _BUILT > _TTL_SECONDS:
-            try:
-                from .card_database import CardDatabase
+_REFRESHING = False
 
-                index = CardDatabase().deck_color_index()
-            except Exception:
-                index = ({}, {})
-            # Cache only a populated index; an empty one may be a transient failure.
-            if index[0] or _INDEX is None:
-                _INDEX, _BUILT = index, time.monotonic()
+
+def _build():
+    try:
+        from .card_database import CardDatabase
+
+        return CardDatabase().deck_color_index()
+    except Exception:
+        return ({}, {})
+
+
+def _refresh():
+    """Rebuild an expired index off the request path (an Arena deck read waits on it)."""
+    global _INDEX, _BUILT, _REFRESHING
+    index = _build()
+    with _LOCK:
+        # Keep the old index when the rebuild came back empty (a transient failure).
+        if index[0]:
+            _INDEX = index
+        _BUILT, _REFRESHING = time.monotonic(), False
+
+
+def _index():
+    global _INDEX, _BUILT, _REFRESHING
+    with _LOCK:
+        if _INDEX is None:
+            _INDEX, _BUILT = _build(), time.monotonic()
+        elif time.monotonic() - _BUILT > _TTL_SECONDS and not _REFRESHING:
+            # Serve the current index now; a set Arena downloaded mid-session
+            # gains colors on the next read.
+            _REFRESHING = True
+            threading.Thread(target=_refresh, name="deck-color-index", daemon=True).start()
         return _INDEX
+
+
+def warm():
+    """Build the index ahead of the first deck read."""
+    _index()
 
 
 def deck_colors(cards) -> str:

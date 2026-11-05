@@ -1590,37 +1590,50 @@ def default_image_url(arena_id: int) -> Optional[str]:
     exporter's ``set|collector`` → Scryfall id cache. No network calls.
     """
     with _image_lock:
-        path = _scryfall_cache_path()
-        try:
-            mtime = path.stat().st_mtime
-        except OSError:
-            mtime = None
-        if mtime != _image_state["cache_mtime"]:
-            cache: Dict[str, str] = {}
-            if mtime is not None:
-                try:
-                    with open(path, "r", encoding="utf-8") as handle:
-                        loaded = json.load(handle)
-                    if isinstance(loaded, dict):
-                        cache = {str(k): str(v) for k, v in loaded.items() if v}
-                except (OSError, ValueError):
-                    cache = {}
-            _image_state["cache"] = cache
-            _image_state["cache_mtime"] = mtime
-        cache = _image_state["cache"]
-        if not cache:
+        if not _scryfall_ids():
             return None
         entry = _arena_printing(arena_id)
     if not entry:
         return None
     _name, set_code, collector = entry
+    return cdn_image_url(set_code, collector)
+
+
+def _scryfall_ids() -> Dict[str, str]:
+    """The ``set|collector`` → Scryfall id cache, reread when it changes; call under ``_image_lock``."""
+    path = _scryfall_cache_path()
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = None
+    if mtime != _image_state["cache_mtime"]:
+        cache: Dict[str, str] = {}
+        if mtime is not None:
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    loaded = json.load(handle)
+                if isinstance(loaded, dict):
+                    cache = {str(k): str(v) for k, v in loaded.items() if v}
+            except (OSError, ValueError):
+                cache = {}
+        _image_state["cache"] = cache
+        _image_state["cache_mtime"] = mtime
+    return _image_state["cache"]
+
+
+def cdn_image_url(set_code: Optional[str], collector: Optional[str], version: str = "normal"):
+    """Scryfall CDN image for a printing in the local id cache; None when it isn't cached.
+
+    The CDN (cards.scryfall.io) is not held to the API's request limits.
+    """
     if not set_code or not collector:
         return None
-    scryfall_id = cache.get(f"{set_code.lower()}|{collector}")
+    with _image_lock:
+        scryfall_id = _scryfall_ids().get(f"{set_code.lower()}|{collector}")
     if not scryfall_id or len(scryfall_id) < 2:
         return None
     return (
-        "https://cards.scryfall.io/normal/front/"
+        f"https://cards.scryfall.io/{version}/front/"
         f"{scryfall_id[0]}/{scryfall_id[1]}/{scryfall_id}.jpg"
     )
 

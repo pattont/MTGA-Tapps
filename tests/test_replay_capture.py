@@ -909,9 +909,9 @@ def test_attacks_blocks_damage_and_life(tmp_path):
             "SELECT player_life, opponent_life FROM game_events WHERE event_subtype = 'life' ORDER BY id"
         ).fetchall()
     assert totals[-1] == (19, 11)
-    # The combat summary re-prints are notes, never a second damage fact.
+    # Combat damage prints once: no end-of-combat summary repeats it as notes.
     notes = [r for r in rows if r["event_subtype"] == "note"]
-    assert notes and all(r["event_type"] == "combat_damage" for r in notes)
+    assert not [r for r in notes if r["event_type"] == "combat_damage"]
 
 
 def test_game_end_row_and_replay_version(tmp_path):

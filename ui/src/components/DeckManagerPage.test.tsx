@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchDeckLibrary, fetchManagedDeck, importManagedDeck, updateManagedDeck, exportManagedDeck, deleteManagedDeck, removeManagedDecks,
-  saveDeckCollection, removeDeckCollection, moveDecksToCollection, fetchNativeDeckStatus, startNativeDeckJob, fetchNativeDeckJob, cancelNativeDeckJob, addDeckToArena,
+  saveDeckCollection, removeDeckCollection, moveDecksToCollection, fetchNativeDeckStatus, startNativeDeckJob, fetchNativeDeckJob, cancelNativeDeckJob, addDeckToArena, fetchArenaDeck,
   type ManagedDeck, type ManagedDeckDetail,
 } from '../deckManagerApi';
 import { DeckManagerPage } from './DeckManagerPage';
@@ -10,7 +10,7 @@ import { DeckManagerPage } from './DeckManagerPage';
 vi.mock('../deckManagerApi', () => ({
   saveDeckCollection: vi.fn(), removeDeckCollection: vi.fn(), moveDecksToCollection: vi.fn(), fetchDeckLibrary: vi.fn(), fetchManagedDeck: vi.fn(), importManagedDeck: vi.fn(),
   updateManagedDeck: vi.fn(), exportManagedDeck: vi.fn(), captureArenaDecks: vi.fn(), deleteManagedDeck: vi.fn(), removeManagedDecks: vi.fn(),
-  fetchNativeDeckStatus: vi.fn(), startNativeDeckJob: vi.fn(), fetchNativeDeckJob: vi.fn(), cancelNativeDeckJob: vi.fn(), addDeckToArena: vi.fn(),
+  fetchNativeDeckStatus: vi.fn(), startNativeDeckJob: vi.fn(), fetchNativeDeckJob: vi.fn(), cancelNativeDeckJob: vi.fn(), addDeckToArena: vi.fn(), fetchArenaDeck: vi.fn(),
 }));
 
 const saved: ManagedDeck = { id: 'deck-a', name: 'Any format deck', format_name: 'Standard',
@@ -41,7 +41,8 @@ it('lists every selected saved deck before a bulk move and preserves selection o
   const other = { ...saved, id: 'deck-b', name: 'Second saved deck' };
   vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [saved, other], capabilities });
   render(<DeckManagerPage />);
-  fireEvent.click(await screen.findByRole('checkbox', { name: 'Select all visible saved decks' }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${saved.name}` }));
+  fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
   await waitFor(() => expect(screen.getByRole('checkbox', { name: `Select ${other.name}` })).toBeChecked());
   fireEvent.click(screen.getByRole('button', { name: 'Move selected to trash' }));
   const dialog = screen.getByRole('dialog', { name: 'Move 2 decks to Trash?' });
@@ -104,6 +105,9 @@ it('selects decks already in Arena for local removal while rejecting a mixed res
 
 beforeEach(() => {
   vi.resetAllMocks();
+  // Sort choices are remembered; each test starts from the defaults.
+  localStorage.removeItem('tapps.deckManager.sort');
+  localStorage.removeItem('tapps.deckManager.arenaSort');
   Object.defineProperties(HTMLDialogElement.prototype, {
     showModal: { configurable: true, value: function (this: HTMLDialogElement) { this.setAttribute('open', ''); } },
     close: { configurable: true, value: function (this: HTMLDialogElement) { this.removeAttribute('open'); } },
@@ -295,13 +299,14 @@ describe('Deck Manager', () => {
 it('shows a large collection without opening or fetching details until a deck is clicked', async () => {
   vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: Array.from({ length: 104 }, (_, i) => ({ ...saved, id: `deck-${i}`, name: `Saved list ${i}` })), capabilities });
   render(<DeckManagerPage />);
-  expect(await screen.findByRole('button', { name: 'Saved (104)' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Saved Locally (104)' })).toBeInTheDocument();
   expect(screen.getAllByRole('button', { name: /Saved list/ })).toHaveLength(104);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(fetchManagedDeck).not.toHaveBeenCalled();
   fireEvent.change(screen.getByRole('searchbox', { name: 'Search saved decks' }), { target: { value: 'Saved list 103' } });
   expect(screen.getAllByRole('button', { name: /Saved list/ })).toHaveLength(1);
-});
+  // 104 tiles: allow for a busy machine during the full suite (0.3 s on its own).
+}, 15000);
 
 it('closes on Escape and restores focus and scrolling to the collection', async () => {
   render(<DeckManagerPage />);
@@ -319,16 +324,15 @@ it('closes on Escape and restores focus and scrolling to the collection', async 
   expect(document.documentElement.style.scrollbarGutter).not.toBe('stable');
 });
 
-it('closes deck details from the backdrop, but not after a drag that ends there', async () => {
+it('keeps deck details open when clicking outside them; only the close button closes', async () => {
   render(<DeckManagerPage />);
   fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
   const dialog = await screen.findByRole('dialog', { name: saved.name });
   // jsdom gives the dialog an empty rect, so any positive point is outside it.
-  fireEvent.mouseDown(within(dialog).getByRole('heading', { name: saved.name }), { clientX: 5, clientY: 5 });
-  fireEvent.click(dialog, { clientX: 50, clientY: 50 });
-  expect(screen.getByRole('dialog', { name: saved.name })).toBeInTheDocument();
   fireEvent.mouseDown(dialog, { clientX: 50, clientY: 50 });
   fireEvent.click(dialog, { clientX: 50, clientY: 50 });
+  expect(screen.getByRole('dialog', { name: saved.name })).toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Close dialog' }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 
@@ -355,9 +359,9 @@ it('shows deck colors on saved and Arena tiles and in the deck dialog', async ()
   expect(within(dialog).getByRole('img', { name: 'Colors: W, R' })).toBeInTheDocument();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Close dialog' }));
   fireEvent.click(screen.getByRole('button', { name: 'Arena (2)' }));
-  const arenaTile = await screen.findByRole('button', { name: 'Toggle selection of Arena fixture A' });
+  const arenaTile = await screen.findByRole('button', { name: /^Arena fixture A/ });
   expect(within(arenaTile).getByRole('img', { name: 'Colors: U, B' })).toBeInTheDocument();
-  expect(within(screen.getByRole('button', { name: 'Toggle selection of Arena fixture B' })).queryByRole('img', { name: /Colors/ })).not.toBeInTheDocument();
+  expect(within(screen.getByRole('button', { name: /^Arena fixture B/ })).queryByRole('img', { name: /Colors/ })).not.toBeInTheDocument();
 });
 
 it('edits a revision in a dialog bound to the opened deck', async () => {
@@ -381,6 +385,29 @@ const connected = { available: true, connected: true, busy: false, deck_screen_o
   decks: [{ id: 'arena-a', name: 'Arena fixture A', format_name: 'Standard', main_count: 60 },
     { id: 'arena-b', name: 'Arena fixture B', format_name: 'Brawl', main_count: 100 }], pending_transfers: [] };
 
+it('shows each deck\'s record table (Ranked, Casual, Play / Draw, Played) on its tile and in its dialog', async () => {
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [{ ...saved, record: { wins: 16, losses: 9,
+    ranked: { wins: 15, losses: 9 }, unranked: { wins: 1, losses: 0 }, play: { wins: 10, losses: 4 }, draw: { wins: 6, losses: 5 } } }], capabilities,
+    records: { 'arena-a': { wins: 2, losses: 3, ranked: { wins: 0, losses: 0 }, unranked: { wins: 2, losses: 3 }, play: { wins: 0, losses: 0 }, draw: { wins: 2, losses: 3 } } } });
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+  vi.mocked(fetchArenaDeck).mockReturnValue(new Promise(() => {}));
+  render(<DeckManagerPage />);
+  const savedRecord = await screen.findByTitle(/^Ranked: 15 wins, 9 losses\sCasual \(unranked queues and events\): 1 win, 0 losses\sOn the play: 10 wins, 4 losses\sOn the draw: 6 wins, 5 losses\s25 games played/);
+  expect(savedRecord).toHaveTextContent('Ranked15–963%Casual1–0100%Play / Draw71%/55%Played25');
+  expect(within(savedRecord).getByText('63%')).toHaveClass('is-winning');
+  fireEvent.click(screen.getByRole('button', { name: 'Arena (2)' }));
+  // Only the queue it was played in; a side with no games shows a dash.
+  const arenaRecord = await screen.findByTitle(/^Casual \(unranked queues and events\): 2 wins, 3 losses\sOn the play: no games/);
+  expect(arenaRecord).toHaveTextContent('Casual2–340%Play / Draw–/40%Played5');
+  expect(within(arenaRecord).getAllByText('40%')[0]).toHaveClass('is-losing');
+  // A deck never played says so, quietly.
+  expect(screen.getByText('No games logged')).toHaveClass('deck-record-empty');
+  // The footer's empty space opens the deck, like the rest of the tile; the dialog repeats the record.
+  fireEvent.click(arenaRecord);
+  const dialog = await screen.findByRole('dialog', { name: 'Arena fixture A' });
+  expect(within(dialog).getByTitle(/^Casual \(unranked queues and events\): 2 wins, 3 losses/)).toHaveClass('deck-record-dialog');
+});
+
 it('reads native status without automatically starting an Arena job', async () => {
   vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
   render(<DeckManagerPage />);
@@ -392,7 +419,8 @@ it('requires confirmation for bulk moves and cancellation never starts a job', a
   vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
   render(<DeckManagerPage />);
   fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Select all visible Arena decks' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Arena fixture A' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
   fireEvent.click(screen.getByRole('button', { name: 'Move to collection' }));
   const dialog = screen.getByRole('dialog', { name: 'Move 2 decks out of Arena?' });
   expect(dialog).toHaveTextContent('deleted from Arena');
@@ -479,6 +507,19 @@ it('disables native restore when slots are full and offers reconciliation for in
   expect(startNativeDeckJob).not.toHaveBeenCalled();
 });
 
+it('loads tile art from Scryfall’s image server or the printing before any name lookup', async () => {
+  const [a, b] = connected.decks;
+  const cdn = 'https://cards.scryfall.io/art_crop/front/4/9/494e.jpg';
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ ...connected, decks: [
+    { ...a, art_card: 'Restoration Magic', art_card_id: 95884, art_url: cdn, art_print: 'fin/30' },
+    { ...b, art_card: 'Ajani Unrelenting', art_card_id: 106487, art_url: null, art_print: 'fra/242' },
+  ] });
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
+  expect(await screen.findByRole('img', { name: 'Restoration Magic' })).toHaveAttribute('src', cdn);
+  expect(screen.getByRole('img', { name: 'Ajani Unrelenting' })).toHaveAttribute('src', 'https://api.scryfall.com/cards/fra/242?format=image&version=art_crop');
+});
+
 it('uses the saved artwork for matching Arena tiles and filters their backup status', async () => {
   vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
   vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [{ ...saved, native_restorable: true, native_arena_ids: ['arena-a'], art_card: 'Forest' }], capabilities });
@@ -492,17 +533,37 @@ it('uses the saved artwork for matching Arena tiles and filters their backup sta
   expect(screen.getByRole('checkbox', { name: 'Select Arena fixture B' })).toBeInTheDocument();
 });
 
+it('shows only the badges that tell decks apart', async () => {
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [saved, { ...saved, id: 'gone', name: 'Trashed deck', native_restorable: true, trashed_at: '2026-10-06' }], capabilities });
+  render(<DeckManagerPage />);
+  // Arena not read yet: no presence badge, just the kind of copy.
+  expect(await screen.findByRole('button', { name: 'Filter by Deck list' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Filter by (In Arena|Not in Arena|Arena not checked)/ })).not.toBeInTheDocument();
+  expect(within(screen.getByRole('combobox', { name: 'Filter decks by status' })).queryByRole('option', { name: 'In Arena' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /^Trash/ }));
+  expect(await screen.findByRole('button', { name: 'Filter by Exact copy' })).toBeInTheDocument();
+  expect(screen.queryByText('In Trash')).not.toBeInTheDocument();
+});
+
 it('filters saved presence and backup type through pills and clears hidden selection', async () => {
   const second = { ...saved, id: 'second', name: 'Collection deck', native_restorable: true };
   vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [{ ...saved, native_arena_ids: ['arena-a'] }, second], capabilities });
   vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
   render(<DeckManagerPage />);
-  fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${saved.name}` }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Filter by Not in Arena' }));
-  expect(screen.queryByRole('checkbox', { name: `Select ${saved.name}` })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Move selected to trash' })).toBeDisabled();
+  fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${second.name}` }));
+  // Only decks in Arena get a presence pill; "Not in Arena" stays a filter option.
+  expect(screen.queryByRole('button', { name: 'Filter by Not in Arena' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Filter by Exact copy' })).toHaveAttribute('title', expect.stringContaining('exactly as it was'));
+  fireEvent.click(await screen.findByRole('button', { name: 'Filter by In Arena' }));
+  expect(screen.queryByRole('checkbox', { name: `Select ${second.name}` })).not.toBeInTheDocument();
+  // The selection was cleared, so the bar shows search and filters again.
+  expect(screen.queryByRole('button', { name: 'Move selected to trash' })).not.toBeInTheDocument();
+  expect(screen.getByRole('searchbox', { name: 'Search saved decks' })).toBeInTheDocument();
   expect(fetchManagedDeck).not.toHaveBeenCalled();
-  fireEvent.change(screen.getByRole('combobox', { name: 'Filter decks by status' }), { target: { value: 'text' } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Filter decks by status' }), { target: { value: 'collection' } });
+  expect(screen.getByRole('checkbox', { name: `Select ${second.name}` })).toBeInTheDocument();
+  expect(screen.queryByRole('checkbox', { name: `Select ${saved.name}` })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Filter decks by status' }), { target: { value: 'list' } });
   expect(screen.getByRole('checkbox', { name: `Select ${saved.name}` })).toBeInTheDocument();
   expect(screen.queryByRole('checkbox', { name: `Select ${second.name}` })).not.toBeInTheDocument();
 });
@@ -521,7 +582,10 @@ it('creates collections, collapses their decks and moves a selection to another 
   fireEvent.click(toggle);
   expect(toggle).toHaveAttribute('aria-expanded', 'true');
   fireEvent.click(screen.getByRole('checkbox', { name: `Select ${saved.name}` }));
-  fireEvent.click(screen.getByRole('button', { name: 'Move decks' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Move to collection' }));
+  const move = screen.getByRole('dialog', { name: 'Move 1 deck to a collection' });
+  expect(within(move).getByRole('list', { name: 'Decks to move' })).toHaveTextContent(`${saved.name}Control`);
+  fireEvent.click(within(move).getByRole('button', { name: 'Move 1 deck' }));
   await waitFor(() => expect(moveDecksToCollection).toHaveBeenCalledExactlyOnceWith([saved.id], null));
   fireEvent.click(screen.getByRole('button', { name: 'New collection' }));
   fireEvent.change(screen.getByLabelText('Collection name'), { target: { value: 'Brawl' } });
@@ -592,6 +656,11 @@ it('stops a running backup after confirmation and reports what was saved', async
   render(<DeckManagerPage />);
   fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
   fireEvent.click(screen.getByRole('button', { name: 'Back up all Arena decks' }));
+  // The banner's title says what is running; the bar has no second line repeating it.
+  const status = await screen.findByRole('region', { name: 'Arena status' });
+  expect(await within(status).findByText('Backing up Arena decks…')).toBeInTheDocument();
+  expect(within(status).getByRole('progressbar', { name: 'Deck transfer progress' })).toBeInTheDocument();
+  expect(within(status).queryByText('Read 12 of 95 decks…')).not.toBeInTheDocument();
   fireEvent.click(await screen.findByRole('button', { name: 'Stop backup' }));
   const dialog = screen.getByRole('dialog', { name: 'Stop backing up Arena decks?' });
   expect(dialog).toHaveTextContent('Decks already read are verified and saved');
@@ -605,11 +674,16 @@ it('stops a running backup after confirmation and reports what was saved', async
   expect(await screen.findByText(/Backup stopped. 12 decks backed up before stopping/, undefined, { timeout: 3000 })).toBeInTheDocument();
 });
 
-it('sorts saved decks by name or update time and Arena decks by name only', async () => {
+it('sorts saved decks by name or update time and Arena decks by name or Arena dates', async () => {
   const older = { ...saved, id: 'deck-old', name: 'Zebra deck', updated_at: '2026-01-01T00:00:00Z' };
   const newer = { ...saved, id: 'deck-new', name: 'Alpha deck', updated_at: '2026-09-01T00:00:00Z' };
   vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [older, newer], capabilities });
-  vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+  const [a, b] = connected.decks;
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ ...connected, decks: [
+    { ...a, arena_modified: '2026-10-01T00:00:00+00:00', arena_played: null },
+    { ...b, arena_modified: '2026-08-01T00:00:00+00:00', arena_played: '2026-09-01T00:00:00+00:00' },
+    { id: 'arena-c', name: 'Arena fixture C', format_name: 'Standard', main_count: 60 },
+  ] });
   render(<DeckManagerPage />);
   const names = (pattern: RegExp) => screen.getAllByRole('checkbox', { name: pattern }).map((box) => box.getAttribute('aria-label'));
   await screen.findByRole('checkbox', { name: 'Select Zebra deck' });
@@ -620,11 +694,74 @@ it('sorts saved decks by name or update time and Arena decks by name only', asyn
   expect(names(/^Select .* deck$/)).toEqual(['Select Zebra deck', 'Select Alpha deck']);
   fireEvent.change(screen.getByRole('combobox', { name: 'Sort decks' }), { target: { value: 'updated-desc' } });
   expect(names(/^Select .* deck$/)).toEqual(['Select Alpha deck', 'Select Zebra deck']);
-  fireEvent.click(screen.getByRole('button', { name: 'Arena (2)' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Arena (3)' }));
   const sortBox = screen.getByRole('combobox', { name: 'Sort decks' });
   expect(within(sortBox).queryByRole('option', { name: /Updated/ })).not.toBeInTheDocument();
   fireEvent.change(sortBox, { target: { value: 'name-desc' } });
-  expect(names(/^Select Arena fixture/)).toEqual(['Select Arena fixture B', 'Select Arena fixture A']);
+  expect(names(/^Select Arena fixture/)).toEqual(['Select Arena fixture C', 'Select Arena fixture B', 'Select Arena fixture A']);
+  // Decks without the date come last in either direction.
+  fireEvent.change(sortBox, { target: { value: 'modified-desc' } });
+  expect(within(sortBox).getByRole('option', { name: 'Modified: newest first' })).toBeInTheDocument();
+  expect(names(/^Select Arena fixture/)).toEqual(['Select Arena fixture A', 'Select Arena fixture B', 'Select Arena fixture C']);
+  fireEvent.change(sortBox, { target: { value: 'modified-asc' } });
+  expect(names(/^Select Arena fixture/)).toEqual(['Select Arena fixture B', 'Select Arena fixture A', 'Select Arena fixture C']);
+  fireEvent.change(sortBox, { target: { value: 'played-desc' } });
+  expect(names(/^Select Arena fixture/)).toEqual(['Select Arena fixture B', 'Select Arena fixture A', 'Select Arena fixture C']);
+  fireEvent.click(screen.getByRole('button', { name: /^Saved Locally/ }));
+  expect(within(screen.getByRole('combobox', { name: 'Sort decks' })).getByRole('option', { name: 'Modified in Arena: newest' })).toBeInTheDocument();
+});
+
+it('orders Arena by newest edit and puts Arena favorites in their own gold section', async () => {
+  const [a, b] = connected.decks;
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ ...connected, decks: [
+    { ...a, arena_modified: '2026-10-01T00:00:00+00:00' },
+    { ...b, arena_modified: '2026-10-05T00:00:00+00:00', is_favorite: true },
+    { id: 'arena-c', name: 'Arena fixture C', format_name: 'Standard', main_count: 60, arena_modified: '2026-10-09T00:00:00+00:00' },
+    { id: 'arena-d', name: 'Arena fixture D', format_name: 'Standard', main_count: 60, arena_modified: '2026-09-01T00:00:00+00:00', is_favorite: true },
+  ] });
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Arena (4)' }));
+  expect(screen.getByRole('combobox', { name: 'Sort decks' })).toHaveValue('modified-desc');
+  const names = (region: string) => within(screen.getByRole('region', { name: region })).getAllByRole('checkbox').map((box) => box.getAttribute('aria-label'));
+  expect(names('Favorites')).toEqual(['Select Arena fixture B', 'Select Arena fixture D']);
+  expect(names('My Decks')).toEqual(['Select Arena fixture C', 'Select Arena fixture A']);
+  expect(screen.getByRole('button', { name: /^Arena fixture B/ })).toHaveClass('deck-manager-tile-favorite');
+  expect(screen.getByRole('button', { name: /^Arena fixture C/ })).not.toHaveClass('deck-manager-tile-favorite');
+  fireEvent.click(screen.getByRole('button', { name: 'Favorites (2)' }));
+  expect(screen.queryByRole('checkbox', { name: 'Select Arena fixture B' })).not.toBeInTheDocument();
+  expect(screen.getByRole('checkbox', { name: 'Select Arena fixture C' })).toBeInTheDocument();
+  // The Saved Locally tab keeps its own order.
+  fireEvent.click(screen.getByRole('button', { name: /^Saved Locally/ }));
+  expect(screen.getByRole('combobox', { name: 'Sort decks' })).toHaveValue('name-asc');
+});
+
+it('stars and unstars Arena decks from their tiles and dialog', async () => {
+  const [a, b] = connected.decks;
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ ...connected, decks: [a, { ...b, is_favorite: true }] });
+  vi.mocked(fetchArenaDeck).mockReturnValue(new Promise(() => {}));
+  vi.mocked(startNativeDeckJob).mockResolvedValue({ job_id: 'favorite-job' });
+  vi.mocked(fetchNativeDeckJob).mockResolvedValue({ state: 'done', detail: 'Completed.', result: { action: 'favorite', count: 1, favorite: true } });
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
+  expect(screen.getByRole('button', { name: 'Remove Arena fixture B from Arena favorites' })).toHaveAttribute('aria-pressed', 'true');
+  fireEvent.click(screen.getByRole('button', { name: 'Add Arena fixture A to Arena favorites' }));
+  await waitFor(() => expect(startNativeDeckJob).toHaveBeenCalledExactlyOnceWith('favorite', [{ id: 'arena-a', favorite: true }]));
+  expect(await screen.findByText('Added to your Arena favorites.')).toBeInTheDocument();
+  // The dialog stays open after a star from inside it.
+  fireEvent.click(screen.getByRole('button', { name: /^Arena fixture B/ }));
+  const dialog = screen.getByRole('dialog', { name: 'Arena fixture B' });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Favorite' }));
+  await waitFor(() => expect(startNativeDeckJob).toHaveBeenLastCalledWith('favorite', [{ id: 'arena-b', favorite: false }]));
+  expect(await screen.findByRole('dialog', { name: 'Arena fixture B' })).toBeInTheDocument();
+});
+
+it('keeps the star off while Arena is not on its Decks screen', async () => {
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ ...connected, deck_screen_open: false });
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
+  const star = screen.getByRole('button', { name: 'Add Arena fixture A to Arena favorites' });
+  expect(star).toBeDisabled();
+  expect(star).toHaveAttribute('title', expect.stringContaining('Decks screen'));
 });
 
 it('shows one message when filters hide every deck, with a way to clear them', async () => {
@@ -659,61 +796,329 @@ it('keeps notes and tags tucked away and saves only after a change', async () =>
   fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
   const dialog = await screen.findByRole('dialog', { name: saved.name });
   expect(within(dialog).getByRole('region', { name: 'Deck (4)' })).toHaveTextContent('Forest');
+  expect(within(dialog).getByText('Deck Info')).toBeInTheDocument();
   const save = within(dialog).getByRole('button', { name: 'Save notes & tags' });
   expect(save).toBeDisabled();
-  fireEvent.change(within(dialog).getByLabelText('Tags'), { target: { value: 'ramp, green' } });
+  const tags = within(dialog).getByLabelText('Tags');
+  // A comma finishes a tag; the text after it stays in the box.
+  fireEvent.change(tags, { target: { value: 'ramp, green' } });
+  expect(within(dialog).getByRole('button', { name: 'Remove tag ramp' })).toBeInTheDocument();
+  expect(tags).toHaveValue('green');
   expect(save).toBeEnabled();
+  // Unfinished text is saved too.
   fireEvent.click(save);
-  await waitFor(() => expect(updateManagedDeck).toHaveBeenCalledWith('deck-a', { notes: '', tags: ['ramp', ' green'] }));
+  await waitFor(() => expect(updateManagedDeck).toHaveBeenCalledWith('deck-a', { notes: '', tags: ['ramp', 'green'] }));
 });
 
-describe('Arena status panel', () => {
-  const status = () => screen.getByRole('region', { name: 'Arena status' });
+it('edits tags as chips: Enter adds, duplicates are ignored, Backspace and the x remove', async () => {
+  vi.mocked(fetchManagedDeck).mockResolvedValue({ ...detail, tags: ['aggro'] });
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
+  const dialog = await screen.findByRole('dialog', { name: saved.name });
+  const tags = within(dialog).getByLabelText('Tags');
+  const chips = () => within(dialog).queryAllByRole('button', { name: /^Remove tag/ }).map((b) => b.getAttribute('aria-label'));
+  expect(chips()).toEqual(['Remove tag aggro']);
+  fireEvent.change(tags, { target: { value: 'Bo3' } });
+  fireEvent.keyDown(tags, { key: 'Enter' });
+  fireEvent.change(tags, { target: { value: 'AGGRO,' } });
+  expect(chips()).toEqual(['Remove tag aggro', 'Remove tag Bo3']);
+  fireEvent.keyDown(tags, { key: 'Backspace' });
+  expect(chips()).toEqual(['Remove tag aggro']);
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Remove tag aggro' }));
+  expect(chips()).toEqual([]);
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Discard' }));
+  expect(chips()).toEqual(['Remove tag aggro']);
+});
 
-  it('explains how to load Arena decks before the first read, above the search', async () => {
+it('groups the main deck by type with mana costs, cheapest first and lands last', async () => {
+  const card = (quantity: number, name: string, section = 'Deck') => ({ section, quantity, name, arena_id: null, set_code: null, collector_number: null });
+  vi.mocked(fetchManagedDeck).mockResolvedValue({ ...detail, deck: { ...detail.deck, cards: [
+    card(21, 'Swamp'), card(2, 'The End'), card(4, 'Deep-Cavern Bat'), card(3, 'Bitter Triumph'), card(1, 'Mystery Card'), card(2, 'Duress', 'Sideboard'),
+  ] }, card_info: {
+    Swamp: { type: 'Land' }, 'The End': { type: 'Instant', mana_cost: '{2}{B}', mana_value: 3 },
+    'Deep-Cavern Bat': { type: 'Creature', mana_cost: '{1}{B}', mana_value: 2 }, 'Bitter Triumph': { type: 'Instant', mana_cost: '{1}{B}', mana_value: 2 },
+    Duress: { type: 'Sorcery', mana_cost: '{B}', mana_value: 1 },
+  } });
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
+  const dialog = await screen.findByRole('dialog', { name: saved.name });
+  const main = within(dialog).getByRole('region', { name: 'Deck (31)' });
+  const groups = within(main).getAllByRole('list').map((list) => list.getAttribute('aria-label'));
+  expect(groups).toEqual(['Creatures (4)', 'Instants (5)', 'Other (1)', 'Lands (21)']);
+  const instants = within(main).getByRole('list', { name: 'Instants (5)' });
+  expect(within(instants).getAllByRole('listitem').map((row) => row.querySelector('.deck-card-name')?.textContent)).toEqual(['Bitter Triumph', 'The End']);
+  // Drawn like the in-game overlay: color vectors and grey generic badges.
+  const cost = within(instants).getByLabelText('Mana cost {2}{B}');
+  expect(within(cost).getByRole('img', { name: 'B' })).toHaveAttribute('src', '/icons/B.svg');
+  expect(cost.querySelector('.gen')).toHaveTextContent('2');
+  // Side piles keep one list, with costs.
+  expect(within(within(dialog).getByRole('region', { name: 'Sideboard (2)' })).getByLabelText('Mana cost {B}')).toBeInTheDocument();
+});
+
+describe('Arena status', () => {
+  const banner = () => screen.findByRole('region', { name: 'Arena status' });
+
+  it('shows only a green Load button before the first read, without a chip or banner', async () => {
     vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ ...connected, connected: false, decks: [], refreshed_at: undefined });
     render(<DeckManagerPage />);
-    expect(await within(status()).findByText('Arena decks not loaded yet')).toBeInTheDocument();
-    expect(within(status()).getByText(/then click Load Arena decks/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Load Arena decks' })).toBeEnabled();
-    // The panel comes before the search box in reading order.
-    expect(status().compareDocumentPosition(screen.getByRole('searchbox')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const load = await screen.findByRole('button', { name: 'Load Arena decks' });
+    expect(load).toBeEnabled();
+    expect(load).toHaveClass('deck-manager-load-arena');
+    expect(load).toHaveAttribute('title', expect.stringContaining('Decks screen'));
+    expect(screen.queryByText('Arena not loaded')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Arena status' })).not.toBeInTheDocument();
+  });
+
+  it('confirms a load in the green banner alone, without a second box repeating it', async () => {
+    vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+    vi.mocked(startNativeDeckJob).mockResolvedValue({ job_id: 'connect-job' });
+    vi.mocked(fetchNativeDeckJob).mockResolvedValue({ state: 'done', detail: 'Completed.', action: 'connect', result: { action: 'connect', count: 0 } });
+    render(<DeckManagerPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Rescan Arena' }));
+    const status = await banner();
+    expect(await within(status).findByText(/^Arena decks loaded/)).toBeInTheDocument();
+    expect(within(status).queryByText('Arena decks refreshed.')).not.toBeInTheDocument();
+    fireEvent.click(within(status).getByRole('button', { name: 'Dismiss message' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Arena status' })).not.toBeInTheDocument());
+  });
+
+  it('puts a job result in the banner headline, not in a box under it', async () => {
+    vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+    vi.mocked(startNativeDeckJob).mockResolvedValue({ job_id: 'backup-job' });
+    vi.mocked(fetchNativeDeckJob).mockResolvedValue({ state: 'done', detail: 'Completed.', action: 'backup', result: { action: 'backup', count: 2 } });
+    render(<DeckManagerPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Back up all Arena decks' }));
+    const status = await banner();
+    const headline = await within(status).findByText('Backed up 2 decks to your collection.');
+    expect(headline.tagName).toBe('STRONG');
+    expect(within(status).getByText(/2 decks in Arena · limit 100/)).toBeInTheDocument();
+    expect(within(status).queryByText(/^Arena decks loaded/)).not.toBeInTheDocument();
+    expect(status.querySelector('.deck-manager-status-message')).toBeNull();
+    fireEvent.click(within(status).getByRole('button', { name: 'Dismiss message' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Arena status' })).not.toBeInTheDocument());
   });
 
   it('shows when Arena was last read and keeps that list during a game', async () => {
     vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ ...connected, in_game: true });
     render(<DeckManagerPage />);
-    expect(await within(status()).findByText('You’re in a game')).toBeInTheDocument();
-    expect(within(status()).getByText(/won’t touch Arena until the game ends\. The Arena list below is from/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Refresh Arena decks' })).toBeDisabled();
+    const status = await banner();
+    expect(within(status).getByText('You’re in a game')).toBeInTheDocument();
+    expect(within(status).getByText(/won’t touch Arena until the game ends\. The Arena list below is from/)).toBeInTheDocument();
+    expect(screen.getByText('In a game')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Rescan Arena' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Arena (2)' })).toBeInTheDocument();
   });
 
-  it('summarizes a fresh read with the deck count and slot limit', async () => {
+  it('summarizes a fresh read in the chip with the deck count and slot limit', async () => {
     vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
     render(<DeckManagerPage />);
-    expect(await within(status()).findByText(/^Arena decks loaded/)).toBeInTheDocument();
-    expect(within(status()).getByText(/2 decks in Arena · limit 100\. Changed something in Arena\? Click Refresh Arena decks\./)).toBeInTheDocument();
+    const chip = await screen.findByText(/^Arena 2\/100/);
+    expect(chip).toHaveAttribute('title', expect.stringMatching(/^Arena decks loaded .*2 decks in Arena · limit 100\. Changed something in Arena\? Click Rescan Arena\./));
+    expect(screen.queryByRole('region', { name: 'Arena status' })).not.toBeInTheDocument();
   });
 
-  it('asks for the interrupted transfer to be checked first, from the panel', async () => {
+  it('asks for the interrupted transfer to be checked first, from the banner', async () => {
     vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ ...connected, pending_transfers: [{ id: 't', action: 'restore', phase: 'uncertain', deck_id: 'deck-a' }] });
     vi.mocked(startNativeDeckJob).mockResolvedValue({ job_id: 'job-r' });
     vi.mocked(fetchNativeDeckJob).mockReturnValue(new Promise(() => {}));
     render(<DeckManagerPage />);
-    expect(await within(status()).findByText('A transfer was interrupted')).toBeInTheDocument();
-    fireEvent.click(within(status()).getByRole('button', { name: 'Reconcile transfers' }));
+    const status = await banner();
+    expect(within(status).getByText('A transfer was interrupted')).toBeInTheDocument();
+    fireEvent.click(within(status).getByRole('button', { name: 'Reconcile transfers' }));
     await waitFor(() => expect(startNativeDeckJob).toHaveBeenCalledWith('reconcile', []));
-    expect(await within(status()).findByText('Checking the interrupted transfer…')).toBeInTheDocument();
+    expect(await within(await banner()).findByText('Checking the interrupted transfer…')).toBeInTheDocument();
   });
 
-  it('shows results inside the panel and lets them be dismissed', async () => {
+  it('shows results in the banner and lets them be dismissed', async () => {
     vi.mocked(moveDecksToCollection).mockResolvedValue({ ok: true, count: 1 });
     render(<DeckManagerPage />);
     fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${saved.name}` }));
-    fireEvent.click(screen.getByRole('button', { name: 'Move decks' }));
-    expect(await within(status()).findByText('Moved 1 deck to Unsorted.')).toBeInTheDocument();
-    fireEvent.click(within(status()).getByRole('button', { name: 'Dismiss message' }));
-    expect(within(status()).queryByText('Moved 1 deck to Unsorted.')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Move to collection' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Move 1 deck' }));
+    const status = await banner();
+    expect(await within(status).findByText('Moved 1 deck to Unsorted.')).toBeInTheDocument();
+    fireEvent.click(within(status).getByRole('button', { name: 'Dismiss message' }));
+    expect(screen.queryByText('Moved 1 deck to Unsorted.')).not.toBeInTheDocument();
+  });
+
+  it('keeps Back up all beside Rescan Arena and the help behind the ? button, with no ⋯ menu', async () => {
+    vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+    vi.mocked(startNativeDeckJob).mockResolvedValue({ job_id: 'backup-job' });
+    vi.mocked(fetchNativeDeckJob).mockReturnValue(new Promise(() => {}));
+    render(<DeckManagerPage />);
+    await screen.findByText(/^Arena 2\/100/);
+    expect(screen.queryByRole('button', { name: 'More Deck Manager actions' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'How Deck Manager works' }));
+    expect(screen.getByRole('dialog', { name: 'How Deck Manager works' })).toHaveTextContent('Back up all Arena decks first.');
+    fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }));
+    // On the Saved tab too, not only Arena.
+    fireEvent.click(screen.getByRole('button', { name: 'Back up all Arena decks' }));
+    await waitFor(() => expect(startNativeDeckJob).toHaveBeenCalledExactlyOnceWith('backup', []));
+  });
+});
+
+describe('selection, Compare and Arena deck actions', () => {
+  const other: ManagedDeck = { ...saved, id: 'deck-b', name: 'Second saved deck', current_revision_id: 'b1' };
+  const cards = (list: [number, string][]) => list.map(([quantity, name]) =>
+    ({ section: 'Deck', quantity, name, arena_id: null, set_code: null, collector_number: null }));
+
+  it('clears the selection with Select none and enables Compare only for two decks', async () => {
+    vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [saved, other, { ...saved, id: 'deck-c', name: 'Third deck' }], capabilities });
+    render(<DeckManagerPage />);
+    fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${saved.name}` }));
+    const compare = screen.getByRole('button', { name: 'Compare' });
+    expect(compare).toBeDisabled();
+    fireEvent.click(screen.getByRole('checkbox', { name: `Select ${other.name}` }));
+    expect(compare).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
+    expect(screen.getByText('3 selected')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Select all' })).not.toBeInTheDocument();
+    expect(compare).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Select none' }));
+    expect(screen.queryByText(/selected$/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Compare' })).not.toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: `Select ${saved.name}` })).not.toBeChecked();
+  });
+
+  it('compares two saved decks card by card', async () => {
+    vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [saved, other], capabilities });
+    vi.mocked(fetchManagedDeck).mockImplementation(async (id) => id === saved.id
+      ? { ...detail, deck: { ...detail.deck, cards: cards([[4, 'Lightning Bolt'], [20, 'Mountain']]) } }
+      : { ...detail, ...other, revision_id: 'b1', deck: { ...detail.deck, cards: cards([[2, 'Lightning Bolt'], [20, 'Mountain'], [2, 'Shock']]) } });
+    render(<DeckManagerPage />);
+    fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${saved.name}` }));
+    fireEvent.click(screen.getByRole('checkbox', { name: `Select ${other.name}` }));
+    fireEvent.click(screen.getByRole('button', { name: 'Compare' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Compare decks' });
+    const onlyA = await within(dialog).findByRole('list', { name: `Only in ${saved.name}` });
+    expect(onlyA).toHaveTextContent('+2Lightning Bolt4 vs 2');
+    expect(within(dialog).getByRole('list', { name: `Only in ${other.name}` })).toHaveTextContent('+2Shock');
+    expect(dialog).toHaveTextContent('92%');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Swap sides' }));
+    expect(within(dialog).getByRole('list', { name: `Only in ${other.name}` })).toBeInTheDocument();
+    expect(startNativeDeckJob).not.toHaveBeenCalled();
+  });
+
+  const arenaCards = (id: string, list: [number, string][]) => ({ id, name: id, format_name: 'Standard', refreshed_at: '2026-10-07T12:00:00Z',
+    cards: cards(list), card_info: {} });
+
+  it('opens an Arena deck with the cards from the last Arena read, without a backup', async () => {
+    vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ ...connected, decks: [
+      { ...connected.decks[0], arena_modified: '2026-10-12T06:12:37+00:00', arena_played: null }, connected.decks[1]] });
+    vi.mocked(fetchArenaDeck).mockResolvedValue(arenaCards('arena-a', [[20, 'Island'], [4, 'Opt']]));
+    vi.mocked(startNativeDeckJob).mockResolvedValue({ job_id: 'backup-job' });
+    vi.mocked(fetchNativeDeckJob).mockReturnValue(new Promise(() => {}));
+    render(<DeckManagerPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Arena fixture A/ }));
+    const dialog = screen.getByRole('dialog', { name: 'Arena fixture A' });
+    expect(await within(dialog).findByText('Opt')).toBeInTheDocument();
+    expect(fetchArenaDeck).toHaveBeenCalledWith('arena-a', expect.anything());
+    expect(within(dialog).getByText('Not saved locally yet')).toBeInTheDocument();
+    expect(within(dialog).getByText(/Modified in Arena/)).toBeInTheDocument();
+    expect(within(dialog).getByText('Never played')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Select Arena fixture A' })).not.toBeChecked();
+    expect(startNativeDeckJob).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: /Copy deck list/ }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith('Deck\n20 Island\n4 Opt'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Back up' }));
+    await waitFor(() => expect(startNativeDeckJob).toHaveBeenCalledExactlyOnceWith('backup', [{ id: 'arena-a' }]));
+  });
+
+  it('offers Arena actions for a deck that is already saved', async () => {
+    const copy = { ...saved, native_restorable: true, native_arena_ids: ['arena-a'] };
+    vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [copy], capabilities });
+    vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+    vi.mocked(fetchArenaDeck).mockResolvedValue(arenaCards('arena-a', [[60, 'Forest']]));
+    render(<DeckManagerPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Arena fixture A/ }));
+    const dialog = screen.getByRole('dialog', { name: 'Arena fixture A' });
+    expect(await within(dialog).findByText('Forest')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Back up again' })).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Move to trash' }));
+    expect(screen.getByRole('dialog', { name: 'Move 1 deck to Trash?' })).toHaveTextContent('Arena fixture A');
+  });
+
+  it('moves selected Arena decks to Trash through the verified move', async () => {
+    vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+    vi.mocked(startNativeDeckJob).mockResolvedValue({ job_id: 'trash-job' });
+    vi.mocked(fetchNativeDeckJob).mockResolvedValue({ state: 'done', detail: 'Completed.', result: { action: 'store', count: 1 } });
+    render(<DeckManagerPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Arena fixture B' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Move selected to trash' }));
+    const dialog = screen.getByRole('dialog', { name: 'Move 1 deck to Trash?' });
+    expect(dialog).toHaveTextContent('deleted from Arena');
+    expect(startNativeDeckJob).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Move to trash' }));
+    await waitFor(() => expect(startNativeDeckJob).toHaveBeenCalledExactlyOnceWith('store', [{ id: 'arena-b' }], undefined, { trash: true }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Moved 1 deck to Trash and removed it from Arena.'));
+  });
+
+  it('compares two Arena decks from the last Arena read, without a backup', async () => {
+    vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+    vi.mocked(fetchArenaDeck).mockImplementation(async (id) => id === 'arena-a'
+      ? arenaCards(id, [[4, 'Shock'], [20, 'Mountain']]) : arenaCards(id, [[20, 'Mountain'], [4, 'Opt']]));
+    render(<DeckManagerPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Arena fixture A' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Compare' }));
+    const dialog = screen.getByRole('dialog', { name: 'Compare decks' });
+    expect(await within(dialog).findByRole('list', { name: 'Only in Arena fixture A' })).toHaveTextContent('+4Shock');
+    expect(within(dialog).getByRole('list', { name: 'Only in Arena fixture B' })).toHaveTextContent('+4Opt');
+    expect(startNativeDeckJob).not.toHaveBeenCalled();
+  });
+
+  it('filters saved decks by collection and finds them by collection name', async () => {
+    const control = { id: 'group-a', name: 'Control' };
+    vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [{ ...saved, collection_id: control.id }, other], collections: [control], capabilities });
+    render(<DeckManagerPage />);
+    const picker = await screen.findByRole('combobox', { name: 'Show collection' });
+    fireEvent.change(picker, { target: { value: control.id } });
+    expect(screen.getByRole('checkbox', { name: `Select ${saved.name}` })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: `Select ${other.name}` })).not.toBeInTheDocument();
+    fireEvent.change(picker, { target: { value: '' } });
+    expect(screen.getByRole('checkbox', { name: `Select ${other.name}` })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: `Select ${saved.name}` })).not.toBeInTheDocument();
+    fireEvent.change(picker, { target: { value: 'all' } });
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search saved decks' }), { target: { value: 'contr' } });
+    expect(screen.getByRole('checkbox', { name: `Select ${saved.name}` })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: `Select ${other.name}` })).not.toBeInTheDocument();
+    expect(screen.getByRole('searchbox')).toHaveAttribute('placeholder', 'Search deck names, tags, collections…');
+  });
+
+  it('adds a pasted list straight to Arena from the Arena tab', async () => {
+    vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+    vi.mocked(addDeckToArena).mockResolvedValue({ job_id: 'add-job' });
+    vi.mocked(fetchNativeDeckJob).mockReturnValue(new Promise(() => {}));
+    render(<DeckManagerPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
+    fireEvent.click(screen.getByRole('button', { name: /Add deck/ }));
+    const dialog = screen.getByRole('dialog', { name: 'Add a deck to Arena' });
+    const add = within(dialog).getByRole('button', { name: 'Add to Arena' });
+    expect(add).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText('Decklist or backup'), { target: { value: 'Deck\n60 Forest' } });
+    fireEvent.change(within(dialog).getByLabelText('Deck name'), { target: { value: 'Forests' } });
+    fireEvent.click(add);
+    await waitFor(() => expect(addDeckToArena).toHaveBeenCalledExactlyOnceWith('Deck\n60 Forest', 'Forests', '', undefined, undefined, { renameIfTaken: false }));
+    expect(importManagedDeck).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['Deck\n60 Forest', 'DeckManager Import Deck'],
+    ['About\nName Mono Green\n\nDeck\n60 Forest', 'Mono Green'],
+  ])('names a blank Arena import from its list or the default', async (list, expected) => {
+    vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+    vi.mocked(addDeckToArena).mockResolvedValue({ job_id: 'add-job' });
+    vi.mocked(fetchNativeDeckJob).mockReturnValue(new Promise(() => {}));
+    render(<DeckManagerPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
+    fireEvent.click(screen.getByRole('button', { name: /Add deck/ }));
+    const dialog = screen.getByRole('dialog', { name: 'Add a deck to Arena' });
+    fireEvent.change(within(dialog).getByLabelText('Decklist or backup'), { target: { value: list } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add to Arena' }));
+    await waitFor(() => expect(addDeckToArena).toHaveBeenCalledExactlyOnceWith(list, expected, '', undefined, undefined, { renameIfTaken: true }));
   });
 });

@@ -325,24 +325,9 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
         """WUBRG letters for the color identity of cards a side has played
         this game — fills the Live Log scoreboard pips in real time (the
         game_card_summary rows only exist after the game persists)."""
-        index = self._live_color_index()
         letters: set = set()
         for event in cards or []:
-            # Play events carry the display name — "Mountain (Land)",
-            # "Smaug the Magnificent (Creature 6/6)" — and no card database
-            # knows that string; the bare card name is what everything here
-            # is keyed by.
-            name = analytics_card_base_name(getattr(event, "card_name", "") or "")
-            identity = (
-                BASIC_LAND_COLORS.get(name)
-                or index.get(name)
-                or index.get(name.split(" // ")[0].strip())
-            )
-            if identity is None:
-                # Not in the session index: ask Arena's DB for this one card
-                # (cached per name) so a brand-new set or a late-readable
-                # DB still lights the pips the turn the card is played.
-                identity = self._live_color_lookup(name)
+            identity = self._live_card_identity(event)
             if not identity:
                 continue
             if identity == "C" and self._live_event_is_land(event):
@@ -354,6 +339,27 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
         # All known cards colorless -> the side IS colorless ("C"), which the
         # scoreboard shows with the diamond pip.
         return colored or ("C" if "C" in letters else "")
+
+    def _live_card_identity(self, event) -> Optional[str]:
+        """WUBRG identity ("C" when colorless) of one card event, or None
+        when no card database knows the card."""
+        # Play events carry the display name — "Mountain (Land)",
+        # "Smaug the Magnificent (Creature 6/6)" — and no card database
+        # knows that string; the bare card name is what everything here
+        # is keyed by.
+        name = analytics_card_base_name(getattr(event, "card_name", "") or "")
+        index = self._live_color_index()
+        identity = (
+            BASIC_LAND_COLORS.get(name)
+            or index.get(name)
+            or index.get(name.split(" // ")[0].strip())
+        )
+        if identity is None:
+            # Not in the session index: ask Arena's DB for this one card
+            # (cached per name) so a brand-new set or a late-readable
+            # DB still lights the pips the turn the card is played.
+            identity = self._live_color_lookup(name)
+        return identity
 
     def _live_color_lookup(self, name: str) -> Optional[str]:
         """On-demand Arena DB lookup for one card name, remembered for the
@@ -1626,10 +1632,10 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
         cache = getattr(self, "_archetype_cache", None) or {}
         return cache.get(game_id)
 
-    def _opponent_card_names(self) -> List[str]:
-        """Distinct opponent card names seen this game: played cards in
-        observed order, then cards revealed by mills, discards and exiles."""
-        names: List[str] = []
+    def _opponent_card_events(self) -> list:
+        """One event per distinct opponent card seen this game: played cards
+        in observed order, then cards revealed by mills, discards and exiles."""
+        events = []
         seen = set()
         revealed = (getattr(self.game_state, "revealed_card_events", {}) or {}).get(
             self.game_state.opponent_seat_id, []
@@ -1638,8 +1644,24 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
             name = str(getattr(event, "card_name", "") or "").strip()
             if name and name not in seen:
                 seen.add(name)
-                names.append(name)
-        return names
+                events.append(event)
+        return events
+
+    def _opponent_card_names(self) -> List[str]:
+        """Distinct opponent card names seen this game (see _opponent_card_events)."""
+        return [str(event.card_name).strip() for event in self._opponent_card_events()]
+
+    def _card_colors_by_name(self, events) -> Dict[str, Optional[str]]:
+        """Card name -> color identity for the AI prompt (None = unknown).
+        Never raises: a failed lookup only leaves that card unknown."""
+        colors: Dict[str, Optional[str]] = {}
+        for event in events:
+            try:
+                identity = self._live_card_identity(event)
+            except Exception:
+                identity = None
+            colors[str(event.card_name).strip()] = identity
+        return colors
 
     def _start_opponent_archetype_lookup(self, game_id: str) -> None:
         """Fire one background AI deck-identification call for a finished game.
@@ -1660,7 +1682,8 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
             self._archetype_cache = cache
         if game_id in cache:
             return
-        card_names = self._opponent_card_names()
+        events = self._opponent_card_events()
+        card_names = [str(event.card_name).strip() for event in events]
         if len(card_names) < 3:
             return
         cache[game_id] = None  # mark attempted so no second call ever fires
@@ -1668,7 +1691,9 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
 
         def _worker() -> None:
             try:
-                archetype = identify_deck(card_names)
+                # Colors tell the model which colors it may name; looked up
+                # here, off the tracking thread (Arena's DB may be queried).
+                archetype = identify_deck(card_names, self._card_colors_by_name(events))
             except Exception:
                 archetype = None
             if not archetype:

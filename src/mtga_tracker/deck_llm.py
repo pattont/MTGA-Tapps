@@ -33,7 +33,9 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
+
+from .colors import COLOR_NAMES, COMBO_NAMES, colors_from_label, normalize_colors
 
 _config: Any = None
 
@@ -295,17 +297,79 @@ def _get_claude_model() -> str:
     return _get_model("claude")
 
 
-def _build_prompt(card_names: List[str]) -> str:
-    lines = "\n".join(f"  - {name}" for name in card_names[:80])  # cap for token safety
+def _seen_colors(colors_by_name: Optional[Mapping[str, str]]) -> str:
+    """WUBRG letters across every card whose color identity is known."""
+    return normalize_colors(
+        "".join(ch for value in (colors_by_name or {}).values() for ch in str(value or "")).replace(
+            "C", ""
+        )
+    )
+
+
+def _color_tag(identity: str) -> str:
+    letters = normalize_colors(str(identity or "").replace("C", ""))
+    return letters or "colorless"
+
+
+#: Community color names, so the reply uses words colors_from_label can read.
+_COLOR_NAME_GUIDE = "; ".join(
+    [", ".join(f"Mono-{name} ({letter})" for letter, name in COLOR_NAMES.items())]
+    + [", ".join(f"{name} ({letters})" for letters, name in COMBO_NAMES.items())]
+)
+
+
+def _build_prompt(card_names: List[str], colors_by_name: Optional[Mapping[str, str]] = None) -> str:
+    colors_by_name = colors_by_name or {}
+    shown = card_names[:80]  # cap for token safety
+    lines = "\n".join(
+        (
+            f"  - {name} [{_color_tag(colors_by_name[name])}]"
+            if name in colors_by_name
+            else f"  - {name}"
+        )
+        for name in shown
+    )
+    seen = _seen_colors({name: colors_by_name[name] for name in shown if name in colors_by_name})
+    colors_line = color_rule = ""
+    if seen:
+        seen_names = ", ".join(COLOR_NAMES[letter] for letter in seen)
+        colors_line = (
+            f"\nColors seen: {seen_names} ({seen}). Each card's color identity is in brackets"
+            " (W white, U blue, B black, R red, G green).\n"
+        )
+        color_rule = (
+            "- Use ONLY colors seen. Never add a color none of these cards has, even when a"
+            " known archetype usually plays it.\n"
+        )
+    # No sample archetype names here: given only a few cards, models copy a
+    # named example ("Selesnya Enchantments" for a white/blue/red deck).
     return f"""You are an expert on Magic: The Gathering Arena deck archetypes. A player was seen with these cards in a single game, played or revealed (not necessarily their full deck):
 
 {lines}
-
-Respond with exactly one short deck archetype name (e.g. "Izzet Control", "Mono-Red Aggro", "Selesnya Enchantments"). Rules:
-- Name the deck by its DOMINANT colors and strategy. If a color appears in only a card or two, it is a splash — leave it out of the name (a mostly-Jeskai deck with one black card is still "Jeskai ...").
-- If you do not recognize the specific cards (they may be from a newer set than you know), infer the colors and strategy from the card names and answer with a descriptive name like "Azorius Artifacts" or "Golgari Midrange" — never refuse.
+{colors_line}
+Respond with exactly one short deck archetype name: a color name followed by the strategy (Aggro, Control, Midrange, Ramp, Tokens, Enchantments, Artifacts, Lifegain and so on). Rules:
+{color_rule}- Name the deck by its DOMINANT colors and strategy. If a color appears in only a card or two (often just a land), it is a splash — leave it out of the name.
+- Color names: {_COLOR_NAME_GUIDE}.
+- If you do not recognize the specific cards (they may be from a newer set than you know), infer the strategy from the card names and types — never refuse.
 
 Reply with ONLY the archetype name, one short phrase."""
+
+
+def fits_seen_colors(archetype: Optional[str], colors_by_name: Optional[Mapping[str, str]]) -> bool:
+    """False when the archetype names a color none of the seen cards has.
+
+    A deck's other colors can't be known from what wasn't shown, so an
+    answer that adds one is a guess (models copy familiar archetype names).
+    Names without a color word, colorless names, and games with a card of
+    unknown color (it could be any color) always pass.
+    """
+    named = colors_from_label(archetype)
+    if not named or named == "C" or not colors_by_name:
+        return True
+    if any(value is None for value in colors_by_name.values()):
+        return True
+    seen = set(_seen_colors(colors_by_name))
+    return not seen or set(named) <= seen
 
 
 def _parse_reply(raw: Optional[str]) -> Optional[str]:
@@ -631,14 +695,28 @@ def diagnose() -> dict:
     }
 
 
-def identify_deck(card_names: List[str]) -> Optional[str]:
+def identify_deck(
+    card_names: List[str], colors_by_name: Optional[Mapping[str, Optional[str]]] = None
+) -> Optional[str]:
     """Identify the opponent's deck archetype from observed card names.
 
-    One cheap API call. Returns a short string (e.g. "Izzet Control") or
-    None when disabled, keyless, or the reply is unusable. Callers should
-    invoke this off the tracking thread — it can take seconds.
+    colors_by_name maps a card name to its WUBRG color identity ("" or "C"
+    for colorless, None when unknown); the prompt shows it and a reply that
+    names a color no card had is dropped (see fits_seen_colors). One cheap
+    API call. Returns a short string (e.g. "Izzet Control") or None when
+    disabled, keyless, or the reply is unusable. Callers should invoke this
+    off the tracking thread — it can take seconds.
     """
     cards = [str(c).strip() for c in card_names if c and str(c).strip()]
     if not cards:
         return None
-    return _parse_reply(_complete_raw(_build_prompt(cards)))
+    given = {str(k).strip(): v for k, v in (colors_by_name or {}).items()}
+    # Every card gets an entry; a card missing from the map counts as unknown.
+    colors = {name: given.get(name) for name in cards} if given else {}
+    known = {name: value for name, value in colors.items() if value is not None}
+    archetype = _parse_reply(_complete_raw(_build_prompt(cards, known)))
+    if archetype and not fits_seen_colors(archetype, colors):
+        global _last_error
+        _last_error = f"reply {archetype!r} names a color not seen ({_seen_colors(known)})"
+        return None
+    return archetype

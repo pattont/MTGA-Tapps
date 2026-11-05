@@ -41,12 +41,33 @@ def job_active():
         return _ACTIVE is not None
 
 
+_WARMED = False
+
+
+def _warm_caches():
+    """Build the card-DB indexes a roster read uses (colors, art ids, names,
+    printings) so the first Load Arena decks after a restart doesn't wait on them."""
+    from . import card_art, deck_colors
+
+    for step in (deck_colors.warm, _art_lookup, card_art._printings):
+        try:
+            step()
+        except Exception:  # noqa: BLE001 - warming is an optimization only
+            pass
+
+
 def status(db_path):
+    global _WARMED
     available, message = nb.availability()
+    if available and not _WARMED:
+        # The first status poll means Deck Manager (or Deck Finder) is open.
+        _WARMED = True
+        threading.Thread(target=_warm_caches, name="deck-manager-warm", daemon=True).start()
     with _LOCK:
         result = dict(_STATUS.get(_key(db_path), {}))
         active = _ACTIVE if _ACTIVE and _JOBS[_ACTIVE]["db"] == _key(db_path) else None
     account = result.pop("_account_key", None)
+    result.pop("_cards", None)
     pending = []
     path = Path(db_path)
     if path.is_file():
@@ -95,16 +116,71 @@ def _roster_colors(deck, pile_names):
     )
 
 
+_PILE_SECTIONS = {
+    "Main": "Deck",
+    "Sideboard": "Sideboard",
+    "CommandZone": "Commander",
+    "Companions": "Companion",
+}
+_DEFAULT_PILES = {"1": "Main", "2": "Sideboard", "3": "CommandZone", "4": "Companions"}
+
+
+def _roster_cards(deck, pile_names):
+    """The deck's cards as Arena reported them in the roster read (ids, not names)."""
+    cards = []
+    for pile in deck.get("piles", []):
+        section = _PILE_SECTIONS.get(pile_names.get(str(pile["pile"])))
+        for card in pile["entries"] if section else []:
+            if type(card.get("id")) is int and card["id"] > 0 and card.get("quantity", 0) > 0:
+                cards.append(
+                    {"section": section, "quantity": card["quantity"], "arena_id": card["id"]}
+                )
+    return cards
+
+
+def _art_lookup():
+    """ArtId index and card-name resolver from Arena's card DB; empty without it."""
+    from .card_database import CardDatabase
+
+    try:
+        cards = CardDatabase()
+        return cards.grp_ids_by_art_id(), cards.get_card_name
+    except Exception:
+        return {}, None
+
+
+def _tile_art(arena_id):
+    """Direct image links for a tile card; best effort, never fails the roster."""
+    from .card_art import tile_art
+
+    try:
+        return tile_art(arena_id)
+    except Exception:  # noqa: BLE001 - art is cosmetic
+        return {"art_url": None, "art_print": None}
+
+
+def _card_name(resolve, arena_id):
+    name = resolve(arena_id) if resolve and arena_id else ""
+    return None if not name or name.startswith("Unknown Card") else name
+
+
 def _public_roster(report):
     dt.roster_ids(report)
-    pile_names = {str(k): v for k, v in (report.get("pile_names") or {}).items()}
+    pile_names = {str(k): v for k, v in (report.get("pile_names") or _DEFAULT_PILES).items()}
+    art_index, resolve = _art_lookup()
+    tiles = {d["arena_id"]: _roster_art_id(d, art_index) for d in report["decks"]}
+    art = {key: _tile_art(card) for key, card in tiles.items()}
     return {
         "connected": True,
+        # Kept server-side for /native/deck; status() leaves it out of the poll.
+        "_cards": {d["arena_id"]: _roster_cards(d, pile_names) for d in report["decks"]},
         "decks": [
             {
                 "id": d["arena_id"],
                 "name": d["name"],
-                "art_card_id": _roster_art_id(d),
+                "art_card_id": tiles[d["arena_id"]],
+                "art_card": _card_name(resolve, tiles[d["arena_id"]]),
+                **art[d["arena_id"]],
                 "format_name": next(
                     (
                         a["value"]
@@ -114,6 +190,8 @@ def _public_roster(report):
                     "",
                 ),
                 "colors": _roster_colors(d, pile_names),
+                **dm.arena_dates(d["summary"]),
+                "is_favorite": _is_favorite(d["summary"]),
                 "main_count": sum(
                     c["quantity"]
                     for p in d.get("piles", [])
@@ -131,17 +209,40 @@ def _public_roster(report):
     }
 
 
-def _roster_art_id(deck):
-    artwork = deck["summary"].get("DeckArtId")
+def _is_favorite(summary):
+    """Arena's IsFavorite attribute: text "true"/"false", sometimes JSON-quoted."""
+    value = next(
+        (a.get("value") for a in summary.get("Attributes", []) if a.get("key") == "IsFavorite"),
+        None,
+    )
+    return str(value).strip().strip('"').lower() == "true"
+
+
+def _roster_art_id(deck, art_index=None):
+    """The card on the deck's Arena tile.
+
+    DeckTileId is a card (GrpId). DeckArtId is an *art* id, which only names a
+    card through Arena's card DB; using it as a card id showed unrelated art.
+    """
+    summary = deck["summary"]
+    tile = summary.get("DeckTileId")
+    if type(tile) is int and tile > 0:
+        return tile
+    ids = [
+        card["id"]
+        for pile_id in (3, 1)
+        for pile in deck.get("piles", [])
+        if pile["pile"] == pile_id
+        for card in pile["entries"]
+        if type(card.get("id")) is int and card["id"] > 0
+    ]
+    artwork = summary.get("DeckArtId")
     if type(artwork) is int and artwork > 0:
-        return artwork
-    for pile_id in (3, 1):
-        for pile in deck.get("piles", []):
-            if pile["pile"] == pile_id:
-                for card in pile["entries"]:
-                    if type(card.get("id")) is int and card["id"] > 0:
-                        return card["id"]
-    return None
+        candidates = (art_index or {}).get(artwork, [])
+        chosen = next((g for g in candidates if g in ids), candidates[0] if candidates else None)
+        if chosen:
+            return chosen
+    return ids[0] if ids else None
 
 
 def _card_types():
@@ -196,10 +297,20 @@ def execute(db_path, action, selections, request_id, progress, cancelled=lambda:
             validate_destination(conn, selections[0].get("collection_id"))
         with nb.attach() as bridge:
             mark("attached")
+            steps = getattr(bridge, "connect_timings", None)
+            if steps:
+                timings.append("(" + ", ".join(f"{k} {v:.2f}s" for k, v in steps.items()) + ")")
             progress("Reading Arena’s current decks…")
-            report = bridge.roster()
+            # A plain load reads Arena's own copy; jobs that change or back up
+            # decks start from a server-refreshed list.
+            report = bridge.roster(refresh=action != "connect")
             dt.roster_ids(report)
             mark(f"roster of {len(report['decks'])}")
+            arena = report.get("timing_ms") or {}
+            if arena:
+                timings.append(
+                    "(" + ", ".join(f"{k} {v / 1000:.2f}s" for k, v in arena.items()) + ")"
+                )
             # Publish the fresh read at once, so a job that stops early (slots
             # full, wrong screen) still replaces an out-of-date status.
             with _LOCK:
@@ -343,6 +454,19 @@ def execute(db_path, action, selections, request_id, progress, cancelled=lambda:
                             **_public_roster(report),
                             "_account_key": bridge.account_key,
                         }
+            elif action == "favorite":
+                # Arena's own star button: one deck, saved and read back by the adapter.
+                choice = selections[0]
+                if choice["id"] not in dt.roster_ids(report):
+                    raise dm.DeckManagerError("This deck is no longer in Arena. Refresh the list.")
+                progress(
+                    "Adding the deck to Arena’s favorites…"
+                    if choice["favorite"]
+                    else "Removing the deck from Arena’s favorites…"
+                )
+                bridge.favorite(choice["id"], choice["favorite"])
+                report = bridge.roster()
+                dt.roster_ids(report)
             elif action != "connect":
                 raise dm.DeckManagerError("Unknown native deck action.")
             mark(action)
@@ -358,7 +482,10 @@ def execute(db_path, action, selections, request_id, progress, cancelled=lambda:
                 count = len(ids)
             else:
                 count = len(selections)
-            return {"count": count, "action": action, "cancelled": stopped}
+            result = {"count": count, "action": action, "cancelled": stopped}
+            if action == "favorite":
+                result["favorite"] = selections[0]["favorite"]
+            return result
     finally:
         conn.close()
         # Durations only; never deck names or account details.
@@ -390,14 +517,14 @@ def _failure_message(exc, action):
         )
     return (
         "Tapps Tracker lost its connection to Arena. Open Arena on the Decks screen "
-        "outside a match, then click Refresh Arena."
+        "outside a match, then click Rescan Arena."
     )
 
 
 def start(db_path, payload):
     global _ACTIVE
     action = payload.get("action")
-    if action not in ("connect", "backup", "store", "restore", "reconcile", "add"):
+    if action not in ("connect", "backup", "store", "restore", "reconcile", "add", "favorite"):
         raise dm.DeckManagerError("Choose a native deck action.")
     request_id = str(uuid.UUID(payload.get("request_id", "")))
     selections = payload.get("decks", [])
@@ -433,6 +560,8 @@ def start(db_path, payload):
                 "name": name.strip(),
                 "format_name": format_name,
                 **({"saved_deck_id": saved_deck_id} if saved_deck_id else {}),
+                # A name the player left blank may be numbered to avoid Arena's names.
+                **({"rename_if_taken": True} if imported.get("rename_if_taken") is True else {}),
                 **(
                     {"collection_id": imported["collection_id"]}
                     if imported.get("collection_id")
@@ -446,15 +575,22 @@ def start(db_path, payload):
         if payload["collection_id"] is not None and not isinstance(payload["collection_id"], str):
             raise dm.DeckManagerError("Choose an existing collection or Unsorted.")
         destination = {"collection_id": payload["collection_id"] or None}
+    if action == "store" and payload.get("trash") is True:
+        # Move to Trash: back up, remove from Arena, then trash the saved copy.
+        destination["trash"] = True
     for item in selections:
         if not isinstance(item, dict):
             raise dm.DeckManagerError("Invalid selected deck.")
         row = {"id": str(uuid.UUID(item.get("id", ""))), **destination}
+        if action == "favorite":
+            if not isinstance(item.get("favorite"), bool) or len(selections) != 1:
+                raise dm.DeckManagerError("Choose one Arena deck to star or unstar.")
+            row["favorite"] = item["favorite"]
         if item.get("revision"):
             row["revision"] = str(uuid.UUID(item["revision"]))
         clean.append(row)
     if len({d["id"] for d in clean}) != len(clean) or (
-        action in ("store", "restore") and not clean
+        action in ("store", "restore", "favorite") and not clean
     ):
         raise dm.DeckManagerError("Select at least one distinct deck.")
     if action == "store" and payload.get("confirm") != "MOVE":
@@ -529,9 +665,43 @@ def start(db_path, payload):
     return request_id
 
 
+def arena_deck(db_path, arena_id):
+    """One Arena deck's cards from the last roster read. Never contacts Arena."""
+    with _LOCK:
+        current = _STATUS.get(_key(db_path), {})
+        cards = (current.get("_cards") or {}).get(arena_id)
+        deck = next((d for d in current.get("decks", []) if d["id"] == arena_id), None)
+        refreshed_at = current.get("refreshed_at")
+    if cards is None or deck is None:
+        return 404, {"error": "Arena hasn’t reported this deck. Click Rescan Arena and try again."}
+    from . import deck_manager_api
+
+    resolve = _resolve_names()
+    named = [
+        {
+            **card,
+            "name": _card_name(resolve, card["arena_id"]) or f"Card #{card['arena_id']}",
+            "set_code": None,
+            "collector_number": None,
+        }
+        for card in cards
+    ]
+    named = deck_manager_api._with_printings({"cards": named})["cards"]
+    return 200, {
+        "id": deck["id"],
+        "name": deck["name"],
+        "format_name": deck["format_name"],
+        "refreshed_at": refreshed_at,
+        "cards": named,
+        "card_info": deck_manager_api._card_info(named),
+    }
+
+
 def handle_get(path, query, db_path):
     if path == "/api/deck-manager/native":
         return 200, status(db_path)
+    if path == "/api/deck-manager/native/deck":
+        return arena_deck(db_path, query.get("id", [""])[0])
     if path == "/api/deck-manager/native/job":
         with _LOCK:
             job = dict(_JOBS.get(query.get("id", [""])[0], {}))

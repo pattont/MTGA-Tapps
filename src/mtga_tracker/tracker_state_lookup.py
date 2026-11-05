@@ -303,6 +303,14 @@ class TrackerStateLookupMixin:
             return
         self.game_state.logged_identity_changes.add(dedupe_key)
 
+        if prev_name in new_name.split(" // "):
+            # A Room cast as one door enters as the whole card ("[Unholy Annex]
+            # became [Unholy Annex // Ritual Chamber]"): nothing changed in play.
+            fact = self._replay_identity_fact(instance_id, current, seat_id)
+            if fact is not None:
+                self._record_silent_event(fact)
+            return
+
         pt_suffix = ""
         if "CardType_Creature" in current_types:
             pt_suffix = f" ({self._object_pt(current)})"

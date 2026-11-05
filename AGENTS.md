@@ -19,6 +19,12 @@ Repo layout:
   second launch with `--open-settings`/`--show`/`--hide`) and a Preact page in `overlay/src/`.
   It talks to the tracker only through `GET /api/overlay`; the Python side that launches
   it is `src/mtga_tracker/overlay_launcher.py`. See `overlay/README.md`.
+  The payload's `session` (`live_api._overlay_session`: the Stream Kit record's
+  `tracker_sessions` totals plus a play/draw split from `participants.went_first`,
+  memoised per session totals) feeds the panel footer (`SessionRecord.tsx`), styled
+  by the overlay setting `sessionRecord` (`off`/`scoreboard`/`split`, default
+  `scoreboard`, mirrored in `settings.rs`). Its digits are sized to the rows on
+  purpose, not the Stream Kit's large ones.
 - `tests/`: pytest suite, including `tests/deck_downloader/`. `tests/deprecated/` holds
   non-test debug scripts and is not part of the suite.
 - `packaging/` + `scripts/`: PyInstaller specs, entry points, and OS build scripts.
@@ -77,8 +83,9 @@ Primary code paths:
 - `src/mtga_tracker/tracker_runtime.py`: startup banner, live polling loop, stop/cleanup.
 - `src/mtga_tracker/tracker_lifecycle.py`: game start/end, match lifecycle, winner/outcome handling.
 - `src/mtga_tracker/tracker_events.py`: core GRE event orchestration and annotation dispatch.
-- `src/mtga_tracker/tracker_event_*.py`: focused event helpers for abilities, client actions, life, targets, and turns.
+- `src/mtga_tracker/tracker_event_*.py`: focused event helpers for abilities, client actions, life, reveals, targets, and turns.
 - `src/mtga_tracker/tracker_zone_transfers.py`: zone-transfer handling for draw/discard/mill/exile/destroy/return/play/cast.
+- `src/mtga_tracker/tracker_zone_transfer_extras.py`: the rarer categories (surveil, warp, manifest, copy, library to graveyard).
 - `src/mtga_tracker/tracker_stack.py`: stack lifecycle tracking and resolution/fizzle/counter display.
 - `src/mtga_tracker/tracker_combat.py`: attack/block/combat damage handling.
 - `src/mtga_tracker/tracker_opening_deck.py`: opening hand, mulligan, format, commander, deck metadata.
@@ -136,6 +143,11 @@ Primary code paths:
   call per completed game, fired from `_start_opponent_archetype_lookup` on a daemon thread —
   it must NEVER block live tracking. Reasoning-class OpenAI models (gpt-5/o-series) get
   `reasoning_effort: low` and a retry on token-starved empty replies.
+  The prompt lists each seen card's color identity (the live scoreboard's
+  `_live_card_identity`) and names no sample archetypes: models copied the old
+  examples ("Selesnya Enchantments" for a W/U/R game). `fits_seen_colors` drops a
+  reply whose color word names a color no seen card had (skipped when a card's
+  color is unknown); the label then falls back to the color label.
 - `src/mtga_tracker/replay_capture.py` / `replay_capture_events.py`: live replay capture.
   Tracker mixins attach a `ReplayFact` to the lines they already print and write silent
   (`visible = 0`) `game_events` rows for facts the console never prints (taps, counters,
@@ -236,7 +248,9 @@ Primary code paths:
   `overlay` is the in-game panel plus its sideboard (right/left/below/off) with the
   overlay's background slider (`opacity`, not the shared `bg`); `stream/overlayView.ts`
   mirrors `overlay/src/model.ts` and its CSS mirrors `overlay/src/styles.css` in px under
-  `zoom`, so change both when the in-game panel changes. Credits sit top right, never on
+  `zoom`, so change both when the in-game panel changes. Stream widgets draw mana costs
+  with `stream/widgets/ManaCost.tsx`, a copy of the overlay's (the `/icons/*.svg`
+  vectors plus grey badges), never the dashboard's mana-font `ManaCost`. Credits sit top right, never on
   a line of their own.
   Widgets read only existing endpoints: `overlay` and `deck` poll `/api/overlay` with its ETag (`stream/useOverlay.ts`),
   `record`/`games`/`matchup` poll `/api/live?events=0` (skips the event feed; `games`
@@ -282,16 +296,97 @@ Primary code paths:
   The collection uses a full-page responsive tile grid; details/revision editing and
   new imports open native dialogs. CardLink previews portal into their containing
   dialog so the browser’s top layer does not obscure them.
-  Saved/Arena tiles share a fixed height and 76px artwork. Arena reuses matching
+  Saved/Arena tiles are cards (`deck-manager-tile-wrapper` draws the border) with the
+  deck button on top and a footer row (record table left, status pills right,
+  wrapping; empty footer space opens the deck), 76px artwork, and a grid of
+  `auto-fill, minmax(480px, 1fr)` columns so the record fits beside the pills. Arena reuses matching
   library artwork or its roster printing ID, with the existing Scryfall loader.
   Bottom-right colored status/backup pills filter through clicks or the status
-  selector; changing a filter clears selection. An unconnected roster must show
-  Not checked, never infer Collection only from a missing native observation.
+  selector; changing a filter clears selection. Pills only tell decks apart: a saved
+  deck shows green In Arena (Not in Arena is a filter option, no pill) and its kind,
+  **Exact copy** (`native_restorable`) or **Deck list** (text, Deck Finder and
+  log-captured lists alike), explained in a tooltip (`statusHints`); Trash shows no
+  In Trash pill and Arena tiles no In Arena pill. Before Arena is read, saved decks
+  show no presence pill or filter: never infer Not in Arena from a missing read.
   Moving a deck to Trash opens a recoverable-action confirmation; native Restore
   to Arena (or Add to Arena for text-only revisions) appears as a yellow button
   in the deck dialog header beside Copy deck list and Close, hidden when Arena has the deck.
-  Every saved/trash tile has a top-right 24px checkbox in a separate 44px target;
-  selection never opens details. Local bulk removal supports all saved deck types,
+  Every tile (saved, trash and Arena) has a top-right 24px checkbox in a separate
+  44px target; selection never opens details, and clicking an Arena tile opens its
+  dialog (`ArenaDeckDetail.tsx`) with the deck's cards from the last roster read:
+  `_public_roster` keeps each deck's piles under the private `_cards` key (left out
+  of the status poll) and `GET /api/deck-manager/native/deck?id=` names them from
+  that cache without contacting Arena. The tile card is the summary's `DeckTileId`
+  (a GrpId); `DeckArtId` is an *art* id, mapped through
+  `CardDatabase.grp_ids_by_art_id` and never used as a card id.
+  The top is two rows: tabs with a compact Arena status chip (`ArenaStatusChip`,
+  full text in its tooltip; hidden before the first read, when a green
+  `deck-manager-load-arena` Load Arena decks button stands alone), a labeled Rescan Arena button
+  (`deck-manager-rescan`, re-reads the roster), Back up all (once Arena is read, on
+  every tab; Capture Arena lists instead when native reads are unavailable) and a
+  ? help button. There is no overflow menu. Then one bar. With nothing ticked
+  the bar holds search, status, sort and the tab's adds (Saved: New collection, Add
+  deck; Arena: Add deck); ticking a deck swaps it for the selection
+  (✕ = Select none, count, Select all) and its actions (Saved: Move to collection,
+  Restore to Arena, Compare, Move to trash; Arena: Back up, Move to collection,
+  Compare, Move to trash; Trash: Delete permanently). The `DeckManagerStatus` banner
+  renders only for warnings, running jobs and results. A result is the banner's headline (its Arena summary stays beside it; a plain line under a warning or job), never a boxed message; after a load or rescan the usual "Arena decks loaded" title stands alone. Only errors get a box, and dialog notices are plain lines. Arena's Add deck (`add` job
+  from pasted text) names a blank import from its `Name` line or "DeckManager Import
+  Deck". Arena's Move to
+  trash is a `store` job with `trash: true`: `deck_transfers.transfer` trashes the
+  saved entry only after the journal records a verified removal.
+  Compare (`DeckCompare.tsx`, pure diff in `ui/src/deckCompare.ts`) needs exactly
+  two selected decks: saved latest revisions on Saved Locally, the last roster read
+  on Arena. A blank-name Arena import sends `rename_if_taken`, and `add_import`
+  numbers the name past the roster's names (`unique_name`). Saved Locally has a
+  collection filter, and its search matches collection names. Arena's deck
+  `LastUpdated`/`LastPlayed` attributes (JSON-quoted text, any fraction length,
+  `0001-01-01` = never) become `arena_modified`/`arena_played` UTC ISO via
+  `deck_manager.arena_time`: on roster decks, and for saved decks from the current
+  revision's native snapshot (`list_decks`, deck detail). Both tabs sort by them,
+  undated decks last. The Arena tab's sort is its own (`tapps.deckManager.arenaSort`,
+  default `modified-desc`). Roster decks carry `is_favorite` (Arena's `IsFavorite`
+  attribute); favorites get gold tiles in a foldable Favorites section above
+  My Decks (Arena's name; a search or filter keeps both open). Tile art never
+  bursts Scryfall's API: `card_art.tile_art` gives roster and library decks an
+  `art_url` (cards.scryfall.io art crop via the replay `set|collector` id cache,
+  `replay_builder.cdn_image_url`) and an `art_print` (`set/number`); the page
+  tries those before `/cards/arena/` and the 2-per-second `/cards/named`.
+  `DeckModal` closes only with its close button or Esc, never from a click outside it.
+  Tile color pips sit under the format line; an Arena tile's star sits left of its
+  checkbox. A tile's bottom left shows its record from tracked games
+  (`DeckRecordBadge`: a small table with thin column lines: Ranked and Casual
+  (every unranked queue and event) wins–losses and win rate, each only when played;
+  Play / Draw win rates from `participants.went_first` (heading in the app's teal
+  `--on-play` / purple `--on-draw`); games Played; a faint "No games logged" when
+  never played. The same table (`.deck-record`) shows under the dates in both deck
+  dialogs (`deck-record-dialog`) and under each deck in Compare (`CompareSide.record`). Ranked = a queue whose `normalize_match_format` label says
+  "(Ranked)", like the deck page's splits. "Casual", not Arena's "Play" queue
+  name, so it can't be confused with on the play),
+  counted by Arena deck id (`participants.deck_id`) so renames keep it
+  (`deck_manager.played_records`, games not Bo3 matches, like the Overview). The
+  library response carries `records` by Arena id for the Arena tab; a saved deck's
+  `record` adds up every Arena id it has been (`saved_arena_ids`: bindings,
+  backup snapshot `DeckId`, log captures' `metadata.arena_deck_id`). The star (tile and Arena dialog) runs a `favorite` job for exactly one deck:
+  `arena_decks.js` `setFavorite` mirrors Arena's `WrapperDeckUtilities.setFavoriteInternal`
+  (loads the deck with `GetFullDeck`, `Client_DeckSummary.set_IsFavorite`, then
+  `DecksManager.UpdateDeck(deck, DeckActionType.Updated = 6)`), refreshes the cache and
+  reads the deck back, failing unless only the star changed (name, piles, skins equal).
+  It needs the Decks screen, is idempotent and is not journaled (no create/delete).
+  Validated live on macOS (IL2CPP) on 2026-11-03; Windows (Mono) is not yet validated. The deck payload's `card_info` (mana cost,
+  mana value, type per name, from Arena's local card DB) orders spells by mana
+  value with lands last. Both deck dialogs (`DeckCardLists.tsx`, grouping in
+  `ui/src/deckCardGroups.ts`) group the main deck under type headings (lands last)
+  in up to three columns, each row with its cost on the right. Deck Manager's
+  costs (these dialogs and Compare) use the in-game overlay's symbols through
+  `stream/widgets/ManaCost.tsx` (vectors plus grey badges, styled by
+  `.deck-card-cost .mana`), not the dashboard's mana-font `ManaCost`. Types come from
+  `CardDatabase.list_type_indexes` (by id, then by name for pasted lists), which
+  places multi-type cards (`Types` "1,2" = Creature, land creatures = Land); the
+  analytics `get_card_type_category` keeps its single-code answer. A two-faced
+  card shows its front face's cost (Arena joins a Room's costs). Tags are edited
+  as chips (`TagInput.tsx`): a comma or Enter adds one, and Save includes text not
+  yet added. Local bulk removal supports all saved deck types,
   including decks still in Arena. Both bulk Trash and permanent-delete dialogs list
   every selected deck; `/api/deck-manager/remove-selected` validates explicit
   confirmation and applies the entire selection in one transaction. Permanent
@@ -343,6 +438,19 @@ Primary code paths:
   Deck Finder passes the saved entry ID to native add so its full native revision
   upgrades the same entry, retaining notes, collection and earlier text revisions.
   Jobs expose verified step counts for progress bars; connecting stays indeterminate.
+  Deck Manager's status banner shows the bar without the job's detail line (its
+  title already names the job; `DeckTransferProgress showDetail={false}`); Deck
+  Finder keeps the line. Each job prints cumulative timings to stderr, with the
+  connection steps (`frida`, `find`, `attach`, `script`, `open`) and Arena's
+  `ForceRefreshCachedDecks` (`refresh`) vs `GetAllDecks` read (`read`, the
+  roster's `timing_ms`). The first status poll warms the card-DB indexes a roster
+  read uses (`_warm_caches`), and `deck_colors` rebuilds its expired index in the
+  background instead of on a read. A plain Load/Rescan (`connect`) reads the deck
+  list Arena already holds (`roster(account, false)`, no `ForceRefreshCachedDecks`):
+  Arena loads every deck at login and updates its copy on each edit, and only one
+  Arena session can be signed in. It falls back to the server refresh when that
+  copy is empty or any deck's cards aren't loaded (`contents_loaded`). Every other
+  job starts from a server-refreshed roster, and checks after writes keep it.
   After a job that sent a create/delete, closing the attachment calls `refreshscreen`:
   it starts Arena's own `DeckManagerController.Coroutine_LoadDecks(_selectedBucket,
   deckId)` on the open Decks screen, selecting the last created deck (`Guid?` is a
@@ -744,6 +852,12 @@ Preserve these behaviors unless the user explicitly changes requirements:
   games matching the current filters, including decks later removed from Arena.
   Arena's active-deck slot limit never truncates tracker history. The UI pages
   ten rows at a time and searches/sorts the complete returned set.
+  A sort menu beside Search decks (Most played, Recently played, Name, Win rate;
+  localStorage `tapps.overview.deckSort`) drives `SortableTable`'s controlled
+  `sort`/`onSortChange`, shared with header clicks; Recently played sorts by each
+  row's `last_played` (newest game within the filters), which has no column, and
+  shows it under the deck name. The deck page's "Last played" under the color pips
+  is the deck's newest game ignoring the page filters (`deck_detail` `last_played`).
   Decks, All Games and Sessions opt into `SortableTable`'s full pagination controls:
   numbered pages with ellipses, first/last navigation and a validated page jump.
   All Games retains 30 rows per page; sorting and filter changes reset the page.
@@ -804,8 +918,9 @@ Preserve these behaviors unless the user explicitly changes requirements:
   color label as fallback. Keep calls cheap — no extra calls, no retries beyond the existing
   token-starvation retry.
 - Brawl: commanders for both seats persist to `participant_commanders`; starting life is 25.
-  Queue labels: Play_Brawl_Historic → "Historic Brawl", Brawl_Ladder → "Brawl (Ranked)",
-  Play_Brawl → "Standard Brawl"; MWM_Brawl resolves to Midweek Magic FIRST (untracked). A
+  Queue labels: Play_Brawl_Historic → "Brawl" (Arena's name since late 2026; the family id
+  stays `historic_brawl`), Brawl_Ladder → "Brawl (Ranked)" (Arena's "Competitive Brawl"; the
+  "(Ranked)" suffix drives ranked splits), Play_Brawl → "Standard Brawl"; MWM_Brawl resolves to Midweek Magic FIRST (untracked). A
   queue identifier always outranks deck metadata: a deck's Format ATTRIBUTE
   ("HistoricBrawl"/"HistoricBrawlRanked") describes the deck, not the queue, and must never
   relabel a match whose format already normalizes to a Brawl queue.
@@ -886,6 +1001,31 @@ Arena logs are not a simple chronological event stream. Be careful with inferred
   snapshot (`_record_object_id_change` replaces or drops it), or an opponent's
   hidden draw reads as yours. A message with more than 50 objects or annotations
   is logged only as "Message summarized because ...", with no details at all.
+- An activated ability whose cost is chosen after activation (Station's creature to
+  tap, a sacrifice choice) arrives as `AbilityInstanceCreated` in a
+  `QueuedGameStateMessage` with no `UserActionTaken`; that annotation comes one
+  message later. `CardDatabase.is_activated_ability` (Arena's `Abilities.Category`
+  1; 2 is triggered) lets the creation handler wait for it instead of printing a
+  trigger. `DamageDealt` carries `type` 1 for combat damage, 2 otherwise; attackers
+  and attacked planeswalkers are rarely in the damage/attack message, so name them
+  through `_lookup_object` snapshots. A spell leaving the stack with category `nil`
+  and no resolution fizzled (targets gone); one moved with `Resolve` resolved even
+  when Arena sent no `ResolutionStart` (`_note_spell_left_stack`).
+- Within one message, only an activation's `AbilityInstanceCreated` is processed
+  ahead of other annotations (its costs follow it); a trigger keeps Arena's order,
+  after the move that caused it (`_is_activation_annotation`). An ability can be
+  missing from its source card's `AbilityIds` (planeswalker tokens, delayed
+  triggers): `_ability_text_for` falls back to Arena's ability table for a named
+  source. Rarer zone-transfer categories (Surveil, Warp, ManifestLike, Copy, and
+  Put from library to graveyard) print through `tracker_zone_transfer_extras.py`;
+  `SBA_Deathtouch`/`SBA_LegendRule` are state-based deaths. Reveals arrive as
+  `RevealedCardCreated` proxies (`GameObjectType_RevealedCard`, in the revealed
+  card's zone); `tracker_event_reveals.py` prints one line per message and seat.
+  Your own hand revealed to the opponent comes without names. Still unhandled,
+  logged to diagnostics: Alchemy's Conjure/Seek (Alchemy is retired) and Foretell. To audit the log,
+  replay Arena's `Player.log`/`Player-prev.log` through a `CardTracker` with a
+  scratch DB and `_diagnostic_text_path`, and compare its lines with the raw
+  annotations; `raw_game_payloads` holds no GRE game messages.
 - Arena's SBA death annotations reference instance ids that do NOT match declared
   attacker/blocker ids (verified against real logs) — combat deaths cannot be told apart
   from burn kills at SBA time, which is why lethal-damage deaths are excluded from

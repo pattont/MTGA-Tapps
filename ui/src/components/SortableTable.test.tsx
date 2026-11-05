@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SortableTable } from './SortableTable';
 
 describe('SortableTable', () => {
@@ -37,6 +37,53 @@ describe('SortableTable', () => {
 
     await user.click(screen.getByRole('button', { name: /deck/i }));
     expect(screen.getAllByRole('row')[1]).toHaveTextContent('Azorius');
+  });
+
+  it('follows a controlled sort, including a field with no column', async () => {
+    const user = userEvent.setup();
+    const onSortChange = vi.fn();
+    const datedRows = [
+      { deck: 'Boros', games: 1, played: '2026-06-01T10:00:00' },
+      { deck: 'Azorius', games: 4, played: '2026-05-01T10:00:00' },
+      { deck: 'Cyan', games: 2, played: null },
+    ];
+    const columns = [
+      { key: 'deck' as const, header: 'Deck' },
+      { key: 'games' as const, header: 'Games' },
+    ];
+    const { rerender } = render(
+      <SortableTable
+        caption="Decks"
+        columns={columns}
+        getRowKey={(row) => row.deck}
+        rows={datedRows}
+        sort={{ key: 'played', direction: 'desc' }}
+        onSortChange={onSortChange}
+      />,
+    );
+    const order = () => screen.getAllByRole('row').slice(1).map((row) => row.querySelector('td')?.textContent);
+    expect(order()).toEqual(['Boros', 'Azorius', 'Cyan']);
+    expect(screen.getAllByRole('columnheader').every((th) => th.getAttribute('aria-sort') === 'none')).toBe(true);
+
+    // Header clicks ask the owner instead of sorting on their own.
+    await user.click(screen.getByRole('button', { name: /games/i }));
+    expect(onSortChange).toHaveBeenLastCalledWith({ key: 'games', direction: 'asc' });
+    expect(order()).toEqual(['Boros', 'Azorius', 'Cyan']);
+
+    rerender(
+      <SortableTable
+        caption="Decks"
+        columns={columns}
+        getRowKey={(row) => row.deck}
+        rows={datedRows}
+        sort={{ key: 'games', direction: 'asc' }}
+        onSortChange={onSortChange}
+      />,
+    );
+    expect(order()).toEqual(['Boros', 'Cyan', 'Azorius']);
+    await user.click(screen.getByRole('button', { name: /games/i }));
+    expect(onSortChange).toHaveBeenLastCalledWith({ key: 'games', direction: 'desc' });
+    expect(sessionStorage.length).toBe(0);
   });
 
   it('renders an empty state', () => {

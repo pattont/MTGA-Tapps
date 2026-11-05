@@ -127,6 +127,7 @@ _PUT_HAND_RE = re.compile(r"^(?:\[([^\]]+)\] )?put \[([^\]]+)\] into (your|oppon
 
 _STATUS_SUFFIXES = (
     ("[left stack without resolving - inferred]", "stack_fizzle"),
+    ("[fizzled]", "stack_fizzle"),
     ("[countered]", "stack_countered"),
     ("[resolved]", "stack_resolve"),
     ("resolved", "stack_resolve"),

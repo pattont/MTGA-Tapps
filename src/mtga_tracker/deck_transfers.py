@@ -48,6 +48,17 @@ def _import_differences(expected_cards, actual_cards, wanted, returned, aliases=
     return "Differences: " + "; ".join(parts) + more + "."
 
 
+def unique_name(name, taken):
+    """`name`, or `name (1)`, `name (2)`… when Arena already has a deck by that name."""
+    used = {str(other).casefold() for other in taken}
+    if name.casefold() not in used:
+        return name
+    number = 1
+    while f"{name} ({number})".casefold() in used:
+        number += 1
+    return f"{name} ({number})"
+
+
 def add_import(
     conn,
     bridge,
@@ -81,6 +92,9 @@ def add_import(
     if report.get("deck_screen_open") is not True or report.get("limit_reached") is not False:
         raise dm.DeckManagerError("Open Arena on Decks outside a match with a free deck slot.")
     expected = dm.parse_import(selection["text"], selection["name"], selection["format_name"])
+    if selection.get("rename_if_taken"):
+        taken = [deck.get("name", "") for deck in report.get("decks", [])]
+        expected["name"] = unique_name(expected["name"], taken)
     if not resolve_name or any(c["section"] == "Maybeboard" for c in expected["cards"]):
         raise dm.DeckManagerError(
             "Direct import requires local card names and Arena-supported piles."
@@ -414,7 +428,6 @@ def transfer(conn, bridge, action, selection, request_id, report, resolve_name=N
         set_presence(conn, account, arena_id, saved["id"], presence)
         journal_phase(conn, transfer_id, "complete")
         notify(3, "Transfer verified.")
-        return after
     except Exception:
         journal_phase(
             conn,
@@ -427,6 +440,16 @@ def transfer(conn, bridge, action, selection, request_id, report, resolve_name=N
             ),
         )
         raise
+    if action == "store" and selection.get("trash"):
+        # Only after Arena confirmed the removal: the verified backup goes to Trash,
+        # where it can still be restored.
+        stamp = dm.now()
+        with conn:
+            conn.execute(
+                "UPDATE managed_decks SET trashed_at=?,updated_at=? WHERE id=? AND trashed_at IS NULL",
+                (stamp, stamp, saved["id"]),
+            )
+    return after
 
 
 def reconcile(conn, bridge, report, resolve_name=None):

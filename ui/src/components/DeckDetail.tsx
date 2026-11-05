@@ -1,34 +1,21 @@
 import { useState, type ReactNode } from 'react';
 import { ChevronDown, Download, Pencil, Trash2, Undo2 } from 'lucide-react';
-import type { DeckCollection, ManagedCard, ManagedDeckDetail } from '../deckManagerApi';
+import type { DeckCollection, DeckRecord, ManagedCard, ManagedDeckDetail } from '../deckManagerApi';
+import { DeckRecordBadge } from './DeckRecordBadge';
 import { formatDateTime } from '../format';
-import { CardLink } from './CardLink';
+import { DeckCardLists } from './DeckCardLists';
+import { TagInput } from './TagInput';
+import { addTags } from '../tagList';
 import { ColorPips } from './ColorPips';
 import { deckFormatLabel } from '../deckFormatLabel';
-
-// The main deck gets the wide column; everything else stacks beside it.
-const SIDE_SECTIONS = ['Commander', 'Companion', 'Sideboard', 'Maybeboard'];
+import { ArenaDates } from './ArenaDates';
 
 const count = (cards: ManagedCard[]) => cards.reduce((sum, card) => sum + card.quantity, 0);
 
-function CardSection({ title, cards }: { title: string; cards: ManagedCard[] }) {
-  return (
-    <section className="deck-detail-section" aria-label={`${title} (${count(cards)})`}>
-      <h4>{title}<span>{count(cards)}</span></h4>
-      <ul>
-        {cards.map((card, i) => (
-          <li key={`${title}-${i}`}>
-            <span className="deck-detail-quantity">{card.quantity}</span>
-            {card.name.startsWith('Card #') ? <span>{card.name}</span> : <CardLink cardName={card.name} returnHash="#/deck-manager" />}
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
 export interface DeckDetailProps {
   detail: ManagedDeckDetail;
+  /** Tracked-game record over every Arena deck this has been; null when never played. */
+  record?: DeckRecord | null;
   busy: boolean;
   collections: DeckCollection[];
   statusPills: ReactNode;
@@ -44,18 +31,17 @@ export interface DeckDetailProps {
 
 /** Body of the saved-deck dialog: summary, controls, a compact card grid, then notes. */
 export function DeckDetail({
-  detail, busy, collections, statusPills, onCollection, onRevision, onSaveMetadata,
+  detail, record, busy, collections, statusPills, onCollection, onRevision, onSaveMetadata,
   onEditRevision, onDownload, onTrash, onRestoreFromTrash, onDeletePermanently,
 }: DeckDetailProps) {
   const [notes, setNotes] = useState(detail.notes);
-  const [tags, setTags] = useState(detail.tags.join(', '));
-  const savedTags = detail.tags.join(', ');
-  const dirty = notes !== detail.notes || tags !== savedTags;
+  const [tags, setTags] = useState(detail.tags);
+  const [tagDraft, setTagDraft] = useState('');
+  const dirty = notes !== detail.notes || tags.join('\n') !== detail.tags.join('\n') || Boolean(tagDraft.trim());
   const cards = detail.deck.cards;
   const main = cards.filter((card) => card.section === 'Deck');
-  const side = SIDE_SECTIONS.map((section) => ({ section, cards: cards.filter((card) => card.section === section) }))
-    .filter((group) => group.cards.length);
-  const sideboard = side.find((group) => group.section === 'Sideboard');
+  const sideboard = cards.some((card) => card.section === 'Sideboard')
+    ? { cards: cards.filter((card) => card.section === 'Sideboard') } : undefined;
   const revision = detail.revisions.find((r) => r.id === detail.revision_id);
   const summary = [
     deckFormatLabel(detail.deck.format_name) || 'Any format',
@@ -70,6 +56,8 @@ export function DeckDetail({
         <p><ColorPips colors={detail.colors} size={16} />{summary}</p>
         {statusPills}
       </div>
+      <ArenaDates modified={detail.arena_modified} played={detail.arena_played} asOfBackup />
+      <DeckRecordBadge record={record} className="deck-record-dialog" />
 
       <div className="deck-detail-controls">
         {!detail.trashed_at ? (
@@ -96,22 +84,24 @@ export function DeckDetail({
       </div>
       {revision && revision.id !== detail.current_revision_id ? <p className="deck-detail-note">Viewing an earlier revision saved {formatDateTime(revision.created_at)}.</p> : null}
 
-      <div className={`deck-detail-lists${side.length ? '' : ' deck-detail-lists-single'}`}>
-        <CardSection title="Deck" cards={main} />
-        {side.length ? <div className="deck-detail-side">{side.map((group) => <CardSection key={group.section} title={group.section} cards={group.cards} />)}</div> : null}
-      </div>
+      <DeckCardLists cards={cards} facts={detail.card_info} />
 
       <details className="deck-detail-notes" open={Boolean(detail.notes || detail.tags.length) || undefined}>
         <summary>
-          <ChevronDown size={16} aria-hidden="true" />Notes &amp; tags
+          <ChevronDown size={16} aria-hidden="true" />Deck Info
           {detail.tags.length ? <span className="deck-detail-tags">{detail.tags.map((tag) => <span key={tag}>{tag}</span>)}</span> : null}
         </summary>
         <div className="deck-detail-notes-body">
-          <label>Tags<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="Separate tags with commas" /></label>
-          <label>Notes<textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} /></label>
-          <div className="deck-detail-notes-actions">
-            {dirty ? <button type="button" disabled={busy} onClick={() => { setNotes(detail.notes); setTags(savedTags); }}>Discard</button> : null}
-            <button type="button" className="deck-manager-add" disabled={busy || !dirty} onClick={() => onSaveMetadata(notes, tags.split(','))}>Save notes &amp; tags</button>
+          <label>Notes<textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="Matchups, sideboard plans, changes to try…" /></label>
+          <div className="deck-detail-tags-row">
+            <div className="deck-detail-tags-field">
+              <span className="deck-detail-field-label" aria-hidden="true">Tags</span>
+              <TagInput tags={tags} draft={tagDraft} disabled={busy} onChange={(nextTags, draft) => { setTags(nextTags); setTagDraft(draft); }} />
+            </div>
+            <div className="deck-detail-notes-actions">
+              {dirty ? <button type="button" disabled={busy} onClick={() => { setNotes(detail.notes); setTags(detail.tags); setTagDraft(''); }}>Discard</button> : null}
+              <button type="button" className="deck-manager-add" disabled={busy || !dirty} onClick={() => { const saved = addTags(tags, [tagDraft]); setTags(saved); setTagDraft(''); onSaveMetadata(notes, saved); }}>Save notes &amp; tags</button>
+            </div>
           </div>
         </div>
       </details>

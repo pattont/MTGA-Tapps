@@ -34,6 +34,9 @@ class TrackerZoneTransferMixin:
             "SBA_ZeroToughness": "0 toughness",
             "SBA_ZeroLoyalty": "0 loyalty",
             "SBA_UnattachedAura": "unattached Aura",
+            "SBA_Deathtouch": "deathtouch",
+            "SBA_LegendRule": "legend rule",
+            "SBA_IllegalAttachment": "illegal attachment",
         }
         reason = reason_by_category.get(str(category))
         if reason is None:
@@ -498,6 +501,7 @@ class TrackerZoneTransferMixin:
             "Destroy": "tokens_destroyed",
             "SBA_Damage": "tokens_destroyed",
             "SBA_ZeroToughness": "tokens_destroyed",
+            "SBA_Deathtouch": "tokens_destroyed",
             "Sacrifice": "tokens_sacrificed",
             "Exile": "tokens_exiled",
         }
@@ -1150,6 +1154,37 @@ class TrackerZoneTransferMixin:
         self.game_state.pending_spell_roots.pop(canonical_instance_id, None)
         return False
 
+    def _note_spell_left_stack(
+        self,
+        category: Optional[str],
+        canonical_instance_id: int,
+        zone_src: Optional[int],
+        zones_by_id: Optional[Dict[int, Dict[str, Any]]],
+    ) -> None:
+        """Close a pending spell from Arena's own move off the stack.
+
+        "Resolve" means it resolved: Arena can skip the ResolutionStart the
+        stack code waits for (a creature spell with only ResolutionComplete).
+        "nil" with no resolution means it fizzled: its targets all became
+        illegal (Arena names real counters "Countered"). Either way the spell
+        otherwise stayed pending until a later cleanup printed it, turns late,
+        as an inferred stack exit.
+        """
+        if category == "Resolve":
+            status = "resolved"
+        elif category in (None, "", "nil"):
+            status = "fizzled_targets"
+        else:
+            return
+        item = self.game_state.stack_items.get(self._stack_key(canonical_instance_id))
+        if not isinstance(item, dict) or item.get("status") != "pending":
+            return
+        if item.get("kind") != "spell":
+            return
+        if self._replay_zone_name(zone_src, zones_by_id) != "stack":
+            return
+        self._emit_stack_item_status(canonical_instance_id, status)
+
     def _known_zone_transfer_category(self, category: Optional[str]) -> bool:
         """Return True when the zone-transfer category is intentionally handled."""
         return category in {
@@ -1295,6 +1330,7 @@ class TrackerZoneTransferMixin:
         """Route one zone transfer to its category handler."""
         canonical_instance_id = self._canonical_instance_id(instance_id) or int(instance_id)
         self._observe_library_zone_transfer(card_obj, annotation, zones_by_id, zone_src, zone_dest)
+        self._note_spell_left_stack(category, canonical_instance_id, zone_src, zones_by_id)
 
         if (
             category in ["CastSpell", "PlaySpell", "PlayLand", "Resolve"]
@@ -1311,6 +1347,18 @@ class TrackerZoneTransferMixin:
                 target_objs,
                 deferred_spell_instance_ids,
             )
+
+        if self._handle_extra_zone_transfer(
+            category,
+            card_obj,
+            annotation,
+            game_objects_by_id,
+            zones_by_id,
+            zone_src,
+            zone_dest,
+            affector_id,
+        ):
+            return True
 
         if category in ["Return", "Put"]:
             self._handle_return_or_put_zone_transfer(

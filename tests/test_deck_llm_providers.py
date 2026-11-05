@@ -270,3 +270,50 @@ def test_saving_a_blank_model_stores_blank(deck_ai_settings):
 )
 def test_openai_reasoning_models_get_low_effort(model, effort):
     assert (("low" if deck_llm._wants_low_effort("openai", model) else None)) == effort
+
+
+GAME_COLORS = {
+    "Dedicated Commons (Land)": "WR",
+    "Island (Land)": "U",
+    "Gleaming Splendor (Enchantment)": "W",
+    "Ajani Resolute (Planeswalker)": "W",
+}
+
+
+def test_prompt_lists_card_colors_and_no_copyable_archetype_names():
+    prompt = deck_llm._build_prompt(list(GAME_COLORS), GAME_COLORS)
+    assert "  - Dedicated Commons (Land) [WR]" in prompt
+    assert "Colors seen: White, Blue, Red (WUR)" in prompt
+    assert "Use ONLY colors seen" in prompt
+    # Models copied the old prompt's example names ("Selesnya Enchantments").
+    for example in ("Selesnya Enchantments", "Izzet Control", "Azorius Artifacts"):
+        assert example not in prompt
+    plain = deck_llm._build_prompt(list(GAME_COLORS))
+    assert "Colors seen" not in plain and "[W]" not in plain
+
+
+@pytest.mark.parametrize(
+    "reply, expected",
+    [
+        ("Selesnya Enchantments", None),  # green was never seen
+        ("Boros Enchantments", "Boros Enchantments"),
+        ("Mono-White Enchantments", "Mono-White Enchantments"),  # splashes may be dropped
+        ("Enchantress", "Enchantress"),  # no color word
+    ],
+)
+def test_identify_deck_drops_names_with_unseen_colors(monkeypatch, reply, expected):
+    sent = []
+    monkeypatch.setattr(deck_llm, "_complete_raw", lambda prompt: sent.append(prompt) or reply)
+    assert deck_llm.identify_deck(list(GAME_COLORS), GAME_COLORS) == expected
+    assert len(sent) == 1  # never a second call
+
+
+def test_identify_deck_trusts_names_when_a_card_color_is_unknown(monkeypatch):
+    monkeypatch.setattr(deck_llm, "_complete_raw", lambda prompt: "Selesnya Enchantments")
+    colors = dict(GAME_COLORS, **{"Brand New Card (Creature 3/3)": None})
+    assert deck_llm.identify_deck(list(colors), colors) == "Selesnya Enchantments"
+    # A card missing from the map is unknown too.
+    names = list(GAME_COLORS) + ["Brand New Card (Creature 3/3)"]
+    assert deck_llm.identify_deck(names, GAME_COLORS) == "Selesnya Enchantments"
+    # No colors at all: nothing to check against.
+    assert deck_llm.identify_deck(list(GAME_COLORS)) == "Selesnya Enchantments"

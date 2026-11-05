@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Set
 
 from .annotations import AnnotationDetails
+from .revealed_cards import is_known_card_name
 
 
 class TrackerAbilitiesMixin:
@@ -35,11 +36,12 @@ class TrackerAbilitiesMixin:
             or source_obj.get("ownerSeatId")
         )
         ability_grp_id = ability_obj.get("grpId")
-        ability_text = (
-            self.card_db.get_card_ability_text(int(source_grp_id), int(ability_grp_id))
-            if source_grp_id is not None and ability_grp_id is not None
-            else None
-        )
+        if self._is_activated_ability_grp(ability_grp_id):
+            # Arena can put an activated ability on the stack one message before
+            # its UserActionTaken (Station: the creature to tap is chosen in
+            # between). That annotation prints it; printing here too doubled it.
+            return
+        ability_text = self._ability_text_for(source_grp_id, ability_grp_id)
         if (
             source_grp_id is not None
             and owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
@@ -66,6 +68,38 @@ class TrackerAbilitiesMixin:
                 kind="ability",
                 turn_override=turn_override,
             )
+
+    def _ability_text_for(self, source_grp_id: Any, ability_grp_id: Any) -> Optional[str]:
+        """Return an ability's text, looked up on its source card first.
+
+        Some abilities are not in their source's own ability list: a
+        planeswalker token's loyalty abilities, or the delayed trigger one
+        creates. Arena's ability table still has their text, so fall back to
+        it, but only for a source with a real name (never a "Card #N" holder).
+        """
+        if source_grp_id is None or ability_grp_id is None:
+            return None
+        text = self.card_db.get_card_ability_text(int(source_grp_id), int(ability_grp_id))
+        if text:
+            return text
+        get_text = getattr(self.card_db, "get_ability_text", None)
+        text = get_text(int(ability_grp_id)) if callable(get_text) else None
+        if not isinstance(text, str) or not text.strip():
+            return None
+        card_name = self.card_db.get_card_name(int(source_grp_id))
+        if not is_known_card_name(card_name):
+            return None
+        return text.strip().replace("CARDNAME", card_name)
+
+    def _is_activated_ability_grp(self, ability_grp_id: Any) -> bool:
+        """True when Arena's card DB marks this abilityGrpId as an activated ability."""
+        lookup = getattr(self.card_db, "is_activated_ability", None)
+        if ability_grp_id is None or not callable(lookup):
+            return False
+        try:
+            return bool(lookup(int(ability_grp_id)))
+        except (TypeError, ValueError):
+            return False
 
     def _handle_ability_instance_deleted(self, affected_ids: List[int]) -> None:
         """Clear ability instance metadata once Arena deletes the instance."""
@@ -113,11 +147,7 @@ class TrackerAbilitiesMixin:
         )
         source_grp_id = source_obj.get("grpId")
         owner_seat = source_obj.get("ownerSeatId")
-        ability_text = (
-            self.card_db.get_card_ability_text(int(source_grp_id), int(ability_grp_id))
-            if source_grp_id is not None and ability_grp_id is not None
-            else None
-        )
+        ability_text = self._ability_text_for(source_grp_id, ability_grp_id)
         if not (
             source_obj
             and owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
@@ -194,11 +224,7 @@ class TrackerAbilitiesMixin:
         source_obj = self._lookup_object(source_instance_id, game_objects_by_id)
         source_grp_id = source_obj.get("grpId")
         owner_seat = source_obj.get("ownerSeatId")
-        ability_text = (
-            self.card_db.get_card_ability_text(int(source_grp_id), int(resolution_grp_id))
-            if source_grp_id is not None
-            else None
-        )
+        ability_text = self._ability_text_for(source_grp_id, resolution_grp_id)
         if not (
             owner_seat in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
             and self._should_log_ability_text(source_obj, ability_text)
@@ -216,6 +242,10 @@ class TrackerAbilitiesMixin:
             else []
         )
         target_str = self._format_target_suffix(target_id, target_obj, target_objs)
+        if "target" not in normalized_ability_text.lower():
+            # One mode of a modal trigger resolves at a time; a mode that
+            # targets nothing must not borrow another mode's target.
+            target_str = ""
         resolution_label = f"[{self.card_db.get_card_name(int(source_grp_id))}] - {normalized_ability_text}{target_str}"
         if self._emit_stack_item_status(
             ability_instance_id,
@@ -411,17 +441,19 @@ class TrackerAbilitiesMixin:
         ability_obj = self._lookup_object(ability_instance_id, game_objects_by_id)
         source_obj = self._lookup_object(source_instance_id, game_objects_by_id)
         target_id = int(affected_ids[0])
+        if int(tapped) == 1 and self._canonical_instance_id(
+            target_id
+        ) == self._canonical_instance_id(source_instance_id):
+            # The source tapping itself is its own {T} cost, already in the
+            # ability's text ("tap, Sacrifice this artifact: ...").
+            return
         target_obj = self._lookup_object(target_id, game_objects_by_id)
         if not source_obj or not target_obj:
             return
 
         source_grp_id = source_obj.get("grpId") or ability_obj.get("objectSourceGrpId")
         ability_grp_id = ability_obj.get("grpId")
-        ability_text = (
-            self.card_db.get_card_ability_text(int(source_grp_id), int(ability_grp_id))
-            if source_grp_id is not None and ability_grp_id is not None
-            else None
-        )
+        ability_text = self._ability_text_for(source_grp_id, ability_grp_id)
         if not self._should_log_ability_text(source_obj, ability_text):
             return
 

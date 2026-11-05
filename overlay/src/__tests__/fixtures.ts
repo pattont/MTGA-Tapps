@@ -72,6 +72,11 @@ export function idlePayload(): OverlayPayload {
   };
 }
 
+/** A session of 6–2: 2–1 on the play, 4–1 on the draw. */
+export function sessionRecord(): NonNullable<OverlayPayload['session']> {
+  return { games: 8, wins: 6, losses: 2, draws: 0, win_rate: 75, play: { wins: 2, losses: 1 }, draw: { wins: 4, losses: 1 } };
+}
+
 export function offlinePayload(): OverlayPayload {
   return { tracker: { state: 'offline', updated_at: null, session_id: null }, state: null, head_to_head: null };
 }

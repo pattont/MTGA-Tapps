@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { fetchAllGames, type AllGamesRow } from '../api';
 import { formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone, shortFormatLabel } from '../format';
 import { quickFilterPredicate } from '../quickFilters';
+import { sortRows, type SortDirection } from '../sort';
 import { REPLAY_ROUTE_HASH, replayRouteHash } from '../routes';
 import { Badge } from './Badge';
 import { ColorPips } from './ColorPips';
@@ -9,6 +10,7 @@ import { FormatQuickFilters } from './FormatQuickFilters';
 import { replayState, replayStateLabel, replayStateTitle } from '../replayAvailability';
 import { ReplayLink } from './ReplayLink';
 import { Section } from './Section';
+import { TablePagination } from './TablePagination';
 
 export const REPLAY_LIST_PAGE_SIZE = 25;
 
@@ -30,15 +32,41 @@ function formatCell(row: AllGamesRow): string {
   return (row.best_of ?? 1) > 1 && row.game_number ? `${label} · Game ${row.game_number}` : label;
 }
 
+type SortValue = string | number | null | undefined;
+
+interface ReplayColumn {
+  id: string;
+  header: string;
+  className?: string;
+  sortValue?: (row: AllGamesRow) => SortValue;
+}
+
+const REPLAY_STATE_ORDER = { recorded: 0, reconstructed: 1, unavailable: 2 } as const;
+
+const REPLAY_COLUMNS: ReplayColumn[] = [
+  { id: 'date', header: 'Date', sortValue: (row) => row.started_at },
+  { id: 'result', header: 'Result', className: 'center', sortValue: (row) => outcomeLabel(row.outcome) },
+  { id: 'deck', header: 'Deck', sortValue: (row) => row.deck_name },
+  { id: 'opponent', header: 'Opponent', sortValue: (row) => opponentLabel(row) },
+  { id: 'format', header: 'Format', sortValue: (row) => formatCell(row) },
+  { id: 'turns', header: 'Turns', className: 'num replay-col-turns', sortValue: (row) => row.total_turns },
+  { id: 'duration', header: 'Duration', className: 'num', sortValue: (row) => row.duration_seconds },
+  { id: 'replay', header: 'Replay', sortValue: (row) => REPLAY_STATE_ORDER[replayState(row.replay)] },
+  { id: 'watch', header: 'Watch' },
+];
+
+const DEFAULT_SORT: { id: string; direction: SortDirection } = { id: 'date', direction: 'desc' };
+
 /**
  * `#/replay`: pick a game to watch. Reuses the All Games endpoint (rows carry
- * `replay` availability) — newest first, 25 at a time.
+ * `replay` availability) — newest first, 25 to a page.
  */
 export function ReplayListPage() {
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
   const [quickFilter, setQuickFilter] = useState('all');
   const [deckQuery, setDeckQuery] = useState('');
-  const [visibleCount, setVisibleCount] = useState(REPLAY_LIST_PAGE_SIZE);
+  const [page, setPage] = useState(1);
+  const [sort, setSort] = useState(DEFAULT_SORT);
   const [retryToken, setRetryToken] = useState(0);
 
   useEffect(() => {
@@ -62,12 +90,37 @@ export function ReplayListPage() {
   const filtered = useMemo(() => {
     const matchesQuick = quickFilterPredicate(quickFilter);
     const needle = deckQuery.trim().toLocaleLowerCase();
-    return games
+    // Newest first underneath, so ties in any other column stay in date order.
+    const newestFirst = games
       .filter((row) => matchesQuick(row.format_label.toLocaleLowerCase()))
       .filter((row) => !needle || row.deck_name.toLocaleLowerCase().includes(needle))
       .sort((a, b) => (b.started_at ?? '').localeCompare(a.started_at ?? ''));
-  }, [deckQuery, games, quickFilter]);
-  const shown = filtered.slice(0, visibleCount);
+    const column = REPLAY_COLUMNS.find((item) => item.id === sort.id);
+    if (!column?.sortValue || (sort.id === 'date' && sort.direction === 'desc')) {
+      return newestFirst;
+    }
+    const valueOf = column.sortValue;
+    return sortRows(
+      newestFirst.map((row) => ({ row, value: valueOf(row) })),
+      'value',
+      sort.direction,
+    ).map(({ row }) => row);
+  }, [deckQuery, games, quickFilter, sort]);
+
+  function toggleSort(id: string) {
+    setPage(1);
+    setSort((current) =>
+      current.id === id
+        ? { id, direction: current.direction === 'asc' ? 'desc' : 'asc' }
+        : { id, direction: 'asc' },
+    );
+  }
+  const pageCount = Math.max(1, Math.ceil(filtered.length / REPLAY_LIST_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const shown = filtered.slice(
+    (currentPage - 1) * REPLAY_LIST_PAGE_SIZE,
+    currentPage * REPLAY_LIST_PAGE_SIZE,
+  );
 
   function openRow(row: AllGamesRow, event: MouseEvent<HTMLTableRowElement>) {
     if ((event.target as HTMLElement).closest('a, button')) {
@@ -119,7 +172,7 @@ export function ReplayListPage() {
                 value={quickFilter}
                 onChange={(id) => {
                   setQuickFilter(id);
-                  setVisibleCount(REPLAY_LIST_PAGE_SIZE);
+                  setPage(1);
                 }}
               />
               <div className="replay-list-controls">
@@ -130,36 +183,57 @@ export function ReplayListPage() {
                   value={deckQuery}
                   onChange={(event) => {
                     setDeckQuery(event.target.value);
-                    setVisibleCount(REPLAY_LIST_PAGE_SIZE);
+                    setPage(1);
                   }}
                 />
               </div>
               {filtered.length === 0 ? (
                 <p className="empty-state">No games match these filters.</p>
               ) : (
-                <div className="table-container">
+                <div
+                  className={
+                    pageCount > 1 ? 'table-container table-container-paginated' : 'table-container'
+                  }
+                >
                   <div className="table-wrap replay-list-table" role="region" aria-label="Games to replay" tabIndex={0}>
                     <table>
                       <caption>Games to replay</caption>
                       <thead>
                         <tr>
-                          <th scope="col">Date</th>
-                          <th scope="col" className="center">
-                            Result
-                          </th>
-                          <th scope="col">Deck</th>
-                          <th scope="col">Opponent</th>
-                          <th scope="col">Format</th>
-                          <th scope="col" className="num replay-col-turns">
-                            Turns
-                          </th>
-                          <th scope="col" className="num">
-                            Duration
-                          </th>
-                          <th scope="col">Replay</th>
-                          <th scope="col">
-                            <span className="visually-hidden">Watch</span>
-                          </th>
+                          {REPLAY_COLUMNS.map((column) => {
+                            const active = sort.id === column.id;
+                            return (
+                              <th
+                                key={column.id}
+                                scope="col"
+                                className={column.className}
+                                aria-sort={
+                                  !column.sortValue
+                                    ? undefined
+                                    : active
+                                      ? sort.direction === 'asc'
+                                        ? 'ascending'
+                                        : 'descending'
+                                      : 'none'
+                                }
+                              >
+                                {column.sortValue ? (
+                                  <button
+                                    className={active ? 'table-sort table-sort-active' : 'table-sort'}
+                                    type="button"
+                                    onClick={() => toggleSort(column.id)}
+                                  >
+                                    {column.header}
+                                    <span className="table-sort-icon" aria-hidden="true">
+                                      {active ? (sort.direction === 'asc' ? '↑' : '↓') : '↕'}
+                                    </span>
+                                  </button>
+                                ) : (
+                                  <span className="visually-hidden">{column.header}</span>
+                                )}
+                              </th>
+                            );
+                          })}
                         </tr>
                       </thead>
                       <tbody>
@@ -211,20 +285,19 @@ export function ReplayListPage() {
                       </tbody>
                     </table>
                   </div>
-                </div>
-              )}
-              {filtered.length > 0 ? (
-                <div className="replay-list-more">
-                  <span>
-                    Showing {shown.length} of {filtered.length}
-                  </span>
-                  {shown.length < filtered.length ? (
-                    <button type="button" onClick={() => setVisibleCount((count) => count + REPLAY_LIST_PAGE_SIZE)}>
-                      Show more
-                    </button>
+                  {pageCount > 1 ? (
+                    <TablePagination
+                      caption="Games to replay"
+                      currentPage={currentPage}
+                      pageCount={pageCount}
+                      pageSize={REPLAY_LIST_PAGE_SIZE}
+                      totalRows={filtered.length}
+                      fullControls
+                      onPageChange={(next) => setPage(Math.min(Math.max(next, 1), pageCount))}
+                    />
                   ) : null}
                 </div>
-              ) : null}
+              )}
             </>
           )}
         </Section>

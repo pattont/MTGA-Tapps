@@ -674,7 +674,7 @@ def test_brawl_fixture_uses_command_zone_tokens_and_blocks():
     assert any(e["kind"] == "move" and e["from"] == "command" for e in stream["events"])
     assert any(e["kind"] == "move" and e["reason"] == "token_create" for e in stream["events"])
     assert stream["seats"]["2"]["commanders"] and stream["seats"]["1"]["commanders"]
-    assert stream["game"]["format"] == "Historic Brawl"
+    assert stream["game"]["format"] == "Brawl"
 
 
 def test_mulligan_counter_fixture():

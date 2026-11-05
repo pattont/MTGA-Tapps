@@ -24,6 +24,22 @@ export function formatDateTime(value: string): string {
   return formatted.replace(/\s([AaPp])\.?\s?[Mm]\.?$/, (_, letter: string) => `${letter.toUpperCase()}M`);
 }
 
+/** How long ago a timestamp was, in calendar days: "today", "yesterday", "3 days ago", "2 months ago". */
+export function formatTimeAgo(value: string, now: Date = new Date()): string | null {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 14) return `${days} days ago`;
+  if (days < 60) return `${Math.floor(days / 7)} weeks ago`;
+  if (days < 730) return `${Math.floor(days / 30)} months ago`;
+  return `${Math.floor(days / 365)} years ago`;
+}
+
 export function formatDuration(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined) {
     return '—';

@@ -429,6 +429,48 @@ def test_dashboard_handler_serves_snapshot_json(tmp_path):
     assert payload["recent"][0]["format_label"] == "Standard Best-of-1 (Unranked)"
 
 
+def test_dashboard_handler_treats_a_dropped_keep_alive_connection_as_a_close(tmp_path):
+    """Regression: a client resetting an idle keep-alive connection (the
+    overlay quitting with Arena) printed a socketserver traceback."""
+    import socket
+    import struct
+    from threading import Event
+
+    db_path = _sample_dashboard_db(tmp_path)
+    done = Event()
+    base = _dashboard_handler_for(db_path)
+
+    class Handler(base):
+        def handle(self):
+            try:
+                super().handle()
+            finally:
+                done.set()
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    errors = []
+    server.handle_error = lambda request, address: errors.append(address)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        client = socket.create_connection(server.server_address)
+        client.sendall(b"GET /api/snapshot HTTP/1.1\r\nHost: x\r\n\r\n")
+        reply = b""
+        while b"\r\n\r\n" not in reply:
+            reply += client.recv(65536)
+        # Linger 0 makes close() send a reset while the server waits for the next request.
+        client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        client.close()
+        assert done.wait(5)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert reply.startswith(b"HTTP/1.1 200")
+    assert errors == []
+
+
 def test_dashboard_handler_serves_opponents_list(tmp_path):
     """Regression: the /api/opponents dispatch read db_path off the wrong
     object (self.server.db_path) and every request 500'd on the real server."""
@@ -1084,6 +1126,23 @@ def test_deck_detail_applies_format_filter_to_all_sections(tmp_path):
     assert [row["display_name"] for row in detail["card_performance"]] == ["Ladder Specialist"]
     assert [row["display_name"] for row in detail["opening_hands"]] == ["Ladder Specialist"]
     assert detail["card_performance"][0]["times_drawn"] == 1
+
+
+def test_deck_last_played_comes_from_recorded_games(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+
+    deck = dashboard_snapshot(db_path)["decks"][0]
+    assert deck["deck_name"] == "Boros Mouse"
+    assert deck["last_played"] == "2026-06-04T00:10:00"
+
+    # The deck page's "Last played" describes the deck, not the page filters.
+    filtered = deck_detail(db_path, "Boros Mouse", since="2026-06-04", until="2026-06-04")
+    assert filtered["last_played"] == "2026-06-04T00:10:00"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("update games set started_at = '2026-06-05T09:00:00' where id = 'game-2'")
+    assert deck_detail(db_path, "Boros Mouse", since="2026-06-04", until="2026-06-04")[
+        "last_played"
+    ] == "2026-06-05T09:00:00"
 
 
 def test_deck_detail_rejects_unknown_deck(tmp_path):

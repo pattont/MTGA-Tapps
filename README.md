@@ -102,8 +102,8 @@ game.
 
 **Brawl, done properly.** Commanders are tracked from the command zone of
 every Brawl game — yours and your opponent's. The Brawl section on the
-Overview shows your overall and per-queue record (Historic Brawl, Brawl
-(Ranked), Standard Brawl), **Best Commander** and **Toughest Opponent
+Overview shows your overall and per-queue record (Brawl, Brawl (Ranked),
+Standard Brawl), **Best Commander** and **Toughest Opponent
 Commander** boxes with card art, and **Your Commanders** / **Faced
 Commanders** win-rate tables, because Brawl players think in commanders, not
 deck names. Game pages open with a commander-vs-commander strip; deck pages
@@ -207,6 +207,11 @@ beside the panel with its next-draw, within-2 and within-3 odds. Lands fold
 into one row, the sideboard is a row, and in Brawl the cards already drawn
 collapse into a **Drawn** group. When the game ends the final library stays
 up, marked **FINAL**, until you leave the results screen.
+
+The foot of the panel shows this session's record: wins–losses, win rate, and
+your win rate on the play and on the draw. It stays up between games. Pick
+**One line** (the default), **Split** (a win/loss bar with the Play and Draw
+records under it) or **Off** under **Session record** in the ⚙ menu.
 
 Pin the panel to keep it out, or leave it unpinned and the rail unfolds it on
 hover and folds it back a few seconds after the cursor leaves. Scale,
@@ -357,11 +362,21 @@ Open a saved deck to inspect its list and revisions. **Copy deck list** works
 with Arena's normal Import button on macOS and Windows; a full native backup
 can also be downloaded for later restoration.
 
+Select two decks and click **Compare** to see what sets similar lists apart:
+how much of the main deck they share, the cards only one of them has (with
+extra copies counted), and the cards in both.
+
 ![Saved deck detail with revision and Arena actions](docs/images/deck-manager-detail.png)
 
 On Apple Silicon Macs and 64-bit Windows, explicit Deck Manager jobs can read
 Arena's current roster, back up selected or all decks, move a deck into the
-local collection, restore a full backup, and add an importable list. The
+local collection or to Trash, restore an exact copy, and add an importable list.
+Saved decks are marked **Exact copy** (read from Arena; it goes back exactly, with
+card styles and deck art) or **Deck list** (just the cards, added as a new deck).
+Click an Arena deck to see its cards as Arena last reported them, with when
+Arena says it was last modified and played (both tabs can sort by these; the
+Arena tab starts newest edit first, with your Arena favorites in their own section,
+and a star on each Arena deck adds or removes it from Arena's favorites). The
 dashboard shows transfer progress and asks for confirmation before removing
 a deck from Arena; interrupted transfers have a reconciliation step. This
 direct Arena integration is beta: it is tested on Apple Silicon Macs and
@@ -408,7 +423,8 @@ priced as their paper originals.
 **Options** narrow what you buy:
 
 - **Board checkboxes** — Main Deck and Sideboard (plus Commander, Companion or
-  Maybeboard when the deck has them) on one line.
+  Maybeboard when the deck has them) on one line. A deck without a sideboard
+  shows Sideboard greyed out.
 - **Include set codes** — asks the store for the printings priced here, where
   the store supports it; otherwise the store picks the printing.
 - **Skip basic lands** — leaves out Plains, Island, Swamp, Mountain, Forest and

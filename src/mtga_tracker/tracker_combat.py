@@ -128,7 +128,6 @@ class TrackerCombatMixin:
         self.game_state.blockers = {}
         self.game_state.current_combat_attackers = {}
         self.game_state.current_combat_blockers = {}
-        self.game_state.combat_damage_events = []
         self.game_state.reported_block_pairs = set()
         self.game_state.recent_combat_returns = []
 
@@ -141,7 +140,6 @@ class TrackerCombatMixin:
             return False
         if not self.game_state.combat_phase_active:
             return False
-        self._display_combat_summary()
         self.game_state.combat_phase_active = False
         self._clear_combat_tracking()
         return True
@@ -325,25 +323,6 @@ class TrackerCombatMixin:
 
                 if attacker_id not in blocker_targets:
                     blocker_targets.append(attacker_id)
-
-    def _display_combat_summary(self):
-        """Display a summary of combat after it ends."""
-        if (
-            not self.game_state.current_combat_attackers
-            and not self.game_state.combat_damage_events
-        ):
-            return
-
-        # Show combat summary if we have significant combat activity
-        if self.game_state.combat_damage_events:
-            self._print_line("\n" + self._style("⚔️ Combat Summary:", "attack"))
-            for event in self.game_state.combat_damage_events:
-                if event.get("source"):
-                    self._print_event(
-                        f"   [{event['source']}] → [{event['target']}] ({event['target_owner']}): {event['amount']} damage",
-                        "combat_damage",
-                    )
-            self._print_line()
 
     def _handle_attacker_declared(
         self, affected_ids: List[int], game_objects: List[Dict[str, Any]]
@@ -564,6 +543,8 @@ class TrackerCombatMixin:
         damage_amount = None
         source_id = None
         is_combat_damage = False
+        # Arena's DamageDealt "type": 1 is combat damage, 2 is not.
+        arena_damage_type = None
         game_objects_by_id = {
             obj.get("instanceId"): obj
             for obj in game_objects
@@ -579,6 +560,8 @@ class TrackerCombatMixin:
                 is_combat_damage = (
                     detail.get("valueBool", [False])[0] or detail.get("valueInt32", [0])[0] == 1
                 )
+            elif detail.get("key") == "type":
+                arena_damage_type = (detail.get("valueInt32") or [None])[0]
 
         if source_id is None:
             source_id = annotation.get("affectorId")
@@ -590,8 +573,10 @@ class TrackerCombatMixin:
         )
         source_card_types = source_obj.get("cardTypes") or []
 
+        if arena_damage_type == 1:
+            is_combat_damage = True
         # Spells can deal damage during combat, but that is not combat damage.
-        if self.game_state.combat_phase_active and not is_combat_damage:
+        if self.game_state.combat_phase_active and not is_combat_damage and arena_damage_type != 2:
             if source_id is None:
                 is_combat_damage = True
             elif (
@@ -651,18 +636,11 @@ class TrackerCombatMixin:
                             "your" if owner_seat == self.game_state.player_seat_id else "opponent's"
                         )
 
-                        # Find source if available
+                        # Name the source. Attackers are rarely in the damage
+                        # message itself, so source_obj falls back to snapshots.
                         source_name = None
-                        if source_id:
-                            for candidate_source_obj in game_objects:
-                                if candidate_source_obj.get("instanceId") == source_id:
-                                    source_name = self._object_display_label(
-                                        candidate_source_obj, source_id
-                                    )
-                                    source_seat = candidate_source_obj.get("controllerSeatId")
-                                    if source_seat is None:
-                                        source_seat = candidate_source_obj.get("ownerSeatId")
-                                    break
+                        if source_id and source_obj.get("grpId"):
+                            source_name = self._object_display_label(source_obj, source_id)
                         self._record_damage_dealt(
                             int(damage_amount),
                             source_seat,
@@ -679,16 +657,6 @@ class TrackerCombatMixin:
                         )
 
                         if is_combat_damage:
-                            # Store for combat summary
-                            self.game_state.combat_damage_events.append(
-                                {
-                                    "source": source_name,
-                                    "target": target_label,
-                                    "target_owner": owner,
-                                    "amount": damage_amount,
-                                }
-                            )
-
                             event_seat = (
                                 source_seat
                                 if source_seat

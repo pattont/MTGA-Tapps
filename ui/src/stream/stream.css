@@ -217,10 +217,41 @@ html.sk-preview .sk:has(.sko) {
   white-space: nowrap;
 }
 
-.sk-row-cost .mana-cost {
+/* The overlay's mana symbols, sized in em: 1em is one pip. */
+.sk-row-cost .mana {
   display: inline-flex;
-  gap: 0.08em;
-  font-size: 0.78em;
+  gap: 0.15em;
+  align-items: center;
+  font-size: 0.85em;
+}
+
+.sk-row-cost .mana img {
+  width: 1em;
+  height: 1em;
+  filter: drop-shadow(0 0.08em 0.08em rgb(0 0 0 / 45%));
+}
+
+.sk-row-cost .mana .gen {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  min-width: calc(1em / 0.7);
+  height: calc(1em / 0.7);
+  padding: 0 0.28em;
+  border-radius: 1em;
+  background: #cbd5d9;
+  color: #1a1f24;
+  font-size: 0.7em;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.sk-row-cost .mana .gen.hybrid {
+  min-width: calc(1em / 0.65);
+  height: calc(1em / 0.65);
+  font-size: 0.65em;
+  letter-spacing: -0.02em;
 }
 
 .sk-row-odds {
@@ -845,16 +876,39 @@ html.sk-preview .sk:has(.sko) {
   color: var(--text);
 }
 
+/* Mana costs: overlay/src/styles.css .mana, verbatim. */
 .sko .mana {
-  display: flex;
-  align-items: center;
-  height: 11px;
-  font-size: 10px;
-}
-
-.sko .mana .mana-cost {
   display: inline-flex;
   gap: 2px;
+  align-items: center;
+  min-width: 0;
+  height: 11px;
+}
+
+.sko .mana img {
+  width: 10px;
+  height: 10px;
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 45%));
+}
+
+.sko .mana .gen {
+  min-width: 10px;
+  height: 10px;
+  padding: 0 2px;
+  border-radius: 5px;
+  background: #cbd5d9;
+  color: #1a1f24;
+  font-style: normal;
+  font-size: 7px;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+}
+
+.sko .mana .gen.hybrid {
+  font-size: 6.5px;
+  letter-spacing: -0.02em;
 }
 
 .sko .pct {

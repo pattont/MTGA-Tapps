@@ -5,14 +5,25 @@ from __future__ import annotations
 import ctypes
 import os
 import re
+import signal
+import socket
 import sqlite3
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import quote
 
-from PyQt6.QtCore import QLockFile, QObject, QPoint, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import (
+    QLockFile,
+    QObject,
+    QPoint,
+    QSocketNotifier,
+    Qt,
+    QTimer,
+    QUrl,
+    pyqtSignal,
+)
 from PyQt6.QtGui import (
     QAction,
     QCloseEvent,
@@ -750,6 +761,54 @@ class MenuBarController(QObject):
         self.tray.hide()
 
 
+def _install_ctrl_c_quit(app: QApplication) -> Optional[Callable[[], None]]:
+    """Source runs: Ctrl+C in the launching terminal quits like the menu's
+    Quit, running the normal shutdown.
+
+    Without this, Python raises KeyboardInterrupt inside whatever Qt callback
+    runs next, and PyQt aborts the process. Nothing polls: the OS writes the
+    signal number to a socket, which wakes the Qt event loop so Python's
+    handler runs. A second Ctrl+C during shutdown is ignored. Frozen builds
+    have no terminal and skip this. The sockets and notifier are kept on the
+    app; garbage-collecting them would leave Ctrl+C writing to a closed
+    socket. Returns a function that restores the previous handlers (tests)."""
+    if getattr(sys, "frozen", False):
+        return None
+    reader, writer = socket.socketpair()
+    try:
+        reader.setblocking(False)
+        writer.setblocking(False)
+        previous_fd = signal.set_wakeup_fd(writer.fileno())
+        previous_handler = signal.signal(signal.SIGINT, lambda *_: app.quit())
+    except (OSError, ValueError):  # not the main thread, or no SIGINT here
+        reader.close()
+        writer.close()
+        return None
+
+    def drain() -> None:
+        # Python runs the SIGINT handler (app.quit) as soon as this slot
+        # gives it control; the socket's bytes only need clearing.
+        try:
+            reader.recv(64)
+        except OSError:
+            pass
+
+    notifier = QSocketNotifier(reader.fileno(), QSocketNotifier.Type.Read, app)
+    notifier.activated.connect(drain)
+
+    def restore() -> None:
+        notifier.setEnabled(False)
+        notifier.deleteLater()
+        signal.signal(signal.SIGINT, previous_handler)
+        signal.set_wakeup_fd(previous_fd)
+        reader.close()
+        writer.close()
+        app._mtga_ctrl_c = None
+
+    app._mtga_ctrl_c = (reader, writer, notifier, drain, restore)
+    return restore
+
+
 def run_menu_app(args: Any) -> int:
     _set_macos_process_name(_APP_NAME)
     raise_open_file_limit()
@@ -782,6 +841,9 @@ def run_menu_app(args: Any) -> int:
     if not app_icon.isNull():
         app.setWindowIcon(app_icon)
     app.setQuitOnLastWindowClosed(False)
+    # Before start(): a Ctrl+C while starting waits in the socket and quits
+    # once the event loop runs.
+    _install_ctrl_c_quit(app)
     controller = MenuBarController(app, args)
     controller.start()
     return app.exec()
