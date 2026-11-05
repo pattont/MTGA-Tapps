@@ -110,6 +110,12 @@ class TrackerStackMixin:
             status_text = "[left stack without resolving - inferred]"
             style = "stack_fail"
             stat_key = "fizzled"
+        elif status == "fizzled_targets":
+            # Arena moved it off the stack unresolved: its targets were gone.
+            status_text = "[fizzled]"
+            style = "stack_fail"
+            stat_key = "fizzled"
+            status = "fizzled"
         else:
             return False
 

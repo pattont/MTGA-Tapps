@@ -107,6 +107,7 @@ export function defaultSettings(): Settings {
     lands: 'grouped',
     density: 'comfortable',
     nameColor: 'type',
+    sessionRecord: 'scoreboard',
     followArena: true,
     hideWhenArenaNotInFront: true,
     apiUrl: 'http://127.0.0.1:8765',

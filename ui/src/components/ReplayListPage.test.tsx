@@ -78,7 +78,9 @@ describe('ReplayListPage', () => {
     render(<ReplayListPage />);
     await screen.findByRole('table', { name: 'Games to replay' });
     const table = screen.getByRole('table', { name: 'Games to replay' });
-    const headers = within(table).getAllByRole('columnheader').map((th) => th.textContent);
+    const headers = within(table)
+      .getAllByRole('columnheader')
+      .map((th) => th.textContent?.replace(/[↑↓↕]/g, ''));
     expect(headers).toContain('Opponent');
     expect(headers.indexOf('Opponent')).toBe(headers.indexOf('Deck') + 1);
     const [second, first] = bodyRows();
@@ -120,16 +122,82 @@ describe('ReplayListPage', () => {
     expect(screen.getByText('No games match these filters.')).toBeInTheDocument();
   });
 
-  it('pages 25 at a time with Show more', async () => {
-    stubGames(Array.from({ length: 30 }, (_, index) => row(index)));
+  it('pages 25 at a time with numbered pages and a page jump', async () => {
+    stubGames(Array.from({ length: 80 }, (_, index) => row(index)));
     render(<ReplayListPage />);
     await screen.findByRole('table', { name: 'Games to replay' });
+    const pager = screen.getByRole('navigation', { name: 'Games to replay pagination' });
+    const firstIds = () => bodyRows().map((tr) => tr.getAttribute('data-game-id'));
     expect(bodyRows()).toHaveLength(25);
-    expect(screen.getByText('Showing 25 of 30')).toBeInTheDocument();
+    expect(within(pager).getByText('Showing 1-25 of 80')).toBeInTheDocument();
+    expect(within(pager).getByText('Page 1 of 4')).toBeInTheDocument();
+    const pageOne = firstIds();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
-    expect(bodyRows()).toHaveLength(30);
+    fireEvent.click(within(pager).getByRole('button', { name: 'Next page' }));
+    expect(within(pager).getByText('Showing 26-50 of 80')).toBeInTheDocument();
+    expect(firstIds()).not.toEqual(pageOne);
+
+    fireEvent.click(within(pager).getByRole('button', { name: 'Last page' }));
+    expect(bodyRows()).toHaveLength(5);
+    expect(within(pager).getByRole('button', { name: 'Page 4' })).toHaveAttribute('aria-current', 'page');
+
+    fireEvent.change(within(pager).getByLabelText('Go to page'), { target: { value: '2' } });
+    fireEvent.click(within(pager).getByRole('button', { name: 'Go' }));
+    expect(within(pager).getByText('Page 2 of 4')).toBeInTheDocument();
+
+    // A filter change goes back to page one.
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Filter by deck' }), { target: { value: 'o' } });
+    expect(firstIds()).toEqual(pageOne);
     expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument();
+  });
+
+  it('sorts by any column header, newest first by default, and back to page one', async () => {
+    stubGames([
+      row(1, { deck_name: 'Cyan Tempo', total_turns: 12, opponent_name: 'Bea', replay: { state: 'recorded', reason: null } }),
+      row(2, { deck_name: 'Azure Control', total_turns: 6, opponent_name: 'Cal', replay: { state: 'unavailable', reason: 'x' } }),
+      row(3, { deck_name: 'Boros Mouse', total_turns: 9, opponent_name: 'Abe' }),
+      ...Array.from({ length: 30 }, (_, index) => row(10 + index, { deck_name: 'Zoo', total_turns: 20 })),
+    ]);
+    render(<ReplayListPage />);
+    const table = await screen.findByRole('table', { name: 'Games to replay' });
+    const ids = () => bodyRows().map((tr) => tr.getAttribute('data-game-id'));
+    const header = (name: RegExp) => within(table).getByRole('button', { name });
+
+    expect(within(table).getByRole('columnheader', { name: /^Date/ })).toHaveAttribute('aria-sort', 'descending');
+    expect(ids()[0]).toBe('game-39');
+
+    const pager = screen.getByRole('navigation', { name: 'Games to replay pagination' });
+    fireEvent.click(within(pager).getByRole('button', { name: 'Next page' }));
+    fireEvent.click(header(/^Deck/));
+    expect(within(pager).getByText('Page 1 of 2')).toBeInTheDocument();
+    expect(ids().slice(0, 3)).toEqual(['game-2', 'game-3', 'game-1']);
+    expect(within(table).getByRole('columnheader', { name: /^Deck/ })).toHaveAttribute('aria-sort', 'ascending');
+
+    fireEvent.click(header(/^Turns/));
+    expect(ids().slice(0, 3)).toEqual(['game-2', 'game-3', 'game-1']);
+    fireEvent.click(header(/^Turns/));
+    // Ties (all the 20-turn games) keep newest first.
+    expect(ids().slice(0, 2)).toEqual(['game-39', 'game-38']);
+
+    fireEvent.click(header(/^Opponent/));
+    expect(ids()[0]).toBe('game-3');
+
+    fireEvent.click(header(/^Replay/));
+    expect(ids()[0]).toBe('game-1');
+    fireEvent.click(header(/^Replay/));
+    expect(ids()[0]).toBe('game-2');
+
+    // The watch column has no sort.
+    const watchHeader = within(table).getByRole('columnheader', { name: 'Watch' });
+    expect(within(watchHeader).queryByRole('button')).not.toBeInTheDocument();
+    expect(watchHeader).not.toHaveAttribute('aria-sort');
+  });
+
+  it('hides the pager when everything fits on one page', async () => {
+    stubGames(Array.from({ length: 10 }, (_, index) => row(index)));
+    render(<ReplayListPage />);
+    await screen.findByRole('table', { name: 'Games to replay' });
+    expect(screen.queryByRole('navigation', { name: 'Games to replay pagination' })).not.toBeInTheDocument();
   });
 
   it('opens the replay when a row is clicked, but not for unavailable games', async () => {

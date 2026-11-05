@@ -353,3 +353,28 @@ test('Nullable<Guid> arguments: a boxed Guid or null on Mono, the raw struct on 
   vm.runInContext("nullableGuidArgument('boxed-guid')",context);
   assert.deepEqual(Array.from(bytes.slice(0,20)),[1,0,0,0,...Array.from({length:16},(_,i)=>i+1)]);
 });
+
+test('a plain roster read uses Arena’s own copy and asks the server only when that copy is incomplete',async()=>{
+  const {context}=runtime();
+  context.reads=[];
+  vm.runInContext(`refreshes=0;
+    refreshCache=async()=>{refreshes+=1;};
+    promiseCall=async()=>reads.shift();`,context);
+  const deck=(loaded)=>({arena_id:'a',contents_loaded:loaded});
+  // Every deck's cards are in memory: no server round trip.
+  context.reads.push({decks:[deck(true)],roster_refreshed:true});
+  let report=await vm.runInContext("roster('fixture',false)",context);
+  assert.equal(vm.runInContext('refreshes',context),0);
+  assert.equal(report.roster_refreshed,false);
+  // A deck without loaded cards (Arena just started): refresh, then read again.
+  context.reads.push({decks:[deck(false)],roster_refreshed:true},{decks:[deck(true)],roster_refreshed:true});
+  report=await vm.runInContext("roster('fixture',false)",context);
+  assert.equal(vm.runInContext('refreshes',context),1);
+  assert.equal(report.roster_refreshed,true);
+  assert.equal(report.decks[0].contents_loaded,true);
+  // Jobs that change decks keep the server refresh.
+  context.reads.push({decks:[deck(true)],roster_refreshed:true});
+  report=await vm.runInContext("roster('fixture')",context);
+  assert.equal(vm.runInContext('refreshes',context),2);
+  assert.equal(report.roster_refreshed,true);
+});

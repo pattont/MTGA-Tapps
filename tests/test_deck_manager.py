@@ -612,3 +612,128 @@ def test_saving_an_edited_revision_retains_membership_until_explicit_destination
     assert dm.deck_detail(conn, saved["id"])["collection_id"] == group["id"]
     dm.save_deck(conn, dm.parse_import(TEXT), deck_id=saved["id"], assign_collection=True)
     assert dm.deck_detail(conn, saved["id"])["collection_id"] is None
+
+
+def test_saved_deck_detail_carries_arena_mana_costs_and_types(tmp_path, monkeypatch):
+    class Cards:
+        def mana_cost_index_by_name(self):
+            return {
+                "Lightning Bolt": ("{R}", 1.0),
+                "Fire": ("{1}{R}", 2.0),
+                "Unholy Annex": ("{2}{B}", 3.0),
+                # Arena joins both faces' costs under the full name.
+                "Unholy Annex // Ritual Chamber": ("{2}{B}{3}{B}{B}", 8.0),
+            }
+
+        def list_type_indexes(self):
+            return {7: "Instant", 8: "Land"}, {"Unholy Annex": "Enchantment", "Fire": "Instant"}
+
+    monkeypatch.setattr(api, "_CARD_DB", Cards())
+    info = api._card_info(
+        [
+            {"name": "Lightning Bolt", "arena_id": 7},
+            {"name": "Mountain", "arena_id": 8},
+            {"name": "Fire // Ice", "arena_id": None},
+            {"name": "Unholy Annex / Ritual Chamber", "arena_id": None},
+            {"name": "Unholy Annex // Ritual Chamber", "arena_id": None},
+            {"name": "Unknown card", "arena_id": None},
+        ]
+    )
+    annex = {"mana_cost": "{2}{B}", "mana_value": 3.0, "type": "Enchantment"}
+    assert info == {
+        "Lightning Bolt": {"mana_cost": "{R}", "mana_value": 1.0, "type": "Instant"},
+        "Mountain": {"type": "Land"},
+        "Fire // Ice": {"mana_cost": "{1}{R}", "mana_value": 2.0, "type": "Instant"},
+        "Unholy Annex / Ritual Chamber": annex,
+        "Unholy Annex // Ritual Chamber": annex,
+    }
+    selected = tmp_path / "chosen.db"
+    status, imported = api.handle_post(
+        "/api/deck-manager/import", {"text": "Deck\n4 Lightning Bolt"}, selected
+    )
+    assert status == 200
+    detail = api.handle_get("/api/deck-manager/deck", {"id": [imported["id"]]}, selected)[1]
+    assert detail["card_info"]["Lightning Bolt"]["mana_cost"] == "{R}"
+
+
+def test_library_records_follow_arena_deck_ids_across_renames_and_saved_entries(tmp_path):
+    path = tmp_path / "tracker.sqlite3"
+    conn = dm.library_connection(path)
+    conn.execute("PRAGMA foreign_keys = OFF")
+    games = [
+        ("g1", "arena-1", "Old name", "win"),
+        ("g2", "arena-1", "New name", "win"),
+        ("g3", "arena-1", "New name", "loss"),
+        ("g4", "arena-2", "Rebuilt", "loss"),
+        ("g5", None, "No id", "win"),
+    ]
+    for index, (game, arena_id, name, outcome) in enumerate(games):
+        # Ladder is ranked Best-of-1; Play is unranked.
+        conn.execute(
+            "INSERT INTO matches (id, session_id, format, best_of) VALUES (?, 1, ?, 1)",
+            (index, "Ladder" if game in ("g1", "g4") else "Play"),
+        )
+        conn.execute(
+            "INSERT INTO games (id, session_id, match_id, outcome) VALUES (?, 1, ?, ?)",
+            (game, index, outcome),
+        )
+        # Every game but g3 was on the play.
+        conn.execute(
+            "INSERT INTO participants (game_id, seat_id, role, deck_name, deck_id, went_first)"
+            " VALUES (?, 1, 'player', ?, ?, ?)",
+            (game, name, arena_id, 0 if game == "g3" else 1),
+        )
+        # The opponent's row never counts.
+        conn.execute(
+            "INSERT INTO participants (game_id, seat_id, role, deck_name, deck_id)"
+            " VALUES (?, 2, 'opponent', 'Them', ?)",
+            (game, arena_id),
+        )
+    saved = dm.save_deck(conn, dm.parse_import(TEXT))
+    never = dm.save_deck(conn, dm.parse_import(TEXT.replace("4 Forest", "5 Forest")))
+    # One saved deck has been two Arena decks (moved out and restored under a new id).
+    for arena_id in ("arena-1", "arena-2"):
+        conn.execute(
+            "INSERT INTO managed_deck_bindings (account_key, arena_deck_id, deck_id, observed_at)"
+            " VALUES ('acct', ?, ?, 'now')",
+            (arena_id, saved["id"]),
+        )
+    conn.commit()
+    conn.close()
+
+    library = api.handle_get("/api/deck-manager", {}, path)[1]
+
+    # Counted by Arena deck id, so the rename keeps one record; games without an id are left out.
+    assert library["records"] == {
+        "arena-1": {
+            "wins": 2,
+            "losses": 1,
+            "ranked": {"wins": 1, "losses": 0},
+            "unranked": {"wins": 1, "losses": 1},
+            "play": {"wins": 2, "losses": 0},
+            "draw": {"wins": 0, "losses": 1},
+        },
+        "arena-2": {
+            "wins": 0,
+            "losses": 1,
+            "ranked": {"wins": 0, "losses": 1},
+            "unranked": {"wins": 0, "losses": 0},
+            "play": {"wins": 0, "losses": 1},
+            "draw": {"wins": 0, "losses": 0},
+        },
+    }
+    records = {deck["id"]: deck["record"] for deck in library["decks"]}
+    assert records[saved["id"]] == {
+        "wins": 2,
+        "losses": 2,
+        "ranked": {"wins": 1, "losses": 1},
+        "unranked": {"wins": 1, "losses": 1},
+        "play": {"wins": 2, "losses": 1},
+        "draw": {"wins": 0, "losses": 1},
+    }
+    assert records[never["id"]] is None
+
+
+def test_records_are_empty_without_gameplay_tables():
+    memory = sqlite3.connect(":memory:")
+    assert dm.played_records(memory) == {}

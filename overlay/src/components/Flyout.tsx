@@ -208,6 +208,16 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
         </span>
       </div>
       <div class="r">
+        <span>Session record</span>
+        <span class="seg" role="group" aria-label="Session record">
+          {(['off', 'scoreboard', 'split'] as const).map((style) => (
+            <button key={style} type="button" class={settings.sessionRecord === style ? 'on' : ''} onClick={() => onChange({ ...settings, sessionRecord: style })}>
+              {style === 'off' ? 'Off' : style === 'scoreboard' ? 'One line' : 'Split'}
+            </button>
+          ))}
+        </span>
+      </div>
+      <div class="r">
         <span>Rows</span>
         <span class="seg" role="group" aria-label="Density">
           <button type="button" class={settings.density === 'comfortable' ? 'on' : ''} onClick={() => onChange({ ...settings, density: 'comfortable' })}>

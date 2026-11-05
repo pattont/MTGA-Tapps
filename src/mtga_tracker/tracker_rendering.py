@@ -177,6 +177,8 @@ class TrackerRenderingMixin:
         cleaned = re.sub(r"\{([^{}]+)\}", r"\1", cleaned)
         cleaned = re.sub(r"CLASSLEVEL \[(\d+\+?)\] \[\] \[(.*)\]", r"Level \1: \2", cleaned)
         cleaned = cleaned.replace("oT", "T")
+        # Modal text ("choose two —\n•A\n•B") spans lines; a log line must not.
+        cleaned = re.sub(r"\s*\n\s*", " ", cleaned)
         return cleaned
 
     @staticmethod

@@ -84,3 +84,28 @@ def test_arena_roster_includes_colors_from_main_and_command_zone():
     roster = native._public_roster(json.loads(json.dumps(report)))
     # The sideboard's Lightning Bolt is ignored; the command zone counts.
     assert roster["decks"][0]["colors"] == "WR"
+
+
+def test_an_expired_index_is_served_while_it_rebuilds_in_the_background(monkeypatch):
+    import threading
+    import time
+
+    fresh = ({999: (None, "{G}", "G")}, {})
+    release = threading.Event()
+
+    def slow_build():
+        release.wait(5)
+        return fresh
+
+    monkeypatch.setattr(dc, "_build", slow_build)
+    monkeypatch.setattr(dc, "_BUILT", 0.0)
+    monkeypatch.setattr(dc, "_REFRESHING", False)
+
+    # An Arena deck read never waits on the rebuild: it gets the current index.
+    assert dc._index() == (BY_ID, BY_NAME)
+    assert dc._index() == (BY_ID, BY_NAME)  # one rebuild at a time
+    release.set()
+    deadline = time.monotonic() + 5
+    while dc._index() is not fresh and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert dc._index() is fresh

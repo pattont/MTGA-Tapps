@@ -52,6 +52,40 @@ def test_card_database_resolves_primary_type_category_from_local_db(tmp_path, mo
     assert db.get_card_type_category(111) == "Land"
 
 
+def test_list_type_indexes_place_multi_type_cards_by_id_and_name(tmp_path, monkeypatch):
+    raw_dir = tmp_path / "Raw"
+    raw_dir.mkdir()
+    conn = sqlite3.connect(raw_dir / "Raw_CardDatabase_test.mtga")
+    conn.execute('CREATE TABLE "Cards" ("GrpId" INTEGER, "TitleId" INTEGER, "Types" TEXT)')
+    conn.execute('CREATE TABLE "Localizations_enUS" ("LocId" INTEGER, "Loc" TEXT)')
+    rows = [
+        (1, 11, "1,2", "Steel Overseer"),
+        (2, 12, "5,2", "Dryad Arbor"),
+        (3, 13, "11,4", "<nobr>All-Out</nobr> Assault"),
+        (4, 14, "11", "Kindred Only"),
+        (5, 15, "3", "Unholy Annex"),
+    ]
+    for grp, loc, types, name in rows:
+        conn.execute('INSERT INTO "Cards" VALUES (?, ?, ?)', (grp, loc, types))
+        conn.execute('INSERT INTO "Localizations_enUS" VALUES (?, ?)', (loc, name))
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(
+        card_database,
+        "get_mtga_raw_card_db_folders",
+        lambda mtga_data_dir=None, log_path=None: [raw_dir],
+    )
+
+    by_id, by_name = CardDatabase().list_type_indexes()
+
+    # An artifact creature lists with creatures and a land creature with lands.
+    assert by_id == {1: "Creature", 2: "Land", 3: "Instant", 5: "Enchantment"}
+    assert by_name["All-Out Assault"] == "Instant"
+    assert "Kindred Only" not in by_name
+    # Tracker analytics keep their single-code lookup.
+    assert CardDatabase().get_card_type_category(1) is None
+
+
 def test_new_set_db_dropped_alongside_old_is_picked_up_mid_session(tmp_path, monkeypatch):
     """Set-release day: Arena downloads a NEW Raw_CardDatabase while the old
     one still exists. The cached old path passes exists(), so the miss on a

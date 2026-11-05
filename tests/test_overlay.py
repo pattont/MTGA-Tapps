@@ -262,12 +262,60 @@ def test_overlay_payload_carries_state_and_head_to_head(tmp_path):
     assert payload["head_to_head"] == {"wins": 1, "losses": 0}
 
 
+def test_overlay_payload_carries_session_record_with_play_draw_split(tmp_path):
+    state = idle_overlay_state(game_active=False)
+    db_path = _store_with_live(tmp_path, state, in_game=0)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE tracker_sessions SET games_played = 5, wins = 3, losses = 1, draws = 1 WHERE id = 'S1'"
+        )
+        conn.execute("INSERT INTO matches (id, session_id) VALUES ('m1', 'S1')")
+        # (game, outcome, went_first): unknown turn order and draws stay out of the split.
+        for game_id, outcome, went_first in [
+            ("g1", "win", 1),
+            ("g2", "loss", 1),
+            ("g3", "win", 0),
+            ("g4", "win", None),
+            ("g5", "draw", 0),
+        ]:
+            conn.execute(
+                "INSERT INTO games (id, session_id, match_id, outcome) VALUES (?, 'S1', 'm1', ?)",
+                (game_id, outcome),
+            )
+            conn.execute(
+                "INSERT INTO participants (id, game_id, role, went_first) VALUES (?, ?, 'player', ?)",
+                (f"{game_id}-p", game_id, went_first),
+            )
+        # Another session's game never counts.
+        conn.execute(
+            "INSERT INTO tracker_sessions (id, started_at) VALUES ('S0', '2026-09-03T00:00:00')"
+        )
+        conn.execute("INSERT INTO matches (id, session_id) VALUES ('m0', 'S0')")
+        conn.execute(
+            "INSERT INTO games (id, session_id, match_id, outcome) VALUES ('g0', 'S0', 'm0', 'loss')"
+        )
+        conn.execute(
+            "INSERT INTO participants (id, game_id, role, went_first) VALUES ('g0-p', 'g0', 'player', 0)"
+        )
+    payload = live_api.build_overlay_payload(db_path)
+    assert payload["session"] == {
+        "games": 5,
+        "wins": 3,
+        "losses": 1,
+        "draws": 1,
+        "win_rate": 75.0,
+        "play": {"wins": 1, "losses": 1},
+        "draw": {"wins": 1, "losses": 0},
+    }
+
+
 def test_overlay_payload_drops_state_when_tracker_offline(tmp_path):
     state = idle_overlay_state(game_active=True, deck_name="Skellies")
     db_path = _store_with_live(tmp_path, state, updated_at=datetime(2026, 1, 1))
     payload = live_api.build_overlay_payload(db_path)
     assert payload["tracker"]["state"] == "offline"
     assert payload["state"] is None
+    assert payload["session"] is None
 
 
 def test_overlay_endpoint_etag_304_and_cors(tmp_path):

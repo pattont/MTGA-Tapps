@@ -8,6 +8,7 @@ from .annotations import AnnotationDetails
 from .tracker_event_abilities import TrackerAbilitiesMixin
 from .tracker_event_client_actions import TrackerClientActionsMixin
 from .tracker_event_life import TrackerLifeMixin
+from .tracker_event_reveals import TrackerRevealsMixin
 from .tracker_event_targets import TrackerTargetsMixin
 from .tracker_event_turns import TrackerTurnStateMixin
 
@@ -18,6 +19,7 @@ class TrackerEventsMixin(
     TrackerLifeMixin,
     TrackerTargetsMixin,
     TrackerAbilitiesMixin,
+    TrackerRevealsMixin,
 ):
     """Core event orchestration used by CardTracker."""
 
@@ -66,6 +68,7 @@ class TrackerEventsMixin(
         self,
         annotation: Dict[str, Any],
         user_action_instance_ids: Optional[Set[int]] = None,
+        game_objects_by_id: Optional[Dict[int, Dict[str, Any]]] = None,
     ) -> int:
         """Keep activation lines ahead of cost/result zone transfers emitted in the same payload."""
         ann_types = annotation.get("type", [])
@@ -74,7 +77,16 @@ class TrackerEventsMixin(
         if "AnnotationType_ObjectIdChanged" in ann_types:
             return 0
         if "AnnotationType_AbilityInstanceCreated" in ann_types:
-            return 0
+            # Only an activation goes ahead of the costs it paid. A trigger keeps
+            # Arena's order, after the move that caused it: an enters trigger
+            # moved ahead printed before its land or creature entered.
+            return (
+                0
+                if self._is_activation_annotation(
+                    annotation, user_action_instance_ids, game_objects_by_id
+                )
+                else 10
+            )
         if "AnnotationType_UserActionTaken" in ann_types:
             return 1
         affector_id = annotation.get("affectorId")
@@ -86,6 +98,22 @@ class TrackerEventsMixin(
         ):
             return 2
         return 10
+
+    def _is_activation_annotation(
+        self,
+        annotation: Dict[str, Any],
+        user_action_instance_ids: Optional[Set[int]],
+        game_objects_by_id: Optional[Dict[int, Dict[str, Any]]],
+    ) -> bool:
+        """True when an AbilityInstanceCreated is an activated ability."""
+        affected = annotation.get("affectedIds") or []
+        if not affected or affected[0] is None:
+            return False
+        instance_id = int(affected[0])
+        if instance_id in (user_action_instance_ids or set()):
+            return True
+        ability_obj = (game_objects_by_id or {}).get(instance_id) or {}
+        return self._is_activated_ability_grp(ability_obj.get("grpId"))
 
     def _process_game_events(self, data: Dict[str, Any]):
         """Process and display important game events."""
@@ -162,7 +190,9 @@ class TrackerEventsMixin(
                         in (self.game_state.player_seat_id, self.game_state.opponent_seat_id)
                         else False
                     ),
-                    self._annotation_processing_priority(annotation, user_action_instance_ids),
+                    self._annotation_processing_priority(
+                        annotation, user_action_instance_ids, game_objects_by_id
+                    ),
                 )
             )
             for annotation in annotations:
@@ -177,6 +207,7 @@ class TrackerEventsMixin(
                 )
 
         self._flush_deferred_life_updates()
+        self._flush_revealed_cards(zones_by_id)
         self._reconcile_deleted_stack_items(data.get("diffDeletedInstanceIds"))
         self._reconcile_hidden_hand_changes(data, game_objects_by_id, zones_by_id)
         self._replay_flush_object_changes()
@@ -225,6 +256,8 @@ class TrackerEventsMixin(
             self._count_token_creations(affected_ids, game_objects_by_id)
             return
 
+        if "AnnotationType_RevealedCardCreated" in ann_type:
+            self._note_revealed_cards(affected_ids, game_objects_by_id)
         if self._process_replay_annotation(
             ann_type, annotation, affected_ids, affector_id, details, game_objects_by_id
         ):

@@ -129,6 +129,7 @@ class CardDatabase:
         # One newer-DB re-scan allowed initially; re-armed at each game end.
         self._db_recheck_armed: bool = True
         self._ability_text_cache: Dict[int, Dict[int, str]] = {}
+        self._activated_ability_ids: Optional[frozenset] = None
 
     _17LANDS_CSV_URL = "https://17lands-public.s3.amazonaws.com/analysis_data/cards/cards.csv"
 
@@ -1000,6 +1001,63 @@ class CardDatabase:
         "Number",
     )
 
+    # A card list's type heading for each of Arena's type codes, best first:
+    # an artifact creature lists with creatures, a land creature with lands.
+    _LIST_TYPE_PRIORITY = (
+        ("5", "Land"),
+        ("2", "Creature"),
+        ("8", "Planeswalker"),
+        ("14", "Battle"),
+        ("4", "Instant"),
+        ("10", "Sorcery"),
+        ("1", "Artifact"),
+        ("3", "Enchantment"),
+    )
+
+    @classmethod
+    def list_type_category(cls, raw_types) -> Optional[str]:
+        """One type heading for Arena's ``Types`` value ("2", or "1,2" for an
+        artifact creature). Kindred alone and unknown codes give None."""
+        codes = {code.strip() for code in str(raw_types or "").split(",")}
+        return next((label for code, label in cls._LIST_TYPE_PRIORITY if code in codes), None)
+
+    def list_type_indexes(self) -> Tuple[Dict[int, str], Dict[str, str]]:
+        """``(arena id -> type, card name -> type)`` for deck-list headings.
+
+        Unlike ``get_card_type_category`` (one code only, which tracker
+        analytics store), this places multi-type cards, and the name index
+        covers pasted lists without Arena ids. Both are empty without Arena's DB.
+        """
+        if getattr(self, "_list_type_indexes", None) is not None:
+            return self._list_type_indexes
+        by_id: Dict[int, str] = {}
+        by_name: Dict[str, str] = {}
+        db_path = self._resolve_mtga_db_path()
+        if db_path:
+            tag_pattern = re.compile(r"<[^>]+>")
+            try:
+                conn = self._connect_mtga_db(db_path)
+                rows = self._title_join_rows(
+                    conn.cursor(), 'c."GrpId", l."Loc", c."Types"', 'c."Types" IS NOT NULL'
+                )
+                conn.close()
+            except Exception:
+                rows = []
+            for grp_id, name, raw_types in rows:
+                category = self.list_type_category(raw_types)
+                if not category:
+                    continue
+                try:
+                    by_id[int(grp_id)] = category
+                except (TypeError, ValueError):
+                    pass
+                clean = tag_pattern.sub("", str(name or "")).strip()
+                if clean:
+                    by_name.setdefault(clean, category)
+        if by_id:
+            self._list_type_indexes = (by_id, by_name)
+        return by_id, by_name
+
     def export_index_by_arena_id(self) -> Dict[int, Tuple[str, str, str]]:
         """Build ``arena_id -> (name, set_code, collector_number)`` from
         Arena's local card DB, for the collection exporter's output lines.
@@ -1153,6 +1211,47 @@ class CardDatabase:
         text = ability_texts.get(int(ability_grp_id))
         return text.strip() if isinstance(text, str) and text.strip() else None
 
+    #: Arena's ``Abilities.Category`` for activated abilities (2 is triggered,
+    #: 3 static); the Enums table carries no names for it.
+    _ACTIVATED_ABILITY_CATEGORY = 1
+
+    def is_activated_ability(self, ability_grp_id: Optional[int]) -> Optional[bool]:
+        """Return whether an abilityGrpId is an activated ability, or None when unknown.
+
+        Arena can put an activated ability on the stack one message before it
+        reports the activation, so the tracker uses this to tell it from a trigger.
+        """
+        if ability_grp_id is None:
+            return None
+        if self._activated_ability_ids is None:
+            ids: frozenset = frozenset()
+            db_path = self._resolve_mtga_db_path()
+            if db_path:
+                try:
+                    conn = self._connect_mtga_db(db_path)
+                    try:
+                        cur = conn.cursor()
+                        cur.execute('PRAGMA table_info("Abilities")')
+                        if "Category" in {str(row[1]) for row in cur.fetchall()}:
+                            ids = frozenset(
+                                int(row[0])
+                                for row in cur.execute(
+                                    'SELECT "Id" FROM "Abilities" WHERE "Category" = ?',
+                                    (self._ACTIVATED_ABILITY_CATEGORY,),
+                                )
+                            )
+                    finally:
+                        conn.close()
+                except Exception:
+                    ids = frozenset()
+            self._activated_ability_ids = ids
+        if not self._activated_ability_ids:
+            return None
+        try:
+            return int(ability_grp_id) in self._activated_ability_ids
+        except (TypeError, ValueError):
+            return None
+
     def get_ability_text(self, ability_grp_id: int) -> Optional[str]:
         """Return localized ability text by abilityGrpId, independent of source card."""
         import sqlite3
@@ -1206,6 +1305,39 @@ class CardDatabase:
 
         fallback = f"Card #{grp_id}"
         return fallback
+
+    def grp_ids_by_art_id(self) -> Dict[int, List[int]]:
+        """Map Arena ArtIds to the GrpIds that use that art, primary non-token cards first.
+
+        A saved Arena deck can name its tile by ArtId (``DeckArtId``) instead of
+        by card; this turns it back into a card. Empty when Arena's DB is missing.
+        """
+        cached = getattr(self, "_grp_ids_by_art", None)
+        if cached:
+            return cached
+        index: Dict[int, List[int]] = {}
+        db_path = self._resolve_mtga_db_path()
+        if db_path:
+            try:
+                conn = self._connect_mtga_db(db_path)
+                try:
+                    columns = {str(row[1]) for row in conn.execute('PRAGMA table_info("Cards")')}
+                    if {"GrpId", "ArtId"} <= columns:
+                        order = [f'"{c}" DESC' for c in ("IsPrimaryCard",) if c in columns]
+                        order += [f'"{c}" ASC' for c in ("IsToken", "IsRebalanced") if c in columns]
+                        order.append('"GrpId" ASC')
+                        for grp_id, art_id in conn.execute(
+                            'SELECT "GrpId", "ArtId" FROM "Cards" WHERE "ArtId" > 0 ORDER BY '
+                            + ", ".join(order)
+                        ):
+                            index.setdefault(int(art_id), []).append(int(grp_id))
+                finally:
+                    conn.close()
+            except Exception:
+                index = {}
+        if index:
+            self._grp_ids_by_art = index
+        return index
 
     def get_card_type_category(self, grp_id: int) -> Optional[str]:
         """Return a primary card type category for a grpId using the local MTGA card DB."""

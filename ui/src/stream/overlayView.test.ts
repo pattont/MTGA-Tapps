@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { DEMO_OVERLAY } from './demo';
-import { deckColors, oddsTone, overlaySections, shortFormat, showsLibrary, tintAlpha } from './overlayView';
+import { deckColors, manaSymbols, oddsTone, overlaySections, shortFormat, showsLibrary, tintAlpha } from './overlayView';
 import type { OverlayState } from './types';
 
 const demo = DEMO_OVERLAY.state!;
 
 describe('overlay view helpers', () => {
+  it('splits a mana cost into symbols the way the overlay does', () => {
+    expect(manaSymbols('{2}{W/U}{G}')).toEqual(['2', 'W/U', 'G']);
+    expect(manaSymbols(null)).toEqual([]);
+    expect(manaSymbols('')).toEqual([]);
+  });
+
   it('maps the background slider the way the in-game overlay does', () => {
     expect(tintAlpha(0)).toBe(0);
     expect(tintAlpha(100)).toBe(0.88);

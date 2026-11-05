@@ -82,6 +82,25 @@ describe('BuyPaperDialog', () => {
     expect(screen.getByRole('button', { name: /Buy @/u })).toBeDisabled();
   });
 
+  it('keeps the Sideboard choice, greyed out, for a deck without one', async () => {
+    vi.mocked(lookupPaperPrices).mockImplementation(async (_names, onUpdate) => {
+      const map = new Map<string, PaperCardInfo | null>([['Opt', paper('Opt', 0.25)]]);
+      onUpdate(map, { pending: 0, interrupted: false });
+      return map;
+    });
+    render(<BuyPaperDialog sections={[{ name: 'Deck', cards: [{ quantity: 4, name: 'Opt' }] }]} onClose={() => {}} returnFocus={null} />);
+    await screen.findByText('Cards');
+
+    const boardToggles = screen.getByRole('group', { name: 'Boards' });
+    expect(within(boardToggles).getAllByRole('checkbox').map((box) => box.closest('label')?.textContent)).toEqual(['Main Deck', 'Sideboard']);
+    expect(screen.getByRole('checkbox', { name: 'Main Deck' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Main Deck' })).toBeEnabled();
+    const sideboard = screen.getByRole('checkbox', { name: 'Sideboard' });
+    expect(sideboard).toBeDisabled();
+    expect(sideboard).not.toBeChecked();
+    expect(sideboard.closest('label')).toHaveAttribute('title', 'This deck has no sideboard.');
+  });
+
   it('reprices the cart from the chosen store’s own list', async () => {
     let finish!: (value: { prices: Map<string, StorePrice | null>; asOf: string }) => void;
     vi.mocked(fetchStorePrices).mockImplementation((vendor, _names, options) => {

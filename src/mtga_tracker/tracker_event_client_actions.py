@@ -179,11 +179,18 @@ class TrackerClientActionsMixin:
             if not mode_texts:
                 continue
             source_grp_id = request.get("source_grp_id")
-            card_name = (
-                self.card_db.get_card_name(int(source_grp_id))
-                if source_grp_id is not None
-                else "modal spell"
-            )
+            affected_id = request.get("affected_id")
+            affected_obj = self._lookup_object(affected_id) if affected_id is not None else {}
+            if affected_obj.get("grpId") or affected_obj.get("objectSourceGrpId"):
+                # For a modal trigger the request's grpId is the ability itself
+                # ("Card #205191"); the object names the card it comes from.
+                card_name = self._object_display_name(affected_obj, affected_id)
+            elif source_grp_id is not None:
+                card_name = self.card_db.get_card_name(int(source_grp_id))
+            else:
+                card_name = "modal spell"
+            # Arena's mode text names the card as a CARDNAME placeholder.
+            mode_texts = [text.replace("CARDNAME", card_name) for text in mode_texts]
             seat_id = self.game_state.player_seat_id or request.get("player_id")
             self.game_state.logged_modal_choices.add(key)
             self._print_event(

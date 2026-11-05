@@ -19,8 +19,10 @@ class TrackerTargetsMixin:
         if target_id == self.game_state.opponent_seat_id:
             return "opponent"
 
-        target_obj = game_objects_by_id.get(target_id)
-        if not target_obj:
+        # A planeswalker or battle under attack is rarely in the attack's own
+        # message, so fall back to the last snapshot of it.
+        target_obj = self._lookup_object(target_id, game_objects_by_id)
+        if not target_obj.get("grpId"):
             return f"ID {target_id}"
 
         grp_id = target_obj.get("grpId")

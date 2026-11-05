@@ -37,6 +37,7 @@ import {
   formatDateTime,
   formatDuration,
   formatNumber,
+  formatTimeAgo,
   formatTurnDuration,
   outcomeLabel,
   outcomeTone,
@@ -1037,6 +1038,13 @@ export function DeckDetailPage({
                 <div className="deck-color-pips">
                   <ColorPips colors={detail.deck_colors} size={22} />
                 </div>
+              ) : null}
+              {detail.last_played ? (
+                <p className="deck-last-played">
+                  Last played{' '}
+                  <time dateTime={detail.last_played}>{formatDateTime(detail.last_played)}</time>
+                  {formatTimeAgo(detail.last_played) ? ` · ${formatTimeAgo(detail.last_played)}` : ''}
+                </p>
               ) : null}
             </div>
           </div>

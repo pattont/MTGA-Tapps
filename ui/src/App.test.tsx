@@ -246,6 +246,7 @@ const snapshot = {
 
 const deckDetail = {
   deck_name: 'Boros Mouse',
+  last_played: '2026-06-04T00:10:00',
   deck_visual: {
     card_id: 123,
     card_name: 'Mouse Mentor',
@@ -1394,6 +1395,9 @@ describe('App', () => {
     );
     expect(screen.getAllByText('Mouse Mentor').length).toBeGreaterThan(0);
     expect(screen.getByText('Signature card: Mouse Mentor')).toBeInTheDocument();
+    const lastPlayed = document.querySelector('.deck-last-played');
+    expect(lastPlayed).toHaveTextContent(/^Last played .+ · .+ago$/);
+    expect(lastPlayed?.querySelector('time')).toHaveAttribute('datetime', '2026-06-04T00:10:00');
     const deckListTable = screen.getByRole('table', { name: 'Deck list and card performance' });
     const sideboardTable = screen.getByRole('table', { name: 'Sideboard cards' });
     const mountainRow = within(deckListTable).getByRole('link', { name: 'Mountain' }).closest('tr');
@@ -1576,7 +1580,69 @@ describe('App', () => {
     expect(within(strip).getByLabelText('Rare wildcards')).toHaveTextContent('63');
     expect(within(strip).getByLabelText('Mythic wildcards')).toHaveTextContent('9');
     // It lives in the Decks section's filter row, next to the search box.
-    expect(strip.parentElement).toBe(screen.getByLabelText('Search decks').parentElement);
+    expect(strip.closest('.table-filter-row')).toBe(
+      screen.getByLabelText('Search decks').closest('.table-filter-row'),
+    );
+  });
+
+  it('sorts decks from the dropdown beside the search and remembers the choice', async () => {
+    const deck = snapshot.decks[0];
+    const sortSnapshot = {
+      ...snapshot,
+      decks: [
+        { ...deck, deck_name: 'Cyan Tempo', games: 9, last_played: '2026-05-01T10:00:00' },
+        { ...deck, deck_name: 'Azure Control', games: 3, last_played: '2026-06-03T10:00:00' },
+        { ...deck, deck_name: 'Boros Mouse', games: 5, last_played: '2026-06-04T00:10:00' },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(sortSnapshot), { status: 200 })));
+    const user = userEvent.setup();
+    render(<App />);
+
+    const deckTable = await screen.findByRole('table', { name: 'Deck performance' });
+    const deckOrder = () =>
+      within(deckTable)
+        .getAllByRole('row')
+        .slice(1)
+        .map((row) => row.querySelector('.deck-cell > div:last-child strong')?.textContent);
+    const sortSelect = screen.getByLabelText('Sort decks');
+    expect(sortSelect.closest('.table-filter-controls')).toBe(
+      screen.getByLabelText('Search decks').closest('.table-filter-controls'),
+    );
+    expect(sortSelect).toHaveDisplayValue('Most played');
+    expect(deckOrder()).toEqual(['Cyan Tempo', 'Boros Mouse', 'Azure Control']);
+
+    await user.selectOptions(sortSelect, 'Recently played');
+    expect(deckOrder()).toEqual(['Boros Mouse', 'Azure Control', 'Cyan Tempo']);
+    expect(within(deckTable).getAllByText(/^Played /).length).toBe(3);
+    expect(localStorage.setItem).toHaveBeenCalledWith(
+      'tapps.overview.deckSort',
+      JSON.stringify({ key: 'last_played', direction: 'desc' }),
+    );
+
+    await user.selectOptions(sortSelect, 'Name A–Z');
+    expect(deckOrder()).toEqual(['Azure Control', 'Boros Mouse', 'Cyan Tempo']);
+    expect(within(deckTable).queryByText(/^Played /)).not.toBeInTheDocument();
+
+    // A header click drives the same sort and the dropdown follows it.
+    await user.click(within(deckTable).getByRole('button', { name: /^Deck/ }));
+    expect(sortSelect).toHaveDisplayValue('Name Z–A');
+    expect(deckOrder()).toEqual(['Cyan Tempo', 'Boros Mouse', 'Azure Control']);
+    await user.click(within(deckTable).getByRole('button', { name: /^Avg Turns/ }));
+    expect(sortSelect).toHaveDisplayValue('Column: Avg Turns ↑');
+  });
+
+  it('restores the saved deck sort', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key: string) =>
+        key === 'tapps.overview.deckSort' ? JSON.stringify({ key: 'last_played', direction: 'desc' }) : null,
+      ),
+      setItem: vi.fn(),
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(snapshot), { status: 200 })));
+    render(<App />);
+
+    expect(await screen.findByLabelText('Sort decks')).toHaveDisplayValue('Recently played');
   });
 
   it('pages and searches the full deck history beyond one hundred decks', async () => {
@@ -1830,6 +1896,29 @@ describe('App', () => {
     }
   });
 
+  it('puts the Watch replay row above the Brawl commander tiles on game detail', async () => {
+    const brawlDetail = {
+      ...gameDetail,
+      game: { ...gameDetail.game, raw_format: 'Play_Brawl_Historic', format_label: 'Brawl' },
+      player: { ...gameDetail.player, commanders: [{ card_name: 'Fblthp, Impossibly Lost', colors: 'U' }] },
+      opponent: { ...gameDetail.opponent, commanders: [{ card_name: 'Laelia, the Blade Reforged', colors: 'R' }] },
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) =>
+        new Response(JSON.stringify(String(url).startsWith('/api/game') ? brawlDetail : snapshot), { status: 200 }),
+      ),
+    );
+    window.location.hash = '#/game/game-1';
+
+    render(<App />);
+
+    const commanders = await screen.findByRole('group', { name: 'Commanders' });
+    const actionsRow = screen.getByRole('group', { name: 'Game actions' });
+    expect(actionsRow.nextElementSibling).toBe(commanders);
+    expect(within(actionsRow).getByRole('link', { name: /Watch replay/ })).toBeInTheDocument();
+  });
+
   it('routes to the game detail page and renders game sections', async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).startsWith('/api/game')) {
@@ -1846,8 +1935,8 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: /Game 6\/4\/26/i })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/game?id=game-1', expect.anything());
     expect(document.title).toContain('Game 6/4/26');
-    // Teal Watch replay button right-aligned in the actions row directly
-    // above the Game metrics cards (like the Deck page's Copy Arena Deck),
+    // Teal Watch replay button right-aligned in the actions row under the
+    // header (directly above the metrics when there are no commander tiles),
     // with the fixture's reconstructed availability (outline style + tooltip).
     const summary = document.getElementById('game-summary') as HTMLElement;
     expect(within(summary).queryByRole('link', { name: /Watch replay/ })).not.toBeInTheDocument();

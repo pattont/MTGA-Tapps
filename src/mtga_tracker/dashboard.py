@@ -2536,7 +2536,8 @@ def dashboard_snapshot(
                   COUNT(*) AS games,
                   SUM(g.outcome = 'win') AS wins,
                   SUM(g.outcome = 'loss') AS losses,
-                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
+                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate,
+                  MAX(COALESCE(g.started_at, g.ended_at)) AS last_played
                 FROM games g
                 JOIN participants p ON p.game_id = g.id AND p.role = 'player'
                 WHERE {where}
@@ -3136,6 +3137,12 @@ def deck_detail(
         ).fetchone()
         if not summary or not summary[0]:
             raise LookupError(f"No recorded games for deck: {deck_name}")
+        # Last played ignores the page filters: it describes the deck itself.
+        deck_where, deck_params = _games_filter(deck_name, None, None)
+        last_played = conn.execute(
+            f"SELECT MAX(COALESCE(g.started_at, g.ended_at)) FROM games g WHERE {deck_where}",
+            deck_params,
+        ).fetchone()[0]
         profile = conn.execute(
             f"""
             SELECT
@@ -3546,6 +3553,7 @@ def deck_detail(
         "commanders": deck_commanders,
         "faced_commanders": deck_faced_commanders,
         "deck_colors": deck_colors,
+        "last_played": last_played,
         "deck_export": deck_export,
         "summary": {
             "games": int(summary[0] or 0),
@@ -5856,6 +5864,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     #: Idle keep-alive connections release their thread after this long.
     timeout = 60
+
+    def handle(self) -> None:
+        """Treat a client dropping its connection as a normal close.
+
+        A keep-alive connection waits for its next request; when the client
+        goes away instead (the overlay quitting with Arena, a closed tab), the
+        read fails with a reset. That isn't an error, so print no traceback.
+        """
+        try:
+            super().handle()
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+            self.close_connection = True
 
     def log_message(self, message_format: str, *args: Any) -> None:
         """Avoid writing request logs when a windowed build has no stderr stream."""

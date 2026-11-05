@@ -817,6 +817,149 @@ img {
   padding: 6px calc(6px + var(--edge-r)) 2px calc(6px + var(--edge-l));
 }
 
+/* ------------------------------------------------------ session record */
+
+/* The session's record at the foot of the panel (Settings → Session record),
+   in the Stream Kit record widget's colours but sized to sit with the rows:
+   the record is only a step above a card count, not the stream's big digits. */
+.ss {
+  flex: none;
+  border-top: 1px solid var(--hairline);
+  background: rgba(0, 0, 0, 0.16);
+  padding: 7px calc(9px + var(--edge-r)) 7px calc(9px + var(--edge-l));
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ss-lab {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--subtle);
+}
+
+.ss-main {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.ss-rec {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.ss-w {
+  color: var(--success);
+}
+
+.ss-l {
+  color: var(--danger);
+}
+
+.ss-dash {
+  color: var(--subtle);
+  margin: 0 1px;
+}
+
+.ss-rate {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.ss-play {
+  color: #5fd4c4;
+}
+
+.ss-draw {
+  color: #b79df7;
+}
+
+.ss-up {
+  color: var(--success);
+  font-weight: 700;
+}
+
+.ss-down {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.ss-none {
+  color: var(--subtle);
+}
+
+/* One line: Play / Draw to the right of a hairline. */
+.ss-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ss-pd {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  padding-left: 10px;
+  border-left: 1px solid var(--hairline);
+}
+
+.ss-pd-v {
+  display: flex;
+  gap: 4px;
+  font-size: 13px;
+}
+
+/* Split: a win/loss bar, then the Play and Draw records at either end. */
+.ss-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(242, 139, 130, 0.55);
+  margin: 6px 0;
+  overflow: hidden;
+}
+
+.ss-bar i {
+  display: block;
+  height: 100%;
+  background: var(--success);
+}
+
+.ss-split .ss-main + .ss-sides {
+  margin-top: 6px;
+}
+
+.ss-sides {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.ss-sides > span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.ss-tag {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.ss-score {
+  color: var(--text);
+}
+
 .empty {
   flex: 1;
   display: flex;
@@ -903,6 +1046,11 @@ img {
   padding: 3px 8px;
 }
 
+.density-compact .ss {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
 /* ------------------------------------------------ no background (default) */
 
 /* Over the board the dark block is a distraction; the text carries a
@@ -916,8 +1064,15 @@ img {
 }
 
 .no-bg .head,
-.no-bg .lands {
+.no-bg .lands,
+.no-bg .ss {
   background: none;
+}
+
+/* The win/loss bar keeps its colours over the board, a touch stronger. */
+.no-bg .ss-bar {
+  background: rgba(242, 139, 130, 0.8);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 70%);
 }
 
 .no-bg .row:hover,

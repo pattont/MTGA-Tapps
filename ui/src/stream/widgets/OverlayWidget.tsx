@@ -1,12 +1,12 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { ColorPips } from '../../components/ColorPips';
-import { ManaCost } from '../../components/ManaCost';
 import type { DeckRow } from '../deckRows';
 import type { DeckSort, StreamOptions } from '../options';
 import { deckColors, oddsTone, overlaySections, shortFormat, showsLibrary, tintAlpha } from '../overlayView';
 import type { OverlayPayload, OverlaySideCard, OverlayState } from '../types';
 import { useOverlay } from '../useOverlay';
 import { Brand } from './Brand';
+import { ManaCost } from './ManaCost';
 
 /*
  * The in-game overlay's panel as one browser source. Nobody on stream can
@@ -29,17 +29,13 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
-function Cost({ cost }: { cost: string | null }) {
-  return <span className="mana">{cost ? <ManaCost info={{ mana_cost: cost, cmc: 0 }} /> : null}</span>;
-}
-
 function CardRow({ row, sub }: { row: DeckRow; sub?: boolean }) {
   const out = row.left === 0;
   return (
     <div className={`row${out ? ' dim' : ''}${sub ? ' sub' : ''}`}>
       <span className="body">
         <span className={`nm ${row.typeClass}`}>{row.name}</span>
-        <Cost cost={row.mana_cost} />
+        <ManaCost cost={row.mana_cost} />
       </span>
       <span className="right">
         <span className="cnt">
@@ -75,7 +71,7 @@ function Sideboard({ cards }: { cards: OverlaySideCard[] }) {
         <div key={card.name} className="sb-row">
           <span className="body">
             <span className={`nm ${typeClassOf(card)}`}>{card.name}</span>
-            <Cost cost={card.mana_cost} />
+            <ManaCost cost={card.mana_cost} />
           </span>
           <span className="cnt">
             <b>{card.count}</b>

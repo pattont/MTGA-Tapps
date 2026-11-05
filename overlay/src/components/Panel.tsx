@@ -3,6 +3,7 @@ import { buildSections, formatPct, formatWhole, oddsTone, shortFormat, showsLibr
 import type { Link, OverlayPayload, Settings, SortKey } from '../types';
 import { Chevron, Gear, Pin } from './Icons';
 import { ManaCost } from './ManaCost';
+import { SessionRecord, showsSessionRecord } from './SessionRecord';
 import W from '../icons/W.svg';
 import U from '../icons/U.svg';
 import B from '../icons/B.svg';
@@ -96,6 +97,8 @@ export function Panel(props: Props) {
   const sideboardCount = sideboard.reduce((sum, card) => sum + card.count, 0);
   const pips = state ? deckColors(state.cards) : [];
   const h2h = payload?.head_to_head;
+  const session = payload?.session;
+  const sessionStyle = settings.sessionRecord ?? 'scoreboard';
   const active = showsLibrary(state);
 
   return (
@@ -271,6 +274,7 @@ export function Panel(props: Props) {
           )}
         </div>
       )}
+      {sessionStyle !== 'off' && showsSessionRecord(sessionStyle, session) ? <SessionRecord session={session} style={sessionStyle} /> : null}
     </div>
   );
 }

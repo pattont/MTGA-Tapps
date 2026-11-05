@@ -32,6 +32,11 @@ describe('format quick filters', () => {
     expect(quickFilterPredicate('brawl-standard')(HISTORIC_BRAWL)).toBe(false);
     // Arena's renamed queue: plain "Brawl" is the historic one.
     expect(quickFilterPredicate('brawl-historic')('brawl')).toBe(true);
+    expect(quickFilterPredicate('brawl-historic')('brawl (ranked)')).toBe(false);
+    // Competitive Brawl is the tracker's "Brawl (Ranked)" label.
+    expect(quickFilterPredicate('brawl-competitive')('brawl (ranked)')).toBe(true);
+    expect(quickFilterPredicate('brawl-competitive')('brawl')).toBe(false);
+    expect(quickFilterPredicate('brawl-competitive')('standard brawl')).toBe(false);
   });
 
   it('legacy bookmarked chip ids keep working', () => {

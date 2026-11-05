@@ -5,7 +5,7 @@ import { Rail, deckTone } from '../components/Rail';
 import { Flyout } from '../components/Flyout';
 import { hoverCardTop, hoverSide, measureContentHeight, tintAlpha } from '../App';
 import { defaultSettings } from '../tauri';
-import { brawlState, inGamePayload, idlePayload, offlinePayload } from './fixtures';
+import { brawlState, inGamePayload, idlePayload, offlinePayload, sessionRecord } from './fixtures';
 
 afterEach(cleanup);
 
@@ -133,6 +133,51 @@ describe('Panel', () => {
   });
 });
 
+describe('Session record', () => {
+  const withSession = (session = sessionRecord(), base = inGamePayload()) => ({ ...base, session });
+
+  it('shows the record, win rate and Play / Draw win rates on one line by default', () => {
+    const { container } = render(<Panel {...panelProps({ payload: withSession() })} />);
+    const footer = container.querySelector('.ss.ss-line');
+    expect(footer).toBeTruthy();
+    expect(footer?.querySelector('.ss-rec')?.textContent).toBe('6–2');
+    expect(footer?.querySelector('.ss-rate')?.textContent).toBe('75%');
+    expect(Array.from(footer?.querySelectorAll('.ss-pd-v .ss-up') ?? []).map((el) => el.textContent)).toEqual(['67%', '80%']);
+    expect(footer?.getAttribute('aria-label')).toMatch(/on the play: 2 wins, 1 loss/);
+    // The last thing in the panel, after the card list.
+    expect(container.querySelector('.panel')?.lastElementChild).toBe(footer);
+  });
+
+  it('splits Play and Draw records under a win/loss bar', () => {
+    const settings = { ...defaultSettings(), sessionRecord: 'split' as const };
+    const { container } = render(<Panel {...panelProps({ payload: withSession(), settings })} />);
+    expect(container.querySelector('.ss.ss-split')).toBeTruthy();
+    expect((container.querySelector('.ss-bar i') as HTMLElement).style.width).toBe('75%');
+    const sides = Array.from(container.querySelectorAll('.ss-sides > span')).map((el) => el.textContent);
+    expect(sides).toEqual(['Play2–167%', 'Draw4–180%']);
+  });
+
+  it('shows draws, a red rate under 50% and a dash for a side with no games', () => {
+    const session = { ...sessionRecord(), wins: 1, losses: 3, draws: 1, win_rate: 25, play: { wins: 1, losses: 3 }, draw: { wins: 0, losses: 0 } };
+    const { container } = render(<Panel {...panelProps({ payload: withSession(session) })} />);
+    expect(container.querySelector('.ss-rec')?.textContent).toBe('1–3–1');
+    expect(container.querySelector('.ss-pd-v .ss-down')?.textContent).toBe('25%');
+    expect(container.querySelector('.ss-pd-v')?.textContent).toBe('25%/–');
+  });
+
+  it('stays between games and hides when off, before the first result, or without a tracker', () => {
+    const { container, rerender } = render(<Panel {...panelProps({ payload: withSession(sessionRecord(), idlePayload()) })} />);
+    expect(screen.getByText(/Waiting for a match/)).toBeTruthy();
+    expect(container.querySelector('.ss')).toBeTruthy();
+    rerender(<Panel {...panelProps({ payload: withSession(), settings: { ...defaultSettings(), sessionRecord: 'off' } })} />);
+    expect(container.querySelector('.ss')).toBeNull();
+    rerender(<Panel {...panelProps({ payload: withSession({ ...sessionRecord(), games: 0, wins: 0, losses: 0, win_rate: null, play: { wins: 0, losses: 0 }, draw: { wins: 0, losses: 0 } }) })} />);
+    expect(container.querySelector('.ss')).toBeNull();
+    rerender(<Panel {...panelProps({ payload: offlinePayload(), link: 'offline' })} />);
+    expect(container.querySelector('.ss')).toBeNull();
+  });
+});
+
 describe('deckColors', () => {
   it('reads colours from casting costs, hybrid included, in WUBRG order', () => {
     expect(deckColors([{ mana_cost: '{1}{G}' }, { mana_cost: '{W/U}' }, { mana_cost: null }])).toEqual(['W', 'U', 'G']);
@@ -197,9 +242,21 @@ describe('Flyout', () => {
     expect(screen.getByText('800 px')).toBeTruthy();
   });
 
+  it('switches the session record between off, one line and split', () => {
+    const onChange = vi.fn();
+    render(<Flyout settings={defaultSettings()} platform="windows" onChange={onChange} onClose={() => undefined} onQuit={() => undefined} />);
+    const group = screen.getByRole('group', { name: 'Session record' });
+    expect(group.querySelector('button.on')?.textContent).toBe('One line');
+    fireEvent.click(screen.getByText('Split'));
+    expect(onChange.mock.calls[0][0].sessionRecord).toBe('split');
+    fireEvent.click(screen.getByText('Off'));
+    expect(onChange.mock.calls[1][0].sessionRecord).toBe('off');
+  });
+
   it('restores every preference but keeps the window and the panel state', () => {
     const current = {
       ...defaultSettings(),
+      sessionRecord: 'off' as const,
       opacity: 0.2,
       scale: 150,
       panelMaxHeight: 400,
@@ -220,6 +277,7 @@ describe('Flyout', () => {
     expect(next.scale).toBe(100);
     expect(next.panelMaxHeight).toBe(800);
     expect(next.dock).toBe('left');
+    expect(next.sessionRecord).toBe('scoreboard');
     expect(next.hotkeysWindows.toggle).toBe('Alt+Shift+T');
     expect(next.panelOpen).toBe(true);
     expect(next.panelPinned).toBe(true);

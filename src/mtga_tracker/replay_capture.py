@@ -121,6 +121,8 @@ _ACCEPT_STYLES = {
     "put": ("zone", "attack"),
     "counter": ("counter",),
     "sba": ("zone",),
+    # Surveil, Warp, copies and manifests print a "zone" line of their own.
+    "unknown": ("zone",),
 }
 
 COUNTER_TYPE_NAMES = {1: "+1/+1", 2: "-1/-1", 7: "loyalty"}

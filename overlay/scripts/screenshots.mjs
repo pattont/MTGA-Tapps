@@ -41,11 +41,12 @@ const bnames = ['Sol Ring','Arcane Signet','Swords to Plowshares','Counterspell'
 const bcards = bnames.map((n,i)=>card(n, i%2?'Instant':'Creature', i%3?'{1}{W}':'{U}{U}', 1, i<3?0:1, blib));
 bcards.push(card('Plains','Land',null,18,15,blib), card('Island','Land',null,16,14,blib), card('Hallowed Fountain','Land',null,1,1,blib));
 const brawl = { ...inGame, deck_name:'Azorius Control', format_label:'Historic Brawl', opponent_name:'Zephyr', on_play:false, player_commanders:['Teferi, Time Raveler'], deck_size:100, library_size:blib, lands_left:30, lands_total:35, cards:bcards };
+const session = { games:8, wins:6, losses:2, draws:0, win_rate:75, play:{wins:2,losses:1}, draw:{wins:4,losses:1} };
 const payloads = {
-  game: { tracker:{state:'live',updated_at:'x',session_id:'s'}, state: inGame, head_to_head:{wins:1,losses:2} },
+  game: { tracker:{state:'live',updated_at:'x',session_id:'s'}, state: inGame, head_to_head:{wins:1,losses:2}, session },
   brawl: { tracker:{state:'live',updated_at:'x',session_id:'s'}, state: brawl, head_to_head:null },
   final: { tracker:{state:'live',updated_at:'x',session_id:'s'}, state: { ...inGame, game_active:false, game_over:true }, head_to_head:{wins:2,losses:2} },
-  idle: { tracker:{state:'idle',updated_at:null,session_id:'s'}, state: { ...inGame, game_active:false, deck_name:null, cards:[], library_size:0, deck_size:0 }, head_to_head:null },
+  idle: { tracker:{state:'idle',updated_at:null,session_id:'s'}, state: { ...inGame, game_active:false, deck_name:null, cards:[], library_size:0, deck_size:0 }, head_to_head:null, session },
 };
 
 mkdirSync(new URL('../shots/', import.meta.url), { recursive: true });
@@ -95,5 +96,9 @@ await shot('panel-op20', 'game', { width: 583, height: 560 }, async (page) => { 
 await shot('panel-nobg-flyout', 'game', { width: 583, height: 560 }, async (page) => { await board(page); await openPanel(page); await page.click('button[aria-label="Settings"]'); });
 await shot('panel-scale150', 'game', { width: 845, height: 720 }, async (page) => { await board(page); await openPanel(page); await page.click('button[aria-label="Settings"]'); await page.evaluate(() => { const el = document.querySelector('input[aria-label="Scale, percent"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(el, '150'); el.dispatchEvent(new Event('input', { bubbles: true })); }); await page.click('button[aria-label="Close settings"]'); });
 await shot('panel-all-lands', 'game', { width: 583, height: 640 }, async (page) => { await openPanel(page); await page.click('button[aria-label="Settings"]'); await page.click('text=Every land'); await page.click('button[aria-label="Close settings"]'); });
+// Session record footer: the Split style, and between games.
+await shot('panel-session-split', 'game', { width: 583, height: 560 }, async (page) => { await openPanel(page); await page.click('button[aria-label="Settings"]'); await page.click('[aria-label="Session record"] button:has-text("Split")'); await page.click('button[aria-label="Close settings"]'); });
+await shot('panel-session-nobg', 'game', { width: 583, height: 560 }, async (page) => { await board(page); await openPanel(page); });
+await shot('panel-session-compact', 'game', { width: 583, height: 560 }, async (page) => { await openPanel(page); await page.click('button[aria-label="Settings"]'); await page.click('[aria-label="Density"] button:has-text("Compact")'); await page.click('button[aria-label="Close settings"]'); });
 await browser.close();
 server.close();

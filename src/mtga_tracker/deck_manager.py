@@ -28,6 +28,127 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Arena deck attributes holding dates: when the deck was last edited and played.
+ARENA_DATES = {"arena_modified": "LastUpdated", "arena_played": "LastPlayed"}
+
+
+def arena_time(raw: Any) -> Optional[str]:
+    """An Arena deck date attribute as UTC ISO text; None when unset or unreadable.
+
+    Arena stores the value as JSON text ('"2026-10-12T02:12:37.027156-04:00"'),
+    with any number of fraction digits, and "0001-01-01T00:00:00" for never.
+    """
+    if not isinstance(raw, str):
+        return None
+    try:
+        text = json.loads(raw)
+    except ValueError:
+        text = raw
+    if not isinstance(text, str):
+        return None
+    text = re.sub(r"\.(\d+)", lambda m: "." + (m.group(1) + "000000")[:6], text.strip(), count=1)
+    try:
+        when = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if when.year < 2000:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
+def arena_dates(summary: Any) -> Dict[str, Optional[str]]:
+    """Last modified / last played from an Arena deck summary's Attributes list."""
+    attributes = summary.get("Attributes") if isinstance(summary, dict) else None
+    values = {
+        a.get("key"): a.get("value")
+        for a in (attributes if isinstance(attributes, list) else [])
+        if isinstance(a, dict)
+    }
+    return {field: arena_time(values.get(key)) for field, key in ARENA_DATES.items()}
+
+
+def played_records(conn) -> Dict[str, Dict[str, Any]]:
+    """Wins and losses per Arena deck id, from the games the tracker recorded,
+    in total, split into ranked and unranked queues, and on the play / on the
+    draw (``participants.went_first``; games with unknown turn order count only
+    toward the total and queues).
+
+    Keyed by Arena's deck id rather than its name, so a renamed deck keeps its
+    record. Counts games (like the Overview's Decks table), not Bo3 matches.
+    Ranked means a queue whose label says "(Ranked)", as on the deck page; every
+    other queue (Play, events) is unranked. A library without gameplay tables
+    has no records.
+    """
+    from .format_normalizer import normalize_match_format
+
+    try:
+        rows = conn.execute(
+            "SELECT p.deck_id, m.format, p.went_first, MAX(COALESCE(m.best_of, 1)),"
+            " SUM(g.outcome = 'win'), SUM(g.outcome = 'loss')"
+            " FROM participants p JOIN games g ON g.id = p.game_id"
+            " LEFT JOIN matches m ON m.id = g.match_id"
+            " WHERE p.role = 'player' AND p.deck_id IS NOT NULL"
+            " AND g.outcome IN ('win', 'loss') GROUP BY p.deck_id, m.format, p.went_first"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    ranked_formats: Dict[Any, bool] = {}
+    records: Dict[str, Dict[str, Any]] = {}
+    for arena_id, raw_format, went_first, best_of, wins, losses in rows:
+        if raw_format not in ranked_formats:
+            label = normalize_match_format(str(raw_format or ""), default_best_of=best_of).label
+            ranked_formats[raw_format] = "(Ranked)" in label
+        record = records.setdefault(arena_id, _empty_record())
+        targets = [record, record["ranked" if ranked_formats[raw_format] else "unranked"]]
+        if went_first is not None:
+            targets.append(record["play" if went_first else "draw"])
+        for target in targets:
+            target["wins"] += wins
+            target["losses"] += losses
+    return records
+
+
+RECORD_SPLITS = ("ranked", "unranked", "play", "draw")
+
+
+def _empty_record() -> Dict[str, Any]:
+    return {
+        "wins": 0,
+        "losses": 0,
+        **{split: {"wins": 0, "losses": 0} for split in RECORD_SPLITS},
+    }
+
+
+def saved_arena_ids(conn) -> Dict[str, set]:
+    """Every Arena deck id each saved deck has been: bindings, native backups
+    (their snapshot's DeckId) and log captures (``metadata.arena_deck_id``)."""
+    ids: Dict[str, set] = {}
+    for deck_id, arena_id in conn.execute(
+        "SELECT deck_id, COALESCE(json_extract(payload_json, '$.metadata.arena_deck_id'),"
+        " json_extract(payload_json, '$.metadata.native_archive.source_snapshot.summary.DeckId'))"
+        " AS arena_id FROM managed_deck_revisions WHERE arena_id IS NOT NULL"
+        " UNION SELECT deck_id, arena_deck_id FROM managed_deck_bindings"
+    ):
+        ids.setdefault(deck_id, set()).add(str(arena_id))
+    return ids
+
+
+def combined_record(records, arena_ids) -> Optional[Dict[str, Any]]:
+    """One record over several Arena deck ids; None when none was played."""
+    played = [records[arena_id] for arena_id in arena_ids if arena_id in records]
+    if not played:
+        return None
+    total = _empty_record()
+    for record in played:
+        for key in ("wins", "losses"):
+            total[key] += record[key]
+            for split in RECORD_SPLITS:
+                total[split][key] += record[split][key]
+    return total
+
+
 def encoded(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -262,22 +383,36 @@ def deck_detail(
 def list_decks(conn: sqlite3.Connection) -> list:
     cursor = conn.cursor()
     cursor.row_factory = sqlite3.Row
-    # One grouped query; independent of the size of the saved library.
-    return [
+    # One grouped query; independent of the size of the saved library. The Arena
+    # dates come from a native backup's snapshot, read once per deck.
+    rows = [
         dict(row)
         for row in cursor.execute(
             """
-        SELECT d.*, r.source, r.completeness, r.created_at AS saved_at,
-               COUNT(c.position) AS unique_cards,
-               COALESCE(MAX(CASE WHEN c.section = 'Commander' THEN c.name END),
-                        MAX(CASE WHEN c.position = 0 THEN c.name END)) AS art_card,
-               SUM(CASE WHEN c.section = 'Deck' THEN c.quantity ELSE 0 END) AS main_count
-        FROM managed_decks d JOIN managed_deck_revisions r ON r.id = d.current_revision_id
-        LEFT JOIN managed_deck_cards c ON c.revision_id = r.id
-        GROUP BY d.id ORDER BY d.name COLLATE NOCASE, d.id
+        SELECT g.*,
+               (SELECT json_extract(a.value, '$.value') FROM managed_deck_revisions r2,
+                       json_each(r2.payload_json, '$.metadata.native_archive.source_snapshot.summary.Attributes') a
+                WHERE r2.id = g.current_revision_id AND json_extract(a.value, '$.key') = 'LastUpdated') AS arena_modified,
+               (SELECT json_extract(a.value, '$.value') FROM managed_deck_revisions r2,
+                       json_each(r2.payload_json, '$.metadata.native_archive.source_snapshot.summary.Attributes') a
+                WHERE r2.id = g.current_revision_id AND json_extract(a.value, '$.key') = 'LastPlayed') AS arena_played
+        FROM (
+            SELECT d.*, r.source, r.completeness, r.created_at AS saved_at,
+                   COUNT(c.position) AS unique_cards,
+                   COALESCE(MAX(CASE WHEN c.section = 'Commander' THEN c.name END),
+                            MAX(CASE WHEN c.position = 0 THEN c.name END)) AS art_card,
+                   SUM(CASE WHEN c.section = 'Deck' THEN c.quantity ELSE 0 END) AS main_count
+            FROM managed_decks d JOIN managed_deck_revisions r ON r.id = d.current_revision_id
+            LEFT JOIN managed_deck_cards c ON c.revision_id = r.id
+            GROUP BY d.id
+        ) g ORDER BY g.name COLLATE NOCASE, g.id
     """
         )
     ]
+    for row in rows:
+        for field in ARENA_DATES:
+            row[field] = arena_time(row[field])
+    return rows
 
 
 def export_document(detail: Dict[str, Any]) -> str:

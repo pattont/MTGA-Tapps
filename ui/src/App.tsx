@@ -51,7 +51,7 @@ import { OpponentDetailPage } from './components/OpponentDetailPage';
 import { OpponentsPage } from './components/OpponentsPage';
 import { OpponentLink } from './components/OpponentLink';
 import { RankProgressChart } from './components/RankProgressChart';
-import { SortableTable, type Column } from './components/SortableTable';
+import { SortableTable, type Column, type TableSort } from './components/SortableTable';
 import { TrendChart } from './components/TrendChart';
 import { WinRateBar } from './components/WinRateBar';
 import { AppShell } from './components/AppShell';
@@ -59,7 +59,7 @@ import { Section } from './components/Section';
 import { ManaReadinessTable } from './components/ManaReadinessTable';
 import { bestDeckMetric, formatPercent, metricCards } from './dashboardData';
 import type { MetricDefinition } from './dashboardData';
-import { formatCardName, formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone, shortFormatLabel } from './format';
+import { formatCardName, formatDateTime, formatDuration, formatNumber, formatTimeAgo, outcomeLabel, outcomeTone, shortFormatLabel } from './format';
 import { auditNavItems,
   deckFinderNavItems, deckManagerNavItems, cardNavItems, deckNavItems, gameNavItems, gamesNavItems, opponentNavItems,
   opponentsNavItems, liveNavItems, replayNavItems, settingsNavItems } from './nav';
@@ -327,25 +327,79 @@ function BestDeckBar({
 
 type DeckWithCombatRow = DeckRow & Partial<CombatDeckRow>;
 
+type DeckSort = TableSort<DeckWithCombatRow>;
+
+const DECK_SORT_STORAGE_KEY = 'tapps.overview.deckSort';
+
+// The Decks table's sort dropdown. Column headers still sort too; a header
+// sort that matches none of these shows as "Column: <header>".
+const DECK_SORT_OPTIONS: { id: string; label: string; sort: DeckSort }[] = [
+  { id: 'games-desc', label: 'Most played', sort: { key: 'games', direction: 'desc' } },
+  { id: 'recent-desc', label: 'Recently played', sort: { key: 'last_played', direction: 'desc' } },
+  { id: 'name-asc', label: 'Name A–Z', sort: { key: 'deck_visual', direction: 'asc' } },
+  { id: 'name-desc', label: 'Name Z–A', sort: { key: 'deck_visual', direction: 'desc' } },
+  { id: 'winrate-desc', label: 'Highest win rate', sort: { key: 'win_rate', direction: 'desc' } },
+];
+
+function readDeckSort(): DeckSort {
+  const fallback = DECK_SORT_OPTIONS[0].sort;
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DECK_SORT_STORAGE_KEY) ?? 'null') as DeckSort | null;
+    const validKey =
+      parsed?.key === 'last_played' || deckColumns.some((column) => column.key === parsed?.key);
+    if (parsed && validKey && (parsed.direction === 'asc' || parsed.direction === 'desc')) {
+      return { key: parsed.key, direction: parsed.direction };
+    }
+  } catch {
+    // Fall back to the default sort.
+  }
+  return fallback;
+}
+
+function storeDeckSort(sort: DeckSort): void {
+  try {
+    localStorage.setItem(DECK_SORT_STORAGE_KEY, JSON.stringify(sort));
+  } catch {
+    // Persistence is best-effort only.
+  }
+}
+
+function deckSortOptionId(sort: DeckSort): string {
+  return (
+    DECK_SORT_OPTIONS.find(
+      (option) => option.sort.key === sort.key && option.sort.direction === sort.direction,
+    )?.id ?? 'column'
+  );
+}
+
+function renderDeckCell(row: DeckWithCombatRow, showLastPlayed: boolean) {
+  const lastPlayed = showLastPlayed && row.last_played ? formatTimeAgo(row.last_played) : null;
+  return (
+    <div className="deck-cell">
+      <DeckVisual deckName={row.deck_name} visual={row.deck_visual} />
+      <div>
+        <DeckLink deckName={row.deck_name}>
+          <strong>{row.deck_name}</strong>
+        </DeckLink>
+        <span>
+          {lastPlayed ? (
+            <span title={formatDateTime(row.last_played ?? '')}>Played {lastPlayed}</span>
+          ) : row.deck_visual.source === 'local_metadata' && row.deck_visual.card_name ? (
+            formatCardName(row.deck_visual.card_name)
+          ) : (
+            'No card data yet'
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 const deckColumns: Column<DeckWithCombatRow>[] = [
   {
     key: 'deck_visual',
     header: 'Deck',
-    render: (row) => (
-      <div className="deck-cell">
-        <DeckVisual deckName={row.deck_name} visual={row.deck_visual} />
-        <div>
-          <DeckLink deckName={row.deck_name}>
-            <strong>{row.deck_name}</strong>
-          </DeckLink>
-          <span>
-            {row.deck_visual.source === 'local_metadata' && row.deck_visual.card_name
-              ? formatCardName(row.deck_visual.card_name)
-              : 'No card data yet'}
-          </span>
-        </div>
-      </div>
-    ),
+    render: (row) => renderDeckCell(row, false),
     sortValue: (row) => row.deck_name,
   },
   {
@@ -1219,6 +1273,24 @@ function Dashboard({
   onTrendRangeChange: (range: string) => void;
 }) {
   const [deckSearch, setDeckSearch] = useState('');
+  const [deckSort, setDeckSort] = useState<DeckSort>(readDeckSort);
+  const changeDeckSort = (sort: DeckSort) => {
+    setDeckSort(sort);
+    storeDeckSort(sort);
+  };
+  const deckSortId = deckSortOptionId(deckSort);
+  // Sorting by last played shows each deck's last game in place of its card name.
+  const visibleDeckColumns = useMemo(
+    () =>
+      deckSort.key === 'last_played'
+        ? deckColumns.map((column) =>
+            column.key === 'deck_visual'
+              ? { ...column, render: (row: DeckWithCombatRow) => renderDeckCell(row, true) }
+              : column,
+          )
+        : deckColumns,
+    [deckSort.key],
+  );
   const [recentQuickFilter, setRecentQuickFilter] = useState('all');
   const landProfile =
     snapshot.land_profile && snapshot.land_profile.classified_games > 0
@@ -1590,23 +1662,49 @@ function Dashboard({
         description="Record plus combat stats per deck: damage pace, attacks, and lifegain. Profile is judged by damage dealt per turn."
       >
         <div className="table-filter table-filter-row">
-          <input
-            type="search"
-            aria-label="Search decks"
-            value={deckSearch}
-            onChange={(event) => setDeckSearch(event.target.value)}
-            placeholder="Search decks"
-          />
+          <div className="table-filter-controls">
+            <input
+              type="search"
+              aria-label="Search decks"
+              value={deckSearch}
+              onChange={(event) => setDeckSearch(event.target.value)}
+              placeholder="Search decks"
+            />
+            <select
+              aria-label="Sort decks"
+              value={deckSortId}
+              onChange={(event) => {
+                const option = DECK_SORT_OPTIONS.find((item) => item.id === event.target.value);
+                if (option) {
+                  changeDeckSort(option.sort);
+                }
+              }}
+            >
+              {DECK_SORT_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+              {deckSortId === 'column' ? (
+                <option value="column" disabled>
+                  {`Column: ${deckColumns.find((column) => column.key === deckSort.key)?.header ?? 'custom'} ${
+                    deckSort.direction === 'asc' ? '↑' : '↓'
+                  }`}
+                </option>
+              ) : null}
+            </select>
+          </div>
           <WildcardStrip inventory={snapshot.inventory} />
         </div>
         <SortableTable
           caption="Deck performance"
-          columns={deckColumns}
+          columns={visibleDeckColumns}
           getRowKey={(row) => row.deck_name}
-          initialSort={{ key: 'games', direction: 'desc' }}
+          sort={deckSort}
+          onSortChange={changeDeckSort}
           pageSize={10}
           paginationControls="full"
-          paginationKey={`${deckSearch.trim().toLocaleLowerCase()}:${dashboardRouteHash(filters)}`}
+          paginationKey={`${deckSearch.trim().toLocaleLowerCase()}:${dashboardRouteHash(filters)}:${deckSortId}`}
           rows={filteredDecks}
         />
       </Section>

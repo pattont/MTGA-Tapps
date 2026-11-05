@@ -22,6 +22,7 @@ from .tracker_state_lookup import TrackerStateLookupMixin
 from .tracker_summary import TrackerSummaryMixin
 from .tracker_stack import TrackerStackMixin
 from .tracker_zone_transfers import TrackerZoneTransferMixin
+from .tracker_zone_transfer_extras import TrackerZoneTransferExtrasMixin
 from .rendering import ANSI_RESET, ANSI_STYLES
 from .state import CardEvent, GameState
 
@@ -39,6 +40,7 @@ class CardTracker(
     TrackerSummaryMixin,
     TrackerStackMixin,
     TrackerZoneTransferMixin,
+    TrackerZoneTransferExtrasMixin,
 ):
     """Tracks cards played during MTGA matches."""
 

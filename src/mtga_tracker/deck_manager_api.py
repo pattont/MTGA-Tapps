@@ -52,6 +52,78 @@ def _with_printings(deck):
     return {**deck, "cards": cards}
 
 
+def _saved_tile_art(deck, cards):
+    """Direct image links for a saved deck's tile card (its ``art_card``)."""
+    from .card_art import tile_art
+
+    card = next((c for c in cards if c["name"] == deck.get("art_card")), None)
+    try:
+        return tile_art(
+            card and card["arena_id"],
+            deck.get("art_card"),
+            card and card["set_code"],
+            card and card["collector_number"],
+        )
+    except Exception:  # noqa: BLE001 - art is cosmetic
+        return {"art_url": None, "art_print": None}
+
+
+_CARD_DB = None
+
+
+def _front_face(name):
+    """A two-faced card's front face: Unholy Annex for Unholy Annex // Ritual Chamber."""
+    for separator in (" // ", " / "):
+        if separator in name:
+            return name.split(separator)[0].strip()
+    return name
+
+
+def _card_info(cards):
+    """Mana cost and card type per card name, from Arena's local card DB.
+
+    The deck dialogs group cards by type and show costs; Deck Compare sorts
+    lands last. Missing data is left out; the dialog shows the name alone.
+    """
+    global _CARD_DB
+    if _CARD_DB is None:
+        try:
+            from .card_database import CardDatabase
+
+            _CARD_DB = CardDatabase()
+        except Exception:
+            _CARD_DB = False
+    if not _CARD_DB:
+        return {}
+    try:
+        mana = _CARD_DB.mana_cost_index_by_name()
+    except Exception:
+        mana = {}
+    try:
+        types_by_id, types_by_name = _CARD_DB.list_type_indexes()
+    except Exception:
+        types_by_id, types_by_name = {}, {}
+    info = {}
+    for card in cards:
+        name = card.get("name") or ""
+        if not name or name in info:
+            continue
+        entry = {}
+        front = _front_face(name)
+        # Arena joins a two-faced card's costs ({2}{B}{3}{B}{B} for a Room):
+        # the front face's cost is the one you cast it for.
+        cost = mana.get(front) or mana.get(name)
+        if cost:
+            entry["mana_cost"], entry["mana_value"] = cost[0], cost[1]
+        kind = types_by_id.get(card.get("arena_id") or 0)
+        kind = kind or types_by_name.get(name) or types_by_name.get(front)
+        if kind:
+            entry["type"] = kind
+        if entry:
+            info[name] = entry
+    return info
+
+
 def handle_get(path, query, db_path):
     from . import deck_native_api
 
@@ -65,6 +137,7 @@ def handle_get(path, query, db_path):
         conn = _read_connection(db_path)
         if path == "/api/deck-manager":
             decks = dm.list_decks(conn) if conn else []
+            records = {}
             for deck in decks:
                 deck["tags"] = json.loads(deck.pop("tags_json"))
             if conn:
@@ -89,8 +162,9 @@ def handle_get(path, query, db_path):
                 for deck in decks:
                     deck["native_arena_ids"] = bindings.get(deck["id"], [])
                 cards = {}
-                for deck_id, section, quantity, name, arena_id in conn.execute(
-                    "SELECT d.id,c.section,c.quantity,c.name,c.arena_id FROM managed_decks d"
+                for deck_id, section, quantity, name, arena_id, set_code, number in conn.execute(
+                    "SELECT d.id,c.section,c.quantity,c.name,c.arena_id,c.set_code,c.collector_number"
+                    " FROM managed_decks d"
                     " JOIN managed_deck_cards c ON c.revision_id=d.current_revision_id"
                     f" WHERE c.section IN ({','.join('?' * len(COLOR_SECTIONS))})",
                     COLOR_SECTIONS,
@@ -101,13 +175,23 @@ def handle_get(path, query, db_path):
                             "quantity": quantity,
                             "name": name,
                             "arena_id": arena_id,
+                            "set_code": set_code,
+                            "collector_number": number,
                         }
                     )
                 for deck in decks:
                     deck["colors"] = deck_colors(cards.get(deck["id"], []))
+                    deck.update(_saved_tile_art(deck, cards.get(deck["id"], [])))
+                # Win-loss from tracked games, by Arena deck id: Arena tiles look
+                # theirs up in "records"; a saved deck adds up every id it has been.
+                records = dm.played_records(conn)
+                arena_ids = dm.saved_arena_ids(conn)
+                for deck in decks:
+                    deck["record"] = dm.combined_record(records, arena_ids.get(deck["id"], ()))
             available, message = deck_native_api.nb.availability()
             return 200, {
                 "decks": decks,
+                "records": records,
                 "collections": dc.list_collections(conn) if conn else [],
                 "capabilities": {
                     "arena_transfers": available,
@@ -148,6 +232,9 @@ def handle_get(path, query, db_path):
                     else ""
                 ),
             }
+        detail["card_info"] = _card_info(detail["deck"]["cards"])
+        snapshot = (detail["deck"].get("metadata") or {}).get("native_archive") or {}
+        detail.update(dm.arena_dates((snapshot.get("source_snapshot") or {}).get("summary")))
         return 200, detail
     except KeyError as exc:
         return 404, {"error": exc.args[0]}

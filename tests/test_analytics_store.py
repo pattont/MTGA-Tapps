@@ -857,7 +857,7 @@ def test_snapshot_brawl_summary_counts_all_brawl_queues(tmp_path):
     assert (brawl["games"], brawl["wins"], brawl["losses"]) == (3, 2, 1)
     assert round(brawl["win_rate"], 1) == 66.7
     assert [(q["format_label"], q["games"], q["wins"]) for q in brawl["queues"]] == [
-        ("Historic Brawl", 2, 1),
+        ("Brawl", 2, 1),
         ("Brawl (Ranked)", 1, 1),
     ]
 

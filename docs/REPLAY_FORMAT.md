@@ -392,7 +392,7 @@ brackets are the anchor):
 | `cast` | `You: cast [X (Type)]` (optional `-> [Target]`, `(on stack)`) | `move hand→stack cast`, `stack_push spell` |
 | `draw` | `drew [X]` / `drew a card` | `move library→hand draw` (hidden when unnamed) |
 | `stack_resolve` | `Stack: [X ...] [resolved]` | `stack_resolve`, then `move stack→battlefield` for permanents or `stack→graveyard` for instants/sorceries (type from the bracket suffix, else `cards.primary_type`); triggers/abilities resolve with no move |
-| `stack_fail` | `[left stack without resolving - inferred]` | `stack_fizzle`, `move stack→graveyard` for spells |
+| `stack_fail` | `[left stack without resolving - inferred]`, or `[fizzled]` when Arena moved the spell off the stack unresolved (its targets were gone) | `stack_fizzle`, `move stack→graveyard` for spells |
 | `counter` | `[X] was countered` | `stack_countered`, `move stack→graveyard` |
 | `ability` / `stack` | `[X] - text` / `(triggered, on stack)` | `stack_push trigger` (resolved by the next matching `stack_resolve`); `[A] became [B]` → `identity` |
 | `zone` | `was destroyed/exiled/sacrificed/discarded`, `was put into graveyard (lethal damage)`, `milled [X]`, `returned [X] to hand`, `put [X] onto battlefield`, `put [X] into … hand`, `sacrificed as cost` | `move` with the matching reason; source zone from current tracking (battlefield first, then stack, hand, graveyard) |

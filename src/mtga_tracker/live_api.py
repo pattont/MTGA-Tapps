@@ -278,6 +278,67 @@ def _head_to_head_query(
     return {"wins": wins, "losses": losses}
 
 
+#: The overlay's session record changes only when a game ends, so the
+#: play/draw split is looked up once per (database, session, totals).
+_overlay_session_cache: Dict[Tuple[str, str, Tuple[int, ...]], Dict[str, Any]] = {}
+
+
+def _overlay_session(
+    conn: sqlite3.Connection, session_id: Optional[str], cache_scope: str
+) -> Optional[Dict[str, Any]]:
+    """This tracker session's record for the overlay footer: the same totals
+    as the Stream Kit record widget, plus wins/losses on the play and on the
+    draw (`participants.went_first`; unknown turn order counts in neither)."""
+    if not session_id:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT games_played, wins, losses, draws FROM tracker_sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if row is None:
+        return None
+    totals = tuple(int(value or 0) for value in row)
+    key = (cache_scope, session_id, totals)
+    cached = _overlay_session_cache.get(key)
+    if cached is not None:
+        return cached
+    games, wins, losses, draws = totals
+    split = {"play": {"wins": 0, "losses": 0}, "draw": {"wins": 0, "losses": 0}}
+    try:
+        rows = conn.execute(
+            """
+            SELECT p.went_first, g.outcome, COUNT(*)
+            FROM games g
+            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            WHERE g.session_id = ? AND g.outcome IN ('win', 'loss')
+              AND p.went_first IS NOT NULL
+            GROUP BY p.went_first, g.outcome
+            """,
+            (session_id,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    for went_first, outcome, count in rows:
+        side = split["play" if went_first else "draw"]
+        side["wins" if outcome == "win" else "losses"] += int(count or 0)
+    decided = wins + losses
+    result = {
+        "games": games,
+        "wins": wins,
+        "losses": losses,
+        "draws": draws,
+        "win_rate": round(100.0 * wins / decided, 1) if decided else None,
+        **split,
+    }
+    if len(_overlay_session_cache) > 32:
+        _overlay_session_cache.clear()
+    _overlay_session_cache[key] = result
+    return result
+
+
 def _commander_record(
     conn: sqlite3.Connection,
     opponent_commanders: Any,
@@ -860,6 +921,7 @@ def reset_poll_connections() -> None:
                 pass
         _poll_connections.clear()
     _overlay_response_cache.clear()
+    _overlay_session_cache.clear()
 
 
 def overlay_response(db_path: Path) -> Tuple[bytes, str]:
@@ -899,8 +961,9 @@ def build_overlay_payload(
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """The in-game overlay's poll target: tracker state, the library state the
-    tracker last wrote (see overlay_state.py), and the head-to-head record the
-    overlay header shows next to the opponent's name."""
+    tracker last wrote (see overlay_state.py), the head-to-head record the
+    overlay header shows next to the opponent's name, and the session record
+    its footer shows."""
     db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
     now = now or datetime.now()
     with _open_readonly(db_uri) as conn:
@@ -921,10 +984,12 @@ def build_overlay_payload(
             head_to_head = _head_to_head(
                 conn, status.get("opponent_name"), status.get("game_id"), cache_scope=db_uri
             )
+        session = _overlay_session(conn, status.get("session_id") if status else None, db_uri)
     tracker_state = _tracker_state(status, now)
     if tracker_state == "offline":
         # A stale row must not keep a finished game's library on screen.
         state = None
+        session = None
     return {
         "tracker": {
             "state": tracker_state,
@@ -933,6 +998,7 @@ def build_overlay_payload(
         },
         "state": state,
         "head_to_head": head_to_head,
+        "session": session,
     }
 
 

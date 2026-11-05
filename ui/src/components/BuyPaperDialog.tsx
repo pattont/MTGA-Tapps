@@ -102,10 +102,15 @@ type StoreState =
 
 const STORE_SOURCES: StorePriceSource[] = ['cardkingdom', 'manapool'];
 
+const ALWAYS_SHOWN_BOARDS: BoardId[] = ['main', 'sideboard'];
+
 /** "Buy on paper": pick a store, choose cards, see live prices, open the store's cart. */
 export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialogProps) {
   const rows = useMemo(() => paperDeckFromSections(sections), [sections]);
   const presentBoards = useMemo(() => BOARD_ORDER.filter((board) => rows.some((row) => row.board === board)), [rows]);
+  // Main Deck and Sideboard always show, so the row never seems to vanish; a board the
+  // deck doesn't have is greyed out. Other boards show only when the deck has them.
+  const boardToggles = BOARD_ORDER.filter((board) => ALWAYS_SHOWN_BOARDS.includes(board) || presentBoards.includes(board));
   const [prefs, setPrefs] = useState(loadPrefs);
   const [boards, setBoards] = useState<Set<BoardId>>(() => new Set(DEFAULT_BOARDS));
   const [excluded, setExcluded] = useState<Set<string>>(() => new Set());
@@ -302,16 +307,19 @@ export function BuyPaperDialog({ sections, onClose, returnFocus }: BuyPaperDialo
           <p className="buy-paper-store-note">{vendor.note}</p>
 
           <h4>Options</h4>
-          {presentBoards.length > 1 ? (
-            <div className="buy-paper-board-toggles" role="group" aria-label="Boards">
-              {presentBoards.map((board) => (
-                <label key={board} className="buy-paper-check">
-                  <input type="checkbox" checked={boards.has(board)} onChange={() => toggleBoard(board)} />
+          <div className="buy-paper-board-toggles" role="group" aria-label="Boards">
+            {boardToggles.map((board) => {
+              const present = presentBoards.includes(board);
+              return (
+                <label key={board} className="buy-paper-check"
+                  title={present ? undefined : `This deck has no ${BOARD_LABELS[board].toLowerCase()}.`}>
+                  <input type="checkbox" checked={present && boards.has(board)} disabled={!present}
+                    onChange={() => toggleBoard(board)} />
                   <span>{BOARD_LABELS[board]}</span>
                 </label>
-              ))}
-            </div>
-          ) : null}
+              );
+            })}
+          </div>
           <label className="buy-paper-check">
             <input
               type="checkbox"

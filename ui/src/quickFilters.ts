@@ -76,17 +76,19 @@ export const FORMAT_FAMILIES: FormatFamily[] = [
     label: 'Brawl',
     matches: (l) => isBrawl(l),
     refinements: [
+      // Arena's queue picker: Brawl (Play_Brawl_Historic, once "Historic
+      // Brawl"), Competitive Brawl (labelled "Brawl (Ranked)") and Standard Brawl.
       {
         id: 'brawl-historic',
-        label: 'Brawl (Historic)',
+        label: 'Brawl',
         matches: (l) => l.includes('historic brawl') || l.trim() === 'brawl',
       },
-      { id: 'brawl-standard', label: 'Standard Brawl', matches: (l) => l.includes('standard brawl') },
       {
         id: 'brawl-competitive',
         label: 'Competitive Brawl',
-        matches: (l) => l.includes('competitive') && l.includes('brawl'),
+        matches: (l) => isBrawl(l) && (ranked(l) || l.includes('competitive')),
       },
+      { id: 'brawl-standard', label: 'Standard Brawl', matches: (l) => l.includes('standard brawl') },
     ],
   },
   { id: 'events', label: 'Events', matches: (l) => isEvent(l) },

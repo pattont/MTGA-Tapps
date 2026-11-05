@@ -51,6 +51,9 @@ export interface InitialSort<T extends object> {
   direction: SortDirection;
 }
 
+/** A table's sort, e.g. one chosen from a dropdown beside the table. */
+export type TableSort<T extends object> = InitialSort<T>;
+
 interface SortableTableProps<T extends object> {
   caption: string;
   columns: Column<T>[];
@@ -58,6 +61,13 @@ interface SortableTableProps<T extends object> {
   getRowKey: (row: T) => string | number;
   rows: T[];
   initialSort?: InitialSort<T>;
+  /**
+   * Controlled sort: the caller owns it (and its persistence), and header
+   * clicks call onSortChange. The key may name a row field with no column
+   * (e.g. a dropdown-only "last played"); then no header shows as active.
+   */
+  sort?: TableSort<T>;
+  onSortChange?: (sort: TableSort<T>) => void;
   pageSize?: number;
   paginationControls?: 'simple' | 'full';
   paginationKey?: string | number;
@@ -90,6 +100,8 @@ export function SortableTable<T extends object>({
   getRowKey,
   rows,
   initialSort,
+  sort,
+  onSortChange,
   pageSize,
   paginationControls = 'simple',
   paginationKey = '',
@@ -128,13 +140,15 @@ export function SortableTable<T extends object>({
     return initialSort?.direction ?? 'asc';
   });
   const [pagination, setPagination] = useState({ key: paginationKey, page: 1 });
-  const requestedSortColumn = sortableColumns.find((column) => column.key === sortKey) ?? null;
-  const activeSortColumn = requestedSortColumn ?? sortableColumns[0] ?? null;
-  const activeDirection = requestedSortColumn ? direction : 'asc';
+  const controlledKey = sort?.key ?? null;
+  const requestedSortColumn =
+    sortableColumns.find((column) => column.key === (sort ? controlledKey : sortKey)) ?? null;
+  const activeSortColumn = sort ? requestedSortColumn : (requestedSortColumn ?? sortableColumns[0] ?? null);
+  const activeDirection = sort ? sort.direction : requestedSortColumn ? direction : 'asc';
 
   const sortedRows = useMemo(() => {
     if (!activeSortColumn) {
-      return rows;
+      return controlledKey !== null ? sortRows(rows, controlledKey, activeDirection) : rows;
     }
     if (activeSortColumn.sortValue) {
       return sortRows(
@@ -144,7 +158,7 @@ export function SortableTable<T extends object>({
       ).map(({ row }) => row);
     }
     return sortRows(rows, activeSortColumn.key, activeDirection);
-  }, [activeDirection, activeSortColumn, rows]);
+  }, [activeDirection, activeSortColumn, controlledKey, rows]);
   const pageCount = pageSize ? Math.max(1, Math.ceil(sortedRows.length / pageSize)) : 1;
   const requestedPage = pagination.key === paginationKey ? pagination.page : 1;
   const activePage = Math.min(requestedPage, pageCount);
@@ -154,6 +168,11 @@ export function SortableTable<T extends object>({
 
   function toggleSort(key: keyof T) {
     setPagination({ key: paginationKey, page: 1 });
+    if (sort) {
+      const nextDirection = key === activeSortColumn?.key && activeDirection === 'asc' ? 'desc' : 'asc';
+      onSortChange?.({ key, direction: nextDirection });
+      return;
+    }
     if (key === activeSortColumn?.key) {
       const nextDirection = activeDirection === 'asc' ? 'desc' : 'asc';
       setSortKey(key);

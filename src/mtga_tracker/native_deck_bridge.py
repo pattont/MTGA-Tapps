@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from contextlib import contextmanager
 import hashlib
 import importlib.util
@@ -45,11 +46,13 @@ class ArenaBridge:
         # The last deck this attachment created, selected by that redraw.
         self.created = None
 
-    def roster(self):
-        report = self.exports.roster(self.account_id)
-        if (
-            report.get("account_id") != self.account_id
-            or report.get("roster_refreshed") is not True
+    def roster(self, refresh=True):
+        """Arena's deck list. ``refresh=False`` (a plain load) reads the copy Arena
+        already holds instead of asking its server first; checks around writes
+        keep the server refresh."""
+        report = self.exports.roster(self.account_id, bool(refresh))
+        if report.get("account_id") != self.account_id or (
+            refresh and report.get("roster_refreshed") is not True
         ):
             raise DeckManagerError("Arena account changed or roster refresh failed.")
         return report
@@ -87,6 +90,15 @@ class ArenaBridge:
         self.wrote = True
         return self.exports.remove(self.account_id, snapshot)
 
+    def favorite(self, arena_id, value):
+        """Star or unstar a deck as Arena's own button does; verified by reading it back."""
+        result = self.exports.favorite(self.account_id, arena_id, bool(value))
+        if result.get("changed"):
+            self.wrote = True
+        if result.get("arena_id") != arena_id or result.get("is_favorite") is not bool(value):
+            raise DeckManagerError("Arena did not save the favorite. Refresh to check it.")
+        return result
+
     def refresh_screen(self):
         """Redraw Arena's open Decks screen. Best effort: the write is already verified."""
         if not self.wrote:
@@ -102,13 +114,26 @@ def attach():
     available, message = availability()
     if not available:
         raise DeckManagerError(message)
+    # Seconds per connection step, for the job's timing line.
+    steps = {}
+    started = time.monotonic()
+
+    def step(label):
+        nonlocal started
+        now = time.monotonic()
+        steps[label] = round(now - started, 2)
+        started = now
+
     import frida
 
+    step("frida")
     device = frida.get_local_device()
     processes = [p for p in device.enumerate_processes() if p.name in ARENA_PROCESS_NAMES]
     if len(processes) != 1:
         raise DeckManagerError("Open Arena and return to Decks outside a match.")
+    step("find")
     session = device.attach(processes[0].pid)
+    step("attach")
     # Each explicit job attaches independently, never launches/restarts Arena.
     timer = Timer(600, session.detach)
     timer.daemon = True
@@ -120,7 +145,10 @@ def attach():
             (Path(__file__).parent / "assets" / "arena_decks.js").read_text(encoding="utf-8")
         )
         script.load()
+        step("script")
         bridge = ArenaBridge(script.exports_sync)
+        step("open")
+        bridge.connect_timings = steps
         yield bridge
     finally:
         # Also after a failed or stopped batch: earlier decks may have changed.

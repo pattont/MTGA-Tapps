@@ -1,16 +1,18 @@
-import { ManaCost } from '../../components/ManaCost';
 import { deckSections, type DeckRow } from '../deckRows';
 import type { StreamOptions } from '../options';
 import type { OverlayState } from '../types';
 import { useOverlay } from '../useOverlay';
 import { Brand } from './Brand';
+import { ManaCost } from './ManaCost';
 
 function Row({ row }: { row: DeckRow }) {
   return (
     <li className={`sk-row sk-type-${row.typeClass}${row.left === 0 ? ' sk-row-out' : ''}`}>
       <span className="sk-row-count">{row.left}</span>
       <span className="sk-row-name">{row.name}</span>
-      <span className="sk-row-cost">{row.mana_cost ? <ManaCost info={{ mana_cost: row.mana_cost, cmc: 0 }} /> : null}</span>
+      <span className="sk-row-cost">
+        <ManaCost cost={row.mana_cost} />
+      </span>
       <span className="sk-row-odds">{row.left > 0 ? `${row.nextDraw}%` : '—'}</span>
     </li>
   );

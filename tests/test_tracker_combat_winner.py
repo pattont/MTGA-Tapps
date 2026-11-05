@@ -4200,7 +4200,7 @@ def test_match_started_block_formats_historic_brawl_label(capsys):
     tracker._print_match_started_block()
     out = capsys.readouterr().out
 
-    assert "Format: Historic Brawl" in out
+    assert "Format: Brawl\n" in out
 
 
 def test_game_state_reset_clears_previous_deck_name():
@@ -5379,7 +5379,7 @@ def test_game_summary_persists_brawl_starting_life(capsys, tmp_path):
     assert rows == [("opponent", 25), ("player", 25)]
 
 
-def test_combat_damage_labels_include_power_toughness_in_log_and_summary(capsys):
+def test_combat_damage_labels_include_power_toughness_without_a_summary(capsys):
     tracker = make_tracker()
     tracker.game_state.in_match = True
     tracker.game_state.player_seat_id = 1
@@ -5428,13 +5428,15 @@ def test_combat_damage_labels_include_power_toughness_in_log_and_summary(capsys)
         },
         [attacker, blocker],
     )
-    tracker._display_combat_summary()
     out = capsys.readouterr().out
 
     assert (
         "Combat: [Devoted Duelist (2/1)] dealt 4 damage to [Keen-Eyed Curator (3/3)] (your)" in out
     )
-    assert "[Devoted Duelist (2/1)] → [Keen-Eyed Curator (3/3)] (your): 4 damage" in out
+    # The combat line names both sides, so no summary repeats it afterwards.
+    tracker.game_state.combat_phase_active = True
+    tracker._update_combat_phase("Phase_Main2")
+    assert "Combat Summary" not in capsys.readouterr().out
 
 
 def test_life_change_from_previous_attack_stays_on_previous_turn(capsys):
@@ -6819,7 +6821,9 @@ def test_opponent_archetype_lookup_fires_once_and_caches(monkeypatch):
     calls = []
     monkeypatch.setattr(ta, "is_deck_llm_enabled", lambda: True)
     monkeypatch.setattr(
-        ta, "identify_deck", lambda names: calls.append(list(names)) or "Mono Red Aggro"
+        ta,
+        "identify_deck",
+        lambda names, colors=None: calls.append(list(names)) or "Mono Red Aggro",
     )
     monkeypatch.setattr(ta.threading, "Thread", _InlineThread)
     monkeypatch.setattr(ta.time, "sleep", lambda seconds: None)
@@ -6844,10 +6848,47 @@ def test_opponent_archetype_lookup_never_blocks_or_calls_when_disabled(monkeypat
     ]
     monkeypatch.setattr(ta, "is_deck_llm_enabled", lambda: False)
     monkeypatch.setattr(
-        ta, "identify_deck", lambda names: (_ for _ in ()).throw(AssertionError("called"))
+        ta,
+        "identify_deck",
+        lambda names, colors=None: (_ for _ in ()).throw(AssertionError("called")),
     )
     monkeypatch.setattr(ta.threading, "Thread", _InlineThread)
     tracker._start_opponent_archetype_lookup(tracker._current_game_id())
+
+
+def test_opponent_archetype_lookup_sends_each_cards_colors(monkeypatch):
+    """The AI call gets every seen card's color identity, so it can't name a
+    color the opponent never showed (a W/U/R game came back "Selesnya")."""
+    from mtga_tracker import tracker_analytics as ta
+
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.opponent_cards = [
+        CardEvent("Dedicated Commons (Land)", "opponent"),
+        CardEvent("Island (Land)", "opponent"),
+        CardEvent("Gleaming Splendor (Enchantment)", "opponent"),
+        CardEvent("Mystery Card (Creature 2/2)", "opponent"),
+    ]
+    tracker._live_color_index_cache = {"Dedicated Commons": "WR", "Gleaming Splendor": "W"}
+    tracker._live_color_index_complete = True
+    tracker._live_color_lookup = lambda name: None
+    seen = []
+    monkeypatch.setattr(ta, "is_deck_llm_enabled", lambda: True)
+    monkeypatch.setattr(
+        ta, "identify_deck", lambda names, colors=None: seen.append(colors) or "Boros Enchantments"
+    )
+    monkeypatch.setattr(ta.threading, "Thread", _InlineThread)
+    monkeypatch.setattr(ta.time, "sleep", lambda seconds: None)
+
+    tracker._start_opponent_archetype_lookup(tracker._current_game_id())
+    assert seen == [
+        {
+            "Dedicated Commons (Land)": "WR",
+            "Island (Land)": "U",
+            "Gleaming Splendor (Enchantment)": "W",
+            "Mystery Card (Creature 2/2)": None,
+        }
+    ]
 
 
 def test_parse_reply_handles_prose_and_junk():

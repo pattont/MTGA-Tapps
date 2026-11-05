@@ -33,7 +33,7 @@ def test_format_normalizer_labels_nonstandard_constructed_queues():
     assert format_label("Timeless_Play") == "Timeless Best-of-1 (Unranked)"
     assert format_label("Explorer_Ranked") == "Explorer Best-of-1 (Ranked)"
     assert format_label("Traditional_Alchemy_Ranked") == "Alchemy Best-of-3 (Ranked)"
-    assert format_label("Historic_Brawl") == "Historic Brawl"
+    assert format_label("Historic_Brawl") == "Brawl"
     assert normalize_match_format("Historic_Brawl").is_brawl
 
 
@@ -682,10 +682,10 @@ def test_brawl_queue_labels():
     from mtga_tracker.format_normalizer import normalize_match_format
 
     cases = {
-        "Play_Brawl_Historic": ("Historic Brawl", True),   # unranked 100-card play queue
+        "Play_Brawl_Historic": ("Brawl", True),   # unranked 100-card queue, "Brawl" in Arena
         "Brawl_Ladder": ("Brawl (Ranked)", True),
         "Play_Brawl": ("Standard Brawl", True),
-        "Historic_Brawl": ("Historic Brawl", True),
+        "Historic_Brawl": ("Brawl", True),
         "Brawl": ("Brawl", True),
     }
     for raw, (label, is_brawl) in cases.items():

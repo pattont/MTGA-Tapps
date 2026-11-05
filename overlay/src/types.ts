@@ -46,13 +46,32 @@ export interface OverlayState {
   updated_at: string | null;
 }
 
+export interface Score {
+  wins: number;
+  losses: number;
+}
+
+/** This tracker session's record (the Stream Kit record widget's totals) with the play/draw split. */
+export interface OverlaySession extends Score {
+  games: number;
+  draws: number;
+  win_rate: number | null;
+  /** Games with unknown turn order count in neither. */
+  play: Score;
+  draw: Score;
+}
+
 export interface OverlayPayload {
   tracker: { state: 'live' | 'idle' | 'offline'; updated_at: string | null; session_id: string | null };
   state: OverlayState | null;
-  head_to_head: { wins: number; losses: number } | null;
+  head_to_head: Score | null;
+  /** Absent from trackers older than the footer. */
+  session?: OverlaySession | null;
 }
 
 export type Dock = 'left' | 'right' | 'float';
+
+export type SessionRecord = 'off' | 'scoreboard' | 'split';
 
 export interface Hotkeys {
   toggle: string;
@@ -79,6 +98,8 @@ export interface Settings {
   density: 'comfortable' | 'compact';
   /** Card names in their type colour, or plain white. */
   nameColor: 'type' | 'white';
+  /** The session record at the foot of the panel. */
+  sessionRecord: SessionRecord;
   followArena: boolean;
   hideWhenArenaNotInFront: boolean;
   apiUrl: string;
