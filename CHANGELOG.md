@@ -2,206 +2,50 @@
 
 ## 0.7.6
 
+**A much better Deck Manager, a more accurate live log, and replay video export in Firefox.**
+
 ### Deck Manager
 
-- Deck Manager can **compare two decks**. Select any two decks and click
-  **Compare** to see them side by side: how much of the main deck they share, the
-  cards (and extra copies) only one of them has, section by section, and a list of
-  the cards in both. Arena decks are compared as Arena last reported them, with
-  no backup needed.
-- Clicking a deck on Deck Manager's **Arena** tab opens it in a dialog, like a
-  saved deck, with its cards as of the last Arena read, **Copy deck list**,
-  **Buy on Paper**, **Back up**, **Move to collection** and **Move to trash**.
-  Ticking a deck's checkbox still selects it.
-- The Arena tab gains **Add deck**, which adds a pasted list straight to Arena and
-  saves a copy to your collection (a blank name uses the list's own `Name` line,
-  or "DeckManager Import Deck", numbered "(1)", "(2)"… when Arena already has a
-  deck by that name), and **Move to trash**, which backs decks up,
-  removes them from Arena, and puts the backups in Trash, where they can still be
-  restored.
-- Star or unstar Arena decks from Deck Manager: a star beside each Arena tile's
-  checkbox, and **Add to favorites** in the Arena deck dialog. It saves the change
-  the way Arena's own star button does and reads the deck back to confirm only
-  the star changed. Arena must be on its Decks screen, outside a match.
-- On the Saved tab, **Move to collection** now opens a dialog listing the selected
-  decks and where they are now, with a choice of collection (or a new one),
-  replacing the collection drop-down in the toolbar.
-- Deck Manager's **Saved** tab is now **Saved Locally**. It gains a collection
-  filter, and its search also matches collection names.
-- Deck Manager shows when Arena says a deck was last modified and last played,
-  in the Arena deck dialog and, for exact copies, the saved deck dialog. Both tabs
-  can sort by **Modified** (newest or oldest first) and **Played** (most recent),
-  matching Arena's own deck sort; decks without that date come last.
-- The Arena tab lists decks newest edit first by default, and remembers its own
-  sort apart from Saved Locally. Decks you starred as favorites in Arena get gold
-  tiles in a **Favorites** section above **My Decks**, as in Arena; both sections fold.
-- Deck Manager's deck dialogs group the main deck by type (creatures, instants,
-  and so on, with lands last), sorted by mana value, with each card's mana cost on
-  the right, in up to three columns so the dialog stays short. Costs here and in
-  Compare use the same mana symbols as the in-game overlay.
-- A saved deck's notes and tags section is now **Deck Info**. Notes get the full
-  width, with tags as chips below: type a tag and press Enter or a comma to add
-  it, or click its × to remove it.
-- Deck tiles show the deck's colors under its format, beside the artwork.
-- Deck tiles show your record with the deck along their bottom: wins–losses and
-  win rate in **Ranked** and **Casual** (unranked queues and events) games, win
-  rate on the play and on the draw, and games played, from the games the tracker
-  recorded; a deck you haven't played says **No games logged**, faintly. The same
-  record shows in the deck dialogs and in Compare. It follows the Arena deck, so
-  renaming a deck keeps its record, and a saved deck counts every Arena copy it
-  has been. Tiles are wider to fit it (two across on a laptop, three on a large
-  monitor) with tighter padding.
-- Loading Arena decks is faster. **Load Arena decks** and **Rescan Arena** read the
-  deck list Arena already has in memory instead of asking Wizards' servers each
-  time (backups, moves and other changes still check with the server), and Deck
-  Manager prepares its card data in the background as soon as it opens.
-- Deck Manager's badges are simpler. A saved deck is either an **Exact copy**
-  (read from Arena, with card styles and deck art; it goes back exactly) or a
-  **Deck list** (just the cards), replacing Full backup, Text backup and Captured
-  list; hover either for details. The **Not in Arena**, **Arena not checked** and
-  **In Trash** badges are gone, as is **In Arena** on the Arena tab; the green
-  **In Arena** badge marks saved decks Arena has, and the status filter can still
-  show the ones it doesn't.
-- Deck Manager's top is tidier. The tabs share a row with a small Arena status
-  (deck count, slot limit and when Arena was last read; hover for details), a
-  **Rescan Arena** button in place of the small refresh icon (a green **Load
-  Arena decks** before the first read, with no status beside it), **Back up all**
-  on every tab, and a **?** button that opens **How Deck Manager works**; the
-  **⋯** menu is gone. Below them, one bar holds search, filters,
-  sort and **Add deck**; once you tick decks it switches to the selection's actions,
-  with **Select all** and a **✕** to select none. The larger status panel now
-  appears only when something needs attention: a game in progress, Arena off its
-  Decks screen, an interrupted transfer, a running job, or a result.
-- Deck Manager's results no longer sit in a gold box under the status line. After a
-  backup, move, restore or other action, the result becomes the status line's own
-  headline (with the Arena deck count beside it); after loading or rescanning Arena,
-  the usual "Arena decks loaded" line says it alone. Messages inside deck dialogs,
-  such as "Deck list copied.", are a plain line too. Errors keep their box.
-- While Deck Manager works with Arena, its progress bar no longer repeats the
-  status line's title above it.
-- Deck Manager and Deck Finder dialogs no longer close when you click outside them;
-  use the **✕** (or Esc).
-- Deck Manager's Arena tab shows each deck's own tile art. It read Arena's art
-  number as a card number, so many decks showed a placeholder and some showed an
-  unrelated card. Click **Rescan Arena** once to pick up the right art.
-- Deck Manager tiles no longer fall back to a placeholder when a page has many
-  decks. Every tile asked Scryfall's API for its picture at once and Scryfall
-  turned most of them away; tiles now load from Scryfall's image server when the
-  tracker's card cache knows the printing, or by set and number for newer cards,
-  and look a card up by name only as a last resort.
+- **Compare two decks** side by side: shared cards, and the cards only one of them has.
+- **Your record on every deck:** Ranked and Casual wins–losses, play/draw win rates and games played, on each tile, in the deck dialogs and in Compare. Renaming a deck in Arena keeps its record.
+- **Arena decks open in a dialog** with their cards, Copy deck list, Buy on Paper, Back up, Move to collection and Move to trash.
+- **Add deck** pastes a list straight into Arena. **Move to trash** backs decks up before removing them from Arena.
+- **Favorites:** starred Arena decks get gold tiles in their own section, and you can star or unstar them from Deck Manager.
+- **Last modified and last played dates** from Arena, with sorting by either.
+- **Card lists grouped by type**, sorted by mana value, with mana costs.
+- **Faster loading:** Load and Rescan use the deck list Arena already has in memory.
+- **Tidier layout:** one toolbar, simpler **Exact copy** / **Deck list** badges, a collection filter on **Saved Locally**, and tag chips in **Deck Info**.
+- Tiles show deck colors and the right art (click **Rescan Arena** once to fix old art).
+- Dialogs no longer close when you click outside them.
 
 ### Dashboard and overlay
 
-- The in-game overlay's panel shows your **session record** at its foot:
-  wins–losses, win rate, and your win rate on the play and on the draw, between
-  games too. Choose **One line**, **Split** (a win/loss bar with the Play and Draw
-  records) or **Off** under **Session record** in the overlay's ⚙ menu.
-- Deck pages show when you **last played** the deck, under its colors (date and
-  how long ago), taken from your recorded games.
-- The Overview's **Decks** table has a sort menu beside **Search decks**: Most
-  played, Recently played, Name A–Z / Z–A and Highest win rate. Recently played
-  shows each deck's last game under its name. Column headers still sort, and the
-  choice is remembered.
-- The Stream Kit's **Full overlay** and **Deck tracker** draw mana costs exactly
-  like the in-game overlay: the same color symbols, and numbers in small grey
-  badges instead of the dashboard's serif-numbered circles.
-- On Game Detail, **Watch replay** sits above the commander tiles instead of
-  between them and the game's stats.
-- The sidebar's bottom buttons (Replay, Deck Finder, Deck Manager and Buy me a
-  coffee) now stay on screen on every page. On a short window, pages with a long
-  section list, like the Overview, pushed the last of them off the bottom, most
-  noticeably in Firefox. On windows 900 px tall or less the sidebar is now more
-  compact, and at 700 px or less (such as a 1080p screen at 150% scaling) the
-  four buttons get slimmer, so every section still fits. On an even shorter
-  window the section list scrolls and the buttons stay put.
-- Buy on Paper always shows the Main Deck and Sideboard checkboxes. For a deck
-  without a sideboard, such as many Best-of-One lists, Sideboard is greyed out
-  instead of the whole row disappearing.
+- **Session record in the overlay:** wins–losses and play/draw win rates at the foot of the panel (⚙ → Session record).
+- **Deck pages show when you last played the deck.**
+- **Overview Decks sort menu:** Most played, Recently played, Name, Win rate.
+- **Replay list** pages 25 at a time, and every column sorts.
+- The sidebar's bottom buttons stay on screen on short windows.
+- Stream Kit mana costs match the in-game overlay.
 
-### Replay
+### Replay video export
 
-- The **Replay** game list pages like Sessions and All Games, 25 games to a page:
-  numbered pages, first/previous/next/last buttons and **Go to page**, in place
-  of **Show more**. Changing a filter goes back to page one. Every column but the
-  play button sorts (newest first by default; ties keep date order).
-- Export video no longer fails in Firefox with "The first chunk for your media
-  track must have a timestamp of 0". Firefox's video encoder stamps its first
-  frame slightly late, which the MP4 writer refused; the video now starts from
-  whichever frame arrives first.
-- Export video shows the file's size as it is made, with a projected total
-  ("6.0 MB so far, about 24 MB in all"), so a long export no longer looks
-  stuck. The dialog's size is now labelled as a ceiling: the table is mostly
-  still, so files usually come out well under it. When a finished video is
-  much smaller than the estimate, the dialog says the video is complete and
-  why. In Firefox on Windows, whose VP9 encoder sets its own quality and size
-  whatever it is asked, the Quality menu is greyed out and the dialog says
-  so, rather than offering a size estimate that can't hold.
+- **Works in Firefox**, which failed with a "timestamp of 0" error.
+- **Shows the file size as it's made**, so long exports don't look stuck.
 
 ### Live log
 
-The live log is more accurate:
-
-- An activated ability whose cost is chosen after it goes on the stack (such
-  as Station, or "Sacrifice another creature: Surveil 1") prints once. It
-  printed twice, once as if it were a triggered ability.
-- Combat damage names the creature that dealt it: "Combat: [Villain (3/1)]
-  dealt 3 damage to [Chandra, Torch of Defiance] (your)" instead of
-  "[Chandra, Torch of Defiance] (your) took 3 damage". Arena's own combat
-  flag now decides what counts as combat damage.
-- An attack on a planeswalker or battle names it instead of showing
-  "[ID 406]".
-- A spell whose targets are gone when it would resolve shows `[fizzled]` at
-  that moment. It used to show "left stack without resolving" turns later,
-  and Game Detail counted it as resolved.
-- A spell that resolves without Arena's usual resolution note (some creature
-  spells) is no longer reported, turns later, as having left the stack
-  without resolving.
-- Mode choices name the card ("Avengers Disassembled deals 3 damage to each
-  creature") instead of "CARDNAME", and a modal triggered ability names its
-  card instead of "Card #205191".
-- A card that taps itself to pay for its own ability no longer prints
-  "[Soul-Guide Lantern] tapped [Soul-Guide Lantern]".
-- Triggered abilities print after the event that caused them. An enters
-  trigger printed before its land or creature entered, and a "whenever you
-  cast" trigger before the spell's cast line.
-- Abilities that aren't printed on their source card show up: a planeswalker
-  token's loyalty abilities (Jace's "deals 1 damage to each opponent") and
-  the delayed triggers they create were silent.
-- Deaths from deathtouch, the legend rule and illegal attachments are shown,
-  as are cards surveilled into the graveyard, Warp's end-of-turn exile,
-  manifested cards, copied spells, and cards put into a graveyard straight
-  from the library (manifest dread's other card).
-- A Room entering the battlefield no longer reads "[Unholy Annex] became
-  [Unholy Annex // Ritual Chamber]".
-- A modal trigger's mode that targets nothing no longer shows another mode's
-  target, and modal ability text prints on one line.
-- Cards revealed from a hand are shown: "Opponent: revealed [Belladonna Took],
-  [Ultima], [Voice of Victory] from hand" after Stinging Vitriol or Duress.
-- The end-of-combat summary is gone: it repeated each "Combat:" line, which
-  now names the attacking creature.
+- Combat damage names the creature that dealt it, and attacks name the planeswalker or battle instead of "[ID 406]".
+- Spells whose targets are gone show `[fizzled]` at the right moment.
+- Triggers print after the event that caused them, and abilities with costs chosen later print once.
+- Newly shown: planeswalker-token abilities, delayed triggers, deathtouch and legend-rule deaths, surveil, Warp, manifest, copied spells and cards revealed from a hand.
+- Cards are named instead of "CARDNAME" or "Card #205191".
 
 ### Fixes
 
-- **Deck AI** no longer names opponent decks with colors they never showed (a
-  white, blue and red game came back "Selesnya Enchantments"). The AI is now told
-  each card's colors, and an answer that adds an unseen color is dropped, so Game
-  Detail shows the plain color label instead. Games identified earlier keep
-  their label.
-- Game Detail's **Opponent Revealed Cards** now lists the opponent's milled and
-  discarded cards, and cards exiled from their library or hand, with Milled,
-  Discarded and Exiled counts. The tracker printed these cards but never saved them,
-  so the columns always read 0. Past games are filled in on the next launch from
-  their recorded timelines (mills and discards only for games recorded before
-  replays). Revealed cards also count toward the opponent's colors and are sent to
-  Deck AI with the cards they played.
-- Games from Arena's **Brawl** queue are labelled **Brawl**, as Arena now names
-  it, instead of "Historic Brawl", in the console log, the dashboard and the
-  overlay, for past games too. The Brawl filter's chips follow Arena's three
-  queues (Brawl, Competitive Brawl, Standard Brawl), and **Competitive Brawl**
-  now finds your ranked Brawl games; it matched none before.
-- Closing Arena (and with it the overlay) no longer prints a
-  "ConnectionResetError" traceback in the tracker's terminal. A client dropping an
-  open dashboard connection is now a normal close.
+- **Opponent Revealed Cards** now lists milled, discarded and exiled cards, for past games too.
+- **Deck AI** no longer names decks with colors the opponent never showed.
+- Arena's **Brawl** queue is labelled Brawl, and the **Competitive Brawl** filter finds your ranked Brawl games.
+- Closing Arena no longer prints a "ConnectionResetError" traceback in the tracker's terminal.
 
 ## 0.7.5
 
