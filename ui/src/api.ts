@@ -1643,28 +1643,85 @@ export interface LiveNow {
   head_to_head?: { wins: number; losses: number } | null;
   /** Brawl: lifetime record vs each of the opponent's commanders (unseen ones omitted). */
   commander_record?: { commander: string; wins: number; losses: number }[] | null;
-  deck_record?: {
-    wins: number;
-    losses: number;
-    win_rate: number;
-    today_wins: number;
-    today_losses: number;
-  } | null;
-  rank?: {
+  deck_record?: LiveDeckRecord | null;
+  rank?: (LiveRank & {
     rank_format: string;
-    rank_class: string;
-    rank_level: number;
-    rank_step: number;
-    rank_steps: number;
-    mythic_percentile: number | null;
-    mythic_rank: number | null;
-  } | null;
+    /** The rank before this session began (the climb this session); null when unknown. */
+    start?: LiveRank | null;
+  }) | null;
+  /** Games won and lost so far in this match (a Bo3's score), the current game excluded. */
+  match_score?: { wins: number; losses: number; draws: number } | null;
+  /** The opponent's played cards this game, first seen first. */
+  opponent_seen?: LiveSeenCard[];
+  /** The player's draw quality so far, by Game Detail's math. */
+  draw_quality?: LiveDrawQuality | null;
   archetype_guess?: {
     archetype: string;
     matched_cards: number;
     wins: number;
     losses: number;
   } | null;
+}
+
+export interface LiveRank {
+  rank_class: string;
+  rank_level: number;
+  rank_step: number;
+  rank_steps: number;
+  mythic_percentile: number | null;
+  mythic_rank: number | null;
+}
+
+export interface LiveScore {
+  wins: number;
+  losses: number;
+}
+
+/** Lifetime record with the current deck (by name), split like Deck Manager's. */
+export interface LiveDeckRecord extends LiveScore {
+  win_rate: number;
+  today_wins: number;
+  today_losses: number;
+  /** This tracker session's record with the deck; missing from older trackers. */
+  session_wins?: number;
+  session_losses?: number;
+  ranked?: LiveScore;
+  unranked?: LiveScore;
+  play?: LiveScore;
+  draw?: LiveScore;
+  /** Last results, newest first: 'win' | 'loss'. */
+  recent?: string[];
+}
+
+export interface LiveSeenCard {
+  name: string;
+  type: string;
+  mana_cost: string | null;
+  mana_value: number | null;
+  /** Times played this game. */
+  count: number;
+}
+
+export interface LiveDrawQuality {
+  lands_seen: number;
+  total_cards_seen: number;
+  ramped_lands: number;
+  expected_lands_seen: number;
+  /** Percent of the deck that is lands. */
+  expected_land_rate: number;
+  deck_size: number;
+  deck_lands: number | null;
+  flood_probability_pct: number | null;
+  screw_probability_pct: number | null;
+  is_flood: boolean;
+  is_screw: boolean;
+  is_land_streak: boolean;
+  /** Why, in Game Detail's words; null when normal. */
+  reason: string | null;
+  /** Chance the next draw is a land, from the overlay's library. */
+  next_land_pct: number | null;
+  library_size: number | null;
+  lands_left: number | null;
 }
 
 export interface LiveSessionInfo {
@@ -1676,6 +1733,20 @@ export interface LiveSessionInfo {
   draws: number;
   runtime_seconds: number | null;
   win_rate: number | null;
+  /** Wins/losses on the play and on the draw; missing from older trackers. */
+  play?: LiveScore;
+  draw?: LiveScore;
+}
+
+/** Every game finished today (local date), across sessions. */
+export interface LiveTodayRecord {
+  games: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  win_rate: number | null;
+  play: LiveScore;
+  draw: LiveScore;
 }
 
 export interface LiveGameRow {
@@ -1706,6 +1777,8 @@ export interface LivePayload {
   tracker: LiveTrackerInfo;
   now: LiveNow | null;
   session: LiveSessionInfo | null;
+  /** Missing from older trackers. */
+  today?: LiveTodayRecord | null;
   games: LiveGameRow[];
   events: LiveEventRow[];
   seq: number;

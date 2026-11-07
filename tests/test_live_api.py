@@ -1086,3 +1086,174 @@ def test_games_list_says_whether_each_game_was_on_the_play(tmp_path):
         "SH:match:2:game:1": 0,
         "SH:match:3:game:1": None,
     }
+
+
+def test_deck_record_splits_and_recent_form(tmp_path):
+    """The Stream Kit's deck stats: Deck Manager's ranked / unranked and
+    play / draw splits, and the last results newest first."""
+    store = _store(tmp_path)
+    conn = store.connect()
+    _seed_history(
+        conn,
+        [
+            ("d1", "Skellies", "A", None, "win", "2026-08-01"),
+            ("d2", "Skellies", "B", None, "loss", "2026-08-02"),
+            ("d3", "Skellies", "C", None, "win", "2026-08-03"),
+        ],
+    )
+    conn.execute("UPDATE matches SET format = 'Ladder', best_of = 1 WHERE id IN ('m-d1', 'm-d2')")
+    conn.execute("UPDATE matches SET format = 'Play', best_of = 1 WHERE id = 'm-d3'")
+    conn.execute("UPDATE participants SET went_first = 1 WHERE id IN ('d1-p', 'd3-p')")
+    conn.execute("UPDATE participants SET went_first = 0 WHERE id = 'd2-p'")
+    conn.commit()
+    _log_line(store, "x", live=_live())
+    store.close()
+
+    record = live_api.build_live_payload(tmp_path / "tracker.sqlite3")["now"]["deck_record"]
+    assert (record["wins"], record["losses"], record["win_rate"]) == (2, 1, 66.7)
+    assert record["ranked"] == {"wins": 1, "losses": 1}
+    assert record["unranked"] == {"wins": 1, "losses": 0}
+    assert record["play"] == {"wins": 2, "losses": 0}
+    assert record["draw"] == {"wins": 0, "losses": 1}
+    assert record["recent"] == ["win", "loss", "win"]
+
+
+def test_records_include_the_finished_game_between_games(tmp_path):
+    """During a game its own result is left out; once it is over and frozen
+    on screen, the deck record and match score count it."""
+    store = _store(tmp_path)
+    conn = store.connect()
+    _seed_history(conn, [("G1", "Skellies", "Villain#12345", None, "win", "2026-08-01")])
+    conn.execute(
+        "INSERT INTO games (id, session_id, match_id, started_at, outcome) "
+        "VALUES ('G0', 'SH', 'm-G1', '2026-08-01T09:00:00', 'loss')"
+    )
+    conn.execute(
+        "INSERT INTO participants (id, game_id, role, deck_name) VALUES ('G0-p', 'G0', 'player', 'Skellies')"
+    )
+    conn.commit()
+    _log_line(store, "x", live=_live(match_id="m-G1", game_id="G1"))
+    store.close()
+    now = live_api.build_live_payload(tmp_path / "tracker.sqlite3")["now"]
+    assert (now["deck_record"]["wins"], now["deck_record"]["losses"]) == (0, 1)
+    assert now["match_score"] == {"wins": 0, "losses": 1, "draws": 0}
+
+    store = _store(tmp_path)
+    frozen = _live(match_id="m-G1", game_id="G1")
+    _log_line(
+        store,
+        "y",
+        live={**_live(in_game=0, game_id=None, match_id=None), "last_game_json": json.dumps(frozen)},
+    )
+    store.close()
+    now = live_api.build_live_payload(tmp_path / "tracker.sqlite3")["now"]
+    assert now["in_game"] is False and now["last_game_frozen"] is True
+    assert (now["deck_record"]["wins"], now["deck_record"]["losses"]) == (1, 1)
+    assert now["match_score"] == {"wins": 1, "losses": 1, "draws": 0}
+
+
+def test_live_payload_passes_opponent_seen_and_draw_quality(tmp_path):
+    store = _store(tmp_path)
+    seen = [{"name": "Shock", "type": "Instant", "mana_cost": "{R}", "mana_value": 1, "count": 2}]
+    quality = {"lands_seen": 5, "total_cards_seen": 12, "is_flood": False, "next_land_pct": 38.5}
+    _log_line(
+        store,
+        "x",
+        live=_live(opponent_seen=json.dumps(seen), draw_quality=json.dumps(quality)),
+    )
+    store.close()
+    now = live_api.build_live_payload(tmp_path / "tracker.sqlite3")["now"]
+    assert now["opponent_seen"] == seen
+    assert now["draw_quality"] == quality
+
+    store = _store(tmp_path)
+    _log_line(store, "y", live=_live(opponent_seen="not json", draw_quality=None))
+    store.close()
+    now = live_api.build_live_payload(tmp_path / "tracker.sqlite3")["now"]
+    assert now["opponent_seen"] == [] and now["draw_quality"] is None
+
+
+def test_rank_start_is_the_rank_before_the_session(tmp_path):
+    store = _store(tmp_path)
+    conn = store.connect()
+    conn.execute(
+        "INSERT OR IGNORE INTO tracker_sessions (id, started_at) VALUES ('SH', '2026-08-01T00:00:00')"
+    )
+    conn.executemany(
+        """
+        INSERT INTO rank_snapshots (
+            session_id, captured_at, season_ordinal, rank_format,
+            rank_class, rank_level, rank_step, rank_steps
+        ) VALUES ('SH', ?, 40, 'constructed', ?, ?, 0, 6)
+        """,
+        [
+            ("2026-08-20T10:00:00", "Gold", 2),
+            # Session S1 starts 2026-08-23T10:00:00.
+            ("2026-08-23T11:00:00", "Platinum", 4),
+        ],
+    )
+    conn.commit()
+    _log_line(store, "x", live=_live(format="Standard BO1 (Ranked)"))
+    store.close()
+    rank = live_api.build_live_payload(tmp_path / "tracker.sqlite3")["now"]["rank"]
+    assert (rank["rank_class"], rank["rank_level"]) == ("Platinum", 4)
+    assert (rank["start"]["rank_class"], rank["start"]["rank_level"]) == ("Gold", 2)
+
+
+def test_session_and_today_records_split_play_and_draw(tmp_path):
+    store = _store(tmp_path)
+    conn = store.connect()
+    today = datetime.now().strftime("%Y-%m-%d")
+    _seed_history(
+        conn,
+        [
+            ("t1", "Skellies", "A", None, "win", today),
+            ("t2", "Skellies", "B", None, "loss", today),
+            ("t3", "Other Deck", "C", None, "win", today),
+            ("t4", "Other Deck", "D", None, "draw", today),
+            ("o1", "Skellies", "E", None, "win", "2026-08-01"),
+        ],
+    )
+    conn.execute("UPDATE participants SET went_first = 1 WHERE id IN ('t1-p', 't2-p', 'o1-p')")
+    conn.execute("UPDATE participants SET went_first = 0 WHERE id = 't3-p'")
+    conn.commit()
+    _log_line(store, "x", live=_live(session_id="SH"))
+    store.close()
+
+    payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+    # The session (SH) holds every seeded game; unknown turn order counts in neither side.
+    assert payload["session"]["play"] == {"wins": 2, "losses": 1}
+    assert payload["session"]["draw"] == {"wins": 1, "losses": 0}
+    # Today leaves out the older game.
+    assert payload["today"] == {
+        "games": 4,
+        "wins": 2,
+        "losses": 1,
+        "draws": 1,
+        "win_rate": 66.7,
+        "play": {"wins": 1, "losses": 1},
+        "draw": {"wins": 1, "losses": 0},
+    }
+
+
+def test_deck_record_counts_this_session(tmp_path):
+    store = _store(tmp_path)
+    conn = store.connect()
+    _seed_history(
+        conn,
+        [
+            ("s1", "Skellies", "A", None, "win", "2026-08-01"),
+            ("s2", "Skellies", "B", None, "loss", "2026-08-02"),
+        ],
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO tracker_sessions (id, started_at) VALUES ('OLD', '2026-07-01T00:00:00')"
+    )
+    conn.execute("UPDATE games SET session_id = 'OLD' WHERE id = 's2'")
+    conn.commit()
+    _log_line(store, "x", live=_live(session_id="SH"))
+    store.close()
+
+    record = live_api.build_live_payload(tmp_path / "tracker.sqlite3")["now"]["deck_record"]
+    assert (record["wins"], record["losses"]) == (1, 1)
+    assert (record["session_wins"], record["session_losses"]) == (1, 0)

@@ -104,14 +104,21 @@ export function TablePopover({ prefs, hindsightAvailable, onClose }: TablePopove
         />
         Mirror opponent (cards face them)
       </label>
-      <label className="replay-check" title={hindsightAvailable ? undefined : 'Only recorded games know hidden cards ahead of time'}>
+      <label
+        className="replay-check"
+        title={
+          hindsightAvailable
+            ? 'Cards the opponent plays or reveals later show face up from the moment they reach their hand. Cards never revealed stay face down.'
+            : 'Only recorded games know hidden cards ahead of time'
+        }
+      >
         <input
           type="checkbox"
           checked={prefs.hindsight}
           disabled={!hindsightAvailable}
           onChange={(event) => savePrefs({ hindsight: event.target.checked })}
         />
-        Hindsight: show opponent cards in hand once revealed
+        Hindsight: show the opponent&apos;s hand cards they play or reveal later
       </label>
       <p className="replay-popover-shortcuts">
         Shortcuts: Space play · ←/→ step · J/K turn · Home/End · [ ] speed · G go to turn · Wheel or +/− zoom, drag to pan, 0 reset · T this panel

@@ -185,6 +185,9 @@ Primary code paths:
   Arena id (Scryfall maps a new set's Arena ids late). Replay image lookups use
   `scryfallFetch` (named/search held to 2/s), and an unanswered lookup is
   retried after a minute instead of leaving the generated face for good.
+  A hand reveal (Thoughtseize) arrives as Arena proxies with new ids; capture stores the
+  proxy's zone in `zone_from` and the builder gives each to a card in that hand
+  (`_hand_card_for`), so it shows face up with Hindsight off.
   The builder moves a `token_create` row ahead of earlier rows of its turn that
   name the token (Mobilize attackers print before their creation).
   Identical tokens and lands stack in one battlefield slot (`layout.stackKey`),
@@ -221,6 +224,11 @@ Primary code paths:
   modules with tests, `export/` (pure video plan, Canvas 2D frame composer, WebCodecs +
   mp4-muxer encoder for the in-browser MP4 export; each codec is probed with one frame and
   H.264 without a reported `decoderConfig` is skipped for VP9, whose config is filled in; the
+  dialog's Format picks which codec is tried first (`candidatesFor`: H.264 default, VP9 the
+  sharper choice, since Chrome's software OpenH264 ignores bitrate and every rate mode and
+  offers no quantizer mode); chunks are held until `finish` and muxed by `muxChunks` with
+  decode times from `decodeTimestamps` (sorted presentation times), because Windows
+  Firefox's Media Foundation H.264 emits B-frames in decode order; the
   export driver waits for the canvas's own reconciler to commit each clock step
   (`state.seq === clock.snapshot.seq`) before drawing, or frames lag an action and
   the closing hold misses the ending card; Firefox's VP9 ignores bitrate, so sizes
@@ -239,12 +247,15 @@ Primary code paths:
   A tiny teal Play / purple Draw `Badge` (`participants.went_first`) follows the deck
   name; the name truncates first and unknown turn order shows nothing.
 - `ui/stream.html` + `ui/src/stream/`: the Stream Kit, OBS/Streamlabs browser-source
-  widgets (`overlay`, `deck`, `record`, `games`, `matchup`, `spotlight`) built as a second Vite entry and
+  widgets (`overlay`, `deck`, `scorebug`, `record`, `games`, `deckstats`, `matchup`,
+  `opponent`, `lands`, `result`, `spotlight`, `break`) built as a second Vite entry and
   served by the dashboard at `/stream.html?widget=<id>`. No app shell, no `styles.css`,
   transparent page (`stream/stream.css`, sized in em from `--sk-scale`). Every option
   lives in the URL (`stream/options.ts`: `streamUrl` writes only the widget's own
   non-default options), so the tracker stores nothing; Settings → Streaming
   (`StreamKitSettings.tsx`) builds the links and keeps its choices in localStorage.
+  A `preview=1` page follows those choices live (`stream/previewSync.ts`: the
+  `storage` event rebuilds its options and address); OBS sources never do.
   `overlay` is the in-game panel plus its sideboard (right/left/below/off) with the
   overlay's background slider (`opacity`, not the shared `bg`); `stream/overlayView.ts`
   mirrors `overlay/src/model.ts` and its CSS mirrors `overlay/src/styles.css` in px under
@@ -253,9 +264,26 @@ Primary code paths:
   vectors plus grey badges), never the dashboard's mana-font `ManaCost`. Credits sit top right, never on
   a line of their own.
   Widgets read only existing endpoints: `overlay` and `deck` poll `/api/overlay` with its ETag (`stream/useOverlay.ts`),
-  `record`/`games`/`matchup` poll `/api/live?events=0` (skips the event feed; `games`
+  the rest but `spotlight` poll `/api/live?events=0` (skips the event feed; `games`
   lists its `games`, Live Scoreboard's Today's Games, capped by `count`), `spotlight`
-  polls `/api/live?since=`. The spotlight never replays history: `stream/spotlight.ts`
+  polls `/api/live?since=`. Their pure logic sits in `stream/liveView.ts`. For them
+  `/api/live`'s `now` carries `match_score`, `deck_record` with Deck Manager's
+  ranked/unranked/play/draw splits and `recent` results, `rank.start` (the rank before
+  the session), `opponent_seen` and `draw_quality`; the payload's `session` adds the
+  overlay footer's `play`/`draw` split and `today` (`_today_record`, every game today
+  across sessions) feeds `record`'s `period=today`; the last two are live_status
+  columns the tracker writes (`_live_opponent_seen`, `_live_draw_quality`, which runs
+  `draw_quality_metrics` on the opening hand and draws, cached on the draw sequence).
+  Between games records count the frozen game; during one they exclude it. `record`,
+  `result` and `break` share `period` (session or today: `liveView.periodRecord` /
+  `periodGames`; game ids start with their session's id). Every widget's optional parts
+  are listed in `options.WIDGET_PARTS`; the link's `hide` names the ones turned off
+  (`shows(options, part)`), so new parts show on old links, and Settings draws them as
+  one Show list with the `opponent` name toggle. Recent games' 0.7.5 `record=0` still
+  parses as `hide=record`. `result`
+  shows only games that finish while it is open. Card lists taller than the source
+  (`overlay`, `deck`, `opponent`) fit the viewport and scroll themselves
+  (`stream/autoScroll.ts`, `widgets/AutoScroll.tsx`; the loop runs only on overflow). The spotlight never replays history: `stream/spotlight.ts`
   catches up silently until a poll brings nothing newer, and resets on a new tracker
   session or after an error. `demo=1` uses `stream/demo.ts` and makes no requests;
   `preview=1` paints a checkerboard. Widgets stop polling while the page is hidden.

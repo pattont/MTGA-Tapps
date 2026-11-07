@@ -50,10 +50,10 @@ your next draw is a land, and cards left in your library — opening into a
 panel with your whole decklist and the chance of drawing each card next. On
 from the first launch, in every game mode, and it reads only the tracker.
 
-**Stream Kit.** Transparent OBS and Streamlabs widgets for streamers: the whole
-in-game overlay with its sideboard, your deck with draw odds, the session record,
-today's games, the current matchup, and a spotlight of each
-card as it's cast. See [Stream Kit](#stream-kit-obs-widgets).
+**Stream Kit.** Twelve transparent OBS and Streamlabs widgets for streamers: the
+whole in-game overlay, a TV-style scorebug, your deck's odds and record, what the
+opponent is on, a flood/screw meter, a Victory/Defeat card after each game, an
+intermission card and more. See [Stream Kit](#stream-kit-obs-widgets).
 
 **Deck analytics.** Every deck gets a drill-down page tinted with its signature
 card's art: per-game combat and resource averages for both players, turn-pace
@@ -229,23 +229,39 @@ native app (Tauri) shipped inside the tracker.
 
 ## Stream Kit (OBS widgets)
 
-Six transparent widgets for OBS and Streamlabs:
+Twelve transparent widgets for OBS and Streamlabs:
 
 - **Full overlay**: the in-game overlay as one source, with its sideboard beside or
   below it and a background slider.
 - **Deck tracker**: copies left and next-draw odds for each card.
-- **Session record**: wins, losses, win rate, rank, and today's record with this deck.
+- **Scorebug**: a TV-style bar with both players, life totals that flash when they
+  change, the turn and whose it is, and the match score in Bo3.
+- **Record**: wins, losses and win rate for this session or today, on the play and on the
+  draw, rank, and your record with this deck over the same span.
 - **Recent games**: today's games under the session record (the last 1 to 25).
+- **Deck stats**: the current deck's win rate and record, with ranked and casual,
+  play and draw, and recent form, each optional.
 - **Matchup**: opponent, colors, likely deck, head-to-head, play or draw, Bo3 game.
+- **What they're on**: the opponent's likely deck and every card they've played
+  this game, grouped by type.
+- **Flood / screw meter**: lands seen against what the deck should give you, with
+  Game Detail's verdict and the chance the next draw is a land.
+- **Game result**: a Victory or Defeat card for a few seconds after each game.
 - **Card spotlight**: a large image of each card as it's cast.
+- **Intermission**: your own title over the session, today's results, the deck and
+  the rank climb, for a "be right back" scene.
+
+A card list too long for its source (a 100-card Brawl deck) scrolls itself slowly.
 
 In **Settings → Streaming**, pick the options, copy a widget's link and paste it
 into a **Browser** source at the size shown; **Preview** shows it with sample data.
+Each widget has a **Show** list, so with several on screen you can turn off a
+number another one already shows.
 Widgets appear only when there's something to show, and nothing runs until one is
 open. They work on the computer that runs the tracker (not yet from a second
 streaming PC). Thanks to MrNaosu for the idea.
 
-![Settings → Streaming: the six Stream Kit widgets with their options and links](docs/images/stream-kit.png)
+![Settings → Streaming: the Stream Kit widgets with their options and links](docs/images/stream-kit.png)
 
 ## Screenshots
 

@@ -1,6 +1,7 @@
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
 import { describe, expect, it } from 'vitest';
-import { chunkMetadata, muxerOptions, projectedBytes, sizeNote } from './mp4Encoder';
+import { candidatesFor, chunkMetadata, decodeTimestamps, muxChunks, muxerOptions, projectedBytes, sizeNote } from './mp4Encoder';
+import type { HeldChunk } from './mp4Encoder';
 
 const config = { codec: 'vp09.00.40.08', width: 1280, height: 720 };
 
@@ -40,6 +41,69 @@ describe('muxerOptions', () => {
     muxer.addVideoChunkRaw(new Uint8Array([4, 5, 6]), 'delta', 2 * frame, frame);
     muxer.finalize();
     expect(target.buffer.byteLength).toBeGreaterThan(0);
+  });
+});
+
+describe('decodeTimestamps', () => {
+  const f = Math.round(1_000_000 / 30);
+
+  it('leaves frames that arrive in order alone', () => {
+    expect(decodeTimestamps([0, f, 2 * f, 3 * f])).toEqual([0, f, 2 * f, 3 * f]);
+    expect(decodeTimestamps([f, 2 * f, 3 * f])).toEqual([f, 2 * f, 3 * f]);
+  });
+
+  it('gives B-frames in decode order rising times at or before each frame', () => {
+    // Firefox's H.264 on Windows: one frame late, then 3, 2, 5, 4...
+    const presentation = [f, 3 * f, 2 * f, 5 * f, 4 * f];
+    const decode = decodeTimestamps(presentation);
+    decode.forEach((time, i) => {
+      expect(time).toBeLessThanOrEqual(presentation[i]);
+      if (i) expect(time).toBeGreaterThan(decode[i - 1]);
+    });
+    expect(decode).toEqual([0, f, 2 * f, 3 * f, 4 * f]);
+  });
+
+  it('keeps decode times rising when two frames share a time', () => {
+    const presentation = [0, f, f, 2 * f];
+    const decode = decodeTimestamps(presentation);
+    decode.forEach((time, i) => {
+      expect(time).toBeLessThanOrEqual(presentation[i]);
+      if (i) expect(time).toBeGreaterThan(decode[i - 1]);
+    });
+  });
+});
+
+describe('candidatesFor', () => {
+  it('tries the chosen format first and keeps the other as a fallback', () => {
+    expect(candidatesFor('h264').map((c) => c.container)).toEqual(['avc', 'avc', 'avc', 'vp9']);
+    expect(candidatesFor('vp9').map((c) => c.container)).toEqual(['vp9', 'avc', 'avc', 'avc']);
+    expect(candidatesFor()[0].codec).toBe('avc1.640028');
+  });
+});
+
+describe('muxChunks', () => {
+  const f = Math.round(1_000_000 / 30);
+  const chunk = (timestamp: number, type: 'key' | 'delta' = 'delta', meta?: EncodedVideoChunkMetadata): HeldChunk => ({
+    data: new Uint8Array([1, 2, 3]),
+    type,
+    timestamp,
+    meta,
+  });
+
+  it('writes B-frames that would otherwise fail as "Timestamps must be monotonically increasing"', () => {
+    const target = new ArrayBufferTarget();
+    const muxer = new Muxer(muxerOptions(target, 'vp9', { width: 1280, height: 720, fps: 30 }));
+    const meta = chunkMetadata('vp9', config, undefined, false);
+    const chunks = [chunk(f, 'key', meta), chunk(3 * f), chunk(2 * f), chunk(5 * f), chunk(4 * f), chunk(6 * f)];
+    expect(() => {
+      for (const c of chunks) muxer.addVideoChunkRaw(c.data, c.type, c.timestamp, f, c.meta);
+    }).toThrow(/monotonically increasing/);
+
+    const target2 = new ArrayBufferTarget();
+    const muxer2 = new Muxer(muxerOptions(target2, 'vp9', { width: 1280, height: 720, fps: 30 }));
+    muxChunks(muxer2, chunks, 1_000_000 / 30);
+    muxer2.finalize();
+    expect(target2.buffer.byteLength).toBeGreaterThan(0);
   });
 });
 

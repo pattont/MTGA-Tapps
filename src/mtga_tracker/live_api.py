@@ -11,7 +11,8 @@ GET /api/live?since=<console_logs.id> returns:
       "tracker": {"state": "live"|"idle"|"offline", "updated_at": ...},
       "now": {...live_status fields...} | null,
       "session": {games, wins, losses, draws, win_rate, runtime_seconds,
-                  started_at} | null,
+                  started_at, play, draw} | null,
+      "today": {games, wins, losses, draws, win_rate, play, draw} | null,
       "games": [{id, started_at, deck_name, opponent_name, outcome,
                  total_turns, duration_seconds, game_number, format, replay}],
       "events": [{id, at, turn, style, text, player_life, opponent_life}],
@@ -161,6 +162,17 @@ def _tracker_state(status: Optional[Dict[str, Any]], now: datetime) -> str:
     return "live" if status.get("in_game") else "idle"
 
 
+def _json_value(value: Any, kind: type) -> Any:
+    """A JSON column parsed to `kind` (dict or list), else None."""
+    if not value:
+        return None
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, kind) else None
+
+
 def _session_payload(
     conn: sqlite3.Connection, session_id: Optional[str]
 ) -> Optional[Dict[str, Any]]:
@@ -283,6 +295,59 @@ def _head_to_head_query(
 _overlay_session_cache: Dict[Tuple[str, str, Tuple[int, ...]], Dict[str, Any]] = {}
 
 
+def _play_draw_split(
+    conn: sqlite3.Connection, where: str, params: Tuple[Any, ...]
+) -> Dict[str, Dict[str, int]]:
+    """Wins and losses on the play and on the draw for the games `where`
+    selects (`participants.went_first`; unknown turn order counts in neither)."""
+    split = {"play": {"wins": 0, "losses": 0}, "draw": {"wins": 0, "losses": 0}}
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT p.went_first, g.outcome, COUNT(*)
+            FROM games g
+            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            WHERE {where} AND g.outcome IN ('win', 'loss')
+              AND p.went_first IS NOT NULL
+            GROUP BY p.went_first, g.outcome
+            """,
+            params,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    for went_first, outcome, count in rows:
+        side = split["play" if went_first else "draw"]
+        side["wins" if outcome == "win" else "losses"] += int(count or 0)
+    return split
+
+
+def _today_record(conn: sqlite3.Connection, today: str) -> Optional[Dict[str, Any]]:
+    """Every game finished today (local date, like Today's Games), across
+    sessions: the Record widget's "Today" view, with the play/draw split."""
+    try:
+        row = conn.execute(
+            """
+            SELECT COUNT(*),
+                   SUM(outcome = 'win'), SUM(outcome = 'loss'), SUM(outcome = 'draw')
+            FROM games
+            WHERE date(started_at) = ? AND outcome IN ('win', 'loss', 'draw')
+            """,
+            (today,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    games, wins, losses, draws = (int(value or 0) for value in row)
+    decided = wins + losses
+    return {
+        "games": games,
+        "wins": wins,
+        "losses": losses,
+        "draws": draws,
+        "win_rate": round(100.0 * wins / decided, 1) if decided else None,
+        **_play_draw_split(conn, "date(g.started_at) = ?", (today,)),
+    }
+
+
 def _overlay_session(
     conn: sqlite3.Connection, session_id: Optional[str], cache_scope: str
 ) -> Optional[Dict[str, Any]]:
@@ -306,24 +371,7 @@ def _overlay_session(
     if cached is not None:
         return cached
     games, wins, losses, draws = totals
-    split = {"play": {"wins": 0, "losses": 0}, "draw": {"wins": 0, "losses": 0}}
-    try:
-        rows = conn.execute(
-            """
-            SELECT p.went_first, g.outcome, COUNT(*)
-            FROM games g
-            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-            WHERE g.session_id = ? AND g.outcome IN ('win', 'loss')
-              AND p.went_first IS NOT NULL
-            GROUP BY p.went_first, g.outcome
-            """,
-            (session_id,),
-        ).fetchall()
-    except sqlite3.OperationalError:
-        rows = []
-    for went_first, outcome, count in rows:
-        side = split["play" if went_first else "draw"]
-        side["wins" if outcome == "win" else "losses"] += int(count or 0)
+    split = _play_draw_split(conn, "g.session_id = ?", (session_id,))
     decided = wins + losses
     result = {
         "games": games,
@@ -374,51 +422,131 @@ def _commander_record(
     return records
 
 
+#: Results listed in deck_record's recent form, newest first.
+DECK_RECENT_GAMES = 10
+
+
 def _deck_record(
     conn: sqlite3.Connection,
     deck_name: Optional[str],
     current_game_id: Optional[str],
+    session_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Lifetime + today's record with this deck (the current game excluded)."""
+    """Lifetime, today's and this session's record with this deck (the current
+    game excluded), split like Deck Manager's record into ranked / unranked
+    queues and on the play / on the draw, with the last results."""
+    from .format_normalizer import normalize_match_format
+
     name = str(deck_name or "").strip()
     if not name:
         return None
     today = datetime.now().strftime("%Y-%m-%d")
     try:
-        row = conn.execute(
+        rows = conn.execute(
             """
             SELECT
+              m.format,
+              MAX(COALESCE(m.best_of, 1)),
+              p.went_first,
               SUM(g.outcome = 'win') AS wins,
               SUM(g.outcome = 'loss') AS losses,
               SUM(g.outcome = 'win' AND date(g.started_at) = ?) AS today_wins,
-              SUM(g.outcome = 'loss' AND date(g.started_at) = ?) AS today_losses
+              SUM(g.outcome = 'loss' AND date(g.started_at) = ?) AS today_losses,
+              SUM(g.outcome = 'win' AND g.session_id IS ?) AS session_wins,
+              SUM(g.outcome = 'loss' AND g.session_id IS ?) AS session_losses
+            FROM games g
+            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            LEFT JOIN matches m ON m.id = g.match_id
+            WHERE p.deck_name = ? AND g.id IS NOT ? AND g.outcome IN ('win', 'loss')
+            GROUP BY m.format, p.went_first
+            """,
+            (today, today, session_id, session_id, name, current_game_id),
+        ).fetchall()
+        recent = conn.execute(
+            f"""
+            SELECT g.outcome
             FROM games g
             JOIN participants p ON p.game_id = g.id AND p.role = 'player'
             WHERE p.deck_name = ? AND g.id IS NOT ? AND g.outcome IN ('win', 'loss')
+            ORDER BY g.started_at DESC
+            LIMIT {DECK_RECENT_GAMES}
             """,
-            (today, today, name, current_game_id),
+            (name, current_game_id),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return None
+    record: Dict[str, Any] = {
+        "wins": 0,
+        "losses": 0,
+        "today_wins": 0,
+        "today_losses": 0,
+        "session_wins": 0,
+        "session_losses": 0,
+        **{split: {"wins": 0, "losses": 0} for split in ("ranked", "unranked", "play", "draw")},
+    }
+    ranked_formats: Dict[Any, bool] = {}
+    for (
+        raw_format,
+        best_of,
+        went_first,
+        wins,
+        losses,
+        today_wins,
+        today_losses,
+        *in_session,
+    ) in rows:
+        if raw_format not in ranked_formats:
+            label = normalize_match_format(str(raw_format or ""), default_best_of=best_of).label
+            ranked_formats[raw_format] = "(Ranked)" in label
+        targets = [record["ranked" if ranked_formats[raw_format] else "unranked"]]
+        if went_first is not None:
+            targets.append(record["play" if went_first else "draw"])
+        for target in [record, *targets]:
+            target["wins"] += int(wins or 0)
+            target["losses"] += int(losses or 0)
+        record["today_wins"] += int(today_wins or 0)
+        record["today_losses"] += int(today_losses or 0)
+        if session_id:
+            record["session_wins"] += int(in_session[0] or 0)
+            record["session_losses"] += int(in_session[1] or 0)
+    if record["wins"] + record["losses"] == 0:
+        return None
+    record["win_rate"] = round(100.0 * record["wins"] / (record["wins"] + record["losses"]), 1)
+    record["recent"] = [str(row[0]) for row in recent]
+    return record
+
+
+def _match_score(
+    conn: sqlite3.Connection, match_id: Optional[str], current_game_id: Optional[str]
+) -> Optional[Dict[str, int]]:
+    """Games won and lost so far in this match (a Bo3's score), the current
+    game excluded."""
+    if not match_id:
+        return None
+    try:
+        row = conn.execute(
+            """
+            SELECT SUM(outcome = 'win'), SUM(outcome = 'loss'), SUM(outcome = 'draw')
+            FROM games WHERE match_id = ? AND id IS NOT ?
+            """,
+            (match_id, current_game_id),
         ).fetchone()
     except sqlite3.OperationalError:
         return None
-    wins, losses = int(row[0] or 0), int(row[1] or 0)
-    if wins + losses == 0:
-        return None
-    return {
-        "wins": wins,
-        "losses": losses,
-        "win_rate": round(100.0 * wins / (wins + losses), 1),
-        "today_wins": int(row[2] or 0),
-        "today_losses": int(row[3] or 0),
-    }
+    return {"wins": int(row[0] or 0), "losses": int(row[1] or 0), "draws": int(row[2] or 0)}
 
 
 def _rank_context(
-    conn: sqlite3.Connection, format_label: Optional[str]
+    conn: sqlite3.Connection,
+    format_label: Optional[str],
+    session_started_at: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Latest rank snapshot for the game's ladder — shown for ranked games.
 
     Limited queues read from the limited ladder; everything else ranked reads
-    from constructed. Non-ranked formats return None.
+    from constructed. Non-ranked formats return None. `start` is the rank
+    before the session began (the last snapshot older than it), for the
+    climb this session; None when there is none.
     """
     label = str(format_label or "").casefold()
     # "Unranked" contains "rank" — require the ranked marker without it.
@@ -444,6 +572,25 @@ def _rank_context(
     if row is None:
         return None
     row["rank_format"] = rank_format
+    row["start"] = None
+    if session_started_at:
+        try:
+            start = _dict_row(
+                conn.execute(
+                    """
+                    SELECT rank_class, rank_level, rank_step, rank_steps,
+                           mythic_percentile, mythic_rank
+                    FROM rank_snapshots
+                    WHERE rank_format = ? AND captured_at < ?
+                    ORDER BY captured_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (rank_format, session_started_at),
+                )
+            )
+        except sqlite3.OperationalError:
+            start = None
+        row["start"] = start
     return row
 
 
@@ -736,6 +883,16 @@ def build_live_payload(
             or _latest_event_game_id(conn, session_id)
         )
 
+        session = _session_payload(conn, session_id)
+        if session:
+            # The Record widget's play/draw columns: the overlay footer's split.
+            split = _overlay_session(conn, session.get("id"), db_uri)
+            if split:
+                session["play"] = split["play"]
+                session["draw"] = split["draw"]
+        # Records exclude the game being played, but not the finished game
+        # on screen between games.
+        record_exclude = feed_game_id if (status and status.get("in_game")) else None
         now_payload: Optional[Dict[str, Any]] = None
         if status is not None:
             # Game-scoped fields come from the live row during a game, and
@@ -783,11 +940,21 @@ def build_live_payload(
                 "deck_size": source.get("deck_size"),
                 "deck_lands": source.get("deck_lands"),
                 "head_to_head": _head_to_head(conn, source.get("opponent_name"), feed_game_id),
-                "deck_record": _deck_record(conn, source.get("deck_name"), feed_game_id),
+                "deck_record": _deck_record(
+                    conn,
+                    source.get("deck_name"),
+                    record_exclude,
+                    session.get("id") if session else None,
+                ),
+                "match_score": _match_score(conn, source.get("match_id"), record_exclude),
+                "opponent_seen": _json_value(source.get("opponent_seen"), list) or [],
+                "draw_quality": _json_value(source.get("draw_quality"), dict),
                 "commander_record": _commander_record(
                     conn, source.get("opponent_commanders"), feed_game_id
                 ),
-                "rank": _rank_context(conn, source.get("format")),
+                "rank": _rank_context(
+                    conn, source.get("format"), session.get("started_at") if session else None
+                ),
                 "archetype_guess": (
                     _archetype_guess(
                         conn,
@@ -811,7 +978,8 @@ def build_live_payload(
                 "session_id": session_id,
             },
             "now": now_payload,
-            "session": _session_payload(conn, session_id),
+            "session": session,
+            "today": _today_record(conn, now.strftime("%Y-%m-%d")),
             "games": _games_payload(conn, session_id),
             "events": events,
             "seq": seq,

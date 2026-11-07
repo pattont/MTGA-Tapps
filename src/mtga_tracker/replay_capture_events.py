@@ -429,6 +429,9 @@ class ReplayEventsMixin(ReplayCaptureMixin):
             if grp_id is None:
                 continue
             seat = self._normalize_seat_id(obj.get("ownerSeatId"))
+            # Arena's proxy sits in the zone of the card it shows; the builder
+            # needs it to give a hand reveal to a card in that hand.
+            zone = self._replay_zone_name(obj.get("zoneId"))
             self._record_silent_event(
                 ReplayFact(
                     "reveal",
@@ -436,6 +439,7 @@ class ReplayEventsMixin(ReplayCaptureMixin):
                     arena_id=grp_id,
                     seat_id=seat,
                     controller_seat=seat,
+                    zone_from=zone if zone and zone != "limbo" else None,
                     payload=payload or None,
                 )
             )

@@ -87,7 +87,7 @@ Columns added for replay (already in `ensure_schema`): `object_id INTEGER`,
 | `attack` | printed (`attack`) | `seat_id` = attacking seat | `{"object_ids": [1, 2], "target_seat": 2}` (or `"target_object_id"` for a planeswalker/battle) |
 | `block` | silent (also printed when the tracker prints blocks) | `seat_id` = blocking seat | `{"pairs": [{"blocker": 9, "attacker": 1}]}` |
 | `damage` | printed (`combat_damage`, `damage`) | `object_id` = source, `target_object_id` or `seat_id` of the damaged player, `amount` | `{"combat": true, "target_seat": 2}` |
-| `reveal` | silent | `object_id`, `arena_id`, `seat_id` = owner | `{"name": "...", "type": "..."}` |
+| `reveal` | silent | `object_id` (Arena's proxy, a new id), `arena_id`, `seat_id` = owner, `zone_from` = the zone of the card it shows (null in older rows and for a Revealed zone) | `{"name": "...", "type": "..."}` |
 | `scry` | printed (`scry`) | `seat_id`, `amount` = looked | `{"top": [ids], "bottom": [ids], "top_names": [], "bottom_names": []}` |
 | `shuffle` | silent | `seat_id` | — |
 | `game_end` | silent | `seat_id` = winner or NULL | `{"reason": "..."}` |
@@ -240,7 +240,7 @@ deep-link to the stream events with that `row_id`.
 | `attack` | `seat`, `objs: [obj]`, `target_seat: int|null`, `target_obj: obj|null` |
 | `block` | `seat`, `pairs: [{"blocker": obj, "attacker": obj}]` |
 | `damage` | `source: obj|null`, `target_obj: obj|null`, `target_seat: int|null`, `amount`, `combat: bool` |
-| `reveal` | `obj`, `card` — only for an object already on the board (reveals of Arena's proxy objects nobody placed are dropped) |
+| `reveal` | `obj`, `card` — only for an object already on the board. A proxy showing a card in a hand (row `zone_from` `hand`, or for older rows the printed "revealed [A], [B] from hand" line after it) goes to a card in that seat's hand: one already known to be that card (then nothing is emitted), else one the game later shows to be it, else one it never identifies; each hand card once per message (`_hand_reveal_rows`, `_hand_card_for`). Such a card stays face up while it is in the hand, Hindsight or not. Other proxies nobody placed are dropped |
 | `scry` | `seat`, `top: [obj]`, `bottom: [obj]`, `looked: int` |
 | `shuffle` | `seat` |
 | `game_end` | `winner_seat: int|null`, `reason` |

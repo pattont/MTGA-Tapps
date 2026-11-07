@@ -17,7 +17,7 @@ describe('StreamKitSettings', () => {
   it('lists every widget with its link and a sample-data preview', () => {
     render(<StreamKitSettings origin={ORIGIN} />);
     expect(link('Deck tracker').value).toBe(`${ORIGIN}/stream.html?widget=deck`);
-    expect(link('Session record').value).toBe(`${ORIGIN}/stream.html?widget=record`);
+    expect(link('Record').value).toBe(`${ORIGIN}/stream.html?widget=record`);
     expect(link('Matchup').value).toBe(`${ORIGIN}/stream.html?widget=matchup`);
     expect(link('Card spotlight').value).toBe(`${ORIGIN}/stream.html?widget=spotlight`);
     const deck = screen.getByRole('article', { name: 'Deck tracker' });
@@ -71,10 +71,56 @@ describe('StreamKitSettings', () => {
     fireEvent.change(within(games).getByLabelText('Games shown'), { target: { value: '1' } });
     expect(link('Recent games').value).toBe(`${ORIGIN}/stream.html?widget=games&count=1`);
     expect(within(games).getByText('380 × 140')).toBeInTheDocument();
-    fireEvent.change(within(games).getByLabelText('Session record'), { target: { value: 'hide' } });
-    expect(link('Recent games').value).toBe(`${ORIGIN}/stream.html?widget=games&count=1&record=0`);
+    fireEvent.click(within(games).getByLabelText('Record', { selector: 'input' }));
+    expect(link('Recent games').value).toBe(`${ORIGIN}/stream.html?widget=games&count=1&hide=record`);
     expect(within(games).getByText('380 × 100')).toBeInTheDocument();
     expect(within(games).getByRole('option', { name: 'Last 25' })).toBeInTheDocument();
+  });
+
+  it('builds the new live widgets’ links from their choices', () => {
+    render(<StreamKitSettings origin={ORIGIN} />);
+    for (const [title, id] of [
+      ['Scorebug', 'scorebug'],
+      ['Deck stats', 'deckstats'],
+      ['What they’re on', 'opponent'],
+      ['Flood / screw meter', 'lands'],
+      ['Game result', 'result'],
+      ['Intermission', 'break'],
+    ]) {
+      expect(link(title).value).toBe(`${ORIGIN}/stream.html?widget=${id}`);
+    }
+
+    const scorebug = screen.getByRole('article', { name: 'Scorebug' });
+    fireEvent.click(within(scorebug).getByLabelText('Turn timer'));
+    expect(link('Scorebug').value).toBe(`${ORIGIN}/stream.html?widget=scorebug&hide=timer`);
+    // The opponent's name sits in the same Show list but keeps its own link option.
+    fireEvent.click(within(scorebug).getByLabelText('Opponent name'));
+    expect(link('Scorebug').value).toBe(`${ORIGIN}/stream.html?widget=scorebug&opponent=0&hide=timer`);
+    expect(within(scorebug).getByLabelText('Turn timer')).not.toBeChecked();
+
+    const stats = screen.getByRole('article', { name: 'Deck stats' });
+    expect(within(stats).getByText('440 × 230')).toBeInTheDocument();
+    fireEvent.click(within(stats).getByLabelText('Play / draw'));
+    expect(link('Deck stats').value).toBe(`${ORIGIN}/stream.html?widget=deckstats&hide=turn`);
+
+    const record = screen.getByRole('article', { name: 'Record' });
+    fireEvent.change(within(record).getByLabelText('Record'), { target: { value: 'today' } });
+    expect(link('Record').value).toBe(`${ORIGIN}/stream.html?widget=record&period=today`);
+    fireEvent.click(within(record).getByLabelText('Deck record'));
+    expect(link('Record').value).toBe(`${ORIGIN}/stream.html?widget=record&period=today&hide=deck`);
+
+    const opponent = screen.getByRole('article', { name: 'What they’re on' });
+    fireEvent.click(within(opponent).getByLabelText('Card art'));
+    fireEvent.change(within(opponent).getByLabelText('Lands'), { target: { value: 'all' } });
+    expect(link('What they’re on').value).toBe(`${ORIGIN}/stream.html?widget=opponent&lands=all&hide=art`);
+
+    const intermission = screen.getByRole('article', { name: 'Intermission' });
+    fireEvent.change(within(intermission).getByLabelText('Title'), { target: { value: 'Back soon!' } });
+    fireEvent.click(within(intermission).getByLabelText('Rank climb'));
+    expect(link('Intermission').value).toBe(
+      `${ORIGIN}/stream.html?widget=break&title=Back+soon%21&hide=rank`,
+    );
+    expect(within(intermission).getByText('560 × 308')).toBeInTheDocument();
   });
 
   it('copies a link', async () => {

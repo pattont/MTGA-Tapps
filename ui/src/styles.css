@@ -8348,9 +8348,38 @@ a.sidebar-deck-finder {
   gap: 10px;
 }
 
-.stream-kit .settings-field select {
+.stream-kit .settings-field select,
+.stream-kit .settings-field input[type='text'] {
   width: 100%;
   min-width: 0;
+}
+
+/* A list option's checkboxes take a whole row of the options grid. */
+.stream-kit-checks {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+  gap: 6px 18px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.stream-kit-checks legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 2px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.stream-kit-wide {
+  grid-column: 1 / -1;
 }
 
 .stream-kit-link {

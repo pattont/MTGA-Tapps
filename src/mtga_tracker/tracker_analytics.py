@@ -204,6 +204,10 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
             "deck_size": deck_stats[0] if deck_stats else None,
             "deck_lands": deck_stats[1] if deck_stats else None,
             "opponent_cards": (self._live_opponent_card_names() if in_game else None),
+            # Stream Kit: the opponent's played cards with types and costs, and
+            # the player's flood/screw reading so far (Game Detail's math).
+            "opponent_seen": (self._live_opponent_seen() if in_game else None),
+            "draw_quality": None,
             "match_id": match_id,
             "game_id": game_id,
             "format": format_label,
@@ -235,6 +239,10 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
         except Exception:
             row["overlay_json"] = None
         if in_game:
+            try:
+                row["draw_quality"] = self._live_draw_quality(row.get("overlay_json"))
+            except Exception:
+                row["draw_quality"] = None
             # Freeze the live scoreboard as it stands: /api/live serves this
             # back between games, so loading the page after a game ends shows
             # the previous game's final scoreboard instead of a blank panel
@@ -617,6 +625,141 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
             if len(names) >= 60:
                 break
         return json.dumps(names) if names else None
+
+    #: Distinct cards kept in the live row's opponent_seen list.
+    LIVE_OPPONENT_SEEN_LIMIT = 40
+
+    def _live_opponent_seen(self) -> Optional[str]:
+        """JSON list of the opponent's played cards this game, first seen
+        first: name, type, mana cost and value, and times played. Feeds the
+        Stream Kit's opponent widget; the archetype guess keeps reading the
+        plain name list."""
+        cards: Dict[str, Dict[str, Any]] = {}
+        for event in getattr(self, "opponent_cards", []) or []:
+            name = str(getattr(event, "card_name", "") or "").strip()
+            if not name or name.startswith("Card #"):
+                continue
+            entry = cards.get(name)
+            if entry is None:
+                if len(cards) >= self.LIVE_OPPONENT_SEEN_LIMIT:
+                    continue
+                cost, value = self._live_card_cost(name)
+                entry = {
+                    "name": name,
+                    "type": str(getattr(event, "card_type_category", "") or "Other"),
+                    "mana_cost": cost,
+                    "mana_value": value,
+                    "count": 0,
+                }
+                cards[name] = entry
+            entry["count"] += 1
+        return json.dumps(list(cards.values()), separators=(",", ":")) if cards else None
+
+    def _live_card_cost(self, name: str) -> tuple:
+        """(mana_cost, mana_value) for any card name, from Arena's card DB."""
+        cache = getattr(self, "_live_card_cost_cache", None)
+        if cache is None:
+            cache = {}
+            self._live_card_cost_cache = cache
+        if name in cache:
+            return cache[name]
+        cost: Optional[str] = None
+        value: Optional[float] = None
+        try:
+            index = self.card_db.mana_cost_index_by_name() or {}
+            parsed = index.get(name) or index.get(name.split(" // ")[0].strip())
+            if isinstance(parsed, tuple):
+                cost = str(parsed[0]) if parsed[0] else None
+                value = float(parsed[1]) if parsed[1] is not None else None
+        except Exception:
+            pass
+        cache[name] = (cost, value)
+        return cache[name]
+
+    def _live_draw_quality(self, overlay_json: Optional[str] = None) -> Optional[str]:
+        """The player's draw quality so far, as JSON: Game Detail's
+        draw_quality_metrics on the opening hand and the draws, with the
+        overlay's chance that the next draw is a land. None without a
+        decklist or after a mid-game attach."""
+        from .draw_quality import draw_quality_metrics
+
+        g = self.game_state
+        if getattr(g, "mid_game_attach", False):
+            return None
+        deck_stats = self._live_deck_land_stats()
+        if not deck_stats or not deck_stats[0]:
+            return None
+        deck_size, deck_lands = deck_stats
+
+        def card_row(event) -> Dict[str, Any]:
+            return {
+                "type_category": getattr(event, "card_type_category", None),
+                "display_name": getattr(event, "card_name", None),
+                "source": getattr(event, "source", None),
+            }
+
+        opening = [card_row(event) for event in g.starting_hand_events or []]
+        drawn_events = []
+        if g.player_seat_id is not None:
+            drawn_events = (g.drawn_card_events or {}).get(g.player_seat_id, []) or []
+        drawn = [
+            dict(card_row(event), draw_position=position)
+            for position, event in enumerate(drawn_events, start=1)
+        ]
+        if not opening and not drawn:
+            return None
+        # The live row is rewritten with every console line; the metrics
+        # change only when a card is seen.
+        key = (
+            deck_size,
+            deck_lands,
+            tuple((row["type_category"], row["display_name"]) for row in opening),
+            tuple((row["type_category"], row["display_name"], row["source"]) for row in drawn),
+        )
+        cached = getattr(self, "_live_draw_quality_cache", None)
+        if cached and cached[0] == key:
+            metrics = cached[1]
+        else:
+            metrics = draw_quality_metrics(
+                opening, drawn, len(drawn), deck_size, deck_lands=deck_lands
+            )
+            self._live_draw_quality_cache = (key, metrics)
+        result: Dict[str, Any] = {
+            key: metrics[key]
+            for key in (
+                "lands_seen",
+                "total_cards_seen",
+                "ramped_lands",
+                "expected_lands_seen",
+                "expected_land_rate",
+                "deck_size",
+                "deck_lands",
+                "flood_probability_pct",
+                "screw_probability_pct",
+                "is_flood",
+                "is_screw",
+                "is_land_streak",
+            )
+        }
+        reasons = (
+            metrics["flood_reasons"]
+            if metrics["is_flood"]
+            else metrics["screw_reasons"] or metrics["streak_reasons"]
+        )
+        result["reason"] = reasons[0] if reasons else None
+        result["next_land_pct"] = None
+        result["library_size"] = None
+        result["lands_left"] = None
+        try:
+            overlay = json.loads(overlay_json) if overlay_json else None
+        except ValueError:
+            overlay = None
+        if isinstance(overlay, dict) and overlay.get("cards"):
+            odds = overlay.get("land_odds") or {}
+            result["next_land_pct"] = odds.get("1")
+            result["library_size"] = overlay.get("library_size")
+            result["lands_left"] = overlay.get("lands_left")
+        return json.dumps(result, separators=(",", ":"))
 
     def _live_card_db_path(self) -> Optional[str]:
         cached = getattr(self, "_live_card_db_path_cache", "unset")

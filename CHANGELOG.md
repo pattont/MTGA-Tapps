@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Stream Kit
+
+- **Six new widgets** (Settings → Streaming):
+  - **Scorebug:** a TV-style bar with both players, life totals that flash and show the change, the turn and whose it is with a timer, and the match score in Bo3.
+  - **Deck stats:** the deck you're playing, its win rate and record, then a strip of ranked, casual, play and draw, and the last 10 games as dots, each optional. A column with no games is left out, and under five games it shows the record instead of a percentage.
+  - **What they're on:** the opponent's likely deck and your record against it, then every card they've played this game, grouped by type with art and costs. A card lights up as it's played.
+  - **Flood / screw meter:** lands seen against what your deck should give you, Game Detail's verdict as you play, and the chance the next draw is a land.
+  - **Game result:** a Victory or Defeat card for a few seconds after each game, with turns, length, the match score, a highlight such as "Won on the draw", and your session's or today's record.
+  - **Intermission:** a "be right back" card with your own title, your session's or today's record and results, the deck and your rank climb this session.
+- **Record** (was Session record) shows this session or today, your pick, with your win rate on the play and on the draw beside it. Play / draw, rank and your record with the current deck (over the same span) can each be turned off.
+- **Recent games** shows your session's win rate on the play and on the draw above the list.
+- **Every widget has a Show list** in Settings: turn off any number another widget already shows (head-to-head, turn, play/draw, rank, Bo3 score and more), so nothing is on screen twice. The opponent's name moved into the same list.
+- **Preview follows Settings.** An open Preview tab updates as you change a widget's choices.
+- **Long decks scroll.** The Full overlay and Deck tracker fit the source's height, and a list too long for it (a 100-card Brawl deck) scrolls itself slowly instead of running off the bottom.
+
+### Fixes
+
+- Live Scoreboard's "with this deck" record counts the finished game while it's on screen between games.
+- The replay's **Hindsight** option now says what it does: cards in the opponent's hand that they play or reveal later show face up from the start, and the rest stay face down.
+- Replays show the opponent's hand cards that a card like Thoughtseize or Duress revealed, from that moment on, even with Hindsight off. Before, the reveal was printed in the log but the cards stayed face down.
+- Replay video export works in Firefox on Windows. Its H.264 encoder sends frames out of order, which failed with "Timestamps must be monotonically increasing".
+- Replay video export has a **Format** choice: H.264 plays everywhere, VP9 is sharper in Chrome and Edge. Chrome's software H.264 encoder (used without a GPU encoder) ignores Quality, so Best could come out smaller than Balanced; VP9 follows it.
+
 ## 0.7.6
 
 **A much better Deck Manager, a more accurate live log, and replay video export in Firefox.**

@@ -604,6 +604,8 @@ class AnalyticsStore:
         AnalyticsStore.ensure_table_column(conn, "live_status", "deck_size", "INTEGER")
         AnalyticsStore.ensure_table_column(conn, "live_status", "deck_lands", "INTEGER")
         AnalyticsStore.ensure_table_column(conn, "live_status", "opponent_cards", "TEXT")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "opponent_seen", "TEXT")
+        AnalyticsStore.ensure_table_column(conn, "live_status", "draw_quality", "TEXT")
         AnalyticsStore.ensure_table_column(conn, "live_status", "last_game_json", "TEXT")
         AnalyticsStore.ensure_table_column(conn, "live_status", "overlay_json", "TEXT")
         AnalyticsStore.backfill_game_turn_counts(conn)
@@ -3255,6 +3257,8 @@ class AnalyticsStore:
         "deck_size",
         "deck_lands",
         "opponent_cards",
+        "opponent_seen",
+        "draw_quality",
         "last_game_json",
         "overlay_json",
     )

@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supportsVideoExport } from '../export/mp4Encoder';
-import type { VideoQuality } from '../export/mp4Encoder';
+import type { VideoFormat, VideoQuality } from '../export/mp4Encoder';
 import { buildVideoPlan } from '../export/videoPlan';
 import { openingEndIndex } from '../scrub';
 import type { Pacing, PlaybackClock, PlaybackSpeed } from '../player';
@@ -26,6 +26,7 @@ export interface ExportOptions {
   targetWidth: number;
   includeLog: boolean;
   quality: VideoQuality;
+  format: VideoFormat;
 }
 
 export interface VideoExportController {
@@ -73,6 +74,7 @@ export function useVideoExport(stream: ReplayStream, clock: PlaybackClock, curre
         targetWidth: options.targetWidth,
         includeLog: options.includeLog,
         quality: options.quality,
+        format: options.format,
       };
       nextJobId += 1;
       setState({ status: 'running', job, progress: null });

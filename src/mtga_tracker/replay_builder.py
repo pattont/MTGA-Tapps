@@ -742,6 +742,47 @@ def _reconnect_lost_arrivals(rows: List[Dict[str, Any]]) -> Tuple[List[Dict[str,
     return out, changed
 
 
+_REVEALED_LINE = re.compile(r"revealed (\[.+\]) from (\w+)\s*$")
+
+
+def _hand_reveal_rows(rows: List[Dict[str, Any]]) -> Set[int]:
+    """``id()`` of each reveal row showing a card in a hand (Thoughtseize, Duress).
+
+    Newer rows carry the proxy's zone in ``zone_from``. Older ones are matched
+    to the console line printed after them, "revealed [A], [B] from hand".
+    """
+    found: Set[int] = set()
+    pending: List[Dict[str, Any]] = []
+    for row in rows:
+        if row.get("event_subtype") == "reveal":
+            zone = row.get("zone_from")
+            if zone:
+                if _zone(zone) == "hand":
+                    found.add(id(row))
+            else:
+                pending.append(row)
+            continue
+        if row.get("event_subtype") == "turn":
+            pending = []
+        if row.get("visible", 1) in (0, "0", False):
+            continue
+        # The line prints once the whole message is handled, after its other lines.
+        match = _REVEALED_LINE.search(str(row.get("text") or ""))
+        if not match:
+            continue
+        if match.group(2) == "hand":
+            names = re.findall(r"\[([^\]]+)\]", match.group(1))
+            seat = _int(row.get("seat_id"))
+            for reveal in pending:
+                name = _payload(reveal).get("name")
+                same_seat = seat is None or _int(reveal.get("seat_id")) in (None, seat)
+                if name in names and same_seat:
+                    names.remove(name)
+                    found.add(id(reveal))
+        pending = []
+    return found
+
+
 class RecordedBuilder:
     """Single-use: ``RecordedBuilder(rows).run()`` returns the stream."""
 
@@ -781,6 +822,12 @@ class RecordedBuilder:
         self.learned_arena: Dict[str, int] = {}
         self._pending_ability: Optional[str] = None
         self.explicit_close: Dict[str, Any] = {}
+        #: Reveal rows that show a hand card, and the first name each object
+        #: shows anywhere in the game (see ``_on_reveal``).
+        self.hand_reveals: Set[int] = set()
+        self.first_name: Dict[str, str] = {}
+        #: Hand cards already given a reveal in the current message.
+        self._revealed_now: Set[str] = set()
 
     # -- helpers ---------------------------------------------------------
 
@@ -1138,6 +1185,16 @@ class RecordedBuilder:
             for row in rows
             if row.get("event_subtype") in STACK_CLOSE_KINDS and _payload(row).get("stack_id")
         }
+        self.hand_reveals = _hand_reveal_rows(rows)
+        for row in rows:
+            obj = _obj(row.get("object_id"))
+            if obj is None or obj in self.first_name:
+                continue
+            if row.get("event_subtype") not in ("move", "stack_push", "identity", "reveal"):
+                continue
+            name = self._row_name(row)
+            if name:
+                self.first_name[obj] = name
         consumed = self._opening(rows)
         has_game_end = False
         for row in rows:
@@ -1154,6 +1211,8 @@ class RecordedBuilder:
         self.log.at(
             row.get("elapsed_seconds"), row.get("turn_number"), row.get("phase"), row.get("step")
         )
+        if visible:
+            self._revealed_now = set()
         handler = getattr(self, f"_on_{kind}", None)
         self._pending_ability = None
         primary = handler(row, _payload(row)) if handler is not None else None
@@ -1428,9 +1487,52 @@ class RecordedBuilder:
             # Arena reveals through proxy objects (GameObjectType_RevealedCard)
             # that never enter a zone the board shows; a reveal of an object
             # no row ever placed would only plant a phantom card.
-            return None
+            if id(row) not in self.hand_reveals:
+                return None
+            obj = self._hand_card_for(self._seat(row), self._row_name(row))
+            if obj is None or self.card_of.get(obj) is not None:
+                return None
         self.card_of[obj] = card
         return self.log.emit("reveal", obj=obj, card=card)
+
+    def _row_name(self, row: Dict[str, Any]) -> Optional[str]:
+        name = _payload(row).get("name")
+        if not name:
+            arena = _int(row.get("arena_id"))
+            name = (self.card_rows_by_arena.get(arena) or {}).get("name") if arena else None
+        if not name or is_unknown_card_name(str(name)):
+            return None
+        return str(name)
+
+    def _hand_card_for(self, seat: Optional[int], name: Optional[str]) -> Optional[str]:
+        """The card in ``seat``'s hand a revealed proxy shows.
+
+        The proxy names no card, so pick, in order: a hand card already known
+        to be this card, one the game later shows to be it, then one it never
+        identifies. A hand card is given out once per message.
+        """
+        if seat is None or not name:
+            return None
+        hand = [
+            obj
+            for obj, zone in self.zone_of.items()
+            if zone == "hand" and self.owner_of.get(obj) == seat and obj not in self._revealed_now
+        ]
+
+        def known(obj: str) -> Optional[str]:
+            card = self.card_of.get(obj)
+            return (self.cards.cards.get(card) or {}).get("name") if card else None
+
+        unknown = [obj for obj in hand if known(obj) is None]
+        for choice in (
+            [obj for obj in hand if known(obj) == name],
+            [obj for obj in unknown if self.first_name.get(obj) == name],
+            [obj for obj in unknown if obj not in self.first_name],
+        ):
+            if choice:
+                self._revealed_now.add(choice[0])
+                return choice[0]
+        return None
 
     def _on_scry(self, row, payload):
         seat = self._seat(row, self.player_seat)

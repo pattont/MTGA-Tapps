@@ -1572,3 +1572,20 @@ def test_commander_cast_from_and_returned_to_the_command_zone(tmp_path):
         ("battlefield", "graveyard", "sba"),
         ("graveyard", "command", "put"),
     ]
+
+
+def test_a_hand_reveal_records_the_hand_it_shows(tmp_path):
+    """Arena's proxy sits in the revealed card's zone; the builder needs it."""
+    tracker = started_tracker(tmp_path)
+    # The game's first full state describes every zone, hands included.
+    full = {"annotations": [], "gameObjects": [], "zones": list(_zone_defs().values())}
+    tracker._handle_event({"type": "game_state", "data": full})
+    tracker._handle_event(
+        message(
+            ann("RevealedCardCreated", [504], 504),
+            objects=[obj(504, 2001, O, HAND[O], type="GameObjectType_RevealedCard")],
+        )
+    )
+    rows = event_rows(tmp_path / "analytics.sqlite3")
+    reveal = next(r for r in rows if r["event_subtype"] == "reveal")
+    assert (reveal["object_id"], reveal["zone_from"]) == (504, "hand")

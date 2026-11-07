@@ -1,7 +1,8 @@
 import { deckSections, type DeckRow } from '../deckRows';
-import type { StreamOptions } from '../options';
+import { shows, type StreamOptions } from '../options';
 import type { OverlayState } from '../types';
 import { useOverlay } from '../useOverlay';
+import { AutoScroll } from './AutoScroll';
 import { Brand } from './Brand';
 import { ManaCost } from './ManaCost';
 
@@ -26,10 +27,12 @@ export function DeckView({ state, options }: { state: OverlayState; options: Str
       <header className="sk-head">
         <div className="sk-title">{state.deck_name || 'Your deck'}</div>
         <div className="sk-sub">
-          <span>
-            Library <strong>{state.library_size}</strong>
-          </span>
-          {state.lands_total > 0 ? (
+          {shows(options, 'library') ? (
+            <span>
+              Library <strong>{state.library_size}</strong>
+            </span>
+          ) : null}
+          {shows(options, 'odds') && state.lands_total > 0 ? (
             <span>
               Land next draw <strong>{Math.round(state.land_odds?.['1'] ?? 0)}%</strong>
             </span>
@@ -37,7 +40,7 @@ export function DeckView({ state, options }: { state: OverlayState; options: Str
           {!live ? <span className="sk-tag">Final</span> : null}
         </div>
       </header>
-      <ul className="sk-rows" aria-label="Library">
+      <AutoScroll as="ul" frameClassName="sk-rows-frame" className="sk-rows" label="Library">
         {spells.map((row) => (
           <Row key={row.key} row={row} />
         ))}
@@ -45,7 +48,7 @@ export function DeckView({ state, options }: { state: OverlayState; options: Str
         {lands.map((row) => (
           <Row key={row.key} row={row} />
         ))}
-      </ul>
+      </AutoScroll>
       <div className="sk-foot">
         <span className="sk-foot-note">Copies left · next-draw odds</span>
         <Brand show={options.brand} />

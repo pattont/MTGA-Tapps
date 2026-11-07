@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as encoder from '../export/mp4Encoder';
 import { makeSampleStream } from '../fixtures/sampleStream';
@@ -16,9 +16,14 @@ const stream = makeSampleStream();
 const FIREFOX = 'Mozilla/5.0 (Windows NT 10.0; rv:144.0) Gecko/20100101 Firefox/144.0';
 const CHROME = 'Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/141.0 Safari/537.36';
 
-function panel(state: ExportState) {
+function panelWithController(state: ExportState) {
   const controller = { state, supported: true, open: vi.fn(), close: vi.fn(), start: vi.fn(), cancel: vi.fn(), handle: null } as VideoExportController;
-  return render(<VideoExportPanel controller={controller} stream={stream} prefs={DEFAULT_PREFS} currentIndex={0} />);
+  const view = render(<VideoExportPanel controller={controller} stream={stream} prefs={DEFAULT_PREFS} currentIndex={0} />);
+  return { controller, view };
+}
+
+function panel(state: ExportState) {
+  return panelWithController(state).view;
 }
 
 function result(size: number, codec: string): ExportResult {
@@ -34,7 +39,7 @@ afterEach(() => {
 
 describe('VideoExportPanel', () => {
   it('shows the size so far and the projected total while rendering', () => {
-    const job = { id: 1, plan: { frames: [], fps: 30, seconds: 60 }, targetWidth: 1920, includeLog: true, quality: 'balanced' } as never;
+    const job = { id: 1, plan: { frames: [], fps: 30, seconds: 60 }, targetWidth: 1920, includeLog: true, quality: 'balanced', format: 'h264' } as never;
     panel({ status: 'running', job, progress: { phase: 'frames', done: 450, total: 1800, bytes: 6_000_000 } });
     expect(screen.getByText(/450 \/ 1800 · 25% · 6\.0 MB so far, about 24\.0 MB in all/)).toBeTruthy();
   });
@@ -70,6 +75,22 @@ describe('VideoExportPanel', () => {
     await act(async () => {});
     expect((screen.getByRole('combobox', { name: 'Quality' }) as HTMLSelectElement).disabled).toBe(false);
     expect(screen.getByText(/at most about/)).toBeTruthy();
+  });
+
+  it('probes the chosen format and passes it to the export', async () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(FIREFOX);
+    vi.mocked(encoder.encoderCodec).mockResolvedValue('avc1.640028');
+    const { controller } = panelWithController({ status: 'dialog' });
+    const format = screen.getByRole('combobox', { name: 'Format' }) as HTMLSelectElement;
+    expect(format.value).toBe('h264');
+    expect(screen.getByText(/software H\.264 encoder/)).toBeTruthy();
+    act(() => {
+      fireEvent.change(format, { target: { value: 'vp9' } });
+    });
+    await waitFor(() => expect(encoder.encoderCodec).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Number), 30, 'vp9'));
+    expect(screen.getByText(/not in QuickTime/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+    expect(controller.start).toHaveBeenCalledWith(expect.objectContaining({ format: 'vp9', quality: 'balanced' }));
   });
 
   it('never probes the encoder outside Firefox', () => {
