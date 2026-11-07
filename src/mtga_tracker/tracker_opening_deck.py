@@ -1593,6 +1593,92 @@ class TrackerOpeningDeckMixin:
         if can_finalize_short_hand:
             self._finalize_starting_hand(hand_cards, hand_grp_ids, hand_events)
 
+    def _with_pregame_hand_departures(
+        self,
+        hand: Dict[str, Any],
+        data: Dict[str, Any],
+        objects_by_id: Dict[int, Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Add back cards that left this hand for the battlefield as the game began.
+
+        A Leyline Axe begins the game on the battlefield straight from the
+        kept hand. Without this the hand looks two cards short and reads as
+        two mulligans with the Leylines "mulliganed away" (issue #55).
+        Mulligan bottoms go to the library, so they are never counted here.
+        """
+        g = self.game_state
+        if g.last_turn_announced == 0:
+            # Arena moves the first Leyline before turn 1 and a second one in
+            # the message that starts it, so count both until a header shows.
+            self._note_pregame_hand_departures(hand["owner_seat"], data, objects_by_id)
+        extra = [
+            (instance_id, grp_id)
+            for instance_id, grp_id in g.pregame_hand_departures.items()
+            if instance_id not in hand.get("hand_instance_ids", [])
+        ]
+        if not extra:
+            return hand
+        out = dict(hand)
+        out["hand_cards"] = list(hand["hand_cards"])
+        out["hand_grp_ids"] = list(hand["hand_grp_ids"])
+        out["hand_instance_ids"] = list(hand.get("hand_instance_ids", []))
+        out["hand_events"] = list(hand["hand_events"])
+        for instance_id, grp_id in extra:
+            name = self.card_db.get_card_name(grp_id)
+            obj = g.object_snapshots.get(instance_id) or {}
+            category = self._get_card_type_category(obj.get("cardTypes", []))
+            out["hand_cards"].append(name)
+            out["hand_grp_ids"].append(grp_id)
+            out["hand_instance_ids"].append(instance_id)
+            out["hand_events"].append(CardEvent(name, "player", card_type_category=category))
+        return out
+
+    def _note_pregame_hand_departures(
+        self, owner_seat: Any, data: Dict[str, Any], objects_by_id: Dict[int, Dict[str, Any]]
+    ) -> None:
+        """Remember cards this message moves from the owner's hand to the battlefield."""
+        g = self.game_state
+        zones: Dict[int, Dict[str, Any]] = {}
+        for zone in data.get("zones") or []:
+            if isinstance(zone, dict) and zone.get("zoneId") is not None:
+                zones[int(zone["zoneId"])] = zone
+        renamed: Dict[int, int] = {}
+        transfers = []
+        for annotation in data.get("annotations") or []:
+            if not isinstance(annotation, dict):
+                continue
+            types = annotation.get("type") or []
+            details = {
+                item.get("key"): (item.get("valueInt32") or [None])[0]
+                for item in annotation.get("details") or []
+                if isinstance(item, dict)
+            }
+            if "AnnotationType_ObjectIdChanged" in types:
+                if details.get("orig_id") is not None and details.get("new_id") is not None:
+                    renamed[int(details["new_id"])] = int(details["orig_id"])
+            elif "AnnotationType_ZoneTransfer" in types:
+                transfers.append((annotation.get("affectedIds") or [], details))
+        def zone(value: Any) -> Optional[Dict[str, Any]]:
+            return zones.get(int(value)) if value is not None else None
+
+        for affected, details in transfers:
+            src, dest = zone(details.get("zone_src")), zone(details.get("zone_dest"))
+            if not (
+                isinstance(src, dict)
+                and src.get("type") == "ZoneType_Hand"
+                and src.get("ownerSeatId") == owner_seat
+                and isinstance(dest, dict)
+                and dest.get("type") == "ZoneType_Battlefield"
+            ):
+                continue
+            for instance_id in affected:
+                if instance_id is None:
+                    continue
+                obj = objects_by_id.get(instance_id) or g.object_snapshots.get(instance_id) or {}
+                if obj.get("grpId"):
+                    original = renamed.get(int(instance_id), int(instance_id))
+                    g.pregame_hand_departures[original] = int(obj["grpId"])
+
     def _capture_opening_hand(self, data: Dict[str, Any]) -> None:
         """Capture starting hand + mulligan count from early hand-zone snapshots."""
         if self._opening_hand_capture_blocked():
@@ -1612,6 +1698,7 @@ class TrackerOpeningDeckMixin:
             return
 
         self._sync_opening_hand_seats(chosen_hand["owner_seat"], hand_zone_owners, data)
+        chosen_hand = self._with_pregame_hand_departures(chosen_hand, data, objects_by_id)
         turn_num = (data.get("turnInfo") or {}).get("turnNumber")
         self._handle_opening_hand_snapshot(
             chosen_hand,

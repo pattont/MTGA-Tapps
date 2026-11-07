@@ -1589,3 +1589,143 @@ def test_a_hand_reveal_records_the_hand_it_shows(tmp_path):
     rows = event_rows(tmp_path / "analytics.sqlite3")
     reveal = next(r for r in rows if r["event_subtype"] == "reveal")
     assert (reveal["object_id"], reveal["zone_from"]) == (504, "hand")
+
+
+def build_pregame_leyline_game() -> List[Tuple[str, datetime]]:
+    """Issue #55: two Leyline Axes begin on the battlefield before turn 1.
+
+    As in a real log: Arena moves the first Leyline in a message whose
+    turnInfo has no turn number yet, and the second in the message that
+    begins turn 1, before anything prints a turn header.
+    """
+    g = GameSim(datetime(2026, 11, 6, 20, 0, 0))
+    for i in range(53):
+        g.card(300 + i, None, P, LIB[P])
+        g.card(400 + i, None, O, LIB[O])
+    hand = [LEYLINE, LEYLINE, 1001, 1001, 1002, 1004, 1008]
+    for i, grp in enumerate(hand):
+        g.card(211 + i, grp, P, HAND[P])
+    for i in range(7):
+        g.card(111 + i, None, O, HAND[O])
+    g.emit(tuple(range(211, 218)), players=g.players())
+    # Hands kept; the game is set up but turn 1 has not begun.
+    g.active = P
+    g.emit(tuple(range(211, 218)), players=g.players())
+    g.move(211, 251, BF)
+    g.emit((251,), (oic(211, 251), zt(251, HAND[P], BF, "Put")))
+    # Turn 1 (you, on the play) begins with the second Leyline, then a land.
+    g.turn_to(1, P)
+    g.move(212, 252, BF)
+    g.emit((252,), (oic(212, 252), zt(252, HAND[P], BF, "Put")), players=g.players())
+    g.phase_to("Phase_Main1")
+    g.move(213, 261, BF)
+    g.emit((261,), (oic(213, 261), zt(261, HAND[P], BF, "PlayLand")))
+    # Turn 2 (opponent): a draw and a land.
+    g.turn_to(2, O)
+    g.emit()
+    g.phase_to("Phase_Beginning", "Step_Draw")
+    g.move(400, 270, HAND[O])
+    g.emit((), (oic(400, 270), zt(270, LIB[O], HAND[O], "Draw")))
+    g.phase_to("Phase_Main1")
+    g.move(111, 271, BF, grp=2001)
+    g.emit((271,), (oic(111, 271), zt(271, HAND[O], BF, "PlayLand")))
+    g.emit(
+        game_info={
+            "stage": "GameStage_GameOver",
+            "matchState": "MatchState_GameComplete",
+            "results": [
+                {
+                    "scope": "MatchScope_Game",
+                    "result": "ResultType_WinLoss",
+                    "winningTeamId": P,
+                    "reason": "ResultReason_Concede",
+                }
+            ],
+        }
+    )
+    return g.lines
+
+
+LEYLINE = 1011
+
+
+def test_pregame_leylines_keep_turn_one_and_the_opening_hand(tmp_path, capsys):
+    from mtga_tracker.replay_builder import replay_for_game
+
+    tracker = synthetic_tracker(tmp_path)
+    tracker.card_db.names[LEYLINE] = "Leyline Axe"
+    run_synthetic_game(tracker, build_pregame_leyline_game())
+    db = tmp_path / "analytics.sqlite3"
+    console = capsys.readouterr().out
+
+    # One turn 1 header, stamped with its turn; no mulligans, all seven kept.
+    assert console.count("Turn 1 - ") == 1
+    assert console.count("put [Leyline Axe] onto battlefield") == 2
+    assert console.index("put [Leyline Axe] onto battlefield") < console.index("Turn 1 - ")
+    assert "Mulliganed away" not in console and "Mulligans: 0" in console
+    assert "Your Starting Hand (7 cards)" in console
+    rows = event_rows(db)
+    turns = [row for row in rows if row["event_subtype"] == "turn"]
+    assert [row["turn_number"] for row in turns] == [1, 2]
+    opening = [row for row in rows if (row["payload"] or {}).get("opening")]
+    assert max(row["id"] for row in opening) < turns[0]["id"]
+
+    game_id = rows[0]["game_id"]
+    stream = replay_for_game(db, game_id)
+    assert [turn["turn"] for turn in stream["turns"]] == [1, 2]
+    start = next(e for e in stream["events"] if e["kind"] == "game_start")
+    # The Leylines were in the dealt hand: seven cards, then two leave it.
+    assert start["seats_hand_sizes"][str(P)] == 7
+    assert start["seats_hand_sizes"][str(O)] == 7
+    first_turn = next(e["seq"] for e in stream["events"] if e["kind"] == "turn")
+    dealt = [
+        e
+        for e in stream["events"]
+        if e["seq"] < first_turn and e["kind"] == "move" and e.get("reason") == "draw"
+    ]
+    assert len([e for e in dealt if e["owner"] == P]) == 7
+    assert len([e for e in dealt if e["owner"] == O]) == 7
+    leylines = [
+        e for e in stream["events"] if e["kind"] == "move" and e.get("to") == "battlefield"
+    ][:2]
+    assert [e["obj"] for e in leylines] == ["211", "212"]
+    assert {e["obj"] for e in dealt} >= {"211", "212"}
+
+
+def test_replay_repairs_a_turn_one_header_printed_before_the_opening(tmp_path, capsys):
+    """Games recorded before the fix: "Turn 1" printed early with no turn
+    number, ahead of the Leylines and the kept hands (issue #55)."""
+    from mtga_tracker.replay_builder import replay_for_game
+
+    tracker = synthetic_tracker(tmp_path)
+    tracker.card_db.names[LEYLINE] = "Leyline Axe"
+    run_synthetic_game(tracker, build_pregame_leyline_game())
+    capsys.readouterr()
+    db = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db) as conn:
+        header = conn.execute(
+            "SELECT id FROM game_events WHERE event_subtype = 'turn' ORDER BY id LIMIT 1"
+        ).fetchone()[0]
+        first_time = conn.execute(
+            "SELECT MIN(event_time) FROM game_events WHERE event_time IS NOT NULL"
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE game_events SET id = -1, turn_number = NULL, event_time = ? WHERE id = ?",
+            (first_time, header),
+        )
+    game_id = event_rows(db)[0]["game_id"]
+
+    stream = replay_for_game(db, game_id)
+
+    assert [turn["turn"] for turn in stream["turns"]] == [1, 2]
+    assert stream["turns"][0]["seat"] == P
+    start = next(e for e in stream["events"] if e["kind"] == "game_start")
+    assert start["seats_hand_sizes"] == {str(O): 7, str(P): 7}
+    first_turn = next(e["seq"] for e in stream["events"] if e["kind"] == "turn")
+    after = [
+        e
+        for e in stream["events"]
+        if e["seq"] > first_turn and e["kind"] == "move" and e.get("reason") == "draw"
+    ]
+    # Only the opponent's turn 2 draw; no opening card replays as a draw.
+    assert [e["owner"] for e in after] == [O]

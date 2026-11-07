@@ -202,6 +202,55 @@ def _zone(value: Any) -> str:
 _HOISTABLE_KINDS = ("untap", "tap", "unsick", "sick", "phase", "pt", "counter")
 
 
+_HEADER_TURN_RE = re.compile(r"^\s*Turn (\d+) - ")
+
+
+def _header_turn(text: Any) -> Optional[int]:
+    """The turn number a printed turn header names ("Turn 1 - YOUR TURN")."""
+    match = _HEADER_TURN_RE.match(str(text or ""))
+    return int(match.group(1)) if match else None
+
+
+def _settle_premature_first_turn(
+    rows: List[Dict[str, Any]], timings: Iterable[Dict[str, Any]] = ()
+) -> List[Dict[str, Any]]:
+    """Move a first turn header printed before the opening hands after them.
+
+    Before the tracker knew Arena's pregame window, a card leaving the
+    opening hand before turn 1 (Leyline Axe) printed "Turn 1" early, with no
+    turn number, and the real header was never printed (issue #55). The
+    kept hands, recorded when turn 1 really began, then followed it, so the
+    replay showed T0 and counted both hands as draws. The header belongs
+    after them; Arena's turn timing names who was active.
+    """
+    first = next((i for i, row in enumerate(rows) if row.get("event_subtype") == "turn"), None)
+    if first is None or rows[first].get("turn_number") is not None:
+        return rows
+    last_opening = None
+    for index in range(first + 1, len(rows)):
+        row = rows[index]
+        if row.get("event_subtype") == "turn":
+            break
+        if row.get("event_subtype") == "move" and _payload(row).get("opening"):
+            last_opening = index
+    if last_opening is None:
+        return rows
+    header = dict(rows[first])
+    turn = _header_turn(header.get("text")) or 1
+    header["turn_number"] = turn
+    for timing in timings:
+        if _int(timing.get("turn_number")) == turn and _int(timing.get("seat_id")) in (1, 2):
+            payload = dict(_payload(header))
+            payload["active_seat"] = _int(timing.get("seat_id"))
+            header["payload_json"] = json.dumps(payload)
+            header["seat_id"] = payload["active_seat"]
+            break
+    out = list(rows)
+    out.pop(first)
+    out.insert(last_opening, header)
+    return out
+
+
 def _hoist_turn_headers(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Move each ``turn`` row before the silent state rows of that same turn.
 
@@ -949,6 +998,7 @@ class RecordedBuilder:
                 mulligan_rows.append(row)
                 consumed.add(id(row))
         self._add_bottomed(rows, first_turn, opening_rows, mulligan_rows)
+        self._add_pregame_departures(rows, first_turn, opening_rows)
 
         player = self.participants.get("player") or {}
         opponent = self.participants.get("opponent") or {}
@@ -1058,6 +1108,39 @@ class RecordedBuilder:
             ):
                 opening_rows.setdefault(seat, []).append(row)
                 to_bottom[seat] -= 1
+
+    def _add_pregame_departures(
+        self,
+        rows: List[Dict[str, Any]],
+        first_turn: int,
+        opening_rows: Dict[int, List[Dict[str, Any]]],
+    ) -> None:
+        """Deal the cards that left the opening hand before turn 1 into it.
+
+        A Leyline Axe moves from the kept hand to the battlefield before the
+        first turn, and the hands recorded when turn 1 begins no longer hold
+        it. Without it the hand runs short by those cards (issue #55).
+        """
+        if not any(opening_rows.values()):
+            return
+        dealt = {
+            _obj(row.get("object_id")) for seat_rows in opening_rows.values() for row in seat_rows
+        }
+        for row in rows[:first_turn]:
+            obj = _obj(row.get("object_id"))
+            if (
+                obj is None
+                or obj in dealt
+                or row.get("event_subtype") != "move"
+                or _zone(row.get("zone_from")) != "hand"
+                or _zone(row.get("zone_to")) != "battlefield"
+            ):
+                continue
+            seat = self._seat(row, self.player_seat)
+            if seat is None:
+                continue
+            opening_rows.setdefault(seat, []).append(row)
+            dealt.add(obj)
 
     def _synthesize_hands(
         self, rows: List[Dict[str, Any]], player: Dict[str, Any], opponent: Dict[str, Any]
@@ -1170,6 +1253,7 @@ class RecordedBuilder:
     def run(self) -> Dict[str, Any]:
         rows = list(self.rows.get("game_events") or [])
         rows.sort(key=lambda row: (str(row.get("event_time") or ""), row.get("id") or 0))
+        rows = _settle_premature_first_turn(rows, self.rows.get("game_turns") or [])
         rows = _hoist_turn_headers(rows)
         rows = _hoist_token_creations(rows)
         rows = _hoist_battlefield_entries(rows)
@@ -1230,7 +1314,7 @@ class RecordedBuilder:
     def _on_turn(self, row, payload):
         for stack_id in list(self.open_stack):
             self._close_item(stack_id, "stack_resolve")
-        turn = _int(row.get("turn_number")) or self.log.turn
+        turn = _int(row.get("turn_number")) or _header_turn(row.get("text")) or self.log.turn
         self.log.turn = turn
         active = _int(payload.get("active_seat")) or self._seat(row) or self.player_seat
         return self.log.emit("turn", turn=turn, active_seat=active)

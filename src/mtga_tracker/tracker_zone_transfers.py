@@ -823,7 +823,16 @@ class TrackerZoneTransferMixin:
 
         attack_state = str(card_obj.get("attackState", ""))
         put_in_attacking = "Attacking" in attack_state or bool(card_obj.get("attackInfo"))
-        if pre_turn_zone_noise and not put_in_attacking:
+        # A card put onto the battlefield from the opening hand before turn 1
+        # (Leyline Axe) is no setup noise: the board starts with it.
+        source_zone = (zones_by_id or {}).get(int(zone_src)) if zone_src is not None else None
+        pregame_entry = (
+            destination_type == "ZoneType_Battlefield"
+            and self.game_state.last_turn_announced == 0
+            and isinstance(source_zone, dict)
+            and source_zone.get("type") == "ZoneType_Hand"
+        )
+        if pre_turn_zone_noise and not put_in_attacking and not pregame_entry:
             return
         matched_return = None
         if put_in_attacking and self.game_state.recent_combat_returns:

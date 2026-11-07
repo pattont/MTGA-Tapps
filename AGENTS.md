@@ -638,6 +638,10 @@ Primary code paths:
   `python -m mtga_tracker.collection_export`, frozen builds run the tracker executable
   with `--collection-scan` (`app.main` routes it before the single-instance guard),
   because the bundled binary has no `-m`.
+  The scan locates the collection by anchor cards: every non-basic card (at most four
+  copies) from the player's tracked decklists and Deck Manager's current revisions, 4-ofs
+  first (`derive_anchors`; singleton Brawl decks must still yield anchors).
+  `CollectionNotFound` carries what the scan saw, and the error message shows it.
   The scan needs known cards from recorded games: the Settings page disables the
   export while `_tracker_info` reports `games == 0` (null keeps it enabled), and
   `_run_export` refuses a fresh scan with `no_games` before any prompt.
@@ -1009,10 +1013,15 @@ Arena logs are not a simple chronological event stream. Be careful with inferred
   (`EventName: Brawl_Ladder` for cBrawl), and Arena's deck attributes use "HistoricBrawl*"
   naming everywhere — never infer the queue from them (substring 'historicbrawl' inside
   'HistoricBrawlRanked' has mislabeled real cBrawl matches twice).
-- Log timestamps are locale-formatted: day-first locales write `dd/mm/yyyy`. The parser
-  (`log_timestamp.py`) learns the order from unambiguous entries with a system-locale
-  fallback; storage is always ISO. Never parse a log date with a fixed `%m/%d` order
-  (pre-0.5.5 did, and migration v21 repairs the month/day-swapped rows it stored).
+- Log timestamps are locale-formatted: day-first locales write `dd/mm/yyyy`, and Arena's
+  order need not match Windows' short-date setting (a US system with a custom day-first
+  format still logs `11/4/2026`). The parser (`log_timestamp.py`) decides an ambiguous date
+  from, in order: the entry's own epoch-ms JSON `"timestamp"` (every GRE message has one),
+  the order learned from earlier entries, the reading within the last two weeks of the system
+  clock, then the system locale; storage is always ISO. Never parse a log date with a fixed
+  `%m/%d` order. `date_repair.py` fixes stored month/day-swapped rows, anchored on the
+  session id's system-clock time (migrations 21 and 37, backup merges, `db_audit --repair`).
+  Tests pin the parser's clock in `tests/conftest.py`.
 - The deck a game is attributed to comes from course-candidate scoring, and the decklist
   actually submitted to the game is the trump card: a candidate that contradicts the
   submitted 60 must never win (a tracker launched mid-queue after a deck switch once
@@ -1024,6 +1033,11 @@ Arena logs are not a simple chronological event stream. Be careful with inferred
   the choice in `subtypes` (`SubType_Mountain`) and has no `color`. The tracker
   remembers the chooser (`GameState.land_type_choosers`) and reads the type from
   `subtypes`, so printed land types (Sacred Foundry) are never shown as a choice.
+- Opening-hand battlefield cards (Leyline Axe): Arena moves the first in a message whose
+  `turnInfo` has no `turnNumber` (`GameState.awaiting_first_turn`) and a second in the
+  message that starts turn 1, both before any turn header. They print as Put lines, never
+  invent a "Turn 1" header for their seat (`_ensure_turn_header_for_event` flushes the
+  pending one), and count in the kept hand (`pregame_hand_departures`), not as mulligans.
 - Arena reuses instance ids it never deleted (an ability whose activation was
   undone): an `ObjectIdChanged` to such an id must not inherit the old object's
   snapshot (`_record_object_id_change` replaces or drops it), or an opponent's
@@ -1144,7 +1158,7 @@ and is decklist-aware; the dashboard and CLI must both use it rather than reimpl
 
 Use `format_normalizer.py` for queue labels and best-of inference. Do not duplicate string-matching format logic in tracker mixins or reports.
 
-Run `mtga_tracker.db_audit` after suspected tracker inconsistencies. Safe repairs currently include format/queue mismatches, turn-count aggregate mismatches, reconstruction of completed games missing their core row, timestamp-based game-event reassignment, and deletion of empty unknown-result game artifacts; unresolved deck names and `Card #...` labels are reported for manual follow-up.
+Run `mtga_tracker.db_audit` after suspected tracker inconsistencies. Safe repairs currently include format/queue mismatches, turn-count aggregate mismatches, reconstruction of completed games missing their core row, timestamp-based game-event reassignment, month/day-swapped log dates, and deletion of empty unknown-result game artifacts; unresolved deck names and `Card #...` labels are reported for manual follow-up.
 
 The analytics writer uses WAL mode, a busy timeout, and bounded retries so dashboard reads or
 development-time reloads do not drop end-game writes. Missing exact turn timings are recovered

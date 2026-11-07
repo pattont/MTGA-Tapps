@@ -17,8 +17,15 @@
 - **Preview follows Settings.** An open Preview tab updates as you change a widget's choices.
 - **Long decks scroll.** The Full overlay and Deck tracker fit the source's height, and a list too long for it (a 100-card Brawl deck) scrolls itself slowly instead of running off the bottom.
 
+### Buy on Paper
+
+- TCGplayer links now carry Tapps Tracker's affiliate link, like Mana Pool's, so choosing TCGplayer shows a note that buying there earns Tapps Tracker a small commission at no cost to you. The list still opens in TCGplayer's Mass Entry, now at its current address, where one Add to Cart click adds every card.
+
 ### Fixes
 
+- **Dates no longer swap month and day** ([#51](https://github.com/pattont/MTGA-Tapps/issues/51)). On days like 4 November, where both readings are valid, Arena's 11/4/2026 could be read as 11 April when Windows' short-date format didn't match how Arena writes its log (a US system with a custom day-first date, or Italian Windows). Games landed months away, Today's Games lost them, and live timers showed hundreds of thousands of minutes. The tracker now reads the order from the log itself (every game message carries an exact timestamp), then from today's date, and only last from Windows' settings. Games already stored with swapped dates are repaired at the next launch, in merged backups, and by `db_audit --repair`.
+- **Collection export finds more collections** ([#52](https://github.com/pattont/MTGA-Tapps/issues/52)). The scan looks for your collection by cards from your own decks, but it only used cards you run four of, so a player with only Brawl or other singleton decks gave it nothing to look for. It now uses every non-basic card from your tracked decks and Deck Manager's saved decks. When the scan still fails, the message says what it saw, to help with bug reports.
+- **Replays of games that start with a Leyline** ([#55](https://github.com/pattont/MTGA-Tapps/issues/55)). A card put onto the battlefield from the opening hand (Leyline Axe, Leyline of Hope) made the timeline start at T0 and counted both opening hands as draws. The live log also printed a second "Turn 1" header or hid one Leyline, and counted the Leylines as mulligans. Existing replays are fixed too.
 - Live Scoreboard's "with this deck" record counts the finished game while it's on screen between games.
 - The replay's **Hindsight** option now says what it does: cards in the opponent's hand that they play or reveal later show face up from the start, and the rest stay face down.
 - Replays show the opponent's hand cards that a card like Thoughtseize or Duress revealed, from that moment on, even with Hindsight off. Before, the reveal was printed in the log but the cards stayed face down.

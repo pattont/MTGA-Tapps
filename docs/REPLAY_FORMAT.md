@@ -307,6 +307,16 @@ Rules the producers guarantee so the reducer can stay simple:
    a seat whose `mulligan` row drops cards, the builder deals the first such
    unseen objects (up to `from_size - to_size`) into its opening hand, so the
    bottoming move leaves a hand that holds the card.
+10. Opening-hand battlefield entries (Leyline Axe): Arena moves the first in a
+    message whose `turnInfo` has no turn number and a second in the message
+    that begins turn 1. Capture writes each `hand→battlefield` move (the
+    first with a NULL `turn_number`, before the first `turn` row) and counts
+    it in that seat's opening hand rows; the builder also deals any such
+    pre-turn move's object into the opening hand
+    (`_add_pregame_departures`). Games recorded before 0.7.7 printed "Turn 1"
+    early with a NULL `turn_number`, ahead of the opening hand rows; the
+    builder moves that header after them, numbered from its text, with
+    `game_turns`' seat (`_settle_premature_first_turn`).
 
 ## 3. Playback: `ui/src/replay/` module API
 

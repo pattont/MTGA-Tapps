@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from .date_repair import repair_swapped_log_dates
 from .log_sanitize import scrub_raw_log
 from .payload_codec import compress_payload, decode_payload
 
@@ -737,6 +738,9 @@ class AnalyticsStore:
             (34, AnalyticsStore._migrate_v34_native_deck_transfers),
             (35, AnalyticsStore._migrate_v35_deck_collections),
             (36, AnalyticsStore._migrate_v36_backfill_revealed_card_counts),
+            # v37: the same date repair as v21, for rows a wrong date order
+            # stored since (US logs on a day-first Windows, issue #51).
+            (37, AnalyticsStore._migrate_v21_repair_swapped_log_dates),
         )
 
     @staticmethod
@@ -1295,124 +1299,21 @@ class AnalyticsStore:
             if column not in existing:
                 conn.execute(f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER")
 
-    #: (table, timestamp columns, SQL producing "<rowid>, <session started_at>")
-    #: for every log-derived timestamp the swapped-date repair must cover.
-    _SWAPPED_DATE_TARGETS = (
-        (
-            "matches",
-            ("started_at", "ended_at"),
-            "SELECT m.id, s.started_at FROM matches m "
-            "JOIN tracker_sessions s ON s.id = m.session_id",
-        ),
-        (
-            "games",
-            ("started_at", "ended_at"),
-            "SELECT g.id, s.started_at FROM games g "
-            "JOIN tracker_sessions s ON s.id = g.session_id",
-        ),
-        (
-            "game_turns",
-            ("started_at", "ended_at"),
-            "SELECT t.id, s.started_at FROM game_turns t "
-            "JOIN games g ON g.id = t.game_id "
-            "JOIN tracker_sessions s ON s.id = g.session_id",
-        ),
-        (
-            "game_events",
-            ("event_time",),
-            "SELECT e.id, s.started_at FROM game_events e "
-            "JOIN tracker_sessions s ON s.id = e.session_id",
-        ),
-        (
-            "console_logs",
-            ("created_at",),
-            "SELECT c.id, s.started_at FROM console_logs c "
-            "JOIN tracker_sessions s ON s.id = c.session_id",
-        ),
-        (
-            "rank_snapshots",
-            ("captured_at",),
-            "SELECT r.id, s.started_at FROM rank_snapshots r "
-            "JOIN tracker_sessions s ON s.id = r.session_id",
-        ),
-        (
-            "raw_game_payloads",
-            ("created_at",),
-            "SELECT p.id, s.started_at FROM raw_game_payloads p "
-            "JOIN tracker_sessions s ON s.id = p.session_id",
-        ),
-    )
-
-    @staticmethod
-    def _swapped_date_repair(value: object, session_start: datetime) -> Optional[str]:
-        """Return the month/day-swapped timestamp when that is clearly the truth.
-
-        Trackers before the locale-aware log parser read day-first log dates
-        as month-first, storing e.g. 9 August as September 8. The session row's
-        started_at comes from the system clock (never log-parsed), so it
-        anchors reality: a timestamp far from its session whose month/day swap
-        lands inside the session window was mis-parsed. Conservative on
-        purpose — anything ambiguous is left alone.
-        """
-        text = str(value or "")
-        if not text:
-            return None
-        try:
-            stamp = datetime.fromisoformat(text)
-        except ValueError:
-            return None
-        if abs((stamp - session_start).total_seconds()) <= 5 * 86400:
-            return None  # close enough to the session to be legitimate
-        if stamp.day > 12:
-            return None  # swapping would produce month > 12
-        try:
-            swapped = stamp.replace(month=stamp.day, day=stamp.month)
-        except ValueError:
-            return None
-        delta = (swapped - session_start).total_seconds()
-        # A session's log timestamps live near its start: allow the previous
-        # day (log lines read at startup) through a generous multi-day session.
-        if -2 * 86400 <= delta <= 3 * 86400:
-            return swapped.isoformat()
-        return None
-
     @staticmethod
     def _migrate_v21_repair_swapped_log_dates(conn: sqlite3.Connection) -> None:
-        """One-time repair of timestamps stored with month and day swapped.
+        """Repair timestamps stored with month and day swapped.
 
-        Fixes games recorded by day-first-locale users (dd/mm log dates read
-        as mm/dd) that landed months in the future and scrambled every
-        date-ordered view. See _swapped_date_repair for the detection rule.
+        Fixes games whose ambiguous log dates (11/4/2026) were read in the
+        wrong field order and landed months away, scrambling every
+        date-ordered view. v21 fixed older day-first logs; v37 re-runs it
+        for rows stored before the parser checked dates against the log's
+        own epoch timestamps (issue #51). See `date_repair` for the rule.
         """
-        repaired = 0
-        for table, columns, query in AnalyticsStore._SWAPPED_DATE_TARGETS:
-            column_list = ", ".join(columns)
-            for row_id, session_start_text in conn.execute(query).fetchall():
-                try:
-                    session_start = datetime.fromisoformat(str(session_start_text))
-                except (TypeError, ValueError):
-                    continue
-                current = conn.execute(
-                    f"SELECT {column_list} FROM {table} WHERE id = ?", (row_id,)
-                ).fetchone()
-                if current is None:
-                    continue
-                updates = {}
-                for column, value in zip(columns, current):
-                    fixed = AnalyticsStore._swapped_date_repair(value, session_start)
-                    if fixed is not None:
-                        updates[column] = fixed
-                if updates:
-                    assignments = ", ".join(f"{c} = ?" for c in updates)
-                    conn.execute(
-                        f"UPDATE {table} SET {assignments} WHERE id = ?",
-                        tuple(updates.values()) + (row_id,),
-                    )
-                    repaired += 1
+        repaired = repair_swapped_log_dates(conn)
         if repaired:
             print(
-                f"🗓️  Repaired {repaired} row(s) whose dates were stored month/day-"
-                "swapped by older versions (day-first locales)."
+                f"🗓️  Repaired {repaired} row(s) whose dates were stored with month and "
+                "day swapped."
             )
 
     @staticmethod

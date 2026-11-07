@@ -9,7 +9,8 @@
  * coming soon and they can't be chosen. Their copy-and-open handoff stays here
  * for when a way to price them turns up.
  *
- * Fill in AFFILIATE once a store approves an account (Mana Pool has): an
+ * Fill in AFFILIATE once a store approves an account (TCGplayer and Mana
+ * Pool have): an
  * empty value sends a plain link, and the dialog only shows its commission
  * disclosure for a store whose code is set.
  */
@@ -22,10 +23,10 @@ export type VendorId = 'tcgplayer' | 'cardkingdom' | 'manapool' | 'starcitygames
 export const AFFILIATE = {
   /**
    * Impact tracking link from the TCGplayer affiliate dashboard, without a
-   * query, e.g. "https://partner.tcgplayer.com/c/<publisher>/1830156/21018".
-   * The Mass Entry URL is passed to it as `u`.
+   * query. The Mass Entry URL is passed to it as `u`, and Impact redirects
+   * there with its click id added.
    */
-  tcgplayer: '',
+  tcgplayer: 'https://partner.tcgplayer.com/c/7992527/1780961/21018',
   /** Card Kingdom partner code (their in-house program), sent as `partner`. */
   cardkingdom: '',
   /** Mana Pool referral code (affiliates.manapool.com), sent as `ref`. */
@@ -169,7 +170,10 @@ export const PAPER_VENDORS: PaperVendor[] = [
         const base = `${line.quantity} ${storeName(line.name)}`;
         return setCodes && line.set ? `${base} [${line.set}]${line.collector_number ? ` ${line.collector_number}` : ''}` : base;
       });
-      const massEntry = withQuery('https://store.tcgplayer.com/massentry', { c: entries.join('||') });
+      // www.tcgplayer.com is Mass Entry's current home (store.tcgplayer.com
+      // redirects there). It reads only the list and the product line, and
+      // fills its Add to Cart form: no link can add to the cart by itself.
+      const massEntry = withQuery('https://www.tcgplayer.com/massentry', { productline: 'Magic', c: entries.join('||') });
       return {
         kind: 'link',
         url: AFFILIATE.tcgplayer ? withQuery(AFFILIATE.tcgplayer, { subId1: SOURCE, u: massEntry }) : massEntry,

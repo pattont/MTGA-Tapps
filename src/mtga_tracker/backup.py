@@ -982,8 +982,13 @@ def merge_snapshot_into(conn: sqlite3.Connection, snapshot_path: Path) -> Dict[s
             else:
                 continue
             copy(table, where)
+        from .date_repair import repair_swapped_log_dates
         from .deck_manager import merge_library
 
+        # A backup made by an older version can carry month/day-swapped
+        # dates (issue #51); fix the merged sessions the way migrations do.
+        merged_sessions = [str(r[0]) for r in conn.execute("SELECT id FROM temp.new_sessions")]
+        repair_swapped_log_dates(conn, session_ids=merged_sessions)
         counts.update(merge_library(conn))
         conn.execute("COMMIT")
         for temp in ("card_map", "new_sessions", "new_games", "new_matches", "new_participants"):

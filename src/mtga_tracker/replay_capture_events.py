@@ -162,6 +162,12 @@ class ReplayEventsMixin(ReplayCaptureMixin):
                 ids = zone.get("objectInstanceIds")
                 if seat in (1, 2) and isinstance(ids, list):
                     hands[int(seat)] = ids
+        # The zones show the hands after this message, but a Leyline it moves
+        # to the battlefield was in the opening hand (issue #55).
+        for seat, leaving in _hand_departures(data).items():
+            if seat in (1, 2):
+                held = list(hands.get(seat, []))
+                hands[seat] = held + [obj for obj in leaving if obj not in held]
         player = self.game_state.player_seat_id
         for seat in (player, self.game_state.opponent_seat_id):
             if seat not in (1, 2):
@@ -581,3 +587,48 @@ class ReplayEventsMixin(ReplayCaptureMixin):
             amount=damage,
             payload=payload,
         )
+
+
+def _hand_departures(data: Dict[str, Any]) -> Dict[int, List[int]]:
+    """Hand instance ids, by owner seat, that this message moves to the battlefield."""
+    zones = {
+        int(zone["zoneId"]): zone
+        for zone in data.get("zones") or []
+        if isinstance(zone, dict) and zone.get("zoneId") is not None
+    }
+    renamed: Dict[int, int] = {}
+    moves = []
+    for annotation in data.get("annotations") or []:
+        if not isinstance(annotation, dict):
+            continue
+        types = annotation.get("type") or []
+        details = {
+            item.get("key"): (item.get("valueInt32") or [None])[0]
+            for item in annotation.get("details") or []
+            if isinstance(item, dict)
+        }
+        if "AnnotationType_ObjectIdChanged" in types:
+            if details.get("orig_id") is not None and details.get("new_id") is not None:
+                renamed[int(details["new_id"])] = int(details["orig_id"])
+        elif "AnnotationType_ZoneTransfer" in types:
+            moves.append((annotation.get("affectedIds") or [], details))
+    out: Dict[int, List[int]] = {}
+    for affected, details in moves:
+        src = zones.get(int(details["zone_src"])) if details.get("zone_src") is not None else None
+        dest = (
+            zones.get(int(details["zone_dest"])) if details.get("zone_dest") is not None else None
+        )
+        if not (
+            isinstance(src, dict)
+            and src.get("type") == "ZoneType_Hand"
+            and isinstance(dest, dict)
+            and dest.get("type") == "ZoneType_Battlefield"
+            and src.get("ownerSeatId") is not None
+        ):
+            continue
+        for instance_id in affected:
+            if instance_id is not None:
+                out.setdefault(int(src["ownerSeatId"]), []).append(
+                    renamed.get(int(instance_id), int(instance_id))
+                )
+    return out
