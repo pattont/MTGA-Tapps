@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- **Very long histories load on Windows.** Past 32,766 recorded games the Overview and All Games failed to load on Windows. They now load at any size.
+- **Rooms and split cards show one cost.** A two-part card's mana cost on the deck and game pages could change between launches (the first door's, the second's, or both joined). It is now always the front face's.
+
 ## 0.7.7
 
 **Six new Stream Kit widgets, a faster and lighter tracker, and fixes for dates, collection export and Leyline replays.**

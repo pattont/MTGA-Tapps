@@ -3290,6 +3290,46 @@ def test_deck_and_game_payloads_ship_arena_mana_costs(tmp_path):
     assert game["card_mana"]["Duress"] == {"mana_cost": "{B}", "mana_value": 1.0}
 
 
+def test_card_mana_shows_the_front_face_cost_of_a_two_part_card():
+    """A Room has a cost stored under its joined name and under each door.
+    The lookup once walked those names as a set, so which cost a page showed
+    changed from one launch to the next."""
+    from mtga_tracker.dashboard import _card_mana_map
+
+    conn = sqlite3.connect(":memory:")
+    AnalyticsStore.ensure_schema(conn)
+    conn.executemany(
+        "insert into cards (name, first_seen_at, mana_cost, mana_value) "
+        "values (?, '2026-08-01T00:00:00', ?, ?)",
+        [
+            ("Unholy Annex // Ritual Chamber", "{2}{B}{3}{B}{B}", 8.0),
+            ("Ritual Chamber", "{3}{B}{B}", 5.0),
+            ("Unholy Annex", "{2}{B}", 3.0),
+            ("Cease // Desist", "{1}{B/G}{4}{G/W}{G/W}", 8.0),
+            ("Porcelain Gallery", "{4}{W}{W}", 6.0),
+        ],
+    )
+
+    costs = _card_mana_map(
+        conn,
+        [
+            "Unholy Annex // Ritual Chamber (Enchantment)",
+            "Cease // Desist",
+            "Dollmaker's Shop // Porcelain Gallery",
+            "Unholy Annex",
+        ],
+    )
+
+    assert costs["Unholy Annex // Ritual Chamber (Enchantment)"] == {
+        "mana_cost": "{2}{B}",
+        "mana_value": 3.0,
+    }
+    assert costs["Unholy Annex"] == {"mana_cost": "{2}{B}", "mana_value": 3.0}
+    # No row for the front face: the joined name, then the other face.
+    assert costs["Cease // Desist"]["mana_cost"] == "{1}{B/G}{4}{G/W}{G/W}"
+    assert costs["Dollmaker's Shop // Porcelain Gallery"]["mana_cost"] == "{4}{W}{W}"
+
+
 def test_deck_colors_come_from_newest_decklist_casting_costs(tmp_path):
     """Deck colors use mana costs (not identity) from the latest decklist."""
     db_path = _sample_dashboard_db(tmp_path)

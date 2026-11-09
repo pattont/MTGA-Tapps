@@ -111,6 +111,13 @@ Primary code paths:
   over history), `_split_card_index` replaces per-row LIKE lookups, and All Games gathers
   opponent colors in one grouped query. Profile with a copy of a real database before
   adding a correlated subquery that runs once per game.
+  Never bind one SQL parameter per game, deck or participant in a single statement: the
+  Windows build's SQLite binds at most 32,766 (macOS allows 500,000, so a Mac hides it),
+  and past that the page fails with "too many SQL variables". Id lists go through
+  `_in_chunks` (`_SQL_IN_CHUNK` ids a statement); `tests/test_scaling_tools.py` reads every
+  page's endpoint over more games than a pinned limit allows.
+  `_card_mana_map` looks a two-part card up in a fixed order (front face, joined name,
+  other faces), never by walking a set.
   The handler speaks HTTP/1.1 with keep-alive: every response must carry a
   Content-Length (`_send_bytes`) or be bodiless (304, `send_error`); POSTs close the
   connection because not every branch drains its body. Built files under `assets/` are
@@ -742,6 +749,11 @@ venv/bin/python -m mtga_tracker.db_audit
 venv/bin/python -m mtga_tracker.db_audit --repair
 venv/bin/python -m mtga_tracker.draw_quality --card "Llanowar Elves"
 venv/bin/python -m mtga_tracker.payload_dump "<game_id>"
+
+# Large-history checks (docs/plans/SCALING_LARGE_HISTORIES.md); outputs hold real names, keep out of git
+venv/bin/python scripts/build_scaled_db.py --factor 10 --out <copy.sqlite3>   # reads the source read-only
+venv/bin/python scripts/dashboard_payloads.py dump --db <copy.sqlite3> --out <dir> [--src <other checkout>/src]
+venv/bin/python scripts/dashboard_payloads.py diff <dir-before> <dir-after>    # must print "0 differ"
 
 # Frontend
 (cd ui && npm ci)

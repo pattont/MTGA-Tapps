@@ -20,7 +20,7 @@ import sys
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .draw_quality import (
@@ -65,6 +65,27 @@ def _dict_rows(cursor: sqlite3.Cursor) -> List[Dict[str, Any]]:
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
+#: Ids bound into one ``IN (...)`` list. SQLite refuses a statement with more
+#: bound parameters than its compiled limit: 32,766 in the Windows build's
+#: SQLite, 500,000 in the macOS one. A long history holds more games than
+#: that, so a query that binds one id per game, deck or participant must go
+#: through ``_in_chunks`` or it fails with "too many SQL variables" on Windows
+#: while passing every test on a Mac.
+_SQL_IN_CHUNK = 900
+
+
+def _in_chunks(values: Iterable[Any]) -> Iterator[Tuple[str, List[Any]]]:
+    """``(placeholders, ids)`` for each slice of an id list, for ``IN (...)``.
+
+    Each id lands in exactly one slice, so a per-id ``GROUP BY`` or a per-id
+    list built from the rows is the same as from one statement.
+    """
+    items = list(values)
+    for start in range(0, len(items), _SQL_IN_CHUNK):
+        chunk = items[start : start + _SQL_IN_CHUNK]
+        yield ",".join("?" * len(chunk)), chunk
+
+
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
     return (
         conn.execute(
@@ -97,7 +118,7 @@ def _replay_availability(
 ) -> Dict[str, Dict[str, Optional[str]]]:
     """``{game_id: {"state", "reason"}}`` for a whole result set.
 
-    Set-based on purpose: one ``IN`` lookup per 500 ids against the covering
+    Set-based on purpose: one ``IN`` lookup per slice of ids against the covering
     ``idx_game_events_game_time`` index plus one for ``replay_version`` —
     never a correlated subquery per row (about 1 ms for 1,100 games).
     """
@@ -105,9 +126,7 @@ def _replay_availability(
     with_events: Set[str] = set()
     recorded: Set[str] = set()
     has_version = "replay_version" in _table_columns(conn, "games")
-    for start in range(0, len(ids), 500):
-        chunk = ids[start : start + 500]
-        marks = ",".join("?" * len(chunk))
+    for marks, chunk in _in_chunks(ids):
         with_events.update(
             str(row[0])
             for row in conn.execute(
@@ -385,102 +404,106 @@ def _draw_quality_batch(
     fallback_size = {pid: size for pid, size in participants if pid}
     if not ids:
         return {}
-    placeholders = ",".join("?" for _ in ids)
     opener: Dict[str, List[Dict[str, Any]]] = {}
-    for record in _dict_rows(
-        conn.execute(
-            f"""
-            SELECT participant_id, display_name,
-                   COALESCE(type_category, 'Other') AS type_category
-            FROM game_opening_hand_cards
-            WHERE participant_id IN ({placeholders})
-            ORDER BY hand_position, copy_number
-            """,
-            ids,
-        )
-    ):
-        opener.setdefault(record["participant_id"], []).append(record)
     drawn: Dict[str, List[Dict[str, Any]]] = {}
-    for record in _dict_rows(
-        conn.execute(
-            f"""
-            SELECT participant_id, display_name,
-                   COALESCE(type_category, 'Other') AS type_category,
-                   draw_position, source
-            FROM game_drawn_cards
-            WHERE participant_id IN ({placeholders})
-            ORDER BY draw_position
-            """,
-            ids,
-        )
-    ):
-        drawn.setdefault(record["participant_id"], []).append(record)
     recorded: Dict[str, int] = {}
-    for pid, cards_drawn in conn.execute(
-        f"SELECT participant_id, cards_drawn FROM game_participant_stats "
-        f"WHERE participant_id IN ({placeholders})",
-        ids,
-    ):
-        recorded[pid] = int(cards_drawn or 0)
     decklists: Dict[str, Tuple[int, int]] = {}
-    for pid, size, lands in conn.execute(
-        f"""
-        SELECT participant_id, SUM(quantity),
-               SUM(CASE WHEN type_category = 'Land' THEN quantity ELSE 0 END)
-        FROM game_deck_cards
-        WHERE deck_zone = 'deck' AND participant_id IN ({placeholders})
-        GROUP BY participant_id
-        """,
-        ids,
-    ):
-        if int(size or 0) > 0:
-            decklists[pid] = (int(size), int(lands or 0))
+    # One slice of games at a time: a whole history is more ids than SQLite
+    # binds in one statement (see _in_chunks). A game's rows all arrive in
+    # its own slice, so each per-game list keeps the statement's order.
+    for placeholders, chunk in _in_chunks(ids):
+        for record in _dict_rows(
+            conn.execute(
+                f"""
+                SELECT participant_id, display_name,
+                       COALESCE(type_category, 'Other') AS type_category
+                FROM game_opening_hand_cards
+                WHERE participant_id IN ({placeholders})
+                ORDER BY hand_position, copy_number
+                """,
+                chunk,
+            )
+        ):
+            opener.setdefault(record["participant_id"], []).append(record)
+        for record in _dict_rows(
+            conn.execute(
+                f"""
+                SELECT participant_id, display_name,
+                       COALESCE(type_category, 'Other') AS type_category,
+                       draw_position, source
+                FROM game_drawn_cards
+                WHERE participant_id IN ({placeholders})
+                ORDER BY draw_position
+                """,
+                chunk,
+            )
+        ):
+            drawn.setdefault(record["participant_id"], []).append(record)
+        for pid, cards_drawn in conn.execute(
+            f"SELECT participant_id, cards_drawn FROM game_participant_stats "
+            f"WHERE participant_id IN ({placeholders})",
+            chunk,
+        ):
+            recorded[pid] = int(cards_drawn or 0)
+        for pid, size, lands in conn.execute(
+            f"""
+            SELECT participant_id, SUM(quantity),
+                   SUM(CASE WHEN type_category = 'Land' THEN quantity ELSE 0 END)
+            FROM game_deck_cards
+            WHERE deck_zone = 'deck' AND participant_id IN ({placeholders})
+            GROUP BY participant_id
+            """,
+            chunk,
+        ):
+            if int(size or 0) > 0:
+                decklists[pid] = (int(size), int(lands or 0))
 
     # Nearest same-deck decklist for games that submitted none.
     missing = [pid for pid in ids if pid not in decklists]
     borrowed: Dict[str, Tuple[int, int]] = {}
     if missing:
         deck_of: Dict[str, Tuple[str, str]] = {}
-        for pid, deck_name, played_at in conn.execute(
-            f"""
-            SELECT p.id, p.deck_name, COALESCE(g.started_at, g.ended_at, '')
-            FROM participants p
-            JOIN games g ON g.id = p.game_id
-            WHERE p.id IN ({",".join("?" for _ in missing)})
-            """,
-            missing,
-        ):
-            if deck_name:
-                deck_of[pid] = (str(deck_name), str(played_at or ""))
-        deck_names = sorted({name for name, _ in deck_of.values()})
-        history: Dict[str, List[Tuple[str, str]]] = {}
-        if deck_names:
+        for placeholders, chunk in _in_chunks(missing):
             for pid, deck_name, played_at in conn.execute(
                 f"""
                 SELECT p.id, p.deck_name, COALESCE(g.started_at, g.ended_at, '')
                 FROM participants p
                 JOIN games g ON g.id = p.game_id
-                WHERE p.role = 'player'
-                  AND p.deck_name IN ({",".join("?" for _ in deck_names)})
-                  AND EXISTS (
-                      SELECT 1 FROM game_deck_cards d
-                      WHERE d.participant_id = p.id AND d.deck_zone = 'deck'
-                  )
+                WHERE p.id IN ({placeholders})
                 """,
-                deck_names,
+                chunk,
             ):
-                history.setdefault(str(deck_name), []).append((str(played_at or ""), pid))
+                if deck_name:
+                    deck_of[pid] = (str(deck_name), str(played_at or ""))
+        deck_names = sorted({name for name, _ in deck_of.values()})
+        history: Dict[str, List[Tuple[str, str]]] = {}
+        if deck_names:
+            for placeholders, chunk in _in_chunks(deck_names):
+                for pid, deck_name, played_at in conn.execute(
+                    f"""
+                    SELECT p.id, p.deck_name, COALESCE(g.started_at, g.ended_at, '')
+                    FROM participants p
+                    JOIN games g ON g.id = p.game_id
+                    WHERE p.role = 'player'
+                      AND p.deck_name IN ({placeholders})
+                      AND EXISTS (
+                          SELECT 1 FROM game_deck_cards d
+                          WHERE d.participant_id = p.id AND d.deck_zone = 'deck'
+                      )
+                    """,
+                    chunk,
+                ):
+                    history.setdefault(str(deck_name), []).append((str(played_at or ""), pid))
             history_ids = [pid for entries in history.values() for _, pid in entries]
             history_stats: Dict[str, Tuple[int, int]] = {}
-            for chunk_start in range(0, len(history_ids), 900):
-                chunk = history_ids[chunk_start : chunk_start + 900]
+            for placeholders, chunk in _in_chunks(history_ids):
                 for pid, size, lands in conn.execute(
                     f"""
                     SELECT participant_id, SUM(quantity),
                            SUM(CASE WHEN type_category = 'Land' THEN quantity ELSE 0 END)
                     FROM game_deck_cards
                     WHERE deck_zone = 'deck'
-                      AND participant_id IN ({",".join("?" for _ in chunk)})
+                      AND participant_id IN ({placeholders})
                     GROUP BY participant_id
                     """,
                     chunk,
@@ -675,52 +698,56 @@ def _deck_decklist_analysis(
 
     deck_rows_by_game: Dict[str, List[Dict[str, Any]]] = {}
     sideboard_by_game: Dict[str, Dict[str, int]] = {}
-    placeholders = ",".join("?" for _ in participant_ids)
-    for row in _dict_rows(
-        conn.execute(
-            f"""
-            SELECT participant_id, display_name, type_category, deck_zone, quantity
-            FROM game_deck_cards
-            WHERE participant_id IN ({placeholders})
-            """,
-            list(participant_ids),
-        )
-    ):
-        game = game_by_participant.get(row["participant_id"])
-        if game is None:
-            continue
-        game_id = game["game_id"]
-        if row["deck_zone"] == "deck":
-            deck_rows_by_game.setdefault(game_id, []).append(row)
-        else:
-            sideboard_by_game.setdefault(game_id, {})[_clean_card_name(row["display_name"])] = int(
-                row["quantity"] or 0
-            )
-
-    seen_by_game: Dict[str, Dict[str, int]] = {}
-    seen_totals_by_game: Dict[str, int] = {}
-    for table in ("game_opening_hand_cards", "game_drawn_cards"):
+    # Sorted slices: SQLite walks an IN list in ascending order, so the rows
+    # come back in the order one statement over every id would give.
+    id_slices = list(_in_chunks(sorted(participant_ids)))
+    for placeholders, chunk in id_slices:
         for row in _dict_rows(
             conn.execute(
                 f"""
-                SELECT participant_id, display_name, COUNT(*) AS copies
-                FROM {table}
+                SELECT participant_id, display_name, type_category, deck_zone, quantity
+                FROM game_deck_cards
                 WHERE participant_id IN ({placeholders})
-                GROUP BY participant_id, display_name
                 """,
-                list(participant_ids),
+                chunk,
             )
         ):
             game = game_by_participant.get(row["participant_id"])
             if game is None:
                 continue
             game_id = game["game_id"]
-            clean = _clean_card_name(row["display_name"])
-            bucket = seen_by_game.setdefault(game_id, {})
-            bucket[clean] = bucket.get(clean, 0) + int(row["copies"] or 0)
-            seen_totals_by_game[game_id] = seen_totals_by_game.get(game_id, 0) + int(
-                row["copies"] or 0
-            )
+            if row["deck_zone"] == "deck":
+                deck_rows_by_game.setdefault(game_id, []).append(row)
+            else:
+                sideboard_by_game.setdefault(game_id, {})[_clean_card_name(row["display_name"])] = (
+                    int(row["quantity"] or 0)
+                )
+
+    seen_by_game: Dict[str, Dict[str, int]] = {}
+    seen_totals_by_game: Dict[str, int] = {}
+    for table in ("game_opening_hand_cards", "game_drawn_cards"):
+        for placeholders, chunk in id_slices:
+            for row in _dict_rows(
+                conn.execute(
+                    f"""
+                    SELECT participant_id, display_name, COUNT(*) AS copies
+                    FROM {table}
+                    WHERE participant_id IN ({placeholders})
+                    GROUP BY participant_id, display_name
+                    """,
+                    chunk,
+                )
+            ):
+                game = game_by_participant.get(row["participant_id"])
+                if game is None:
+                    continue
+                game_id = game["game_id"]
+                clean = _clean_card_name(row["display_name"])
+                bucket = seen_by_game.setdefault(game_id, {})
+                bucket[clean] = bucket.get(clean, 0) + int(row["copies"] or 0)
+                seen_totals_by_game[game_id] = seen_totals_by_game.get(game_id, 0) + int(
+                    row["copies"] or 0
+                )
 
     # --- Composition / dead-weight rows ---
     composition: Dict[str, Dict[str, Any]] = {}
@@ -1641,21 +1668,20 @@ def _mana_readiness_rows(
     )
     if not games:
         return []
-    participant_ids = [row["participant_id"] for row in games]
-    placeholders = ",".join("?" for _ in participant_ids)
     land_draws: Dict[str, List[Optional[int]]] = {}
-    for row in _dict_rows(
-        conn.execute(
-            f"""
-            SELECT participant_id, turn_number
-            FROM game_drawn_cards
-            WHERE participant_id IN ({placeholders})
-              AND (type_category = 'Land' OR display_name LIKE '%(Land)')
-            """,
-            participant_ids,
-        )
-    ):
-        land_draws.setdefault(row["participant_id"], []).append(row["turn_number"])
+    for placeholders, chunk in _in_chunks(row["participant_id"] for row in games):
+        for row in _dict_rows(
+            conn.execute(
+                f"""
+                SELECT participant_id, turn_number
+                FROM game_drawn_cards
+                WHERE participant_id IN ({placeholders})
+                  AND (type_category = 'Land' OR display_name LIKE '%(Land)')
+                """,
+                chunk,
+            )
+        ):
+            land_draws.setdefault(row["participant_id"], []).append(row["turn_number"])
 
     rows: List[Dict[str, Any]] = []
     for threshold in (2, 3, 4, 5):
@@ -2296,9 +2322,7 @@ def _participant_deck_color_map(
     cost_column = 'c."mana_cost"' if has_mana else "NULL"
     rows_by_participant: Dict[str, List[Any]] = {}
     # Stay below SQLite's variable limit when All Games contains a long history.
-    for offset in range(0, len(participant_ids), 400):
-        chunk = participant_ids[offset : offset + 400]
-        placeholders = ",".join("?" for _ in chunk)
+    for placeholders, chunk in _in_chunks(participant_ids):
         try:
             rows = conn.execute(
                 f"""
@@ -3887,7 +3911,13 @@ def _card_mana_map(conn: sqlite3.Connection, names: Iterable[str]) -> Dict[str, 
             by_name[clean_name] = (str(cost), value)
     result: Dict[str, Dict[str, Any]] = {}
     for name in wanted:
-        for alias in _card_name_aliases(name):
+        # Front face, then the joined name, then the other faces. The cards
+        # table can hold a cost under each ("Unholy Annex", "Unholy Annex //
+        # Ritual Chamber" with both costs joined, "Ritual Chamber"), and a
+        # set's order changes with every launch, so the cost shown did too.
+        clean_name = _clean_card_name(name) or ""
+        faces = [part.strip() for part in clean_name.split(" // ") if part.strip()]
+        for alias in dict.fromkeys(faces[:1] + [clean_name] + faces[1:]):
             entry = by_name.get(alias)
             if entry is not None:
                 result[name] = {"mana_cost": entry[0], "mana_value": entry[1]}
