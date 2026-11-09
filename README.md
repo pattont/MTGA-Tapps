@@ -659,6 +659,7 @@ passed for that run.
 | `#/settings` | Tracker status, startup, sessions, updates, overlay, Buy on Paper, Deck AI, creators, Stream Kit, backup/restore, collection export |
 | `/stream.html?widget=` | A Stream Kit widget (links built in Settings → Streaming) |
 | `#/audit` | Database health findings |
+| `#/reset` | Reset tracker data: what a reset deletes and keeps, and the reset itself |
 
 JSON API: `GET /api/snapshot`, `/api/live`, `/api/overlay`, `/api/deck`,
 `/api/game`, `/api/card`, `/api/cards?q=`, `/api/games`, `/api/opponents`,
@@ -668,7 +669,8 @@ actions save game notes/tags
 jobs (`/api/deckfinder/*`) or its terminal launcher
 (`/api/deck-downloader/launch`), and start collection exports
 (`/api/collection/export`). `/api/db/reset` clears the analytics database
-only with an explicit `{"confirm": "RESET"}` body and takes a backup first.
+only with an explicit `{"confirm": "RESET"}` body and takes a backup first; it
+refuses while MTG Arena is open or a game is in progress.
 
 ## Command-line tools
 

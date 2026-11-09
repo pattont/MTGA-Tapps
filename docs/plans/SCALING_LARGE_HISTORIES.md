@@ -122,15 +122,86 @@ second cold.
 
 ## Step 3 — what stays large
 
-- `console_logs` plus printed `game_events` hold the same text twice; at 37k
-  games that is roughly 1.8 GB + 1.7 GB. The [raw log archive](RAW_LOG_ARCHIVE.md)
-  plan proposes keeping the originals instead and turning `console_logs` into a
-  rolling window; decide them together.
+- `console_logs` is already a rolling window: `CONSOLE_LOG_RETENTION_DAYS` (30)
+  is pruned at every store connect, and migration 38 made the first cut and
+  compacted the file. It no longer grows with the history. The one copy of the
+  printed history that remains is `game_events` (`visible = 1`), roughly
+  1.7 GB at 37k games; the [raw log archive](RAW_LOG_ARCHIVE.md) plan decides
+  whether the originals replace any of it. Nothing in this plan depends on
+  that decision.
+- `raw_game_payloads` is pruned after 30 days and does not grow either.
 - Backups and merges move whole tables; a multi-GB database makes the
   pre-update backup and restore slow. Measure once Step 2 is in.
 - The dashboard process holds about 10 KB of RSS per game across its caches
   (364 MB at 37k). The response cache is bounded by entry count, not bytes;
   bound it by bytes.
+
+## Upgrading an existing database
+
+What a user with history sees on the first launch after an update that
+carries Step 2. The updater's side is unchanged: the signed download, the
+mandatory `pre-update` `.tappsbackup`, the hand-off and the "Updated to X"
+notice all run as they do today, and the backup is the recovery path.
+
+Two mechanisms exist for one-time work at startup, and they block different
+things. Which one Step 2 uses is the design decision:
+
+- **A numbered migration** runs inside `AnalyticsStore` construction, on the
+  launcher's main thread, before the dashboard thread or the tracker exist
+  (`app.start_dashboard` builds the store first). A migration that recomputes
+  every game would make a 37k-game launch sit with no tray icon, no dashboard
+  and no tracking until it finishes. Step 2's backfill must **not** be a
+  migration. The migration creates the empty `game_derived` table and nothing
+  else, which is instant.
+- **A watermarked startup pass** runs in the tracker thread, inside the
+  startup banner (`tracker_runtime`, next to turn-time recovery and the colour
+  backfill), after the dashboard is already serving. The dashboard stays up
+  while it runs, but the tracker prints "Now ready to track" only when the
+  passes finish. A pass that takes minutes on a large database delays
+  tracking: a user who updates and starts a game at once would be attached
+  mid-game, and that game is never persisted.
+
+So the backfill is a watermarked pass with two additions:
+
+1. **Bounded work per launch, or a background thread.** The pass processes
+   games in batches (say 500 per transaction, newest first, so Recent Games is
+   fast first) and either stops after a time budget and resumes at the next
+   launch from its watermark, or runs on a daemon thread after the banner so
+   tracking starts immediately. Either way the tracker is ready within
+   seconds of launch regardless of history size. The budget must still make
+   progress on a database where the budget is never enough; batching by
+   rowid with a persisted watermark guarantees that.
+2. **Readers never wait for it.** Every reader of `game_derived` falls back to
+   today's compute path for games without a row (the plan already requires
+   this for the game in progress). During the backfill the dashboard is
+   exactly as fast as it is today, and gets faster as rows land. Nothing is
+   wrong or missing while the pass is incomplete; the Overview is only slow.
+
+Rows written by the live tracker at game end and rows written by the pass
+come from one function, so a game recorded between launch and the pass
+reaching it is not a special case.
+
+Other upgrade properties worth stating:
+
+- **Rule changes later.** Bumping `rules_version` makes the pass recompute
+  every row under the same budget; until it reaches a game, the game's row is
+  stale, not missing. Readers prefer a row whose version matches the current
+  constant and otherwise fall back to computing live, so a rule change never
+  shows old verdicts, only slower pages until the pass catches up.
+- **Downgrade.** `game_derived` is additive. An older build ignores the table
+  and computes live, as it does today; `db_newer_than_app` reports it. No
+  data is lost in either direction.
+- **Backups and merges.** `game_derived` is derived data and need not travel
+  in `.tappsbackup`; a restore or merge clears the watermark
+  (`merge_snapshot_into` already clears `maintenance_state`) and the next
+  launch recomputes. A reset empties it (`RESET_TABLES`).
+- **Disk.** One narrow row per game, a few hundred bytes; at 37k games about
+  10–20 MB. Negligible against the 160 MB per 1,256 games the history already
+  costs.
+- **First launch cost, measured before shipping.** Time the pass on the 10x
+  and 30x copies with the batch size chosen; the acceptance number is
+  "tracking ready in under five seconds on the 30x copy", not the total
+  backfill time.
 
 ## Order
 
