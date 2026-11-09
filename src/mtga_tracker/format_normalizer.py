@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from typing import Optional
 
 #: Families whose Bo1/Bo3 split comes from the queue name alone — and can
@@ -151,7 +152,24 @@ def normalize_match_format(
     matches.best_of). When it says 3 but the queue string alone reads as Bo1
     — e.g. a Bo3 match whose format resolved to plain "Historic_Play" — the
     caller's knowledge wins and the result is upgraded to Best-of-3.
+
+    Answers are remembered: the dashboard asks once per game row, and a whole
+    history holds only a few dozen distinct identifiers. The result is frozen,
+    so sharing one object between callers is safe.
     """
+    if (raw_format is None or type(raw_format) is str) and type(default_best_of) is int:
+        return _normalize_match_format_cached(raw_format, default_best_of)
+    return _normalize_match_format_uncached(raw_format, default_best_of)
+
+
+@lru_cache(maxsize=4096)
+def _normalize_match_format_cached(
+    raw_format: Optional[str], default_best_of: int
+) -> NormalizedFormat:
+    return _normalize_match_format_uncached(raw_format, default_best_of)
+
+
+def _normalize_match_format_uncached(raw_format, default_best_of) -> NormalizedFormat:
     result = _normalize_match_format_inner(raw_format, default_best_of=default_best_of)
     if (
         default_best_of == 3

@@ -184,3 +184,97 @@ def test_payload_dump_is_repeatable_and_diff_reports_a_changed_number(tmp_path, 
 
     assert dashboard_payloads.diff(first, second, 8) == 1
     assert ".games[0].total_turns" in capsys.readouterr().out
+
+
+def _two_deck_db(tmp_path):
+    """The sample database plus a second deck and a game with no deck name."""
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            "insert into games (id, session_id, match_id, game_number, started_at, outcome) "
+            "values (?, 'session-1', 'match-1', 1, ?, ?)",
+            [
+                ("game-b", "2026-06-05T00:01:00", "loss"),
+                ("game-c", "2026-06-06T00:01:00", "win"),
+            ],
+        )
+        conn.executemany(
+            "insert into participants (id, game_id, seat_id, role, display_name, deck_name) "
+            "values (?, ?, ?, ?, ?, ?)",
+            [
+                ("player-b", "game-b", 1, "player", "Tapps", "Dimir Tempo"),
+                ("opponent-b", "game-b", 2, "opponent", "Rival", None),
+                ("player-c", "game-c", 1, "player", "Tapps", None),
+                ("opponent-c", "game-c", 2, "opponent", "Other", None),
+            ],
+        )
+        conn.executemany(
+            "insert into game_card_summary "
+            "(game_id, participant_id, display_name, type_category, played_count) "
+            "values (?, ?, ?, ?, ?)",
+            [
+                ("game-b", "player-b", "Floodpits Drowner (Creature 2/1)", "Creature", 3),
+                ("game-b", "player-b", "Island", "Land", 5),
+                ("game-c", "player-c", "Llanowar Elves (Creature 1/1)", "Creature", 2),
+            ],
+        )
+    return db_path
+
+
+def test_deck_maps_for_named_decks_match_the_whole_history_maps(tmp_path):
+    """Pages ask for the decks they show; the answer for a deck must be the
+    one the every-deck computation gives."""
+    db_path = _two_deck_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        all_visuals = dashboard._deck_visuals(conn)
+        all_colors = dashboard._deck_color_map(conn)
+        assert {"Boros Mouse", "Dimir Tempo", "(unknown)"} <= set(all_visuals)
+        for name in all_visuals:
+            assert dashboard._deck_visuals(conn, [name]) == {name: all_visuals[name]}
+        for name in all_colors:
+            assert dashboard._deck_color_map(conn, [name]) == {name: all_colors[name]}
+        assert dashboard._deck_visuals(conn, set(all_visuals)) == all_visuals
+        assert dashboard._deck_color_map(conn, set(all_colors)) == all_colors
+        # No decks asked for: no work, no rows.
+        assert dashboard._deck_visuals(conn, []) == {}
+        assert dashboard._deck_color_map(conn, []) == {}
+        assert dashboard._deck_visuals(conn, ["No Such Deck"]) == {}
+
+
+def test_deck_filter_matches_named_decks_and_games_without_a_deck_name(tmp_path):
+    db_path = _two_deck_db(tmp_path)
+
+    named = dashboard.all_games(db_path, deck="Dimir Tempo")
+    unnamed = dashboard.all_games(db_path, deck="(unknown)")
+    everything = dashboard.all_games(db_path)
+
+    assert [row["game_id"] for row in named["games"]] == ["game-b"]
+    assert [row["game_id"] for row in unnamed["games"]] == ["game-c"]
+    assert unnamed["games"][0]["deck_name"] == "(unknown)"
+    sample_games = dashboard.all_games(db_path, deck="Boros Mouse")["total"]
+    assert sample_games >= 1
+    assert everything["total"] == named["total"] + unnamed["total"] + sample_games
+    assert dashboard.dashboard_snapshot(db_path, deck="Dimir Tempo")["summary"]["games"] == 1
+    assert dashboard.deck_detail(db_path, "Dimir Tempo")["summary"]["games"] == 1
+
+
+def test_format_normalisation_is_remembered_and_unchanged():
+    from mtga_tracker import format_normalizer
+
+    cases = [
+        ("Ladder", 1),
+        ("Traditional_Ladder", 3),
+        ("Historic_Play", 3),
+        ("Brawl_Ladder", 1),
+        ("CubeDraft_Powered_20260908", 1),
+        (None, 3),
+        ("", 1),
+    ]
+    for raw, best_of in cases:
+        remembered = format_normalizer.normalize_match_format(raw, default_best_of=best_of)
+        computed = format_normalizer._normalize_match_format_uncached(raw, best_of)
+        assert remembered == computed
+        # The same frozen object on the next ask.
+        assert format_normalizer.normalize_match_format(raw, default_best_of=best_of) is remembered
+    # Anything that is not a plain string or None is computed, never cached.
+    assert format_normalizer.normalize_match_format(12345).label == "Unknown"

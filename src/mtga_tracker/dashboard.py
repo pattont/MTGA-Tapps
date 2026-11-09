@@ -86,6 +86,29 @@ def _in_chunks(values: Iterable[Any]) -> Iterator[Tuple[str, List[Any]]]:
         yield ",".join("?" * len(chunk)), chunk
 
 
+def _deck_name_filters(
+    deck_names: Optional[Iterable[Any]], *, missing_as_unknown: bool = False
+) -> List[Tuple[str, List[Any]]]:
+    """``(" AND p.deck_name IN (...)", names)`` per slice of deck names, to
+    limit a per-deck query to the decks a page shows. ``None`` means every
+    deck: one empty fragment. No names means no query at all.
+
+    A deck's rows all match one slice, so per-deck grouping and ranking are
+    the same as over every deck. ``missing_as_unknown`` also matches a NULL
+    name for "(unknown)", the label such games are shown under.
+    """
+    if deck_names is None:
+        return [("", [])]
+    names = sorted({str(name) for name in deck_names if name is not None})
+    filters: List[Tuple[str, List[Any]]] = []
+    for placeholders, chunk in _in_chunks(names):
+        clause = f"p.deck_name IN ({placeholders})"
+        if missing_as_unknown and "(unknown)" in chunk:
+            clause = f"({clause} OR p.deck_name IS NULL)"
+        filters.append((f" AND {clause}", chunk))
+    return filters
+
+
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
     return (
         conn.execute(
@@ -1061,9 +1084,9 @@ def _opponent_threat_rows(
               SUM(g.outcome = 'win') AS wins,
               SUM(g.outcome = 'loss') AS losses,
               ROUND(100.0 * SUM(g.outcome = 'loss') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS loss_rate
-            FROM game_card_summary s
-            JOIN participants p ON p.id = s.participant_id AND p.role = 'opponent'
-            JOIN games g ON g.id = s.game_id
+            FROM games g
+            CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'opponent'
+            CROSS JOIN game_card_summary s ON s.participant_id = p.id AND s.game_id = g.id
             WHERE {where} AND s.played_count > 0
             GROUP BY s.display_name
             HAVING COUNT(DISTINCT g.id) >= 2
@@ -1114,12 +1137,19 @@ def _opponent_color_rows(
     try:
         rows = conn.execute(
             f"""
-            WITH revealed AS (
+            WITH opponents AS (
+              SELECT po.id
+              FROM games g
+              JOIN matches m ON m.id = g.match_id
+              JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
+              WHERE {where}
+            ), revealed AS (
               SELECT s.game_id, s.participant_id,
                      GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL
                                        THEN c.color_identity || 'C' END, '') AS letters
               FROM game_card_summary s
               JOIN cards c ON c.id = s.card_id
+              WHERE s.participant_id IN (SELECT id FROM opponents)
               GROUP BY s.game_id, s.participant_id
             ), commander_identity AS (
               SELECT pc.participant_id,
@@ -1142,7 +1172,7 @@ def _opponent_color_rows(
             LEFT JOIN commander_identity ON commander_identity.participant_id = po.id
             WHERE {where}
             """,
-            params,
+            [*params, *params],
         ).fetchall()
     except sqlite3.OperationalError:
         return []
@@ -1753,9 +1783,9 @@ def _combat_deck_rows(
               SUM(s.blockers_lost) AS blockers_lost,
               ROUND(AVG(s.life_gained), 1) AS avg_life_gained,
               ROUND(AVG(g.player_turns), 1) AS avg_player_turns
-            FROM game_participant_stats s
-            JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
-            JOIN games g ON g.id = s.game_id
+            FROM games g
+            CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            CROSS JOIN game_participant_stats s ON s.participant_id = p.id AND s.game_id = g.id
             WHERE {where}
             GROUP BY COALESCE(p.deck_name, '(unknown)')
             HAVING COUNT(*) > 0
@@ -1869,9 +1899,9 @@ def _interaction_deck_profile(
         conn.execute(
             f"""
             SELECT {', '.join(select_parts)}
-            FROM game_participant_stats s
-            JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
-            JOIN games g ON g.id = s.game_id
+            FROM games g
+            CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            CROSS JOIN game_participant_stats s ON s.participant_id = p.id AND s.game_id = g.id
             LEFT JOIN participants op ON op.game_id = g.id AND op.role = 'opponent'
             LEFT JOIN game_participant_stats os
               ON os.game_id = g.id AND os.participant_id = op.id
@@ -1989,9 +2019,9 @@ def _combat_split_rows(
               ROUND(AVG(s.cards_drawn), 1) AS avg_cards_drawn,
               ROUND(AVG(s.cards_discarded + s.cards_milled), 1) AS avg_cards_denied,
               ROUND(AVG(g.duration_seconds), 0) AS avg_duration_seconds
-            FROM game_participant_stats s
-            JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
-            JOIN games g ON g.id = s.game_id
+            FROM games g
+            CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            CROSS JOIN game_participant_stats s ON s.participant_id = p.id AND s.game_id = g.id
             WHERE {where} AND g.outcome IN ('win', 'loss')
             GROUP BY split
             ORDER BY split = 'Wins' DESC
@@ -2025,11 +2055,18 @@ def _games_filter(
     ]
     params: List[Any] = []
     if deck:
+        # An id list read from the (role, deck_name) index, so a statement
+        # starts from this deck's games instead of testing every game ever
+        # recorded. "(unknown)" is the label of games with no deck name.
+        name_test = (
+            "(pf.deck_name = ? OR pf.deck_name IS NULL)"
+            if deck == "(unknown)"
+            else "pf.deck_name = ?"
+        )
         clauses.append(
-            """EXISTS (
-              SELECT 1 FROM participants pf
-              WHERE pf.game_id = g.id AND pf.role = 'player'
-                AND COALESCE(pf.deck_name, '(unknown)') = ?
+            f"""g.id IN (
+              SELECT pf.game_id FROM participants pf
+              WHERE pf.role = 'player' AND {name_test}
             )"""
         )
         params.append(deck)
@@ -2127,10 +2164,42 @@ def _grouped_format_rows(
     return _finish(top)[:20], []
 
 
-def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
-    rows = _dict_rows(
+def _deck_visuals(
+    conn: sqlite3.Connection, deck_names: Optional[Iterable[Any]] = None
+) -> Dict[str, Dict[str, Any]]:
+    """The card that stands for each deck (its most-played nonland card).
+
+    ``deck_names`` limits the work to the decks a page shows; a deck's card
+    is judged from its whole history either way.
+    """
+    rows: List[Dict[str, Any]] = []
+    for deck_filter, deck_params in _deck_name_filters(deck_names, missing_as_unknown=True):
+        rows.extend(_deck_visual_rows(conn, deck_filter, deck_params))
+    visuals: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        deck_name = row["deck_name"]
+        card_name = row.get("card_name") or _clean_card_name(row.get("display_name"))
+        image_url = _card_image_url(row.get("arena_id"), card_name)
+        # New sets often reach Scryfall before their Arena-ID mapping does;
+        # the by-name URL is the client's fallback when the arena URL 404s.
+        fallback_url = _card_image_url(None, card_name) if row.get("arena_id") else None
+        visuals[deck_name] = {
+            "card_id": row.get("card_id"),
+            "card_name": card_name,
+            "type_category": row.get("type_category") or "Other",
+            "image_url": image_url,
+            "image_fallback_url": fallback_url if fallback_url != image_url else None,
+            "source": "local_metadata",
+        }
+    return visuals
+
+
+def _deck_visual_rows(
+    conn: sqlite3.Connection, deck_filter: str, deck_params: List[Any]
+) -> List[Dict[str, Any]]:
+    return _dict_rows(
         conn.execute(
-            """
+            f"""
             WITH candidate_cards AS (
               SELECT
                 COALESCE(p.deck_name, '(unknown)') AS deck_name,
@@ -2141,7 +2210,7 @@ def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
                 1 AS source_rank
               FROM participants p
               JOIN game_card_summary s ON s.participant_id = p.id
-              WHERE p.role = 'player'
+              WHERE p.role = 'player'{deck_filter}
               GROUP BY p.deck_name, s.card_id, s.display_name, s.type_category
               UNION ALL
               SELECT
@@ -2153,7 +2222,7 @@ def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
                 2 AS source_rank
               FROM participants p
               JOIN game_opening_hand_cards h ON h.participant_id = p.id
-              WHERE p.role = 'player'
+              WHERE p.role = 'player'{deck_filter}
               GROUP BY p.deck_name, h.card_id, h.display_name, h.type_category
               UNION ALL
               SELECT
@@ -2165,7 +2234,7 @@ def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
                 3 AS source_rank
               FROM participants p
               JOIN game_drawn_cards d ON d.participant_id = p.id
-              WHERE p.role = 'player'
+              WHERE p.role = 'player'{deck_filter}
               GROUP BY p.deck_name, d.card_id, d.display_name, d.type_category
             ),
             ranked AS (
@@ -2198,29 +2267,15 @@ def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
             FROM ranked r
             LEFT JOIN cards c ON c.id = r.card_id
             WHERE r.rank = 1
-            """
+            """,
+            deck_params * 3,
         )
     )
-    visuals: Dict[str, Dict[str, Any]] = {}
-    for row in rows:
-        deck_name = row["deck_name"]
-        card_name = row.get("card_name") or _clean_card_name(row.get("display_name"))
-        image_url = _card_image_url(row.get("arena_id"), card_name)
-        # New sets often reach Scryfall before their Arena-ID mapping does;
-        # the by-name URL is the client's fallback when the arena URL 404s.
-        fallback_url = _card_image_url(None, card_name) if row.get("arena_id") else None
-        visuals[deck_name] = {
-            "card_id": row.get("card_id"),
-            "card_name": card_name,
-            "type_category": row.get("type_category") or "Other",
-            "image_url": image_url,
-            "image_fallback_url": fallback_url if fallback_url != image_url else None,
-            "source": "local_metadata",
-        }
-    return visuals
 
 
-def _deck_color_map(conn: sqlite3.Connection) -> Dict[str, str]:
+def _deck_color_map(
+    conn: sqlite3.Connection, deck_names: Optional[Iterable[Any]] = None
+) -> Dict[str, str]:
     """WUBRG colors per deck, judged lands-first from real casting requirements.
 
     Preferred evidence is the newest submitted decklist; decks tracked before
@@ -2228,34 +2283,47 @@ def _deck_color_map(conn: sqlite3.Connection) -> Dict[str, str]:
     playing (max copies seen in any one game as the quantity). Both paths
     feed _score_deck_colors: land identities dominate, only strictly
     required pips count for spells, and single-card colors are ignored.
+
+    ``deck_names`` limits the work to the decks a page shows. The observed
+    cards are read only for decks the decklists left without colors, so a
+    history recorded entirely with decklists never scans them.
     """
     if not _table_exists(conn, "cards"):
         return {}
     has_mana = "mana_cost" in {row[1] for row in conn.execute("PRAGMA table_info(cards)")}
     cost_column = 'c."mana_cost"' if has_mana else "NULL"
     result: Dict[str, str] = {}
+    if deck_names is not None:
+        deck_names = list(deck_names)
+    deck_filters = _deck_name_filters(deck_names)
     if _table_exists(conn, "game_deck_cards"):
+        latest: List[Any] = []
         try:
-            latest = conn.execute(
-                """
-                SELECT deck_name, game_id FROM (
-                  SELECT
-                    p.deck_name AS deck_name,
-                    p.game_id AS game_id,
-                    ROW_NUMBER() OVER (
-                      PARTITION BY p.deck_name
-                      ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
-                    ) AS rn
-                  FROM participants p
-                  JOIN games g ON g.id = p.game_id
-                  WHERE p.role = 'player' AND COALESCE(p.deck_name, '') != ''
-                    AND EXISTS (
-                      SELECT 1 FROM game_deck_cards dc
-                      WHERE dc.participant_id = p.id AND dc.deck_zone = 'deck'
-                    )
-                ) WHERE rn = 1
-                """
-            ).fetchall()
+            for deck_filter, deck_params in deck_filters:
+                latest.extend(
+                    conn.execute(
+                        f"""
+                        SELECT deck_name, game_id FROM (
+                          SELECT
+                            p.deck_name AS deck_name,
+                            p.game_id AS game_id,
+                            ROW_NUMBER() OVER (
+                              PARTITION BY p.deck_name
+                              ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
+                            ) AS rn
+                          FROM participants p
+                          JOIN games g ON g.id = p.game_id
+                          WHERE p.role = 'player' AND COALESCE(p.deck_name, '') != ''
+                            {deck_filter}
+                            AND EXISTS (
+                              SELECT 1 FROM game_deck_cards dc
+                              WHERE dc.participant_id = p.id AND dc.deck_zone = 'deck'
+                            )
+                        ) WHERE rn = 1
+                        """,
+                        deck_params,
+                    ).fetchall()
+                )
         except sqlite3.OperationalError:
             latest = []
         for deck_name, game_id in latest:
@@ -2272,23 +2340,40 @@ def _deck_color_map(conn: sqlite3.Connection) -> Dict[str, str]:
             result[str(deck_name)] = _score_deck_colors(card_rows)
     # Decks with no captured decklist (tracked before submitted-deck capture,
     # or scoring empty above): judge from the cards they were seen playing.
+    observed: List[Any] = []
     try:
-        observed = conn.execute(
-            f"""
-            SELECT
-              p.deck_name,
-              s.type_category,
-              {("MAX(c.mana_cost)" if has_mana else "NULL")} AS mana_cost,
-              MAX(c.color_identity) AS color_identity,
-              MAX(s.played_count) AS copies
-            FROM participants p
-            JOIN game_card_summary s ON s.participant_id = p.id
-            LEFT JOIN cards c ON c.id = s.card_id
-            WHERE p.role = 'player' AND COALESCE(p.deck_name, '') != ''
-              AND s.played_count > 0
-            GROUP BY p.deck_name, s.display_name, s.type_category
-            """
-        ).fetchall()
+        if deck_names is None:
+            candidates = [
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT DISTINCT deck_name FROM participants "
+                    "WHERE role = 'player' AND COALESCE(deck_name, '') != ''"
+                )
+            ]
+        else:
+            candidates = [str(name) for name in deck_names if name]
+        uncolored = [name for name in candidates if not result.get(name)]
+        for deck_filter, deck_params in _deck_name_filters(uncolored):
+            observed.extend(
+                conn.execute(
+                    f"""
+                    SELECT
+                      p.deck_name,
+                      s.type_category,
+                      {("MAX(c.mana_cost)" if has_mana else "NULL")} AS mana_cost,
+                      MAX(c.color_identity) AS color_identity,
+                      MAX(s.played_count) AS copies
+                    FROM participants p
+                    JOIN game_card_summary s ON s.participant_id = p.id
+                    LEFT JOIN cards c ON c.id = s.card_id
+                    WHERE p.role = 'player' AND COALESCE(p.deck_name, '') != ''
+                      {deck_filter}
+                      AND s.played_count > 0
+                    GROUP BY p.deck_name, s.display_name, s.type_category
+                    """,
+                    deck_params,
+                ).fetchall()
+            )
     except sqlite3.OperationalError:
         observed = []
     observed_by_deck: Dict[str, List[Any]] = {}
@@ -2348,6 +2433,18 @@ def _participant_deck_color_map(
     return {
         participant_id: _score_deck_colors(rows)
         for participant_id, rows in rows_by_participant.items()
+    }
+
+
+def _decks_without_game_colors(
+    rows: Iterable[Dict[str, Any]], game_deck_colors: Dict[str, str]
+) -> Set[str]:
+    """Deck names of the game rows whose own submitted decklist gave no
+    colors: the only rows that fall back to the deck-level color map."""
+    return {
+        str(row.get("deck_name") or "")
+        for row in rows
+        if not game_deck_colors.get(str(row.get("player_participant_id")))
     }
 
 
@@ -2610,9 +2707,20 @@ def dashboard_snapshot(
                 params,
             )
         )
+        # The 100 newest games are picked first: joining every game's opener
+        # and draws and then keeping 100 read the whole history's cards.
         draw_quality_rows = _dict_rows(
             conn.execute(
                 f"""
+                WITH newest AS (
+                  SELECT g.id
+                  FROM games g
+                  JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                  WHERE {where}
+                  GROUP BY g.id
+                  ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
+                  LIMIT 100
+                )
                 SELECT
                   g.id AS game_id,
                   COALESCE(g.started_at, g.ended_at) AS started_at,
@@ -2637,11 +2745,13 @@ def dashboard_snapshot(
                 LEFT JOIN (
                   SELECT game_id, participant_id, display_name, type_category, 'opening' AS source
                   FROM game_opening_hand_cards
+                  WHERE game_id IN (SELECT id FROM newest)
                   UNION ALL
                   SELECT game_id, participant_id, display_name, type_category, 'draw' AS source
                   FROM game_drawn_cards
+                  WHERE game_id IN (SELECT id FROM newest)
                 ) seen ON seen.game_id = g.id AND seen.participant_id = p.id
-                WHERE {where}
+                WHERE g.id IN (SELECT id FROM newest)
                 GROUP BY g.id
                 ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
                 LIMIT 100
@@ -2702,9 +2812,9 @@ def dashboard_snapshot(
                   COALESCE(d.type_category, 'Other') AS type_category,
                   COUNT(*) AS times_drawn,
                   COUNT(DISTINCT d.game_id) AS games_seen
-                FROM game_drawn_cards d
-                JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
-                JOIN games g ON g.id = d.game_id
+                FROM games g
+                CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                CROSS JOIN game_drawn_cards d ON d.participant_id = p.id AND d.game_id = g.id
                 WHERE {where}
                 GROUP BY d.display_name, d.type_category
                 ORDER BY times_drawn DESC, d.display_name
@@ -3000,8 +3110,14 @@ def dashboard_snapshot(
         your_commander_rows = _commander_rows(conn, where, params, "player")
         brawl_summary = _brawl_summary(conn, where, params)
         faced_commander_rows = _commander_rows(conn, where, params, "opponent")
-        deck_visuals = _deck_visuals(conn)
-        deck_color_map = _deck_color_map(conn)
+        # Only the decks this view lists (plus the recent games' decks, for
+        # their colour fallback): a narrow period must not pay for every
+        # deck ever played.
+        shown_decks = {row["deck_name"] for row in deck_rows} | {
+            str(row.get("deck_name") or "") for row in recent_rows
+        }
+        deck_visuals = _deck_visuals(conn, {row["deck_name"] for row in deck_rows})
+        deck_color_map = _deck_color_map(conn, shown_decks)
         for row in deck_rows:
             deck_name = row["deck_name"]
             row["deck_visual"] = deck_visuals.get(deck_name, _empty_deck_visual(deck_name))
@@ -3199,9 +3315,9 @@ def deck_detail(
                 conn.execute(
                     f"""
                     SELECT dc.game_id, dc.display_name
-                    FROM game_deck_cards dc
-                    JOIN participants p ON p.id = dc.participant_id AND p.role = 'player'
-                    JOIN games g ON g.id = dc.game_id
+                    FROM games g
+                    CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                    CROSS JOIN game_deck_cards dc ON dc.participant_id = p.id AND dc.game_id = g.id
                     WHERE {where}
                     """,
                     params,
@@ -3220,9 +3336,9 @@ def deck_detail(
                 conn.execute(
                     f"""
                     SELECT owned.display_name
-                    FROM {table_name} owned
-                    JOIN participants p ON p.id = owned.participant_id AND p.role = 'player'
-                    JOIN games g ON g.id = owned.game_id
+                    FROM games g
+                    CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                    CROSS JOIN {table_name} owned ON owned.participant_id = p.id AND owned.game_id = g.id
                     WHERE {where}
                     """,
                     params,
@@ -3250,9 +3366,9 @@ def deck_detail(
                   COALESCE(s.type_category, 'Other') AS type_category,
                   COALESCE(s.played_count, 0) AS times_played,
                   g.outcome
-                FROM game_card_summary s
-                JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
-                JOIN games g ON g.id = s.game_id
+                FROM games g
+                CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                CROSS JOIN game_card_summary s ON s.participant_id = p.id AND s.game_id = g.id
                 WHERE {where}
                 """,
                 params,
@@ -3292,9 +3408,9 @@ def deck_detail(
             conn.execute(
                 f"""
                 SELECT d.game_id, d.display_name, COALESCE(d.type_category, 'Other') AS type_category
-                FROM game_drawn_cards d
-                JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
-                JOIN games g ON g.id = d.game_id
+                FROM games g
+                CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                CROSS JOIN game_drawn_cards d ON d.participant_id = p.id AND d.game_id = g.id
                 WHERE {where}
                 """,
                 params,
@@ -3338,9 +3454,9 @@ def deck_detail(
                 f"""
                 WITH opener_games AS (
                   SELECT DISTINCT h.game_id, h.display_name, COALESCE(h.type_category, 'Other') AS type_category
-                  FROM game_opening_hand_cards h
-                  JOIN participants p ON p.id = h.participant_id AND p.role = 'player'
-                  JOIN games g ON g.id = h.game_id
+                  FROM games g
+                  CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                  CROSS JOIN game_opening_hand_cards h ON h.participant_id = p.id AND h.game_id = g.id
                   WHERE {where}
                 )
                 SELECT
@@ -3463,8 +3579,8 @@ def deck_detail(
             )
         )
         trend_rows.reverse()
-        deck_visuals = _deck_visuals(conn)
-        deck_colors = _deck_color_map(conn).get(deck_name, "")
+        deck_visuals = _deck_visuals(conn, [deck_name])
+        deck_colors = _deck_color_map(conn, [deck_name]).get(deck_name, "")
         deck_export = _deck_export_snapshot(conn, where, params, deck_name)
         # Arena-derived mana costs for every card the page can show; the UI
         # falls back to Scryfall for names missing from this map.
@@ -3960,9 +4076,9 @@ def _deck_played_mana(
                   COALESCE(s.type_category, 'Other') AS type_category,
                   SUM(s.played_count) AS times_played
                 FROM games g
-                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-                JOIN participants pt ON pt.game_id = g.id AND pt.role = ?
-                JOIN game_card_summary s ON s.game_id = g.id AND s.participant_id = pt.id
+                CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                CROSS JOIN participants pt ON pt.game_id = g.id AND pt.role = ?
+                CROSS JOIN game_card_summary s ON s.game_id = g.id AND s.participant_id = pt.id
                 WHERE s.played_count > 0 AND {where}
                 GROUP BY s.display_name, COALESCE(s.type_category, 'Other')
                 """,
@@ -4636,9 +4752,11 @@ def opponent_detail(
                 (requested_name, *filter_params),
             )
         )
-        deck_color_map = _deck_color_map(conn)
         game_deck_colors = _participant_deck_color_map(
             conn, (row.get("player_participant_id") for row in game_rows)
+        )
+        deck_color_map = _deck_color_map(
+            conn, _decks_without_game_colors(game_rows, game_deck_colors)
         )
         _attach_replay_availability(conn, game_rows)
     for row in game_rows:
@@ -5253,25 +5371,29 @@ def all_games(
         opp_commander_letters: Dict[str, str] = {}
         try:
             for game_id, letters in conn.execute(
-                """
+                f"""
                 SELECT s.game_id,
                        GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
                 FROM game_card_summary s
                 JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
                 JOIN cards c ON c.id = s.card_id
+                WHERE s.game_id IN (SELECT g.id FROM games g WHERE {where})
                 GROUP BY s.game_id
-                """
+                """,
+                params,
             ):
                 opp_letters[str(game_id)] = str(letters or "")
             for game_id, letters in conn.execute(
-                """
+                f"""
                 SELECT po.game_id,
                        GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
                 FROM participant_commanders pc
                 JOIN participants po ON po.id = pc.participant_id AND po.role = 'opponent'
                 JOIN cards c ON c.name = pc.card_name
+                WHERE po.game_id IN (SELECT g.id FROM games g WHERE {where})
                 GROUP BY po.game_id
-                """
+                """,
+                params,
             ):
                 opp_commander_letters[str(game_id)] = str(letters or "")
         except sqlite3.OperationalError:
@@ -5283,10 +5405,10 @@ def all_games(
             conn,
             [(row["player_participant_id"], row.get("deck_size")) for row in rows],
         )
-        deck_color_map = _deck_color_map(conn)
         game_deck_colors = _participant_deck_color_map(
             conn, (row.get("player_participant_id") for row in rows)
         )
+        deck_color_map = _deck_color_map(conn, _decks_without_game_colors(rows, game_deck_colors))
         _attach_replay_availability(conn, rows)
 
     for row in rows:
