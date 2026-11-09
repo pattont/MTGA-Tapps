@@ -29,10 +29,14 @@ from mtga_tracker.dashboard import (
 )
 
 
+def _arena_closed():
+    return False
+
+
 def test_reset_database_wipes_history_but_keeps_schema_and_backup(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
 
-    result = reset_database(db_path)
+    result = reset_database(db_path, arena_probe=_arena_closed)
 
     from pathlib import Path
 
@@ -50,6 +54,115 @@ def test_reset_database_wipes_history_but_keeps_schema_and_backup(tmp_path):
     snapshot = dashboard_snapshot(db_path)
     assert snapshot["summary"]["games"] == 0
 from mtga_tracker.format_normalizer import normalize_match_format
+
+
+def test_reset_database_clears_scry_rows_and_keeps_the_deck_library(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        game_id = conn.execute("SELECT id FROM games LIMIT 1").fetchone()[0]
+        conn.execute(
+            "INSERT INTO game_library_events (game_id, kind) VALUES (?, 'scry')", (game_id,)
+        )
+        conn.execute(
+            "INSERT INTO managed_decks (id, name, current_revision_id, created_at, updated_at) "
+            "VALUES ('deck-1', 'Mono Red', 'rev-1', '2026-06-04T00:00:00', '2026-06-04T00:00:00')"
+        )
+
+    reset_database(db_path, arena_probe=_arena_closed)
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM game_library_events").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM managed_decks").fetchone()[0] == 1
+
+
+def test_reset_database_refuses_during_a_game(tmp_path):
+    from datetime import datetime
+
+    from mtga_tracker.dashboard import GameInProgress
+
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO live_status (id, updated_at, in_game) VALUES (1, ?, 1)",
+            (datetime.now().isoformat(),),
+        )
+
+    with pytest.raises(GameInProgress):
+        reset_database(db_path, arena_probe=_arena_closed)
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM games").fetchone()[0] > 0
+    assert not list(tmp_path.glob("*.pre-reset"))
+
+
+@pytest.mark.parametrize(
+    ("running", "platform_key", "message"),
+    [
+        (True, "darwin", "Close MTG Arena"),
+        (None, "darwin", "Couldn't tell"),
+        (None, "win32", "Couldn't tell"),
+    ],
+)
+def test_reset_database_refuses_while_arena_is_open_or_unknown(
+    tmp_path, monkeypatch, running, platform_key, message
+):
+    """Arena closed means no match can be open, not even between Bo3 games,
+    which the in-game check alone lets through."""
+    from mtga_tracker import paths
+    from mtga_tracker.dashboard import ArenaRunning
+
+    monkeypatch.setattr(paths, "current_platform_key", lambda: platform_key)
+    db_path = _sample_dashboard_db(tmp_path)
+
+    with pytest.raises(ArenaRunning, match=message):
+        reset_database(db_path, arena_probe=lambda: running)
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM games").fetchone()[0] > 0
+    assert not list(tmp_path.glob("*.pre-reset"))
+
+
+def test_reset_database_without_an_arena_probe_relies_on_the_game_check(tmp_path, monkeypatch):
+    """Linux has no Arena probe (it always answers None), so the reset falls
+    back to the in-game check instead of never being allowed."""
+    from mtga_tracker import paths
+
+    monkeypatch.setattr(paths, "current_platform_key", lambda: "linux")
+    db_path = _sample_dashboard_db(tmp_path)
+
+    assert reset_database(db_path, arena_probe=lambda: None)["ok"] is True
+
+
+def test_reset_database_clears_the_frozen_previous_game(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO live_status (id, updated_at, in_game, last_game_json) "
+            "VALUES (1, '2026-06-04T00:00:00', 0, '{\"game_id\": \"old\"}')"
+        )
+
+    reset_database(db_path, arena_probe=_arena_closed)
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT last_game_json FROM live_status").fetchone() == (None,)
+
+
+def test_every_table_is_either_reset_or_kept_on_purpose(tmp_path):
+    """A new table must be sorted into RESET_TABLES or RESET_KEPT_TABLES, so
+    tracked history can't silently survive a reset (scry rows once did)."""
+    from mtga_tracker.dashboard import RESET_KEPT_TABLES, RESET_TABLES
+
+    db_path = tmp_path / "fresh.sqlite3"
+    conn = AnalyticsStore(db_path).connect()
+    conn.close()
+    with sqlite3.connect(db_path) as conn:
+        tables = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+
+    assert not set(RESET_TABLES) & set(RESET_KEPT_TABLES)
+    assert tables - set(RESET_TABLES) - set(RESET_KEPT_TABLES) == set()
+    assert set(RESET_TABLES) - tables == set()
 
 
 @pytest.mark.parametrize(

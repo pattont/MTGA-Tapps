@@ -118,6 +118,13 @@ Primary code paths:
   by Last-Modified; API responses stay `no-store`.
 - `src/mtga_tracker/live_api.py`: `/api/live` payload — current game, frozen previous-game
   scoreboard, records vs. deck / opponent / opponent commander, local archetype guess.
+  Everything but the tracker block and the event feed is memoised per database on
+  `PRAGMA data_version` (read on the poll connection before the live row, so a body is
+  never older than its key), the live/idle/offline state and the local date, with a 30 s
+  rebuild as a safety net; the feed's linkable card names are memoised on
+  `game_card_summary`'s row count, max rowid and filled types. `/api/overlay`'s memo key
+  deliberately leaves out `live_status.updated_at` (the heartbeat) and includes the
+  session totals; neither payload carries a timestamp the clients read.
 - `src/mtga_tracker/draw_quality.py`: CLI/report helpers for land flood/screw and repeated-card draw audits.
 - `src/mtga_tracker/tracker_summary.py`: end-game and session summary rendering.
 - `src/mtga_tracker/tracker_rendering.py`: console formatting, actor labels, mana/text cleanup, runtime strings.
@@ -306,7 +313,9 @@ Primary code paths:
   the PyQt Deck AI settings implementation.
   `ui/src/components/SettingsPage.tsx` layout: a full-width Tracker card (MetricCard
   tiles for games captured, last game, version and Deck AI from `_tracker_info`, then
-  the paths, with a small Database health link on the Log DB row; there is no
+  the paths, with small Database health | Reset Settings links on the Log DB row (`#/audit` and
+  `#/reset`, two separate pages whose sidebar is only the way back; the links never reset
+  anything themselves, and `ResetPage.tsx` lists what a reset deletes and keeps); there is no
   Database Health section), then `SettingsGroup`s General (Startup stacked over
   Sessions, beside Updates), Features (overlay, Buy on Paper, Deck AI, creators),
   Streaming (the full-width Stream Kit card) and
@@ -691,9 +700,12 @@ Primary code paths:
   overlay through a second launch); `overlay/src-tauri/src/parent.rs` quits the overlay once that
   process is gone, so a crashed, killed or uninstalled tracker never leaves it over Arena. The
   Windows uninstaller also stops both executables (`[UninstallRun]` taskkill) before removing files.
-  On macOS, `overlay/src-tauri/src/arena.rs` parses `lsappinfo` one property line at a time;
-  macOS 27 returns extra properties even with `-only`, so never parse everything after the first
-  equals sign or Arena will be treated as never frontmost and the overlay will hide itself.
+  `overlay/src-tauri/src/arena.rs` never spawns a process: macOS asks NSWorkspace for the
+  front app and NSRunningApplication for Arena's pid (`lsappinfo front` answered `[ NULL ]`
+  intermittently on macOS 27), Windows uses GetForegroundWindow and a Toolhelp walk; both
+  remember Arena's pid and re-check it with one syscall, and the poll slows to 2 s while Arena
+  is closed. The tracker side (`overlay_launcher.OverlayManager.running`) likewise trusts its
+  last pgrep/tasklist scan for 30 s, so the tray's 3 s poll does not spawn a process each time.
 - `src/mtga_tracker/deck_downloader_launcher.py`: launches the bundled Deck Finder in a sized
   terminal window via `POST /api/deck-downloader/launch`; frozen builds invoke the same
   tracker executable with `--deck-finder`. The menu item opens dashboard `#/deckfinder`.
@@ -816,6 +828,9 @@ Common runtime files:
 
 Windows is a first-class target: use `pathlib`, quote paths for `cmd`, and prefer pasteable
 `%USERPROFILE%`/`%LOCALAPPDATA%` forms over POSIX-only examples in user-facing output.
+Read Windows tool output (tasklist) as bytes through `paths.windows_process_ids`, never
+`text=True`: a localized message that fails to decode leaves `stdout` None on Windows
+(the reader thread dies quietly), which crashed startup on German Windows.
 Background Windows subprocesses launched by the frozen GUI must use
 `CREATE_NO_WINDOW`; periodic console tools such as `tasklist` otherwise flash a window above
 the user's applications on every poll.
@@ -1109,8 +1124,13 @@ Important tables:
   `controller_seat`, zones, `amount`, `payload_json`) and silent replay-only rows
   (`visible = 0`, `game_id` only). Migration 32 makes the session index partial over
   printed rows. See `docs/REPLAY_FORMAT.md`.
-- `console_logs`: rendered console log lines for later dashboard/query work. Also feeds the
-  dashboard's Live Scoreboard page (`/api/live` in `live_api.py`, `since` = `console_logs.id`).
+- `console_logs`: every rendered console line, kept for `CONSOLE_LOG_RETENTION_DAYS` (30)
+  and pruned at each store connect (`prune_console_logs`; migration 38 made the first cut and
+  compacted the file). The timeline, replays and the Live Scoreboard feed read `game_events`
+  (`/api/live`'s `since` is a `game_events.id`); turn timings are in `game_turns`. What only
+  console_logs holds (banners, life lines, "Previous Turn" headers) is read by the startup
+  turn-time recovery and the audit's missing-game reconstruction, both within the window.
+  Unbounded it was 38% of a 1,256-game database, twice the text of `game_events`.
 - `live_status`: single-row (id=1) "what is happening right now" snapshot the tracker upserts
   with every console line plus a ~5s idle heartbeat; drives the Live Scoreboard. Stopping the
   tracker calls `mark_live_status_stopped` (rewinds `updated_at`, `in_game=0`) so the
@@ -1135,13 +1155,30 @@ Important tables:
 - `rank_snapshots`: constructed and limited rank changes by season, with optional ranked match/game linkage.
 - `game_annotations`: user notes and comma-joined tags per game, written by
   `POST /api/game/annotation`. Analytics query endpoints remain read-only GETs.
-  `POST /api/db/reset` is destructive, requires `{"confirm": "RESET"}`, and backs up first.
+  `POST /api/db/reset` is destructive, requires `{"confirm": "RESET"}`, backs up first,
+  and answers 409 while MTG Arena is open (`paths.arena_process_running`; unknown
+  counts as open on macOS/Windows, Linux has no probe) or a running tracker reports a
+  game in progress. It empties `dashboard.RESET_TABLES`, clears `live_status`'s frozen
+  `last_game_json`, and keeps `RESET_KEPT_TABLES` (Deck Manager library, cards,
+  inventory); every schema table must be in exactly one of the two (a test checks).
+  Keep the Reset page's deleted/kept lists in step when they change. A running tracker
+  needs no restart: once its committed session row is gone, `_upsert_session_row`
+  starts a new session (zeroed totals, no frozen game) instead of writing the old
+  in-memory totals back.
   Other existing POSTs are `/api/settings/*` (settings and overlay actions),
   `/api/deckfinder/*` (fetch/variants/hydrate/surprise jobs),
   `/api/deck-downloader/launch` (terminal launcher), `/api/collection/export`
   (explicit memory scan/export job), and `/api/update/*` (update check, download, install,
   skip, acknowledge; `install` restarts the app and carries the Deck Manager-style Origin
   and Content-Type guard). Do not describe the entire dashboard as read-only.
+- `maintenance_state`: watermarks for startup repair passes that would otherwise re-check all
+  history at every launch (`turn_time_recovery` by `games.rowid`, `event_reassignment` by
+  `game_events.id`), stored as `"<pass version>:<watermark>"`. A pass resumes from its watermark
+  while its `*_PASS_VERSION` constant in `tracker_analytics.py` is unchanged; bump that constant
+  when a fix must look at every row once more (a numbered migration also works). Backup merges
+  clear the table (`merge_snapshot_into`), a reset empties it (`RESET_TABLES`), restore carries it
+  with the data, and `db_audit --repair` ignores it. New whole-history startup passes should use
+  `maintenance_watermark`/`set_maintenance_watermark` from the start.
 - `schema_migrations`: numbered one-time migrations applied by `AnalyticsStore.apply_pending_migrations`
   (baseline is version 1; add new migrations there rather than ad-hoc ALTERs when possible).
   Each pending migration runs in its own transaction together with its

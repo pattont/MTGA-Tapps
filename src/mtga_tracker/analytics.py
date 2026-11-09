@@ -561,6 +561,15 @@ class AnalyticsStore:
             CREATE INDEX IF NOT EXISTS idx_games_match
             ON games(match_id);
 
+            CREATE INDEX IF NOT EXISTS idx_games_started_at
+            ON games(started_at);
+
+            CREATE TABLE IF NOT EXISTS maintenance_state (
+                name TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             INSERT OR IGNORE INTO schema_migrations(version, applied_at)
             VALUES (1, datetime('now'));
             """
@@ -741,6 +750,7 @@ class AnalyticsStore:
             # v37: the same date repair as v21, for rows a wrong date order
             # stored since (US logs on a day-first Windows, issue #51).
             (37, AnalyticsStore._migrate_v21_repair_swapped_log_dates),
+            (38, AnalyticsStore._migrate_v38_prune_console_logs),
         )
 
     @staticmethod
@@ -787,7 +797,8 @@ class AnalyticsStore:
         # The raw payload archive is a diagnostics/replay buffer, not history:
         # nothing in the app reads it back after a month. Keep 30 days.
         pruned = AnalyticsStore.prune_raw_payload_archive(conn)
-        if 11 in ran or 28 in ran:
+        pruned += AnalyticsStore.prune_console_logs(conn)
+        if 11 in ran or 28 in ran or 38 in ran:
             # Compaction only frees pages; VACUUM returns them to the OS.
             # Must run outside any transaction, hence after the commit above.
             print("🗜️  Reclaiming disk space from the payload archive (VACUUM)…")
@@ -2029,6 +2040,55 @@ class AnalyticsStore:
     #: diagnostics and reprocessing of recent games; a month covers both.
     RAW_PAYLOAD_RETENTION_DAYS = 30
 
+    #: console_logs keeps every printed line only this long. The lines that
+    #: matter for history are in game_events (the timeline, replays) and
+    #: game_turns (turn timings, written live or recovered at the next launch);
+    #: what console_logs alone holds past that is banners, life lines and
+    #: "Previous Turn" headers, which only the audit's missing-game
+    #: reconstruction and the turn-time recovery read, both within days.
+    #: Unbounded, it was 38% of a 1,256-game database and twice the text of
+    #: game_events.
+    CONSOLE_LOG_RETENTION_DAYS = 30
+
+    @staticmethod
+    def prune_console_logs(conn: sqlite3.Connection, *, now: Optional[datetime] = None) -> int:
+        """Delete console lines older than CONSOLE_LOG_RETENTION_DAYS that
+        belong to tracker sessions that also started before the cutoff (so a
+        long-running session keeps its own lines). Returns rows removed."""
+        cutoff = (
+            (now or datetime.now()) - timedelta(days=AnalyticsStore.CONSOLE_LOG_RETENTION_DAYS)
+        ).isoformat()
+        try:
+            with conn:
+                removed = conn.execute(
+                    """
+                    DELETE FROM console_logs
+                    WHERE created_at < ?
+                      AND session_id IN (SELECT id FROM tracker_sessions WHERE started_at < ?)
+                    """,
+                    (cutoff, cutoff),
+                ).rowcount
+        except sqlite3.Error:
+            return 0
+        return int(removed or 0)
+
+    @staticmethod
+    def _migrate_v38_prune_console_logs(conn: sqlite3.Connection) -> None:
+        """First application of the console_logs retention window; the file is
+        compacted right after (see the VACUUM in apply_pending_migrations)."""
+        cutoff = (
+            datetime.now() - timedelta(days=AnalyticsStore.CONSOLE_LOG_RETENTION_DAYS)
+        ).isoformat()
+        conn.execute(
+            """
+            DELETE FROM console_logs
+            WHERE created_at < ?
+              AND session_id IN (SELECT id FROM tracker_sessions WHERE started_at < ?)
+            """,
+            (cutoff, cutoff),
+        )
+
+    @staticmethod
     @staticmethod
     def prune_raw_payload_archive(
         conn: sqlite3.Connection, *, now: Optional[datetime] = None
@@ -2831,22 +2891,73 @@ class AnalyticsStore:
         )
         return conn.total_changes - changes_before
 
+    # ------------------------------------------------------------------
+    # Startup maintenance watermarks
+    #
+    # Repair passes that run at every launch used to re-check the whole
+    # history each time. Each pass now records how far it got under a name
+    # and a version: with the same version it resumes from the watermark,
+    # and a changed version (bump the constant next to the pass when a fix
+    # must look at every row again) makes it run over everything once more.
+    # Rows merged in from a backup clear the table, a database reset empties
+    # it, and `db_audit --repair` always checks everything regardless.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def maintenance_watermark(conn: sqlite3.Connection, name: str, version: int) -> Optional[str]:
+        """The watermark saved for `name` at this `version`, or None when the
+        pass has never run at this version (a full pass is due)."""
+        try:
+            row = conn.execute(
+                "SELECT value FROM maintenance_state WHERE name = ?", (name,)
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return None
+        if row is None:
+            return None
+        stored_version, _, watermark = str(row[0]).partition(":")
+        return watermark if stored_version == str(version) else None
+
+    @staticmethod
+    def set_maintenance_watermark(
+        conn: sqlite3.Connection, name: str, version: int, watermark: object
+    ) -> None:
+        """Record where the pass `name` at `version` got to (inside the caller's
+        transaction)."""
+        conn.execute(
+            """
+            INSERT INTO maintenance_state (name, value, updated_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            """,
+            (name, f"{version}:{watermark}"),
+        )
+
     @staticmethod
     def backfill_recovered_game_turn_times(
-        conn: sqlite3.Connection, game_id: Optional[str] = None
+        conn: sqlite3.Connection,
+        game_id: Optional[str] = None,
+        *,
+        min_game_rowid: Optional[int] = None,
     ) -> int:
         """Recover exact live turn durations preserved in console turn headers.
 
         Each turn transition prints the completed turn's exact measured duration.
         The final turn is reconstructed from its observed header and the persisted
-        game end. Existing timing rows are never overwritten.
+        game end. Existing timing rows are never overwritten. With
+        `min_game_rowid` only games recorded after that row are considered (the
+        startup pass resumes from its watermark: a game whose session log could
+        not recover it once will not recover it later either).
         """
         changes_before = conn.total_changes
-        params: tuple[str, ...] = ()
+        params: tuple = ()
         game_filter = ""
         if game_id is not None:
             game_filter = "AND g.id = ?"
             params = (game_id,)
+        if min_game_rowid is not None:
+            game_filter += " AND g.rowid > ?"
+            params = params + (int(min_game_rowid),)
         games = conn.execute(
             f"""
             SELECT g.id, g.session_id, g.started_at, g.ended_at, g.total_turns

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Bot, CalendarClock, Gamepad2, Tag } from 'lucide-react';
 import { Badge } from './Badge';
 import { BackupCard } from './BackupCard';
+import { RESET_ROUTE } from './ResetPage';
 import { MetricCard } from './MetricCard';
 import {
   collectionDownloadUrl,
@@ -162,9 +163,15 @@ function TrackerOverview({ info, deckAi }: { info: TrackerInfoSettings; deckAi: 
             <dt>{label}</dt>
             <dd>{info[key] ?? 'not found (start the tracker to detect it)'}</dd>
             {key === 'log_db' ? (
-              <a className="settings-quiet-link" href="#/audit">
-                Database health
-              </a>
+              <span className="settings-quiet-links">
+                <a className="settings-quiet-link" href="#/audit">
+                  Database health
+                </a>
+                <span aria-hidden="true">|</span>
+                <a className="settings-quiet-link" href={RESET_ROUTE}>
+                  Reset Settings
+                </a>
+              </span>
             ) : null}
           </div>
         ))}

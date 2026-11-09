@@ -137,7 +137,7 @@ const DEMO_SEEN: LiveSeenCard[] = [
 ];
 
 export const DEMO_LIVE: LivePayload = {
-  tracker: { state: 'live', updated_at: null, session_id: 'demo' },
+  tracker: { state: 'live', session_id: 'demo' },
   now: {
     in_game: true,
     last_game_frozen: false,

@@ -248,10 +248,13 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
             # the previous game's final scoreboard instead of a blank panel
             # (the client alone can only keep it while the page stays open).
             self._last_in_game_live_row = dict(row)
+            self._last_in_game_live_json = None
             row["last_game_json"] = None
         else:
             cached = getattr(self, "_last_in_game_live_row", None)
-            row["last_game_json"] = json.dumps(cached) if cached else None
+            if cached and getattr(self, "_last_in_game_live_json", None) is None:
+                self._last_in_game_live_json = json.dumps(cached)
+            row["last_game_json"] = self._last_in_game_live_json if cached else None
         return row
 
     def _live_color_index(self) -> Dict[str, str]:
@@ -549,7 +552,10 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
         """The in-game overlay's payload (see overlay_state.py), or the idle
         shape between games. None only when there is nothing to say."""
         g = self.game_state
-        now = self._now().isoformat()
+        # No timestamp in the state: nothing reads it, and stamping each
+        # console line's time made every line a new overlay ETag, so pollers
+        # downloaded and redrew an unchanged library on every line (and the
+        # frozen post-game library on every line between games).
         if not in_game:
             # The game just ended: keep the final library on screen (marked
             # game_over) until Arena goes back to Home, which clears it.
@@ -558,23 +564,19 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
                 ended = dict(frozen)
                 ended["game_active"] = False
                 ended["game_over"] = True
-                ended["updated_at"] = now
                 return json.dumps(ended)
-            return json.dumps(idle_overlay_state(game_active=False, updated_at=now))
+            return json.dumps(idle_overlay_state(game_active=False))
         if getattr(g, "mid_game_attach", False):
             return json.dumps(
                 idle_overlay_state(
                     game_active=True,
                     mid_game_attach=True,
                     deck_name=g.player_deck_name,
-                    updated_at=now,
                 )
             )
         deck = self._overlay_deck_names()
         if not deck:
-            return json.dumps(
-                idle_overlay_state(game_active=True, deck_name=g.player_deck_name, updated_at=now)
-            )
+            return json.dumps(idle_overlay_state(game_active=True, deck_name=g.player_deck_name))
         # Departures start from the kept opening hand; everything after it
         # is counted by _observe_library_zone_transfer.
         departures: Dict[str, int] = dict(g.library_departures)
@@ -598,7 +600,6 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
             on_play=None if on_play is None else bool(on_play),
             player_commanders=g.player_commanders,
             opponent_commanders=g.opponent_commanders,
-            updated_at=now,
             sideboard=self._overlay_sideboard_names(),
         )
         self._last_in_game_overlay_state = state
@@ -913,6 +914,8 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
             # blocking the dashboard's note saves with "database is locked".
             with conn:
                 self._upsert_session_row(conn)
+            # Committed: from now on a missing row means a reset.
+            self._session_row_written = True
             return conn
         except (OSError, sqlite3.Error, TypeError, ValueError):
             return None
@@ -1082,10 +1085,11 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
         """Startup repair: move events that fall inside a DIFFERENT game's window.
 
         Same operation as db_audit --repair's event reassignment, run
-        automatically so non-technical users never need the CLI. Costs one
-        indexed pass over game_events (~150ms on an 80k-event database);
-        events outside every game window are deliberately left where they
-        are (post-game tails belong to their game).
+        automatically so non-technical users never need the CLI, over the
+        events written since the last launch did this (see maintenance_state;
+        the first launch checks everything). Events outside every game window
+        are deliberately left where they are (post-game tails belong to their
+        game).
         """
         conn = self._analytics_connect()
         if conn is None:
@@ -1097,7 +1101,13 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
 
             def _run() -> None:
                 nonlocal repaired
-                repaired = _repair_game_event_assignments(conn)
+                name, version = "event_reassignment", self.EVENT_REASSIGNMENT_PASS_VERSION
+                watermark = AnalyticsStore.maintenance_watermark(conn, name, version)
+                newest = conn.execute("SELECT MAX(id) FROM game_events").fetchone()[0]
+                repaired = _repair_game_event_assignments(
+                    conn, min_event_id=int(watermark) if watermark else None
+                )
+                AnalyticsStore.set_maintenance_watermark(conn, name, version, int(newest or 0))
 
             self._run_analytics_write(conn, _run)
         except (ImportError, sqlite3.Error, OSError):
@@ -1107,16 +1117,29 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
                 f"🧭 Reassigned {repaired} game event(s) to the game matching their timestamps."
             )
 
+    #: Bump when a fix needs the turn-time recovery to look at every game again.
+    TURN_RECOVERY_PASS_VERSION = 1
+    #: Bump when a fix needs the event reassignment to look at every event again.
+    EVENT_REASSIGNMENT_PASS_VERSION = 1
+
     def _recover_missing_turn_timings(self) -> None:
-        """Recover persisted turn durations from durable console headers at startup."""
+        """Recover persisted turn durations from durable console headers at startup,
+        for games recorded since the last launch did this (see maintenance_state)."""
         conn = self._analytics_connect()
         if conn is None:
             return
         try:
-            self._run_analytics_write(
-                conn,
-                lambda: AnalyticsStore.backfill_recovered_game_turn_times(conn),
-            )
+
+            def _run() -> None:
+                name, version = "turn_time_recovery", self.TURN_RECOVERY_PASS_VERSION
+                watermark = AnalyticsStore.maintenance_watermark(conn, name, version)
+                newest = conn.execute("SELECT MAX(rowid) FROM games").fetchone()[0]
+                AnalyticsStore.backfill_recovered_game_turn_times(
+                    conn, min_game_rowid=int(watermark) if watermark else None
+                )
+                AnalyticsStore.set_maintenance_watermark(conn, name, version, int(newest or 0))
+
+            self._run_analytics_write(conn, _run)
         except sqlite3.Error as exc:
             self._report_analytics_persistence_error(
                 "historical turn timing recovery", "startup", exc
@@ -1130,7 +1153,19 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
         AnalyticsStore.ensure_table_column(conn, table_name, column_name, column_type)
 
     def _upsert_session_row(self, conn: sqlite3.Connection) -> None:
-        """Persist current session counters."""
+        """Persist current session counters.
+
+        A row this session already wrote that is now gone means the dashboard
+        reset the database (or a backup without it was restored). Writing the
+        in-memory totals back would bring the old record back, so the tracker
+        starts a fresh session first.
+        """
+        if getattr(self, "_session_row_written", False):
+            exists = conn.execute(
+                "SELECT 1 FROM tracker_sessions WHERE id = ?", (self.session_id,)
+            ).fetchone()
+            if exists is None:
+                self._start_session_after_reset()
         runtime_seconds = self._session_play_runtime_seconds()
         conn.execute(
             """

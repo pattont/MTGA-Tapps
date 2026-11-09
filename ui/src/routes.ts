@@ -228,6 +228,10 @@ export function parseDeckManagerRoute(hash: string): boolean {
   return ['#/deck-manager', '#deck-manager-library', '#deck-manager-import'].includes(hash.split('?')[0]);
 }
 
+export function parseResetRoute(hash: string): boolean {
+  return hash === '#/reset' || hash.startsWith('#/reset?');
+}
+
 export function parseSettingsRoute(hash: string): boolean {
   return hash === '#/settings' || hash.startsWith('#/settings?');
 }

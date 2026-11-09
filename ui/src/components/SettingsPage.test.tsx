@@ -160,6 +160,10 @@ describe('Settings page layout', () => {
     expect(within(tracker).getByText('Anthropic (Claude) · claude-haiku')).toBeInTheDocument();
 
     expect(within(tracker).getByRole('link', { name: 'Database health' })).toHaveAttribute('href', '#/audit');
+    expect(within(tracker).getByRole('link', { name: 'Reset Settings' })).toHaveAttribute(
+      'href',
+      '#/reset',
+    );
     expect(screen.queryByRole('heading', { name: 'Database Health' })).not.toBeInTheDocument();
   });
 

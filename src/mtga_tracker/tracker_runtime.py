@@ -13,6 +13,12 @@ DETAILED_LOGS_ENABLED_MARKER = "DETAILED LOGS: ENABLED"
 class TrackerRuntimeMixin:
     """Console startup and live log polling loop used by CardTracker."""
 
+    #: The live loop's pace while Arena is writing to its log.
+    POLL_SECONDS = 0.25
+    #: ...and once the log has been quiet for IDLE_LOG_SECONDS (Arena closed).
+    IDLE_POLL_SECONDS = 1.0
+    IDLE_LOG_SECONDS = 120.0
+
     def _detailed_logs_enabled(self) -> Optional[bool]:
         """Return Arena's DETAILED LOGS state from the log head, None if unknown."""
         try:
@@ -122,6 +128,7 @@ class TrackerRuntimeMixin:
         # A stop requested while the startup banner printed must still win.
         self.running = not getattr(self, "_stop_requested_early", False)
 
+        last_log_activity = time.monotonic()
         try:
             while self.running:
                 # Safety: If we've been waiting for next game for more than 5 minutes, clear the flag.
@@ -133,12 +140,20 @@ class TrackerRuntimeMixin:
                         self.waiting_for_next_game = False
                         self.waiting_start_time = None
 
+                position_before = getattr(self.parser, "last_position", None)
                 self._process_new_events()
                 self._live_heartbeat()
+                now = time.monotonic()
+                if getattr(self.parser, "last_position", None) != position_before:
+                    last_log_activity = now
                 # A quarter second, not half: with nothing new in the log
                 # this is one stat call, and it halves the worst-case lag
-                # between a draw in Arena and the overlay showing it.
-                time.sleep(0.25)
+                # between a draw in Arena and the overlay showing it. Arena
+                # writes to its log every few seconds while it runs, so a
+                # log quiet for two minutes means Arena is closed: look once
+                # a second until it writes again.
+                idle = now - last_log_activity > self.IDLE_LOG_SECONDS
+                time.sleep(self.IDLE_POLL_SECONDS if idle else self.POLL_SECONDS)
         except KeyboardInterrupt:
             self._print_line("\n" + "=" * 75)
             self._print_line("🛑 Stopping tracker...")

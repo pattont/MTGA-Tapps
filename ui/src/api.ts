@@ -1361,6 +1361,9 @@ export async function resetDatabase(confirm: string): Promise<{ ok: boolean; bac
     } catch {
       // Body unavailable; fall back to the status code alone.
     }
+    if (response.status === 409 && detail) {
+      throw new Error(detail); // Arena open or a game in progress
+    }
     throw new Error(detail ? `HTTP ${response.status} — ${detail}` : `Reset failed (HTTP ${response.status})`);
   }
   return response.json() as Promise<{ ok: boolean; backup: string }>;
@@ -1603,7 +1606,8 @@ export async function startDeckFinderSurprise(format: string): Promise<{ job: st
 
 export interface LiveTrackerInfo {
   state: 'live' | 'idle' | 'offline';
-  updated_at: string | null;
+  /** `/api/live` only; `/api/overlay` leaves it out so its ETag survives the tracker's heartbeat. */
+  updated_at?: string | null;
   session_id: string | null;
 }
 

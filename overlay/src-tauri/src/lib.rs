@@ -26,6 +26,8 @@ use settings::{Dock, Settings};
 const MAIN_WINDOW: &str = "main";
 const SETTINGS_FILE: &str = "overlay.json";
 const ARENA_POLL: Duration = Duration::from_secs(1);
+/// With Arena closed there is nothing to dock to or hide from: look half as often.
+const ARENA_POLL_IDLE: Duration = Duration::from_secs(2);
 /// The cursor watch (rail hover opens the panel; an unpinned panel folds
 /// away after the cursor has been off it for the return delay). Done here
 /// from the real cursor position rather than from the page's mouse events:
@@ -599,7 +601,7 @@ fn start_arena_poll(app: AppHandle) {
                     raise_above_fullscreen(&window);
                 }
             }
-            std::thread::sleep(ARENA_POLL);
+            std::thread::sleep(if status.running { ARENA_POLL } else { ARENA_POLL_IDLE });
         })
         .expect("arena poll thread");
 }

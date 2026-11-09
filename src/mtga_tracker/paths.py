@@ -339,21 +339,60 @@ def arena_process_running(run=None) -> Optional[bool]:
                 return False
             return None
         if system == "Windows":
-            from .overlay_launcher import _detached_kwargs
-
-            result = run(
-                ["tasklist", "/FI", "IMAGENAME eq MTGA.exe", "/FO", "CSV", "/NH"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                **_detached_kwargs(),
-            )
-            if result.returncode != 0:
-                return None
-            return '"mtga.exe"' in str(result.stdout or "").lower()
+            pids = windows_process_ids("MTGA.exe", run=run, timeout=10)
+            return None if pids is None else bool(pids)
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
     return None
+
+
+def windows_process_ids(image_name: str, *, run=None, timeout: float = 10.0) -> Optional[List[int]]:
+    """PIDs of running processes with this exact image name, from `tasklist`.
+
+    Reads the output as bytes, never text: tasklist writes in the console's
+    OEM code page, and a localized message such as German "ausgeführt"
+    (0x81 in cp850) is not valid in the encoding Python would decode with.
+    On Windows that decode runs in subprocess's reader thread, whose failure
+    leaves `stdout` None, which once crashed startup. Only the ASCII image
+    name and PID columns are read. None when tasklist could not run.
+    """
+    import subprocess
+
+    run = run or subprocess.run
+    kwargs = {}
+    if sys.platform == "win32":
+        # Never flash a console window from the frozen GUI build.
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        result = run(
+            ["tasklist", "/FI", f"IMAGENAME eq {image_name}", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            timeout=timeout,
+            **kwargs,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    if result is None or getattr(result, "returncode", 0) != 0:
+        return None
+    return tasklist_pids(getattr(result, "stdout", None), image_name)
+
+
+def tasklist_pids(output: object, image_name: str) -> List[int]:
+    """The PIDs in `tasklist /FO CSV /NH` output (bytes or text) for one image."""
+    if isinstance(output, (bytes, bytearray)):
+        text = bytes(output).decode("utf-8", errors="replace")
+    else:
+        text = str(output or "")
+    wanted = image_name.lower()
+    pids: List[int] = []
+    for line in text.splitlines():
+        columns = [part.strip().strip('"') for part in line.split('","')]
+        if len(columns) >= 2 and columns[0].strip('"').lower() == wanted:
+            try:
+                pids.append(int(columns[1]))
+            except ValueError:
+                continue
+    return pids
 
 
 def raise_open_file_limit(target: int = 4096) -> Optional[int]:

@@ -8371,6 +8371,41 @@ def test_a_bo3_match_never_splits_across_sessions(monkeypatch):
     assert tracker.game_state.game_number == 2
 
 
+def test_a_database_reset_under_a_running_tracker_starts_a_new_session(tmp_path):
+    """The tracker rewrites its session row from memory on every connect. After
+    a dashboard reset deleted it, writing the old totals back would bring the
+    pre-reset record back to the overlay and Stream Kit, so it starts over."""
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "analytics.sqlite3"
+    assert tracker._analytics_connect() is not None
+    tracker.session_games_played, tracker.session_wins, tracker.session_losses = 8, 5, 3
+    assert tracker._analytics_connect() is not None
+    tracker._last_in_game_live_row = {"game_id": "test-session-g8"}
+
+    with sqlite3.connect(tracker._console_db_path) as conn:
+        conn.execute("DELETE FROM tracker_sessions")
+    assert tracker._analytics_connect() is not None
+
+    assert tracker.session_id != "test-session"
+    assert (tracker.session_games_played, tracker.session_wins) == (0, 0)
+    assert tracker._last_in_game_live_row is None
+    with sqlite3.connect(tracker._console_db_path) as conn:
+        rows = conn.execute("SELECT id, games_played, wins FROM tracker_sessions").fetchall()
+    assert rows == [(tracker.session_id, 0, 0)]
+
+
+def test_a_new_session_writes_its_first_row_without_a_restart(tmp_path):
+    """No row yet is the normal start of a session, not a reset."""
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "analytics.sqlite3"
+    tracker.session_games_played = 1
+
+    assert tracker._analytics_connect() is not None
+
+    assert tracker.session_id == "test-session"
+    assert tracker.session_games_played == 1
+
+
 def test_session_break_follows_the_setting(monkeypatch):
     """Settings → Sessions: a longer break keeps a late-night return in the
     same session, and Never leaves only a relaunch to start one."""
@@ -8396,3 +8431,133 @@ def test_an_ability_object_is_named_after_its_source_card():
     assert tracker._object_display_name(ability, 495) == "Kaito, Bane of Nightmares"
     card = {"type": "GameObjectType_Card", "grpId": 92314}
     assert tracker._object_display_name(card, 317) == "Kaito, Bane of Nightmares"
+
+
+def _watermark_fixture(tmp_path):
+    """Two finished games in one session and one event that belongs to g2 by
+    its timestamp but sits on g1."""
+    db_path = tmp_path / "analytics.sqlite3"
+    store = AnalyticsStore(db_path)
+    conn = store.connect()
+    with conn:
+        conn.execute(
+            "INSERT INTO tracker_sessions (id, started_at) VALUES ('s1', '2026-07-01T12:00:00')"
+        )
+        conn.executemany(
+            "INSERT INTO matches (id, session_id) VALUES (?, 's1')", (("m1",), ("m2",))
+        )
+        conn.executemany(
+            "INSERT INTO games (id, session_id, match_id, started_at, ended_at, outcome, total_turns) "
+            "VALUES (?, 's1', ?, ?, ?, 'win', 4)",
+            (
+                ("g1", "m1", "2026-07-01T12:00:00", "2026-07-01T12:05:00"),
+                ("g2", "m2", "2026-07-01T12:10:00", "2026-07-01T12:15:00"),
+            ),
+        )
+        conn.execute(
+            "INSERT INTO game_events (session_id, match_id, game_id, event_time, text) "
+            "VALUES ('s1', 'm1', 'g1', '2026-07-01T12:11:00', 'You: cast [Opt]')"
+        )
+    store.close()
+    return db_path
+
+
+def test_startup_event_reassignment_resumes_from_its_watermark(tmp_path, capsys):
+    """Each launch checks only the events written since the last launch; a
+    bumped pass version, or db_audit's own repair, checks every event again."""
+    from mtga_tracker.db_audit import _repair_game_event_assignments
+
+    tracker = make_tracker()
+    tracker._console_db_path = _watermark_fixture(tmp_path)
+    tracker.analytics = None
+
+    tracker._reassign_misattributed_game_events()  # first launch: everything
+    conn = sqlite3.connect(tracker._console_db_path)
+    assert conn.execute("SELECT game_id FROM game_events").fetchone() == ("g2",)
+    assert conn.execute("SELECT value FROM maintenance_state WHERE name = 'event_reassignment'").fetchone() == ("1:1",)
+
+    # A new event lands after the watermark, misattributed: still repaired.
+    with conn:
+        conn.execute(
+            "INSERT INTO game_events (session_id, match_id, game_id, event_time, text) "
+            "VALUES ('s1', 'm1', 'g1', '2026-07-01T12:12:00', 'You: cast [Consider]')"
+        )
+    conn.close()
+    tracker._reassign_misattributed_game_events()
+    conn = sqlite3.connect(tracker._console_db_path)
+    assert conn.execute("SELECT game_id FROM game_events WHERE id = 2").fetchone() == ("g2",)
+    assert conn.execute("SELECT value FROM maintenance_state WHERE name = 'event_reassignment'").fetchone() == ("1:2",)
+
+    # An already-checked event changed behind the watermark is not re-checked
+    # by a launch (the passes only ever see new rows)...
+    with conn:
+        conn.execute("UPDATE game_events SET game_id = 'g1', match_id = 'm1' WHERE id = 1")
+    conn.close()
+    tracker._reassign_misattributed_game_events()
+    conn = sqlite3.connect(tracker._console_db_path)
+    assert conn.execute("SELECT game_id FROM game_events WHERE id = 1").fetchone() == ("g1",)
+    # ...until the pass version is bumped, which is how a future fix asks for
+    # a full re-check...
+    tracker.EVENT_REASSIGNMENT_PASS_VERSION = 2
+    conn.close()
+    tracker._reassign_misattributed_game_events()
+    conn = sqlite3.connect(tracker._console_db_path)
+    assert conn.execute("SELECT game_id FROM game_events WHERE id = 1").fetchone() == ("g2",)
+    assert conn.execute("SELECT value FROM maintenance_state WHERE name = 'event_reassignment'").fetchone() == ("2:2",)
+    # ...and db_audit --repair never uses the watermark at all.
+    with conn:
+        conn.execute("UPDATE game_events SET game_id = 'g1', match_id = 'm1' WHERE id = 1")
+        assert _repair_game_event_assignments(conn) == 1
+    conn.close()
+    assert "Reassigned 1 game event(s)" in capsys.readouterr().out
+
+
+def test_startup_turn_recovery_resumes_from_its_watermark(tmp_path, monkeypatch):
+    tracker = make_tracker()
+    tracker._console_db_path = _watermark_fixture(tmp_path)
+    tracker.analytics = None
+    seen = []
+    real = AnalyticsStore.backfill_recovered_game_turn_times
+
+    def recording(conn, game_id=None, *, min_game_rowid=None):
+        seen.append(min_game_rowid)
+        return real(conn, game_id, min_game_rowid=min_game_rowid)
+
+    monkeypatch.setattr(AnalyticsStore, "backfill_recovered_game_turn_times", staticmethod(recording))
+
+    tracker._recover_missing_turn_timings()
+    tracker._recover_missing_turn_timings()
+    assert seen == [None, 2]  # first launch: every game; next launch: games after rowid 2
+
+    # A third game recorded later is the only one the next launch looks at.
+    conn = sqlite3.connect(tracker._console_db_path)
+    with conn:
+        conn.execute("INSERT INTO matches (id, session_id) VALUES ('m3', 's1')")
+        conn.execute(
+            "INSERT INTO games (id, session_id, match_id, started_at, ended_at, outcome, total_turns) "
+            "VALUES ('g3', 's1', 'm3', '2026-07-01T12:20:00', '2026-07-01T12:25:00', 'win', 4)"
+        )
+    conn.close()
+    tracker._recover_missing_turn_timings()
+    assert seen[-1] == 2
+    conn = sqlite3.connect(tracker._console_db_path)
+    assert conn.execute("SELECT value FROM maintenance_state WHERE name = 'turn_time_recovery'").fetchone() == ("1:3",)
+    conn.close()
+    tracker.TURN_RECOVERY_PASS_VERSION = 2
+    tracker._recover_missing_turn_timings()
+    assert seen[-1] is None
+
+
+def test_maintenance_watermark_is_per_version(tmp_path):
+    store = AnalyticsStore(tmp_path / "analytics.sqlite3")
+    conn = store.connect()
+    assert AnalyticsStore.maintenance_watermark(conn, "pass", 1) is None
+    with conn:
+        AnalyticsStore.set_maintenance_watermark(conn, "pass", 1, 42)
+    assert AnalyticsStore.maintenance_watermark(conn, "pass", 1) == "42"
+    assert AnalyticsStore.maintenance_watermark(conn, "pass", 2) is None
+    with conn:
+        AnalyticsStore.set_maintenance_watermark(conn, "pass", 2, 7)
+    assert AnalyticsStore.maintenance_watermark(conn, "pass", 2) == "7"
+    assert AnalyticsStore.maintenance_watermark(conn, "pass", 1) is None
+    store.close()

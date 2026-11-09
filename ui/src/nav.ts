@@ -32,11 +32,13 @@ export const opponentsNavItems: AppNavItem[] = [
   { id: 'opponents-all', label: 'Opponents' },
 ];
 
+// Database Health and Reset are short pages reached from Settings: the way back is all they need.
 export const auditNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
-  { id: 'audit-summary', label: 'Summary' },
-  { id: 'audit-findings', label: 'Findings' },
-  { id: 'audit-danger', label: 'Danger Zone' },
+];
+
+export const resetNavItems: AppNavItem[] = [
+  { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
 ];
 
 export const deckNavItems: AppNavItem[] = [

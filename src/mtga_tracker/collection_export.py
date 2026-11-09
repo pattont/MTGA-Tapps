@@ -283,23 +283,10 @@ def _find_pid_macos(process_name: str) -> Optional[int]:
 
 def _find_pid_windows(process_name: str) -> Optional[int]:
     """PID of a running process by image name — tasklist, no psutil."""
-    try:
-        out = subprocess.run(
-            ["tasklist", "/FI", f"IMAGENAME eq {process_name}", "/FO", "CSV", "/NH"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    for row in out.stdout.splitlines():
-        parts = [p.strip('"') for p in row.split('","')]
-        if len(parts) >= 2 and parts[0].lower() == process_name.lower():
-            try:
-                return int(parts[1])
-            except ValueError:
-                continue
-    return None
+    from .paths import windows_process_ids
+
+    pids = windows_process_ids(process_name, timeout=10)
+    return pids[0] if pids else None
 
 
 # --- The pure scan core (unit-tested; no process access) --------------------

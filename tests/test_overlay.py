@@ -416,3 +416,35 @@ def test_untracked_match_still_feeds_the_overlay_through_the_live_row(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM console_logs").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM game_events").fetchone()[0] == 0
     conn.close()
+
+
+def test_overlay_etag_survives_the_heartbeat_and_follows_the_session_record(tmp_path):
+    """A heartbeat (updated_at only) must not change the overlay's ETag — every
+    poller would download and redraw an unchanged panel every 5 s — while a
+    finished game (the session's totals) must."""
+    state = idle_overlay_state(game_active=False)
+    db_path = _store_with_live(tmp_path, state, in_game=0)
+    live_api.reset_poll_connections()
+
+    payload_1, etag_1 = live_api.overlay_response(db_path)
+    store = AnalyticsStore(db_path)
+    store.touch_live_status("S1", datetime.now())
+    store.close()
+    payload_2, etag_2 = live_api.overlay_response(db_path)
+    assert etag_2 == etag_1 and payload_2 == payload_1
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE tracker_sessions SET games_played = 3, wins = 2, losses = 1 WHERE id = 'S1'"
+        )
+    payload_3, etag_3 = live_api.overlay_response(db_path)
+    assert etag_3 != etag_1
+    assert json.loads(payload_3)["session"]["wins"] == 2
+
+    # A live row that stops being refreshed goes offline on time, memo or not.
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE live_status SET updated_at = '2020-01-01T00:00:00' WHERE id = 1")
+    payload_4, etag_4 = live_api.overlay_response(db_path)
+    assert etag_4 != etag_3
+    assert json.loads(payload_4)["tracker"]["state"] == "offline"
+    live_api.reset_poll_connections()

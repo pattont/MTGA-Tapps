@@ -1,4 +1,5 @@
 import json
+import sqlite3
 
 import pytest
 from datetime import datetime, timedelta
@@ -1257,3 +1258,72 @@ def test_deck_record_counts_this_session(tmp_path):
     record = live_api.build_live_payload(tmp_path / "tracker.sqlite3")["now"]["deck_record"]
     assert (record["wins"], record["losses"]) == (1, 1)
     assert (record["session_wins"], record["session_losses"]) == (1, 0)
+
+
+def test_live_payload_is_memoised_until_something_commits(tmp_path, monkeypatch):
+    """Twice a second from the Live Scoreboard and every two seconds from each
+    Stream Kit source: an unchanged database must not rebuild the payload, and
+    any commit — a console line, a finished game — must show at once."""
+    store = _store(tmp_path)
+    _log_line(store, "any console line", live=_live(player_life=18))
+    _game_event(store, "G1", "Opponent: Casts [Atraxa, Praetors' Voice]", "cast", turn=7)
+    store.close()
+    db_path = tmp_path / "tracker.sqlite3"
+    live_api.reset_poll_connections()
+    builds = []
+    real_body = live_api._live_body
+
+    def counting_body(*args, **kwargs):
+        builds.append(1)
+        return real_body(*args, **kwargs)
+
+    monkeypatch.setattr(live_api, "_live_body", counting_body)
+
+    first = live_api.build_live_payload(db_path, include_events=False)
+    second = live_api.build_live_payload(db_path, include_events=False)
+    assert first == second and first["now"]["player_life"] == 18
+    assert len(builds) == 1
+
+    # The event feed is never memoised: a delta poll still reads game_events.
+    with_events = live_api.build_live_payload(db_path, since=0)
+    assert [event["text"] for event in with_events["events"]] == [
+        "Opponent: Casts [Atraxa, Praetors' Voice]"
+    ]
+    assert len(builds) == 1
+
+    # Another connection commits (the tracker writing a line): rebuilt, exact.
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE live_status SET player_life = 7 WHERE id = 1")
+    third = live_api.build_live_payload(db_path, include_events=False)
+    assert third["now"]["player_life"] == 7
+    assert len(builds) == 2
+
+    # The tracker falling silent flips the state without any commit.
+    monkeypatch.setattr(live_api, "OFFLINE_AFTER_SECONDS", -1.0)
+    offline = live_api.build_live_payload(db_path, include_events=False)
+    assert offline["tracker"]["state"] == "offline"
+    assert len(builds) == 3
+    live_api.reset_poll_connections()
+
+
+def test_live_feed_links_a_card_first_seen_in_a_new_game_summary(tmp_path):
+    store = _store(tmp_path)
+    _log_line(store, "any console line", live=_live())
+    _game_event(store, "G1", "You: cast [Brand New Card]", "cast", turn=3)
+    store.close()
+    db_path = tmp_path / "tracker.sqlite3"
+    live_api.reset_poll_connections()
+
+    before = live_api.build_live_payload(db_path, since=0)
+    kinds = [segment["kind"] for segment in before["events"][0]["text_segments"]]
+    assert "card" not in kinds  # never in game_card_summary: plain text
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO game_card_summary (game_id, participant_id, display_name, type_category, played_count)"
+            " VALUES ('G0', 'P0', 'Brand New Card', 'Creature', 1)"
+        )
+    after = live_api.build_live_payload(db_path, since=0)
+    cards = [s for s in after["events"][0]["text_segments"] if s["kind"] == "card"]
+    assert cards and cards[0]["card_name"] == "Brand New Card" and cards[0]["card_type"] == "Creature"
+    live_api.reset_poll_connections()

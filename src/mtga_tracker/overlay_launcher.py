@@ -20,8 +20,9 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .paths import DATA_DIR, PROJECT_ROOT
 
@@ -167,23 +168,9 @@ def _overlay_process_ids(binary: Path) -> List[int]:
     """
     try:
         if sys.platform == "win32":
-            result = subprocess.run(
-                ["tasklist", "/FI", f"IMAGENAME eq {binary.name}", "/FO", "CSV", "/NH"],
-                capture_output=True,
-                text=True,
-                timeout=2,
-                check=False,
-                **_detached_kwargs(),
-            )
-            pids: List[int] = []
-            for line in result.stdout.splitlines():
-                columns = [part.strip().strip('"') for part in line.split(",")]
-                if len(columns) >= 2 and columns[0].lower() == binary.name.lower():
-                    try:
-                        pids.append(int(columns[1]))
-                    except ValueError:
-                        continue
-            return pids
+            from .paths import windows_process_ids
+
+            return windows_process_ids(binary.name, timeout=2) or []
 
         result = subprocess.run(
             ["/usr/bin/pgrep", "-x", binary.name],
@@ -246,6 +233,17 @@ class OverlayManager:
         self._listeners: List[Listener] = []
         self._last_error: Optional[str] = None
         self._last_exit_code: Optional[int] = None
+        # (monotonic time, pids) of the last process-table scan; see `running`.
+        self._external_scan: Optional[Tuple[float, List[int]]] = None
+        # ((mtime_ns, size), enabled) of the settings file as last read.
+        self._enabled_cache: Optional[Tuple[Tuple[int, int], bool]] = None
+
+    #: How long a process-table scan is trusted by `running`/`status()`. The
+    #: tray asks every 3 s; each scan spawns pgrep+ps (tasklist on Windows),
+    #: so without this an overlay the tracker does not own (disabled, quit, or
+    #: handed off) cost a process spawn every poll. Transitions (start, stop,
+    #: a child exiting) always scan afresh.
+    EXTERNAL_SCAN_SECONDS = 30.0
 
     # -- discovery ---------------------------------------------------------
 
@@ -261,13 +259,45 @@ class OverlayManager:
 
     @property
     def enabled(self) -> bool:
-        return load_overlay_enabled(self._settings_path)
+        path = self._settings_path or _settings_path()
+        try:
+            stat = path.stat()
+            stamp: Optional[Tuple[int, int]] = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            stamp = None
+        cached = self._enabled_cache
+        if stamp is not None and cached is not None and cached[0] == stamp:
+            return cached[1]
+        value = load_overlay_enabled(path)
+        self._enabled_cache = (stamp, value) if stamp is not None else None
+        return value
 
     @property
     def running(self) -> bool:
         with self._lock:
             self._reap()
-            return self._process is not None or bool(self._external_process_ids())
+            if self._process is not None:
+                return True
+            return bool(self._recent_external_process_ids())
+
+    @property
+    def running_now(self) -> bool:
+        """`running` from a fresh process-table scan, for a decision that must
+        not act on a scan up to EXTERNAL_SCAN_SECONDS old (the tray's toggle)."""
+        with self._lock:
+            self._reap()
+            if self._process is not None:
+                return True
+            return bool(self._external_process_ids())
+
+    def _recent_external_process_ids(self) -> List[int]:
+        """The last process-table scan, repeated once it is older than
+        EXTERNAL_SCAN_SECONDS (callers hold the lock)."""
+        now = time.monotonic()
+        scan = self._external_scan
+        if scan is not None and now - scan[0] < self.EXTERNAL_SCAN_SECONDS:
+            return scan[1]
+        return self._external_process_ids()
 
     @property
     def log_path(self) -> Path:
@@ -451,6 +481,8 @@ class OverlayManager:
                 self._process_killer(pid)
             except OSError:
                 pass
+        with self._lock:
+            self._external_scan = None
         self._close_stderr()
 
     def _close_stderr(self) -> None:
@@ -490,13 +522,16 @@ class OverlayManager:
             self._close_stderr()
 
     def _external_process_ids(self, binary: Optional[Path] = None) -> List[int]:
+        """Scan the process table now; `running` reuses the answer for a while."""
         binary = binary or self.binary
         if binary is None:
             return []
         try:
-            return self._process_finder(binary)
+            pids = self._process_finder(binary)
         except OSError:
-            return []
+            pids = []
+        self._external_scan = (time.monotonic(), pids)
+        return pids
 
     @staticmethod
     def _ensure_executable(binary: Path) -> None:

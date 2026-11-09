@@ -442,7 +442,12 @@ class MenuBarController(QObject):
             self.launcher.start_updater(request_exit=self.signals.update_exit.emit)
             self._sync_update_action(self.updates.status())
             self.launcher.start_tracker(background=True)
-            self._start_overlay(url)
+            try:
+                self._start_overlay(url)
+            except Exception as exc:  # noqa: BLE001 - the overlay is optional
+                # The tracker and dashboard already run; an overlay problem
+                # must not report the whole app as failed or skip the browser.
+                self.log_window.append_text(f"Overlay: could not start ({exc})\n")
             if not self.args.no_browser:
                 QTimer.singleShot(350, self.open_dashboard)
         except Exception as exc:
@@ -515,7 +520,7 @@ class MenuBarController(QObject):
         self._overlay_timer.start()
 
     def toggle_overlay(self) -> None:
-        turn_on = not self.overlay.running
+        turn_on = not self.overlay.running_now
         status = self.overlay.set_enabled(turn_on)
         if turn_on and not status.get("running"):
             self.tray.showMessage(

@@ -12,6 +12,7 @@ from .format_normalizer import (
     normalize_match_format,
     normalize_match_text,
 )
+from .log_parser import iter_lines_reversed, tail_lines
 from .opening_hand import (
     game_objects_by_instance,
     visible_opening_hand_snapshots,
@@ -1009,11 +1010,9 @@ class TrackerOpeningDeckMixin:
         if not force:
             self._metadata_backfilled = True
         try:
-            with open(self.parser.log_path, "r", encoding="utf-8", errors="ignore") as f:
-                lines = f.readlines()
+            tail = tail_lines(self.parser.log_path, max_lines)
         except Exception:
             return
-        tail = lines[-max_lines:] if len(lines) > max_lines else lines
         end_markers = (
             "matchcompleted",
             "gamecompleted",
@@ -1047,12 +1046,13 @@ class TrackerOpeningDeckMixin:
     def _refresh_current_match_room_metadata(self) -> bool:
         """Re-read the latest match-room state and apply it only when it is active."""
         try:
-            with open(self.parser.log_path, "r", encoding="utf-8", errors="ignore") as f:
-                lines = f.readlines()
+            # Newest first, read from the file's end: the room event is a few
+            # lines back at most, and the log may be hundreds of MB.
+            lines = iter_lines_reversed(self.parser.log_path)
         except Exception:
             return False
 
-        for raw_line in reversed(lines):
+        for raw_line in lines:
             if "matchGameRoomStateChangedEvent" not in raw_line:
                 continue
             line = raw_line.rstrip("\n")
@@ -1658,6 +1658,7 @@ class TrackerOpeningDeckMixin:
                     renamed[int(details["new_id"])] = int(details["orig_id"])
             elif "AnnotationType_ZoneTransfer" in types:
                 transfers.append((annotation.get("affectedIds") or [], details))
+
         def zone(value: Any) -> Optional[Dict[str, Any]]:
             return zones.get(int(value)) if value is not None else None
 
