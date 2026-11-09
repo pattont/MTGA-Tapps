@@ -61,12 +61,12 @@ export function inGameState(): OverlayState {
 }
 
 export function inGamePayload(): OverlayPayload {
-  return { tracker: { state: 'live', updated_at: '2026-09-02T18:00:00Z', session_id: 's1' }, state: inGameState(), head_to_head: { wins: 1, losses: 2 } };
+  return { tracker: { state: 'live', session_id: 's1' }, state: inGameState(), head_to_head: { wins: 1, losses: 2 } };
 }
 
 export function idlePayload(): OverlayPayload {
   return {
-    tracker: { state: 'idle', updated_at: null, session_id: 's1' },
+    tracker: { state: 'idle', session_id: 's1' },
     state: { ...inGameState(), game_active: false, deck_name: null, opponent_name: null, turn_number: null, cards: [], library_size: 0, deck_size: 0, lands_left: 0, lands_total: 0, land_odds: { '1': 0, '2': 0, '3': 0 } },
     head_to_head: null,
   };
@@ -78,7 +78,7 @@ export function sessionRecord(): NonNullable<OverlayPayload['session']> {
 }
 
 export function offlinePayload(): OverlayPayload {
-  return { tracker: { state: 'offline', updated_at: null, session_id: null }, state: null, head_to_head: null };
+  return { tracker: { state: 'offline', session_id: null }, state: null, head_to_head: null };
 }
 
 export function brawlState(): OverlayState {

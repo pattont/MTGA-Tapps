@@ -835,9 +835,11 @@ class ReplayCaptureMixin:
         if fact.payload.pop("_consumed", False):
             self._replay_note_move(state, fact)
             return
-        if (self.game_state.turn_number or 0) < 1:
+        if (self.game_state.turn_number or 0) < 1 and fact.zone_to != "battlefield":
             # Pre-game re-deals and London-mulligan bottoms: the opening hand
-            # snapshot written when turn 1 starts already reflects them.
+            # snapshot written when turn 1 starts already reflects them. A
+            # card put onto the battlefield from the opening hand (Leyline
+            # Axe) is kept: the board starts with it.
             return
         reason = fact.payload.get("reason")
         if not self._replay_attach(fact, start, _ACCEPT_STYLES.get(str(reason), ())):

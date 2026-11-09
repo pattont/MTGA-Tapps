@@ -202,6 +202,55 @@ def _zone(value: Any) -> str:
 _HOISTABLE_KINDS = ("untap", "tap", "unsick", "sick", "phase", "pt", "counter")
 
 
+_HEADER_TURN_RE = re.compile(r"^\s*Turn (\d+) - ")
+
+
+def _header_turn(text: Any) -> Optional[int]:
+    """The turn number a printed turn header names ("Turn 1 - YOUR TURN")."""
+    match = _HEADER_TURN_RE.match(str(text or ""))
+    return int(match.group(1)) if match else None
+
+
+def _settle_premature_first_turn(
+    rows: List[Dict[str, Any]], timings: Iterable[Dict[str, Any]] = ()
+) -> List[Dict[str, Any]]:
+    """Move a first turn header printed before the opening hands after them.
+
+    Before the tracker knew Arena's pregame window, a card leaving the
+    opening hand before turn 1 (Leyline Axe) printed "Turn 1" early, with no
+    turn number, and the real header was never printed (issue #55). The
+    kept hands, recorded when turn 1 really began, then followed it, so the
+    replay showed T0 and counted both hands as draws. The header belongs
+    after them; Arena's turn timing names who was active.
+    """
+    first = next((i for i, row in enumerate(rows) if row.get("event_subtype") == "turn"), None)
+    if first is None or rows[first].get("turn_number") is not None:
+        return rows
+    last_opening = None
+    for index in range(first + 1, len(rows)):
+        row = rows[index]
+        if row.get("event_subtype") == "turn":
+            break
+        if row.get("event_subtype") == "move" and _payload(row).get("opening"):
+            last_opening = index
+    if last_opening is None:
+        return rows
+    header = dict(rows[first])
+    turn = _header_turn(header.get("text")) or 1
+    header["turn_number"] = turn
+    for timing in timings:
+        if _int(timing.get("turn_number")) == turn and _int(timing.get("seat_id")) in (1, 2):
+            payload = dict(_payload(header))
+            payload["active_seat"] = _int(timing.get("seat_id"))
+            header["payload_json"] = json.dumps(payload)
+            header["seat_id"] = payload["active_seat"]
+            break
+    out = list(rows)
+    out.pop(first)
+    out.insert(last_opening, header)
+    return out
+
+
 def _hoist_turn_headers(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Move each ``turn`` row before the silent state rows of that same turn.
 
@@ -742,6 +791,47 @@ def _reconnect_lost_arrivals(rows: List[Dict[str, Any]]) -> Tuple[List[Dict[str,
     return out, changed
 
 
+_REVEALED_LINE = re.compile(r"revealed (\[.+\]) from (\w+)\s*$")
+
+
+def _hand_reveal_rows(rows: List[Dict[str, Any]]) -> Set[int]:
+    """``id()`` of each reveal row showing a card in a hand (Thoughtseize, Duress).
+
+    Newer rows carry the proxy's zone in ``zone_from``. Older ones are matched
+    to the console line printed after them, "revealed [A], [B] from hand".
+    """
+    found: Set[int] = set()
+    pending: List[Dict[str, Any]] = []
+    for row in rows:
+        if row.get("event_subtype") == "reveal":
+            zone = row.get("zone_from")
+            if zone:
+                if _zone(zone) == "hand":
+                    found.add(id(row))
+            else:
+                pending.append(row)
+            continue
+        if row.get("event_subtype") == "turn":
+            pending = []
+        if row.get("visible", 1) in (0, "0", False):
+            continue
+        # The line prints once the whole message is handled, after its other lines.
+        match = _REVEALED_LINE.search(str(row.get("text") or ""))
+        if not match:
+            continue
+        if match.group(2) == "hand":
+            names = re.findall(r"\[([^\]]+)\]", match.group(1))
+            seat = _int(row.get("seat_id"))
+            for reveal in pending:
+                name = _payload(reveal).get("name")
+                same_seat = seat is None or _int(reveal.get("seat_id")) in (None, seat)
+                if name in names and same_seat:
+                    names.remove(name)
+                    found.add(id(reveal))
+        pending = []
+    return found
+
+
 class RecordedBuilder:
     """Single-use: ``RecordedBuilder(rows).run()`` returns the stream."""
 
@@ -781,6 +871,12 @@ class RecordedBuilder:
         self.learned_arena: Dict[str, int] = {}
         self._pending_ability: Optional[str] = None
         self.explicit_close: Dict[str, Any] = {}
+        #: Reveal rows that show a hand card, and the first name each object
+        #: shows anywhere in the game (see ``_on_reveal``).
+        self.hand_reveals: Set[int] = set()
+        self.first_name: Dict[str, str] = {}
+        #: Hand cards already given a reveal in the current message.
+        self._revealed_now: Set[str] = set()
 
     # -- helpers ---------------------------------------------------------
 
@@ -902,6 +998,7 @@ class RecordedBuilder:
                 mulligan_rows.append(row)
                 consumed.add(id(row))
         self._add_bottomed(rows, first_turn, opening_rows, mulligan_rows)
+        self._add_pregame_departures(rows, first_turn, opening_rows)
 
         player = self.participants.get("player") or {}
         opponent = self.participants.get("opponent") or {}
@@ -1011,6 +1108,39 @@ class RecordedBuilder:
             ):
                 opening_rows.setdefault(seat, []).append(row)
                 to_bottom[seat] -= 1
+
+    def _add_pregame_departures(
+        self,
+        rows: List[Dict[str, Any]],
+        first_turn: int,
+        opening_rows: Dict[int, List[Dict[str, Any]]],
+    ) -> None:
+        """Deal the cards that left the opening hand before turn 1 into it.
+
+        A Leyline Axe moves from the kept hand to the battlefield before the
+        first turn, and the hands recorded when turn 1 begins no longer hold
+        it. Without it the hand runs short by those cards (issue #55).
+        """
+        if not any(opening_rows.values()):
+            return
+        dealt = {
+            _obj(row.get("object_id")) for seat_rows in opening_rows.values() for row in seat_rows
+        }
+        for row in rows[:first_turn]:
+            obj = _obj(row.get("object_id"))
+            if (
+                obj is None
+                or obj in dealt
+                or row.get("event_subtype") != "move"
+                or _zone(row.get("zone_from")) != "hand"
+                or _zone(row.get("zone_to")) != "battlefield"
+            ):
+                continue
+            seat = self._seat(row, self.player_seat)
+            if seat is None:
+                continue
+            opening_rows.setdefault(seat, []).append(row)
+            dealt.add(obj)
 
     def _synthesize_hands(
         self, rows: List[Dict[str, Any]], player: Dict[str, Any], opponent: Dict[str, Any]
@@ -1123,6 +1253,7 @@ class RecordedBuilder:
     def run(self) -> Dict[str, Any]:
         rows = list(self.rows.get("game_events") or [])
         rows.sort(key=lambda row: (str(row.get("event_time") or ""), row.get("id") or 0))
+        rows = _settle_premature_first_turn(rows, self.rows.get("game_turns") or [])
         rows = _hoist_turn_headers(rows)
         rows = _hoist_token_creations(rows)
         rows = _hoist_battlefield_entries(rows)
@@ -1138,6 +1269,16 @@ class RecordedBuilder:
             for row in rows
             if row.get("event_subtype") in STACK_CLOSE_KINDS and _payload(row).get("stack_id")
         }
+        self.hand_reveals = _hand_reveal_rows(rows)
+        for row in rows:
+            obj = _obj(row.get("object_id"))
+            if obj is None or obj in self.first_name:
+                continue
+            if row.get("event_subtype") not in ("move", "stack_push", "identity", "reveal"):
+                continue
+            name = self._row_name(row)
+            if name:
+                self.first_name[obj] = name
         consumed = self._opening(rows)
         has_game_end = False
         for row in rows:
@@ -1154,6 +1295,8 @@ class RecordedBuilder:
         self.log.at(
             row.get("elapsed_seconds"), row.get("turn_number"), row.get("phase"), row.get("step")
         )
+        if visible:
+            self._revealed_now = set()
         handler = getattr(self, f"_on_{kind}", None)
         self._pending_ability = None
         primary = handler(row, _payload(row)) if handler is not None else None
@@ -1171,7 +1314,7 @@ class RecordedBuilder:
     def _on_turn(self, row, payload):
         for stack_id in list(self.open_stack):
             self._close_item(stack_id, "stack_resolve")
-        turn = _int(row.get("turn_number")) or self.log.turn
+        turn = _int(row.get("turn_number")) or _header_turn(row.get("text")) or self.log.turn
         self.log.turn = turn
         active = _int(payload.get("active_seat")) or self._seat(row) or self.player_seat
         return self.log.emit("turn", turn=turn, active_seat=active)
@@ -1428,9 +1571,52 @@ class RecordedBuilder:
             # Arena reveals through proxy objects (GameObjectType_RevealedCard)
             # that never enter a zone the board shows; a reveal of an object
             # no row ever placed would only plant a phantom card.
-            return None
+            if id(row) not in self.hand_reveals:
+                return None
+            obj = self._hand_card_for(self._seat(row), self._row_name(row))
+            if obj is None or self.card_of.get(obj) is not None:
+                return None
         self.card_of[obj] = card
         return self.log.emit("reveal", obj=obj, card=card)
+
+    def _row_name(self, row: Dict[str, Any]) -> Optional[str]:
+        name = _payload(row).get("name")
+        if not name:
+            arena = _int(row.get("arena_id"))
+            name = (self.card_rows_by_arena.get(arena) or {}).get("name") if arena else None
+        if not name or is_unknown_card_name(str(name)):
+            return None
+        return str(name)
+
+    def _hand_card_for(self, seat: Optional[int], name: Optional[str]) -> Optional[str]:
+        """The card in ``seat``'s hand a revealed proxy shows.
+
+        The proxy names no card, so pick, in order: a hand card already known
+        to be this card, one the game later shows to be it, then one it never
+        identifies. A hand card is given out once per message.
+        """
+        if seat is None or not name:
+            return None
+        hand = [
+            obj
+            for obj, zone in self.zone_of.items()
+            if zone == "hand" and self.owner_of.get(obj) == seat and obj not in self._revealed_now
+        ]
+
+        def known(obj: str) -> Optional[str]:
+            card = self.card_of.get(obj)
+            return (self.cards.cards.get(card) or {}).get("name") if card else None
+
+        unknown = [obj for obj in hand if known(obj) is None]
+        for choice in (
+            [obj for obj in hand if known(obj) == name],
+            [obj for obj in unknown if self.first_name.get(obj) == name],
+            [obj for obj in unknown if obj not in self.first_name],
+        ):
+            if choice:
+                self._revealed_now.add(choice[0])
+                return choice[0]
+        return None
 
     def _on_scry(self, row, payload):
         seat = self._seat(row, self.player_seat)

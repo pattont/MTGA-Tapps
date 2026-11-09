@@ -1,6 +1,6 @@
 /** Sample data for `demo=1`, so streamers can place sources with no game running. */
 
-import type { LiveGameRow, LivePayload } from '../api';
+import type { LiveGameRow, LivePayload, LiveSeenCard } from '../api';
 import type { OverlayCard, OverlayPayload, OverlaySideCard } from './types';
 
 function card(
@@ -88,7 +88,7 @@ function game(
   deck = 'Mono-Green Stompy',
 ): LiveGameRow {
   return {
-    id: `demo-${n}`,
+    id: `demo:match:${n}:game:${gameNumber}`,
     started_at: null,
     outcome,
     outcome_reason: null,
@@ -115,8 +115,29 @@ const DEMO_GAMES: LiveGameRow[] = [
   game(1, 'win', 1, 'ElfballEnjoyer', 7, 10, 1, 'Golgari Midrange (Duskmourn Brew v3)'),
 ];
 
+function seen(name: string, type: string, mana_cost: string | null, mana_value: number | null, count = 1): LiveSeenCard {
+  return { name, type, mana_cost, mana_value, count };
+}
+
+/** Local time `seconds` ago, as the tracker writes it. */
+function ago(seconds: number): string {
+  return new Date(Date.now() - seconds * 1000).toISOString();
+}
+
+/** What a Dimir opponent has shown by turn 5. */
+const DEMO_SEEN: LiveSeenCard[] = [
+  seen('Watery Grave', 'Land', null, null),
+  seen('Island', 'Land', null, null, 2),
+  seen('Deep-Cavern Bat', 'Creature', '{1}{B}', 2),
+  seen('Cut Down', 'Instant', '{B}', 1, 2),
+  seen('Swamp', 'Land', null, null),
+  seen('Preacher of the Schism', 'Creature', '{2}{B}', 3),
+  seen('Go for the Throat', 'Instant', '{1}{B}', 2),
+  seen('Kaito, Bane of Nightmares', 'Planeswalker', '{2}{U}{B}', 4),
+];
+
 export const DEMO_LIVE: LivePayload = {
-  tracker: { state: 'live', updated_at: null, session_id: 'demo' },
+  tracker: { state: 'live', session_id: 'demo' },
   now: {
     in_game: true,
     last_game_frozen: false,
@@ -135,12 +156,26 @@ export const DEMO_LIVE: LivePayload = {
     opponent_life: 12,
     mulligans: 0,
     game_started_at: null,
+    turn_started_at: ago(42),
     player_commanders: [],
     opponent_commanders: [],
     player_colors: 'G',
     opponent_colors: 'UB',
     head_to_head: { wins: 2, losses: 1 },
-    deck_record: { wins: 34, losses: 21, win_rate: 61.8, today_wins: 4, today_losses: 1 },
+    deck_record: {
+      wins: 34,
+      losses: 21,
+      win_rate: 61.8,
+      today_wins: 4,
+      today_losses: 1,
+      session_wins: 3,
+      session_losses: 1,
+      ranked: { wins: 22, losses: 12 },
+      unranked: { wins: 12, losses: 9 },
+      play: { wins: 19, losses: 9 },
+      draw: { wins: 15, losses: 12 },
+      recent: ['win', 'win', 'win', 'loss', 'win', 'loss', 'win', 'win', 'loss', 'win'],
+    },
     rank: {
       rank_format: 'constructed',
       rank_class: 'Diamond',
@@ -149,18 +184,57 @@ export const DEMO_LIVE: LivePayload = {
       rank_steps: 6,
       mythic_percentile: null,
       mythic_rank: null,
+      start: {
+        rank_class: 'Diamond',
+        rank_level: 4,
+        rank_step: 1,
+        rank_steps: 6,
+        mythic_percentile: null,
+        mythic_rank: null,
+      },
+    },
+    match_score: { wins: 1, losses: 0, draws: 0 },
+    opponent_seen: DEMO_SEEN,
+    draw_quality: {
+      lands_seen: 5,
+      total_cards_seen: 12,
+      ramped_lands: 0,
+      expected_lands_seen: 4.4,
+      expected_land_rate: 36.7,
+      deck_size: 60,
+      deck_lands: 22,
+      flood_probability_pct: 36.2,
+      screw_probability_pct: 85.1,
+      is_flood: false,
+      is_screw: false,
+      is_land_streak: false,
+      reason: null,
+      next_land_pct: 32.6,
+      library_size: 46,
+      lands_left: 15,
     },
     archetype_guess: { archetype: 'Dimir Midrange', matched_cards: 4, wins: 7, losses: 5 },
   },
   session: {
     id: 'demo',
-    started_at: '',
+    started_at: ago(2 * 3600 + 14 * 60),
     games_played: 8,
     wins: 6,
     losses: 2,
     draws: 0,
     runtime_seconds: null,
     win_rate: 75,
+    play: { wins: 4, losses: 1 },
+    draw: { wins: 2, losses: 1 },
+  },
+  today: {
+    games: 11,
+    wins: 8,
+    losses: 3,
+    draws: 0,
+    win_rate: 72.7,
+    play: { wins: 5, losses: 1 },
+    draw: { wins: 3, losses: 2 },
   },
   games: DEMO_GAMES,
   events: [],
@@ -174,3 +248,6 @@ export const DEMO_CASTS: Array<{ name: string; role: 'player' | 'opponent' }> = 
   { name: 'Sentinel of the Nameless City', role: 'player' },
   { name: 'Preacher of the Schism', role: 'opponent' },
 ];
+
+/** The game the result widget shows in demo mode: a win on the draw. */
+export const DEMO_RESULT: LiveGameRow = DEMO_GAMES[1];

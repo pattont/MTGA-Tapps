@@ -2,11 +2,18 @@ import type { CSSProperties } from 'react';
 import { useEffect } from 'react';
 import { PRODUCT_NAME } from '../branding';
 import { WIDGETS, type StreamOptions } from './options';
+import { usePreviewOptions } from './previewSync';
+import { BreakWidget } from './widgets/BreakWidget';
+import { DeckStatsWidget } from './widgets/DeckStatsWidget';
 import { DeckWidget } from './widgets/DeckWidget';
 import { GamesWidget } from './widgets/GamesWidget';
+import { LandsWidget } from './widgets/LandsWidget';
 import { MatchupWidget } from './widgets/MatchupWidget';
+import { OpponentWidget } from './widgets/OpponentWidget';
 import { OverlayWidget } from './widgets/OverlayWidget';
 import { RecordWidget } from './widgets/RecordWidget';
+import { ResultWidget } from './widgets/ResultWidget';
+import { ScorebugWidget } from './widgets/ScorebugWidget';
 import { SpotlightWidget } from './widgets/SpotlightWidget';
 
 function Widget({ options }: { options: StreamOptions }) {
@@ -23,6 +30,18 @@ function Widget({ options }: { options: StreamOptions }) {
       return <MatchupWidget options={options} />;
     case 'spotlight':
       return <SpotlightWidget options={options} />;
+    case 'scorebug':
+      return <ScorebugWidget options={options} />;
+    case 'result':
+      return <ResultWidget options={options} />;
+    case 'opponent':
+      return <OpponentWidget options={options} />;
+    case 'lands':
+      return <LandsWidget options={options} />;
+    case 'break':
+      return <BreakWidget options={options} />;
+    case 'deckstats':
+      return <DeckStatsWidget options={options} />;
     default:
       return (
         <div className="sk-panel sk-help">
@@ -48,4 +67,9 @@ export function StreamApp({ options }: { options: StreamOptions }) {
       <Widget options={options} />
     </div>
   );
+}
+
+/** The page's root: options from the address, followed live by a preview tab. */
+export function StreamRoot() {
+  return <StreamApp options={usePreviewOptions(window.location.search)} />;
 }

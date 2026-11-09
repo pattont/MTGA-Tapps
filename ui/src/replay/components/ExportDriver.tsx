@@ -15,7 +15,7 @@ import type { FrameLayout } from '../export/frameComposer';
 import { buildFrameInput } from '../export/frameInput';
 import type { FrameSource } from '../export/frameInput';
 import { createMp4Encoder, estimateBytes } from '../export/mp4Encoder';
-import type { VideoQuality } from '../export/mp4Encoder';
+import type { VideoFormat, VideoQuality } from '../export/mp4Encoder';
 import { exportFileName } from '../export/videoPlan';
 import type { VideoPlan } from '../export/videoPlan';
 import { buildLogItems } from '../logText';
@@ -33,6 +33,7 @@ export interface ExportJob {
   /** Draw the actions log beside the table (else the current action is a caption). */
   includeLog: boolean;
   quality: VideoQuality;
+  format: VideoFormat;
 }
 
 export interface ExportProgress {
@@ -139,7 +140,7 @@ export function ExportDriver(props: ExportDriverProps) {
         while (latest.current.state.seq !== clock.snapshot.seq && performance.now() < deadline) await sleep(0);
       };
 
-      const encoder = await createMp4Encoder({ width: layout.width, height: layout.height, fps: plan.fps, quality: job.quality });
+      const encoder = await createMp4Encoder({ width: layout.width, height: layout.height, fps: plan.fps, quality: job.quality, format: job.format });
       const startSeq = clock.seq;
       const wasPlaying = clock.isPlaying;
       clock.pause();

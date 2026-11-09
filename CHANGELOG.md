@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.7.7
+
+**Six new Stream Kit widgets, a faster and lighter tracker, and fixes for dates, collection export and Leyline replays.**
+
+### Stream Kit
+
+- **Six new widgets** (Settings → Streaming):
+  - **Scorebug:** both players, life totals that flash on a change, the turn with a timer, and the Bo3 score.
+  - **Deck stats:** your deck's win rate and record, ranked/casual and play/draw splits, and the last 10 games.
+  - **What they're on:** the opponent's likely deck, your record against it, and every card they've played this game.
+  - **Flood / screw meter:** lands seen against what your deck should give you, and the chance the next draw is a land.
+  - **Game result:** a Victory or Defeat card for a few seconds after each game.
+  - **Intermission:** a "be right back" card with your record, deck and rank climb.
+- **Record** shows this session or today, with your win rate on the play and on the draw. **Recent games** shows the same split.
+- **Every widget has a Show list**, so you can turn off anything another widget already shows.
+- **Preview follows Settings** as you change a widget's choices.
+- **Long decks scroll** instead of running off the bottom of the source (a 100-card Brawl deck, for example).
+
+### Faster and lighter
+
+- **Tracking a game uses about a quarter of the CPU it did**, with identical output.
+- **The overlay and tray look for Arena far less often:** the overlay no longer starts a process every second to find it, and it no longer redraws every 5 seconds between games.
+- **Live Scoreboard and Stream Kit** only rebuild their data when something changed, instead of re-reading your history on every poll.
+- **Launch is quicker with a long history:** startup repairs check only games recorded since the last launch.
+- **A smaller database:** raw console text is kept for 30 days instead of forever. Game timelines, replays and turn timings are unaffected. The first launch after updating compacts the database once.
+- **Less work while Arena is closed**, and the Overview stops refreshing behind Live Scoreboard and Settings.
+
+### Reset
+
+- **Reset has its own page**, linked from Settings beside Database health. It lists what a reset deletes and what stays, and suggests a backup first.
+- **Close MTG Arena before resetting**, so no match is left half recorded.
+- A reset now also clears scry history, and your session record starts from zero without restarting the app.
+
+### Buy on Paper
+
+- TCGplayer links use Tapps Tracker's affiliate link, with a note saying so, and open TCGplayer's current Mass Entry page.
+
+### Fixes
+
+- **Dates no longer swap month and day** ([#51](https://github.com/pattont/MTGA-Tapps/issues/51)) when Windows' date format doesn't match how Arena writes its log. Games stored with swapped dates are repaired at the next launch.
+- **Collection export finds more collections** ([#52](https://github.com/pattont/MTGA-Tapps/issues/52)), including for players with only Brawl or other singleton decks. A failed scan says what it saw.
+- **Games that start with a Leyline** ([#55](https://github.com/pattont/MTGA-Tapps/issues/55)) replay from turn 1, and the Leyline no longer counts as a draw or a mulligan or adds a second "Turn 1" to the live log. Existing replays are fixed too.
+- **Startup no longer fails on some non-English Windows** (German, for example) with "'NoneType' object has no attribute 'splitlines'".
+- **Replays show hand cards revealed by Thoughtseize or Duress** from that moment on, even with Hindsight off. Hindsight now explains what it does.
+- **Replay video export works in Firefox on Windows**, which failed with "Timestamps must be monotonically increasing". A new **Format** choice offers H.264 (plays everywhere) or VP9 (sharper in Chrome and Edge).
+- Live Scoreboard's "with this deck" record counts the finished game while it's shown between games.
+
 ## 0.7.6
 
 **A much better Deck Manager, a more accurate live log, and replay video export in Firefox.**

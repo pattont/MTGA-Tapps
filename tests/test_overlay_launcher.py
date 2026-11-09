@@ -400,3 +400,64 @@ def test_windows_app_control_block_gets_a_readable_error(tmp_path):
 
     assert manager.start() is False
     assert "Smart App Control" in manager.status()["error"]
+
+
+def test_running_reuses_a_recent_process_scan_but_decisions_scan_afresh(tmp_path):
+    """The tray asks `running` every 3 s; each scan spawns pgrep/tasklist, so
+    a scan is trusted for a while. Start, stop, and the toggle's `running_now`
+    always look again."""
+    binary = _fake_binary(tmp_path)
+    external_pids = [4321]
+    scans = []
+
+    def finder(_binary):
+        scans.append(list(external_pids))
+        return list(external_pids)
+
+    manager = OverlayManager(
+        binary=binary,
+        settings_path=tmp_path / "settings.json",
+        popen=lambda *args, **kwargs: FakeProcess(*args, **kwargs),
+        log_dir=tmp_path,
+        process_finder=finder,
+        process_killer=lambda pid: external_pids.remove(pid),
+    )
+
+    assert manager.running is True
+    assert manager.status()["running"] is True
+    assert manager.running is True
+    assert len(scans) == 1  # three questions, one scan
+
+    external_pids.clear()  # the player quit that overlay from its own menu
+    assert manager.running is True  # still the trusted answer...
+    assert manager.running_now is False  # ...but a decision looks for itself
+    assert len(scans) == 2
+    assert manager.running is False  # and `running` now shares the fresh answer
+
+    external_pids.append(4321)
+    assert manager.set_enabled(True)["running"] is True  # start() scanned afresh
+    assert manager._process is None
+    manager.set_enabled(False)  # stop() scans, kills, and forgets the scan
+    assert external_pids == []
+    assert manager.running is False
+    assert manager.enabled is False
+
+
+def test_enabled_rereads_settings_only_when_the_file_changes(tmp_path, monkeypatch):
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"overlay": {"enabled": False}}))
+    manager = OverlayManager(binary=_fake_binary(tmp_path), settings_path=settings)
+    reads = []
+    real = overlay_launcher.load_overlay_enabled
+
+    def counting(path=None):
+        reads.append(path)
+        return real(path)
+
+    monkeypatch.setattr(overlay_launcher, "load_overlay_enabled", counting)
+    assert manager.enabled is False
+    assert manager.enabled is False
+    assert len(reads) == 1
+    overlay_launcher.save_overlay_enabled(True, settings)
+    assert manager.enabled is True
+    assert len(reads) == 2

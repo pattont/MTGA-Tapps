@@ -294,3 +294,44 @@ def test_current_platform_key(monkeypatch):
     ):
         monkeypatch.setattr(sys, "platform", raw)
         assert paths_mod.current_platform_key() == key
+
+
+def test_tasklist_output_is_read_as_bytes_so_localized_windows_cannot_crash(monkeypatch):
+    """German tasklist says "ausgeführt", 0x81 in the console code page and
+    undefined in cp1252. Decoded as text on Windows, that failure left
+    stdout None and startup died with "'NoneType' object has no attribute
+    'splitlines'"."""
+    import sys
+    from types import SimpleNamespace
+
+    import pytest
+
+    german = (
+        "INFORMATION: Es werden keine Tasks ausgeführt, die den angegebenen Kriterien "
+        "entsprechen.\r\n"
+    ).encode("cp850")
+    with pytest.raises(UnicodeDecodeError):
+        german.decode("cp1252")
+    monkeypatch.setattr(sys, "platform", "win32")
+    seen = []
+
+    def run(args, **kwargs):
+        seen.append(kwargs)
+        return SimpleNamespace(returncode=0, stdout=german)
+
+    assert paths_mod.windows_process_ids("tapps-overlay.exe", run=run) == []
+    assert "text" not in seen[0] and "encoding" not in seen[0]
+
+    running = b'"tapps-overlay.exe","4321","Console","1","18.240 K"\r\n' + german
+    assert paths_mod.windows_process_ids(
+        "tapps-overlay.exe", run=lambda *a, **k: SimpleNamespace(returncode=0, stdout=running)
+    ) == [4321]
+    # A reader-thread failure that still left stdout None reads as nothing running.
+    assert (
+        paths_mod.windows_process_ids(
+            "MTGA.exe", run=lambda *a, **k: SimpleNamespace(returncode=0, stdout=None)
+        )
+        == []
+    )
+    monkeypatch.setattr(paths_mod.platform, "system", lambda: "Windows")
+    assert paths_mod.arena_process_running(run=run) is False

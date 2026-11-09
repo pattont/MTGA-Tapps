@@ -1,16 +1,9 @@
 import type { LiveNow } from '../../api';
-import { colorComboLabel } from '../../colorCombos';
 import { ColorPips } from '../../components/ColorPips';
-import type { StreamOptions } from '../options';
+import { opponentDeck } from '../liveView';
+import { shows, type StreamOptions } from '../options';
 import { useLiveSnapshot } from '../useLive';
 import { Brand } from './Brand';
-
-/** What the opponent is on: Brawl commanders, else the archetype guess, else their colors. */
-function opponentDeck(now: LiveNow): string | null {
-  if (now.opponent_commanders.length > 0) return now.opponent_commanders.join(' + ');
-  if (now.archetype_guess?.archetype) return now.archetype_guess.archetype;
-  return colorComboLabel(now.opponent_colors);
-}
 
 export function MatchupView({ now, options }: { now: LiveNow; options: StreamOptions }) {
   const deck = opponentDeck(now);
@@ -27,14 +20,14 @@ export function MatchupView({ now, options }: { now: LiveNow; options: StreamOpt
       </div>
       <div className="sk-arch">{deck ?? 'Deck not revealed yet'}</div>
       <div className="sk-chips">
-        {now.on_play != null ? (
+        {shows(options, 'order') && now.on_play != null ? (
           <span className={`sk-chip ${now.on_play ? 'sk-chip-play' : 'sk-chip-draw'}`}>
             {now.on_play ? 'On the play' : 'On the draw'}
           </span>
         ) : null}
-        {bo3 && now.game_number ? <span className="sk-chip">Game {now.game_number} of 3</span> : null}
-        {now.turn_number ? <span className="sk-chip">Turn {now.turn_number}</span> : null}
-        {h2h && h2h.wins + h2h.losses > 0 ? (
+        {shows(options, 'game') && bo3 && now.game_number ? <span className="sk-chip">Game {now.game_number} of 3</span> : null}
+        {shows(options, 'turn') && now.turn_number ? <span className="sk-chip">Turn {now.turn_number}</span> : null}
+        {shows(options, 'h2h') && h2h && h2h.wins + h2h.losses > 0 ? (
           <span className="sk-chip">
             Head-to-head {h2h.wins}–{h2h.losses}
           </span>

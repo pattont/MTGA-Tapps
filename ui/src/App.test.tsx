@@ -821,6 +821,26 @@ describe('App', () => {
     window.location.hash = '';
   });
 
+  it('opens Reset Tracker Data on its own page with only the way back in the sidebar', async () => {
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(
+      async () => new Response(JSON.stringify(snapshot), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    window.location.hash = '#/reset';
+    render(<App />);
+
+    expect(
+      await screen.findByRole('heading', { level: 2, name: 'Reset Tracker Data' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'What gets deleted' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Back to dashboard/ })).toHaveAttribute('href', '#overview');
+    expect(screen.queryByRole('link', { name: 'Findings' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Findings' })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/snapshot'))).toBe(false);
+    expect(document.title).toContain('Reset Tracker Data');
+    window.location.hash = '';
+  });
+
   it('leaves the replay player instantly from the dashboard nav, while playing and after a seek', async () => {
     // Regression: on the replay player the sidebar keeps the dashboard's
     // section links, which only replaceState'd the hash (no hashchange), so
@@ -2313,7 +2333,9 @@ describe('App', () => {
   });
 
   it('refetches with query params when filters change', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify(snapshot), { status: 200 }));
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(
+      async () => new Response(JSON.stringify(snapshot), { status: 200 }),
+    );
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     render(<App />);
@@ -2339,7 +2361,9 @@ describe('App', () => {
   });
 
   it('changes the trend range independently of the overview period', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify(snapshot), { status: 200 }));
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(
+      async () => new Response(JSON.stringify(snapshot), { status: 200 }),
+    );
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     render(<App />);

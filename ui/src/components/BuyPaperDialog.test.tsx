@@ -206,6 +206,21 @@ describe('BuyPaperDialog', () => {
     expect(JSON.parse(localStorage.getItem('mtga-tracker-buy-paper-v1')!).vendor).toBe('cardkingdom');
   });
 
+  it('opens TCGplayer Mass Entry through the affiliate link and says so', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    render(<BuyPaperDialog sections={sections} onClose={() => {}} returnFocus={null} />);
+    await screen.findByText('Cards');
+    expect(screen.getByText('Buying through TCGplayer earns Tapps Tracker a small commission at no cost to you, which helps support its ongoing development.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Buy @ TCGplayer' }));
+
+    await waitFor(() => expect(open).toHaveBeenCalled());
+    const url = new URL(String(open.mock.calls[0][0]));
+    expect(url.origin).toBe('https://partner.tcgplayer.com');
+    const target = new URL(url.searchParams.get('u')!);
+    expect(target.origin + target.pathname).toBe('https://www.tcgplayer.com/massentry');
+    expect(target.searchParams.get('c')).toBe('4 Opt||20 Island||3 Negate');
+  });
+
   it('opens Mana Pool with the referral code and says so only there', async () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null);
     render(<BuyPaperDialog sections={sections} onClose={() => {}} returnFocus={null} />);

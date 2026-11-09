@@ -683,3 +683,57 @@ def test_export_refuses_to_scan_before_any_game_is_recorded(tmp_path, monkeypatc
     assert raised.value.code == "no_games"
     assert collection_api.recorded_game_count(db) == 0
     assert collection_api.recorded_game_count(tmp_path / "missing.sqlite3") is None
+
+
+def test_derive_anchors_finds_singleton_brawl_cards(tmp_path):
+    # Issue #52: a Brawl-only player has no 4-ofs; their 1-ofs must still
+    # locate the collection. Basics (run more than four times) never anchor.
+    conn = _tracker_db(tmp_path)
+    conn.execute("DELETE FROM game_deck_cards")
+    conn.executemany(
+        "INSERT INTO game_deck_cards VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            ("g1", "p1", 80001, "Sol Ring", "deck", 1),
+            ("g1", "p1", 80002, "Arcane Signet", "deck", 1),
+            ("g1", "p1", 80003, "Command Tower", "deck", 1),
+            ("g1", "p1", 60001, "Forest", "deck", 30),
+        ],
+    )
+    conn.commit()
+    ids = {a.arena_id for a in ce.derive_anchors(conn)}
+    assert ids == {80001, 80002, 80003}
+
+
+def test_derive_anchors_prefers_playsets_and_adds_the_deck_library(tmp_path):
+    conn = _tracker_db(tmp_path)
+    conn.executescript(
+        """
+        INSERT INTO game_deck_cards VALUES ('g1', 'p1', 80001, 'Opt', 'deck', 1);
+        CREATE TABLE managed_decks (id TEXT, current_revision_id TEXT);
+        CREATE TABLE managed_deck_cards (
+            revision_id TEXT, arena_id INTEGER, name TEXT, quantity INTEGER
+        );
+        INSERT INTO managed_decks VALUES ('d1', 'r2');
+        INSERT INTO managed_deck_cards VALUES ('r1', 85555, 'Old Revision Card', 4);
+        INSERT INTO managed_deck_cards VALUES ('r2', 86666, 'Library Card', 2);
+        """
+    )
+    anchors = ce.derive_anchors(conn)
+    ids = [a.arena_id for a in anchors]
+    assert ids[:2] == [90573, 91234]  # 4-ofs first, the two-deck card ahead
+    assert 86666 in ids and 80001 in ids
+    assert 85555 not in ids  # not the deck's current revision
+    assert ids.index(86666) < ids.index(80001)  # 2 copies ahead of 1
+
+
+def test_collection_not_found_reports_what_the_scan_saw(tmp_path):
+    conn = _tracker_db(tmp_path)
+    mem = FakeMemory([(999999, 1)])
+    with pytest.raises(ce.CollectionNotFound) as caught:
+        ce.scan_collection(conn, memory=mem)
+    err = caught.value
+    assert err.anchors == 2
+    round_trip = ce.CollectionNotFound.from_details(err.details())
+    assert (round_trip.anchors, round_trip.largest) == (err.anchors, err.largest)
+    assert "2 of your deck cards" in err.summary()
+    assert "none of your deck cards" in ce.CollectionNotFound().summary()

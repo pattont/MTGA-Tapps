@@ -168,9 +168,9 @@ def _timeline_text_segments(
     text: str, linkable_cards: Set[str] | Dict[str, Optional[str]]
 ) -> List[Dict[str, str]]:
     """Split timeline text into plain text and validated card-name segments."""
-    linkable_card_names = (
-        set(linkable_cards) if isinstance(linkable_cards, dict) else linkable_cards
-    )
+    # Both a set and a dict answer `in`; copying 20k names into a set for
+    # every timeline row was most of the live feed's first-load cost.
+    linkable_card_names = linkable_cards
     segments: List[Dict[str, str]] = []
     cursor = 0
     for match in _BRACKET_CONTENT_RE.finditer(text):
@@ -3603,6 +3603,7 @@ RESET_TABLES = (
     "game_participant_stats",
     "game_turns",
     "game_events",
+    "game_library_events",
     "game_deck_cards",
     "game_annotations",
     "participant_commanders",
@@ -3614,19 +3615,76 @@ RESET_TABLES = (
     "raw_game_payloads",
     "rank_snapshots",
     "tracker_sessions",
+    "maintenance_state",
+)
+
+#: Tables a reset leaves alone, on purpose. Every table in the schema is in
+#: exactly one of these two lists (a test checks it), so a new table has to
+#: be sorted into one before it ships. live_status keeps its row, but the
+#: reset clears its frozen previous-game scoreboard.
+RESET_KEPT_TABLES = (
+    "cards",
+    "schema_migrations",
+    "sqlite_sequence",
+    "inventory_snapshots",
+    "live_status",
+    "managed_decks",
+    "managed_deck_revisions",
+    "managed_deck_cards",
+    "managed_deck_bindings",
+    "managed_deck_collections",
+    "managed_deck_transfers",
 )
 
 
-def reset_database(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
+class GameInProgress(RuntimeError):
+    """A reset was asked for while the tracker is recording a game."""
+
+
+class ArenaRunning(RuntimeError):
+    """A reset was asked for while MTG Arena is open (or could not be checked)."""
+
+
+def _arena_blocks_reset(arena_probe: Callable[[], Optional[bool]]) -> Optional[str]:
+    """Why Arena's state blocks a reset, or None. Unknown counts as open where
+    a probe exists (macOS, Windows); elsewhere the in-game check stands alone."""
+    from .paths import current_platform_key
+
+    running = arena_probe()
+    if running is True:
+        return "Close MTG Arena before you reset."
+    if running is None and current_platform_key() in ("darwin", "win32"):
+        return "Couldn't tell whether MTG Arena is running. Close it and try again."
+    return None
+
+
+def reset_database(
+    db_path: Path = DEFAULT_DB_PATH,
+    *,
+    arena_probe: Optional[Callable[[], Optional[bool]]] = None,
+) -> Dict[str, Any]:
     """Wipe all tracked history after writing a timestamped backup.
 
     Uses SQLite's online backup API, then empties every stats table (keeping
-    the cards cache and applied schema_migrations) and VACUUMs. Returns the
-    backup path so the UI can tell the user where their old data went.
+    the cards cache, the Deck Manager library and applied schema_migrations)
+    and VACUUMs. Refuses while MTG Arena is open, so no match can be half
+    written, and while a running tracker reports a game in progress.
+    A running tracker notices its session row is gone and starts a new
+    session (`_upsert_session_row`), so the app needs no restart.
+    Returns the backup path so the UI can tell the user where their old data went.
     """
     db_path = Path(db_path).expanduser()
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
+    from .live_api import game_activity
+
+    if arena_probe is None:
+        from .paths import arena_process_running as arena_probe
+    reason = _arena_blocks_reset(arena_probe)
+    if reason:
+        raise ArenaRunning(reason)
+    if game_activity(db_path).get("tracker") == "live":
+        raise GameInProgress("A game is in progress. Reset after it ends.")
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     backup_path = db_path.with_name(f"{db_path.name}.backup.{timestamp}.pre-reset")
     conn = sqlite3.connect(str(db_path), timeout=10)
@@ -3645,6 +3703,10 @@ def reset_database(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
                     conn.execute(f"DELETE FROM {table_name}")
             if "sqlite_sequence" in existing:
                 conn.execute("DELETE FROM sqlite_sequence")
+            if "live_status" in existing and "last_game_json" in {
+                row[1] for row in conn.execute("PRAGMA table_info(live_status)")
+            }:
+                conn.execute("UPDATE live_status SET last_game_json = NULL")
         conn.execute("VACUUM")
         # Fold the (large) post-VACUUM WAL back into the main file so the
         # on-disk size visibly shrinks right away.
@@ -6095,6 +6157,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             try:
                 result = reset_database(self.db_path)
+            except (ArenaRunning, GameInProgress) as exc:
+                _send_bytes(
+                    self,
+                    409,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
             except FileNotFoundError as exc:
                 _send_bytes(
                     self,

@@ -8,12 +8,21 @@ import { ArrayBufferTarget, Muxer, type MuxerOptions } from 'mp4-muxer';
 
 export type VideoQuality = 'small' | 'balanced' | 'best';
 
+/**
+ * H.264 plays everywhere (QuickTime, phones); VP9 plays in browsers, VLC,
+ * Discord and Windows' own player, and is sharper where the browser only has
+ * a software H.264 encoder (Chrome's ignores the bitrate and stays near 1 Mbps).
+ */
+export type VideoFormat = 'h264' | 'vp9';
+
 export interface Mp4EncoderOptions {
   width: number;
   height: number;
   fps: number;
   /** Target bitrate class; 'balanced' when omitted. */
   quality?: VideoQuality;
+  /** Codec to try first; 'h264' when omitted. The other is the fallback. */
+  format?: VideoFormat;
 }
 
 export interface Mp4Encoder {
@@ -34,13 +43,19 @@ export function supportsVideoExport(): boolean {
   return typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
 }
 
-/** Candidate codecs, best first: H.264 High, Main, Baseline, then VP9 in MP4. */
-const CANDIDATES: ReadonlyArray<{ container: 'avc' | 'vp9'; codec: string }> = [
+type Candidate = { container: 'avc' | 'vp9'; codec: string };
+/** H.264 profiles, best first: High, Main, Baseline. */
+const AVC: readonly Candidate[] = [
   { container: 'avc', codec: 'avc1.640028' },
   { container: 'avc', codec: 'avc1.4d0028' },
   { container: 'avc', codec: 'avc1.42001f' },
-  { container: 'vp9', codec: 'vp09.00.40.08' },
 ];
+const VP9: readonly Candidate[] = [{ container: 'vp9', codec: 'vp09.00.40.08' }];
+
+/** Codecs to try, the chosen format first and the other as a fallback. */
+export function candidatesFor(format: VideoFormat = 'h264'): readonly Candidate[] {
+  return format === 'vp9' ? [...VP9, ...AVC] : [...AVC, ...VP9];
+}
 
 /** Bits per pixel per frame and the ceiling for each quality; the table is mostly still, so modest rates look clean. */
 const QUALITY: Record<VideoQuality, { bpp: number; cap: number }> = {
@@ -134,6 +149,43 @@ export function chunkMetadata(
   };
 }
 
+/** One encoded frame, held until the export finishes. */
+export interface HeldChunk {
+  data: Uint8Array;
+  type: 'key' | 'delta';
+  /** Presentation time in microseconds, as the encoder stamped it. */
+  timestamp: number;
+  meta: EncodedVideoChunkMetadata | undefined;
+}
+
+/**
+ * Decode times for chunks in the order the encoder output them. An encoder
+ * that uses B-frames (Firefox's H.264 on Windows) outputs frames in decode
+ * order, so their presentation times go 1, 3, 2, 5, 4…; the MP4 needs decode
+ * times that only rise, each at or before its frame's presentation time.
+ * They are the presentation times sorted, moved back just enough for that.
+ * Frames already in order get their own times back unchanged.
+ */
+export function decodeTimestamps(presentation: readonly number[]): number[] {
+  const decode = [...presentation].sort((a, b) => a - b);
+  for (let i = 1; i < decode.length; i += 1) {
+    if (decode[i] <= decode[i - 1]) decode[i] = decode[i - 1] + 1;
+  }
+  let shift = 0;
+  decode.forEach((time, i) => {
+    shift = Math.max(shift, time - presentation[i]);
+  });
+  return shift ? decode.map((time) => time - shift) : decode;
+}
+
+/** Hands the held chunks to the muxer with decode times that suit any frame order. */
+export function muxChunks(muxer: Muxer<ArrayBufferTarget>, chunks: readonly HeldChunk[], frameMicros: number): void {
+  const decode = decodeTimestamps(chunks.map((chunk) => chunk.timestamp));
+  chunks.forEach((chunk, i) => {
+    muxer.addVideoChunkRaw(chunk.data, chunk.type, chunk.timestamp, Math.round(frameMicros), chunk.meta, chunk.timestamp - decode[i]);
+  });
+}
+
 /**
  * Muxer setup. Frames go in from timestamp 0, but some encoders (Firefox's)
  * stamp their first chunk one frame later, and mp4-muxer's default rejects
@@ -210,7 +262,7 @@ async function probeEncoder(container: 'avc' | 'vp9', config: VideoEncoderConfig
 
 async function pickConfig(opts: Mp4EncoderOptions): Promise<{ container: 'avc' | 'vp9'; config: VideoEncoderConfig }> {
   const bitrate = bitrateFor(opts.width, opts.height, opts.fps, opts.quality ?? 'balanced');
-  for (const candidate of CANDIDATES) {
+  for (const candidate of candidatesFor(opts.format)) {
     // No acceleration preference: the browser uses a hardware encoder when it
     // has one and software otherwise (asking for hardware outright can be
     // reported as supported and then never produce a frame).
@@ -242,11 +294,11 @@ const codecChoices = new Map<string, Promise<string>>();
  * finds it (one probe frame per candidate) and remembered per size, so the
  * dialog can tell before the export starts.
  */
-export function encoderCodec(width: number, height: number, fps: number): Promise<string> {
-  const key = `${width}x${height}@${fps}`;
+export function encoderCodec(width: number, height: number, fps: number, format: VideoFormat = 'h264'): Promise<string> {
+  const key = `${width}x${height}@${fps}/${format}`;
   let choice = codecChoices.get(key);
   if (!choice) {
-    choice = pickConfig({ width, height, fps }).then(({ config }) => config.codec);
+    choice = pickConfig({ width, height, fps, format }).then(({ config }) => config.codec);
     choice.catch(() => codecChoices.delete(key));
     codecChoices.set(key, choice);
   }
@@ -260,20 +312,18 @@ export async function createMp4Encoder(opts: Mp4EncoderOptions): Promise<Mp4Enco
   const target = new ArrayBufferTarget();
   const muxer = new Muxer(muxerOptions(target, container, opts));
   let failure: Error | null = null;
-  let chunks = 0;
+  // Chunks wait here until finish(), when the whole order is known (see decodeTimestamps).
+  const held: HeldChunk[] = [];
   let bytes = 0;
   let haveConfig = false;
   const encoder = new VideoEncoder({
     output: (chunk, meta) => {
       const muxMeta = chunkMetadata(container, config, meta, haveConfig);
       if (muxMeta?.decoderConfig) haveConfig = true;
-      chunks += 1;
+      const data = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(data);
+      held.push({ data, type: chunk.type, timestamp: chunk.timestamp, meta: muxMeta });
       bytes += chunk.byteLength;
-      try {
-        muxer.addVideoChunk(chunk, muxMeta);
-      } catch (error) {
-        failure ??= error instanceof Error ? error : new Error(String(error));
-      }
     },
     error: (error) => {
       failure = error instanceof Error ? error : new Error(String(error));
@@ -323,14 +373,17 @@ export async function createMp4Encoder(opts: Mp4EncoderOptions): Promise<Mp4Enco
       encoder.close();
       // Checked here because mp4-muxer would otherwise fail with a bare
       // "decoderConfig is null" when it writes the header.
-      if (chunks === 0) throw new Error('The video encoder produced no video.');
+      if (held.length === 0) throw new Error('The video encoder produced no video.');
       if (!haveConfig) throw new Error("The browser's video encoder did not describe its stream, so the MP4 cannot be written.");
+      muxChunks(muxer, held, frameMicros);
+      held.length = 0;
       muxer.finalize();
       return new Blob([target.buffer], { type: 'video/mp4' });
     },
     cancel() {
       if (closed) return;
       closed = true;
+      held.length = 0;
       try {
         encoder.close();
       } catch {

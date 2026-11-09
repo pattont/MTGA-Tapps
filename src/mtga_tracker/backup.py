@@ -890,7 +890,7 @@ def restore_backup(
 
 #: Tables the merge never touches: this computer's live row and diagnostics,
 #: and SQLite's own bookkeeping.
-MERGE_SKIP_TABLES = {"live_status", "raw_game_payloads", "schema_migrations", "sqlite_sequence", "cards", "managed_deck_transfers",
+MERGE_SKIP_TABLES = {"live_status", "raw_game_payloads", "schema_migrations", "sqlite_sequence", "cards", "managed_deck_transfers", "maintenance_state",
                      "managed_decks", "managed_deck_revisions", "managed_deck_cards", "managed_deck_bindings", "managed_deck_collections"}
 
 
@@ -982,9 +982,20 @@ def merge_snapshot_into(conn: sqlite3.Connection, snapshot_path: Path) -> Dict[s
             else:
                 continue
             copy(table, where)
+        from .date_repair import repair_swapped_log_dates
         from .deck_manager import merge_library
 
+        # A backup made by an older version can carry month/day-swapped
+        # dates (issue #51); fix the merged sessions the way migrations do.
+        merged_sessions = [str(r[0]) for r in conn.execute("SELECT id FROM temp.new_sessions")]
+        repair_swapped_log_dates(conn, session_ids=merged_sessions)
         counts.update(merge_library(conn))
+        # Merged rows are older than every startup watermark: the next launch
+        # must run its repair passes over everything once more.
+        if conn.execute(
+            "SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = 'maintenance_state'"
+        ).fetchone():
+            conn.execute("DELETE FROM maintenance_state")
         conn.execute("COMMIT")
         for temp in ("card_map", "new_sessions", "new_games", "new_matches", "new_participants"):
             conn.execute(f"DROP TABLE IF EXISTS temp.{temp}")

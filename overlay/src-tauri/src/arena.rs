@@ -1,4 +1,5 @@
-//! Where is Arena? One cheap OS query per second, no hooks, no injection.
+//! Where is Arena? One cheap OS query a second (two when it is closed), no
+//! hooks, no injection, and never a spawned process.
 //!
 //! Answers two things the window manager needs: is Arena the frontmost
 //! application (so the overlay can get out of the way when the player
@@ -34,35 +35,20 @@ pub fn probe() -> ArenaStatus {
     platform::probe()
 }
 
-/// Read one assignment from `lsappinfo info` output.
-///
-/// macOS 27 appends additional lines such as `bundle path=...` even when
-/// `-only bundleid` or `-only pid` is requested. Parsing the entire output
-/// after the first `=` folds those lines into the value and makes a real
-/// `com.wizards.mtga` foreground identifier fail its exact comparison.
-fn lsappinfo_property(text: &str, property: &str) -> Option<String> {
-    text.lines().find_map(|line| {
-        let (label, value) = line.split_once('=')?;
-        if label.trim().trim_matches('"') != property {
-            return None;
-        }
-        let value = value.trim().trim_matches('"');
-        (!value.is_empty()).then(|| value.to_string())
-    })
-}
-
 #[cfg(target_os = "macos")]
 mod platform {
     use super::ArenaStatus;
-    use objc2_app_kit::NSWorkspace;
+    use objc2::rc::autoreleasepool;
+    use objc2_app_kit::{NSRunningApplication, NSWorkspace};
+    use objc2_foundation::NSString;
     use std::ffi::{c_char, c_void, CString};
-    use std::process::Command;
+    use std::sync::Mutex;
 
     const BUNDLE_ID: &str = "com.wizards.mtga";
 
-    /// `lsappinfo` ships with macOS, needs no Automation/Accessibility
-    /// permission (unlike System Events or CGWindowList names), and answers
-    /// in a few milliseconds — the right trade for a once-a-second poll.
+    /// The foreground application's bundle id: NSWorkspace is the native,
+    /// permission-free source (`lsappinfo front` returned `[ NULL ]`
+    /// intermittently on macOS 27, including for an active Arena window).
     fn frontmost_bundle_id() -> Option<String> {
         // `lsappinfo front` returns `[ NULL ]` intermittently on macOS 27,
         // including for an active Arena window. NSWorkspace is the native,
@@ -72,23 +58,47 @@ mod platform {
         application.bundleIdentifier().map(|id| id.to_string())
     }
 
-    /// Arena's process id, when it is running: by process name first, then
-    /// by bundle id through LaunchServices (covers a renamed executable).
+    /// Arena's process id, as last seen. Checked first through LaunchServices
+    /// (one API call, no spawn) while Arena stays up.
+    static ARENA_PID: Mutex<Option<i32>> = Mutex::new(None);
+
+    /// Is `pid` still Arena? Pids are reused, so the remembered one must
+    /// resolve to a running application with Arena's bundle id, not merely
+    /// to a live process.
+    fn pid_is_arena(pid: i32) -> bool {
+        NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+            .filter(|app| !app.isTerminated())
+            .and_then(|app| app.bundleIdentifier())
+            .map(|id| id.to_string() == BUNDLE_ID)
+            .unwrap_or(false)
+    }
+
+    /// Arena's process id, when it is running: the remembered pid while it
+    /// is still alive, otherwise LaunchServices' list of running
+    /// applications with Arena's bundle id (covers a renamed executable).
+    /// Earlier builds spawned `pgrep` and `lsappinfo` for this every second,
+    /// the overlay's largest idle cost.
     fn arena_pid() -> Option<i32> {
-        if let Ok(out) = Command::new("/usr/bin/pgrep").args(["-x", "MTGA"]).output() {
-            if out.status.success() {
-                if let Some(pid) = String::from_utf8_lossy(&out.stdout).lines().next().and_then(|l| l.trim().parse().ok()) {
-                    return Some(pid);
-                }
+        let remembered = ARENA_PID.lock().ok().and_then(|pid| *pid);
+        if let Some(pid) = remembered {
+            if pid_is_arena(pid) {
+                return Some(pid);
             }
         }
-        let out = Command::new("/usr/bin/lsappinfo")
-            .args(["info", "-only", "pid", BUNDLE_ID])
-            .output()
-            .ok()?;
-        // "pid"=39523
-        let text = String::from_utf8_lossy(&out.stdout);
-        super::lsappinfo_property(&text, "pid")?.parse().ok()
+        let bundle_id = NSString::from_str(BUNDLE_ID);
+        let apps = NSRunningApplication::runningApplicationsWithBundleIdentifier(&bundle_id);
+        let pid = apps
+            .iter()
+            .find(|app| !app.isTerminated())
+            .map(|app| app.processIdentifier() as i32)
+            .filter(|pid| *pid > 0);
+        if let Ok(mut slot) = ARENA_PID.lock() {
+            if *slot != pid {
+                crate::diag::log(format!("arena: pid is now {pid:?}"));
+                *slot = pid;
+            }
+        }
+        pid
     }
 
     // --- CGWindowList: the bounds of Arena's window without any permission
@@ -204,75 +214,25 @@ mod platform {
     static LAST_FRONT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
     pub fn probe() -> ArenaStatus {
-        let front = frontmost_bundle_id();
-        if let Ok(mut last) = LAST_FRONT.lock() {
-            if *last != front {
-                crate::diag::log(format!("arena: front app is now {front:?}"));
-                *last = front.clone();
+        // This thread never returns to a run loop, so AppKit's autoreleased
+        // objects need a pool of their own or they pile up for ever.
+        autoreleasepool(|_| {
+            let front = frontmost_bundle_id();
+            if let Ok(mut last) = LAST_FRONT.lock() {
+                if *last != front {
+                    crate::diag::log(format!("arena: front app is now {front:?}"));
+                    *last = front.clone();
+                }
             }
-        }
-        let frontmost = front.as_deref() == Some(BUNDLE_ID);
-        let pid = arena_pid();
-        static LAST_PID: std::sync::Mutex<Option<i32>> = std::sync::Mutex::new(None);
-        if let Ok(mut last) = LAST_PID.lock() {
-            if *last != pid {
-                crate::diag::log(format!("arena: pid is now {pid:?}"));
-                *last = pid;
+            let frontmost = front.as_deref() == Some(BUNDLE_ID);
+            let pid = arena_pid();
+            ArenaStatus {
+                running: frontmost || pid.is_some(),
+                frontmost,
+                bounds: pid.and_then(window_bounds),
+                overlay_frontmost: front.as_deref() == Some(super::OVERLAY_BUNDLE_ID),
             }
-        }
-        ArenaStatus {
-            running: frontmost || pid.is_some(),
-            frontmost,
-            bounds: pid.and_then(window_bounds),
-            overlay_frontmost: front.as_deref() == Some(super::OVERLAY_BUNDLE_ID),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::lsappinfo_property;
-
-    #[test]
-    fn parses_legacy_single_line_output() {
-        assert_eq!(
-            lsappinfo_property(
-                "\"CFBundleIdentifier\"=\"com.wizards.mtga\"\n",
-                "CFBundleIdentifier"
-            ),
-            Some("com.wizards.mtga".into())
-        );
-        assert_eq!(
-            lsappinfo_property("\"pid\"=39523\n", "pid"),
-            Some("39523".into())
-        );
-    }
-
-    #[test]
-    fn ignores_macos_27_trailing_properties() {
-        let output = concat!(
-            "\"CFBundleIdentifier\"=\"com.wizards.mtga\"\n",
-            "    bundle path=\"/Applications/MTGA.app\"\n",
-            "    executable path=\"/Applications/MTGA.app/Contents/MacOS/MTGA\"\n",
-        );
-        assert_eq!(
-            lsappinfo_property(output, "CFBundleIdentifier"),
-            Some("com.wizards.mtga".into())
-        );
-    }
-
-    #[test]
-    fn selects_the_requested_property() {
-        let output = concat!(
-            "\"pid\"=86067\n",
-            "    bundle path=\"/Applications/MTGA.app\"\n",
-        );
-        assert_eq!(lsappinfo_property(output, "pid"), Some("86067".into()));
-        assert_eq!(
-            lsappinfo_property(output, "bundle path"),
-            Some("/Applications/MTGA.app".into())
-        );
-        assert_eq!(lsappinfo_property(output, "missing"), None);
+        })
     }
 }
 
@@ -312,6 +272,16 @@ mod platform {
         }
     }
 
+    /// Arena's process id, as last seen: checked with one handle open before
+    /// the Toolhelp walk over every process runs.
+    static ARENA_PID: std::sync::Mutex<Option<u32>> = std::sync::Mutex::new(None);
+
+    fn remember_pid(pid: Option<u32>) {
+        if let Ok(mut slot) = ARENA_PID.lock() {
+            *slot = pid;
+        }
+    }
+
     fn is_arena_path(path: &str) -> bool {
         path.rsplit(['\\', '/'])
             .next()
@@ -338,6 +308,7 @@ mod platform {
             if !is_arena {
                 return (false, None, false);
             }
+            remember_pid(Some(pid));
             let mut rect = RECT::default();
             let bounds = GetWindowRect(hwnd, &mut rect)
                 .ok()
@@ -347,6 +318,15 @@ mod platform {
     }
 
     fn running() -> bool {
+        let remembered = ARENA_PID.lock().ok().and_then(|pid| *pid);
+        if let Some(pid) = remembered {
+            if crate::parent::alive(pid)
+                && image_name_of(pid).map(|p| is_arena_path(&p)).unwrap_or(false)
+            {
+                return true;
+            }
+            remember_pid(None);
+        }
         unsafe {
             let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
                 return false;
@@ -361,6 +341,7 @@ mod platform {
                     let end = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
                     let name = String::from_utf16_lossy(&entry.szExeFile[..end]);
                     if name.eq_ignore_ascii_case(EXE_NAME) {
+                        remember_pid(Some(entry.th32ProcessID));
                         found = true;
                         break;
                     }

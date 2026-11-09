@@ -1468,3 +1468,100 @@ def test_a_card_bottomed_for_a_mulligan_starts_in_the_opening_hand():
     assert "280" in dealt
     bottom = next(e for e in stream["events"] if e.get("obj") == "280" and e["turn"] == 1)
     assert (bottom["from"], bottom["to"]) == ("hand", "library")
+
+
+def _hand_reveal_rows(with_zone):
+    """Opponent draws 301 (later cast as Lightning Bolt); a Duress shows their hand."""
+    r = _Rows()
+    r.turn_row(1, PLAYER)
+    r.turn_row(2, OPPONENT)
+    r.move(301, "library", "hand", "draw", OPPONENT)
+    r.turn_row(3, PLAYER)
+    r.add("stack_push", "[1:00] You: cast [Duress]", seat_id=PLAYER, payload={"stack_id": "s1"})
+    hand = {"zone_from": "hand"} if with_zone else {}
+    r.add(
+        "reveal",
+        seat_id=OPPONENT,
+        object_id=900,
+        arena_id=9101,
+        payload={"name": "Lightning Bolt"},
+        **hand,
+    )
+    r.add(
+        "reveal", seat_id=OPPONENT, object_id=901, arena_id=9002, payload={"name": "Forest"}, **hand
+    )
+    if with_zone:
+        r.add(
+            "reveal",
+            seat_id=OPPONENT,
+            object_id=902,
+            arena_id=9001,
+            zone_from="library",
+            payload={"name": "Grizzly Bears"},
+        )
+    r.add(
+        "note", "[1:01] Opponent: revealed [Lightning Bolt], [Forest] from hand", seat_id=OPPONENT
+    )
+    r.turn_row(4, OPPONENT)
+    r.move(
+        301,
+        "hand",
+        "stack",
+        "cast",
+        OPPONENT,
+        9101,
+        "Lightning Bolt",
+        visible=1,
+        text="[1:10] Opponent: cast [Lightning Bolt]",
+    )
+    return r.rows
+
+
+def _revealed(stream):
+    return [
+        (e["obj"], stream["cards"][e["card"]]["name"])
+        for e in stream["events"]
+        if e["kind"] == "reveal"
+    ]
+
+
+def test_hand_reveal_proxies_show_the_cards_in_the_opponents_hand():
+    stream = build_recorded(_game_rows(_hand_reveal_rows(with_zone=True)))
+    assert validate_stream(stream) == []
+    revealed = _revealed(stream)
+    # The Bolt goes to the card later cast as one, the Forest to a hand card the
+    # game never identifies; the library reveal stays off the board.
+    assert revealed[0] == ("301", "Lightning Bolt")
+    assert revealed[1][1] == "Forest" and revealed[1][0].startswith("h")
+    assert len(revealed) == 2
+    reveal_seq = next(e["seq"] for e in stream["events"] if e["kind"] == "reveal")
+    cast_seq = next(
+        e["seq"] for e in stream["events"] if e.get("obj") == "301" and e.get("to") == "stack"
+    )
+    assert reveal_seq < cast_seq
+
+
+def test_hand_reveal_rows_without_a_zone_use_the_printed_line():
+    stream = build_recorded(_game_rows(_hand_reveal_rows(with_zone=False)))
+    assert validate_stream(stream) == []
+    revealed = _revealed(stream)
+    assert revealed[0] == ("301", "Lightning Bolt")
+    assert [name for _obj, name in revealed] == ["Lightning Bolt", "Forest"]
+
+
+def test_two_revealed_copies_go_to_two_hand_cards():
+    r = _Rows()
+    r.turn_row(1, PLAYER)
+    for obj in (900, 901):
+        r.add(
+            "reveal",
+            seat_id=OPPONENT,
+            object_id=obj,
+            arena_id=9002,
+            zone_from="hand",
+            payload={"name": "Forest"},
+        )
+    r.add("note", "[0:30] Opponent: revealed [Forest], [Forest] from hand", seat_id=OPPONENT)
+    stream = build_recorded(_game_rows(r.rows))
+    objs = [obj for obj, _name in _revealed(stream)]
+    assert len(objs) == 2 and len(set(objs)) == 2

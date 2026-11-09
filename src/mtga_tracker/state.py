@@ -119,6 +119,12 @@ class GameState:
         self.match_complete = False
         self.seen_instance_ids: Set[int] = set()
         self.last_turn_announced = 0
+        # Arena sent a turnInfo without a turn number: the game is set up
+        # (hands kept) but turn 1 has not begun. Events now are pregame.
+        self.awaiting_first_turn = False
+        # Cards that left the opening hand for the battlefield before turn 1
+        # (Leyline Axe): instance id -> grpId. They were kept, not mulliganed.
+        self.pregame_hand_departures: Dict[int, int] = {}
         self.last_player_turn_number = 0
         self.last_opponent_turn_number = 0
         self.turns_taken_by_seat: Dict[int, Set[int]] = {1: set(), 2: set()}

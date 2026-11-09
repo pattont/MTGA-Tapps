@@ -1206,3 +1206,69 @@ def test_newer_schema_warning_prints_once_per_process(tmp_path, capsys, monkeypa
     fresh = AnalyticsStore(tmp_path / "fresh.sqlite3")
     fresh.connect()
     fresh.close()
+
+
+def test_console_logs_are_pruned_after_the_retention_window(tmp_path):
+    """Lines older than the window, in sessions that also began before it, go;
+    the current session and anything newer stays, and turn-time recovery from
+    recent lines still works."""
+    from datetime import timedelta
+
+    store = AnalyticsStore(tmp_path / "analytics.sqlite3")
+    conn = store.connect()
+    now = datetime(2026, 11, 9, 12, 0, 0)
+    old = now - timedelta(days=AnalyticsStore.CONSOLE_LOG_RETENTION_DAYS + 5)
+    long_running = now - timedelta(days=AnalyticsStore.CONSOLE_LOG_RETENTION_DAYS + 5)
+    with conn:
+        conn.executemany(
+            "INSERT INTO tracker_sessions (id, started_at) VALUES (?, ?)",
+            (("old", old.isoformat()), ("recent", (now - timedelta(days=2)).isoformat()), ("long", long_running.isoformat())),
+        )
+        conn.executemany(
+            "INSERT INTO console_logs (session_id, created_at, text) VALUES (?, ?, ?)",
+            (
+                ("old", old.isoformat(), "old banner"),
+                ("old", (old + timedelta(minutes=1)).isoformat(), "Previous Turn (You): 12s"),
+                ("recent", (now - timedelta(days=2)).isoformat(), "recent line"),
+                # a session that began before the window but is still writing:
+                # its old lines go, its fresh lines stay
+                ("long", long_running.isoformat(), "stale line of a long session"),
+                ("long", (now - timedelta(hours=1)).isoformat(), "fresh line of a long session"),
+            ),
+        )
+
+    removed = AnalyticsStore.prune_console_logs(conn, now=now)
+
+    assert removed == 3
+    assert sorted(r[0] for r in conn.execute("SELECT text FROM console_logs")) == [
+        "fresh line of a long session",
+        "recent line",
+    ]
+    assert AnalyticsStore.prune_console_logs(conn, now=now) == 0
+    store.close()
+
+
+def test_migration_38_prunes_console_logs_once_and_compacts(tmp_path, capsys):
+    from datetime import timedelta
+
+    path = tmp_path / "analytics.sqlite3"
+    store = AnalyticsStore(path)
+    conn = store.connect()
+    old = datetime.now() - timedelta(days=400)
+    with conn:
+        conn.execute("INSERT INTO tracker_sessions (id, started_at) VALUES ('old', ?)", (old.isoformat(),))
+        conn.executemany(
+            "INSERT INTO console_logs (session_id, created_at, text) VALUES ('old', ?, ?)",
+            ((old.isoformat(), "x" * 2000) for _ in range(500)),
+        )
+        conn.execute("DELETE FROM schema_migrations WHERE version = 38")
+    store.close()
+    before = path.stat().st_size
+
+    store = AnalyticsStore(path)
+    conn = store.connect()  # applies 38 and VACUUMs
+    assert conn.execute("SELECT COUNT(*) FROM console_logs").fetchone() == (0,)
+    assert conn.execute("SELECT 1 FROM schema_migrations WHERE version = 38").fetchone()
+    store.close()
+    assert path.stat().st_size < before
+    assert "Reclaiming disk space" in capsys.readouterr().out

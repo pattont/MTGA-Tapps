@@ -118,6 +118,13 @@ Primary code paths:
   by Last-Modified; API responses stay `no-store`.
 - `src/mtga_tracker/live_api.py`: `/api/live` payload — current game, frozen previous-game
   scoreboard, records vs. deck / opponent / opponent commander, local archetype guess.
+  Everything but the tracker block and the event feed is memoised per database on
+  `PRAGMA data_version` (read on the poll connection before the live row, so a body is
+  never older than its key), the live/idle/offline state and the local date, with a 30 s
+  rebuild as a safety net; the feed's linkable card names are memoised on
+  `game_card_summary`'s row count, max rowid and filled types. `/api/overlay`'s memo key
+  deliberately leaves out `live_status.updated_at` (the heartbeat) and includes the
+  session totals; neither payload carries a timestamp the clients read.
 - `src/mtga_tracker/draw_quality.py`: CLI/report helpers for land flood/screw and repeated-card draw audits.
 - `src/mtga_tracker/tracker_summary.py`: end-game and session summary rendering.
 - `src/mtga_tracker/tracker_rendering.py`: console formatting, actor labels, mana/text cleanup, runtime strings.
@@ -185,6 +192,9 @@ Primary code paths:
   Arena id (Scryfall maps a new set's Arena ids late). Replay image lookups use
   `scryfallFetch` (named/search held to 2/s), and an unanswered lookup is
   retried after a minute instead of leaving the generated face for good.
+  A hand reveal (Thoughtseize) arrives as Arena proxies with new ids; capture stores the
+  proxy's zone in `zone_from` and the builder gives each to a card in that hand
+  (`_hand_card_for`), so it shows face up with Hindsight off.
   The builder moves a `token_create` row ahead of earlier rows of its turn that
   name the token (Mobilize attackers print before their creation).
   Identical tokens and lands stack in one battlefield slot (`layout.stackKey`),
@@ -221,6 +231,11 @@ Primary code paths:
   modules with tests, `export/` (pure video plan, Canvas 2D frame composer, WebCodecs +
   mp4-muxer encoder for the in-browser MP4 export; each codec is probed with one frame and
   H.264 without a reported `decoderConfig` is skipped for VP9, whose config is filled in; the
+  dialog's Format picks which codec is tried first (`candidatesFor`: H.264 default, VP9 the
+  sharper choice, since Chrome's software OpenH264 ignores bitrate and every rate mode and
+  offers no quantizer mode); chunks are held until `finish` and muxed by `muxChunks` with
+  decode times from `decodeTimestamps` (sorted presentation times), because Windows
+  Firefox's Media Foundation H.264 emits B-frames in decode order; the
   export driver waits for the canvas's own reconciler to commit each clock step
   (`state.seq === clock.snapshot.seq`) before drawing, or frames lag an action and
   the closing hold misses the ending card; Firefox's VP9 ignores bitrate, so sizes
@@ -239,12 +254,15 @@ Primary code paths:
   A tiny teal Play / purple Draw `Badge` (`participants.went_first`) follows the deck
   name; the name truncates first and unknown turn order shows nothing.
 - `ui/stream.html` + `ui/src/stream/`: the Stream Kit, OBS/Streamlabs browser-source
-  widgets (`overlay`, `deck`, `record`, `games`, `matchup`, `spotlight`) built as a second Vite entry and
+  widgets (`overlay`, `deck`, `scorebug`, `record`, `games`, `deckstats`, `matchup`,
+  `opponent`, `lands`, `result`, `spotlight`, `break`) built as a second Vite entry and
   served by the dashboard at `/stream.html?widget=<id>`. No app shell, no `styles.css`,
   transparent page (`stream/stream.css`, sized in em from `--sk-scale`). Every option
   lives in the URL (`stream/options.ts`: `streamUrl` writes only the widget's own
   non-default options), so the tracker stores nothing; Settings → Streaming
   (`StreamKitSettings.tsx`) builds the links and keeps its choices in localStorage.
+  A `preview=1` page follows those choices live (`stream/previewSync.ts`: the
+  `storage` event rebuilds its options and address); OBS sources never do.
   `overlay` is the in-game panel plus its sideboard (right/left/below/off) with the
   overlay's background slider (`opacity`, not the shared `bg`); `stream/overlayView.ts`
   mirrors `overlay/src/model.ts` and its CSS mirrors `overlay/src/styles.css` in px under
@@ -253,9 +271,26 @@ Primary code paths:
   vectors plus grey badges), never the dashboard's mana-font `ManaCost`. Credits sit top right, never on
   a line of their own.
   Widgets read only existing endpoints: `overlay` and `deck` poll `/api/overlay` with its ETag (`stream/useOverlay.ts`),
-  `record`/`games`/`matchup` poll `/api/live?events=0` (skips the event feed; `games`
+  the rest but `spotlight` poll `/api/live?events=0` (skips the event feed; `games`
   lists its `games`, Live Scoreboard's Today's Games, capped by `count`), `spotlight`
-  polls `/api/live?since=`. The spotlight never replays history: `stream/spotlight.ts`
+  polls `/api/live?since=`. Their pure logic sits in `stream/liveView.ts`. For them
+  `/api/live`'s `now` carries `match_score`, `deck_record` with Deck Manager's
+  ranked/unranked/play/draw splits and `recent` results, `rank.start` (the rank before
+  the session), `opponent_seen` and `draw_quality`; the payload's `session` adds the
+  overlay footer's `play`/`draw` split and `today` (`_today_record`, every game today
+  across sessions) feeds `record`'s `period=today`; the last two are live_status
+  columns the tracker writes (`_live_opponent_seen`, `_live_draw_quality`, which runs
+  `draw_quality_metrics` on the opening hand and draws, cached on the draw sequence).
+  Between games records count the frozen game; during one they exclude it. `record`,
+  `result` and `break` share `period` (session or today: `liveView.periodRecord` /
+  `periodGames`; game ids start with their session's id). Every widget's optional parts
+  are listed in `options.WIDGET_PARTS`; the link's `hide` names the ones turned off
+  (`shows(options, part)`), so new parts show on old links, and Settings draws them as
+  one Show list with the `opponent` name toggle. Recent games' 0.7.5 `record=0` still
+  parses as `hide=record`. `result`
+  shows only games that finish while it is open. Card lists taller than the source
+  (`overlay`, `deck`, `opponent`) fit the viewport and scroll themselves
+  (`stream/autoScroll.ts`, `widgets/AutoScroll.tsx`; the loop runs only on overflow). The spotlight never replays history: `stream/spotlight.ts`
   catches up silently until a poll brings nothing newer, and resets on a new tracker
   session or after an error. `demo=1` uses `stream/demo.ts` and makes no requests;
   `preview=1` paints a checkerboard. Widgets stop polling while the page is hidden.
@@ -278,7 +313,9 @@ Primary code paths:
   the PyQt Deck AI settings implementation.
   `ui/src/components/SettingsPage.tsx` layout: a full-width Tracker card (MetricCard
   tiles for games captured, last game, version and Deck AI from `_tracker_info`, then
-  the paths, with a small Database health link on the Log DB row; there is no
+  the paths, with small Database health | Reset Settings links on the Log DB row (`#/audit` and
+  `#/reset`, two separate pages whose sidebar is only the way back; the links never reset
+  anything themselves, and `ResetPage.tsx` lists what a reset deletes and keeps); there is no
   Database Health section), then `SettingsGroup`s General (Startup stacked over
   Sessions, beside Updates), Features (overlay, Buy on Paper, Deck AI, creators),
   Streaming (the full-width Stream Kit card) and
@@ -610,6 +647,10 @@ Primary code paths:
   `python -m mtga_tracker.collection_export`, frozen builds run the tracker executable
   with `--collection-scan` (`app.main` routes it before the single-instance guard),
   because the bundled binary has no `-m`.
+  The scan locates the collection by anchor cards: every non-basic card (at most four
+  copies) from the player's tracked decklists and Deck Manager's current revisions, 4-ofs
+  first (`derive_anchors`; singleton Brawl decks must still yield anchors).
+  `CollectionNotFound` carries what the scan saw, and the error message shows it.
   The scan needs known cards from recorded games: the Settings page disables the
   export while `_tracker_info` reports `games == 0` (null keeps it enabled), and
   `_run_export` refuses a fresh scan with `no_games` before any prompt.
@@ -659,9 +700,12 @@ Primary code paths:
   overlay through a second launch); `overlay/src-tauri/src/parent.rs` quits the overlay once that
   process is gone, so a crashed, killed or uninstalled tracker never leaves it over Arena. The
   Windows uninstaller also stops both executables (`[UninstallRun]` taskkill) before removing files.
-  On macOS, `overlay/src-tauri/src/arena.rs` parses `lsappinfo` one property line at a time;
-  macOS 27 returns extra properties even with `-only`, so never parse everything after the first
-  equals sign or Arena will be treated as never frontmost and the overlay will hide itself.
+  `overlay/src-tauri/src/arena.rs` never spawns a process: macOS asks NSWorkspace for the
+  front app and NSRunningApplication for Arena's pid (`lsappinfo front` answered `[ NULL ]`
+  intermittently on macOS 27), Windows uses GetForegroundWindow and a Toolhelp walk; both
+  remember Arena's pid and re-check it with one syscall, and the poll slows to 2 s while Arena
+  is closed. The tracker side (`overlay_launcher.OverlayManager.running`) likewise trusts its
+  last pgrep/tasklist scan for 30 s, so the tray's 3 s poll does not spawn a process each time.
 - `src/mtga_tracker/deck_downloader_launcher.py`: launches the bundled Deck Finder in a sized
   terminal window via `POST /api/deck-downloader/launch`; frozen builds invoke the same
   tracker executable with `--deck-finder`. The menu item opens dashboard `#/deckfinder`.
@@ -784,6 +828,9 @@ Common runtime files:
 
 Windows is a first-class target: use `pathlib`, quote paths for `cmd`, and prefer pasteable
 `%USERPROFILE%`/`%LOCALAPPDATA%` forms over POSIX-only examples in user-facing output.
+Read Windows tool output (tasklist) as bytes through `paths.windows_process_ids`, never
+`text=True`: a localized message that fails to decode leaves `stdout` None on Windows
+(the reader thread dies quietly), which crashed startup on German Windows.
 Background Windows subprocesses launched by the frozen GUI must use
 `CREATE_NO_WINDOW`; periodic console tools such as `tasklist` otherwise flash a window above
 the user's applications on every poll.
@@ -981,10 +1028,15 @@ Arena logs are not a simple chronological event stream. Be careful with inferred
   (`EventName: Brawl_Ladder` for cBrawl), and Arena's deck attributes use "HistoricBrawl*"
   naming everywhere — never infer the queue from them (substring 'historicbrawl' inside
   'HistoricBrawlRanked' has mislabeled real cBrawl matches twice).
-- Log timestamps are locale-formatted: day-first locales write `dd/mm/yyyy`. The parser
-  (`log_timestamp.py`) learns the order from unambiguous entries with a system-locale
-  fallback; storage is always ISO. Never parse a log date with a fixed `%m/%d` order
-  (pre-0.5.5 did, and migration v21 repairs the month/day-swapped rows it stored).
+- Log timestamps are locale-formatted: day-first locales write `dd/mm/yyyy`, and Arena's
+  order need not match Windows' short-date setting (a US system with a custom day-first
+  format still logs `11/4/2026`). The parser (`log_timestamp.py`) decides an ambiguous date
+  from, in order: the entry's own epoch-ms JSON `"timestamp"` (every GRE message has one),
+  the order learned from earlier entries, the reading within the last two weeks of the system
+  clock, then the system locale; storage is always ISO. Never parse a log date with a fixed
+  `%m/%d` order. `date_repair.py` fixes stored month/day-swapped rows, anchored on the
+  session id's system-clock time (migrations 21 and 37, backup merges, `db_audit --repair`).
+  Tests pin the parser's clock in `tests/conftest.py`.
 - The deck a game is attributed to comes from course-candidate scoring, and the decklist
   actually submitted to the game is the trump card: a candidate that contradicts the
   submitted 60 must never win (a tracker launched mid-queue after a deck switch once
@@ -996,6 +1048,11 @@ Arena logs are not a simple chronological event stream. Be careful with inferred
   the choice in `subtypes` (`SubType_Mountain`) and has no `color`. The tracker
   remembers the chooser (`GameState.land_type_choosers`) and reads the type from
   `subtypes`, so printed land types (Sacred Foundry) are never shown as a choice.
+- Opening-hand battlefield cards (Leyline Axe): Arena moves the first in a message whose
+  `turnInfo` has no `turnNumber` (`GameState.awaiting_first_turn`) and a second in the
+  message that starts turn 1, both before any turn header. They print as Put lines, never
+  invent a "Turn 1" header for their seat (`_ensure_turn_header_for_event` flushes the
+  pending one), and count in the kept hand (`pregame_hand_departures`), not as mulligans.
 - Arena reuses instance ids it never deleted (an ability whose activation was
   undone): an `ObjectIdChanged` to such an id must not inherit the old object's
   snapshot (`_record_object_id_change` replaces or drops it), or an opponent's
@@ -1067,8 +1124,13 @@ Important tables:
   `controller_seat`, zones, `amount`, `payload_json`) and silent replay-only rows
   (`visible = 0`, `game_id` only). Migration 32 makes the session index partial over
   printed rows. See `docs/REPLAY_FORMAT.md`.
-- `console_logs`: rendered console log lines for later dashboard/query work. Also feeds the
-  dashboard's Live Scoreboard page (`/api/live` in `live_api.py`, `since` = `console_logs.id`).
+- `console_logs`: every rendered console line, kept for `CONSOLE_LOG_RETENTION_DAYS` (30)
+  and pruned at each store connect (`prune_console_logs`; migration 38 made the first cut and
+  compacted the file). The timeline, replays and the Live Scoreboard feed read `game_events`
+  (`/api/live`'s `since` is a `game_events.id`); turn timings are in `game_turns`. What only
+  console_logs holds (banners, life lines, "Previous Turn" headers) is read by the startup
+  turn-time recovery and the audit's missing-game reconstruction, both within the window.
+  Unbounded it was 38% of a 1,256-game database, twice the text of `game_events`.
 - `live_status`: single-row (id=1) "what is happening right now" snapshot the tracker upserts
   with every console line plus a ~5s idle heartbeat; drives the Live Scoreboard. Stopping the
   tracker calls `mark_live_status_stopped` (rewinds `updated_at`, `in_game=0`) so the
@@ -1093,13 +1155,30 @@ Important tables:
 - `rank_snapshots`: constructed and limited rank changes by season, with optional ranked match/game linkage.
 - `game_annotations`: user notes and comma-joined tags per game, written by
   `POST /api/game/annotation`. Analytics query endpoints remain read-only GETs.
-  `POST /api/db/reset` is destructive, requires `{"confirm": "RESET"}`, and backs up first.
+  `POST /api/db/reset` is destructive, requires `{"confirm": "RESET"}`, backs up first,
+  and answers 409 while MTG Arena is open (`paths.arena_process_running`; unknown
+  counts as open on macOS/Windows, Linux has no probe) or a running tracker reports a
+  game in progress. It empties `dashboard.RESET_TABLES`, clears `live_status`'s frozen
+  `last_game_json`, and keeps `RESET_KEPT_TABLES` (Deck Manager library, cards,
+  inventory); every schema table must be in exactly one of the two (a test checks).
+  Keep the Reset page's deleted/kept lists in step when they change. A running tracker
+  needs no restart: once its committed session row is gone, `_upsert_session_row`
+  starts a new session (zeroed totals, no frozen game) instead of writing the old
+  in-memory totals back.
   Other existing POSTs are `/api/settings/*` (settings and overlay actions),
   `/api/deckfinder/*` (fetch/variants/hydrate/surprise jobs),
   `/api/deck-downloader/launch` (terminal launcher), `/api/collection/export`
   (explicit memory scan/export job), and `/api/update/*` (update check, download, install,
   skip, acknowledge; `install` restarts the app and carries the Deck Manager-style Origin
   and Content-Type guard). Do not describe the entire dashboard as read-only.
+- `maintenance_state`: watermarks for startup repair passes that would otherwise re-check all
+  history at every launch (`turn_time_recovery` by `games.rowid`, `event_reassignment` by
+  `game_events.id`), stored as `"<pass version>:<watermark>"`. A pass resumes from its watermark
+  while its `*_PASS_VERSION` constant in `tracker_analytics.py` is unchanged; bump that constant
+  when a fix must look at every row once more (a numbered migration also works). Backup merges
+  clear the table (`merge_snapshot_into`), a reset empties it (`RESET_TABLES`), restore carries it
+  with the data, and `db_audit --repair` ignores it. New whole-history startup passes should use
+  `maintenance_watermark`/`set_maintenance_watermark` from the start.
 - `schema_migrations`: numbered one-time migrations applied by `AnalyticsStore.apply_pending_migrations`
   (baseline is version 1; add new migrations there rather than ad-hoc ALTERs when possible).
   Each pending migration runs in its own transaction together with its
@@ -1116,7 +1195,7 @@ and is decklist-aware; the dashboard and CLI must both use it rather than reimpl
 
 Use `format_normalizer.py` for queue labels and best-of inference. Do not duplicate string-matching format logic in tracker mixins or reports.
 
-Run `mtga_tracker.db_audit` after suspected tracker inconsistencies. Safe repairs currently include format/queue mismatches, turn-count aggregate mismatches, reconstruction of completed games missing their core row, timestamp-based game-event reassignment, and deletion of empty unknown-result game artifacts; unresolved deck names and `Card #...` labels are reported for manual follow-up.
+Run `mtga_tracker.db_audit` after suspected tracker inconsistencies. Safe repairs currently include format/queue mismatches, turn-count aggregate mismatches, reconstruction of completed games missing their core row, timestamp-based game-event reassignment, month/day-swapped log dates, and deletion of empty unknown-result game artifacts; unresolved deck names and `Card #...` labels are reported for manual follow-up.
 
 The analytics writer uses WAL mode, a busy timeout, and bounded retries so dashboard reads or
 development-time reloads do not drop end-game writes. Missing exact turn timings are recovered

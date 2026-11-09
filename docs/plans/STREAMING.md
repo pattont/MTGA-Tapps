@@ -1,8 +1,8 @@
 # Streaming
 
-Status: phase 1 (Stream Kit) built 2026-10-31 and checked with sample data; it still
-needs a live check in OBS during real games (see below). Later phases are planned,
-not built.
+Status: phase 1 (Stream Kit) built 2026-10-31 and six more widgets (1b) 2026-11-05,
+all checked with sample data; they still need a live check in OBS during real games
+(see below). Later phases are planned, not built.
 
 ## Goal
 
@@ -46,7 +46,7 @@ endpoints the dashboard already serves; there is no new tracker work.
 | --- | --- | --- |
 | `overlay` | The in-game overlay's panel: deck, format, opponent and head-to-head, turn, land-drop odds (next, in 2, in 3), play/draw, library, every card with copies left and next-draw odds, the Lands and Sideboard rows, and the sideboard itself | `GET /api/overlay` (ETag) |
 | `deck` | Deck name, library size, land odds, every card with copies left and next-draw odds | `GET /api/overlay` (ETag) |
-| `record` | Session record and win rate, rank, today's record with the current deck | `GET /api/live?events=0` |
+| `record` | Record and win rate for this session or today (`period`), play / draw columns, rank, the current deck's record over the same span (each optional, `hide`; `deck_record` carries `today_*` and `session_*`) | `GET /api/live?events=0` (`session` with its `play`/`draw` split, or `today`) |
 | `games` | Today's games, newest first, as on Live Scoreboard (result, Play/Draw, deck, opponent, turns, length; no replay links or clock time), 1–25 of them (`count`, default 10), under the session record (`record=0` hides it) | `GET /api/live?events=0` (its `games`, up to 40) |
 | `matchup` | Opponent, revealed colors, archetype guess, head-to-head, play/draw, game number, turn | `GET /api/live?events=0` |
 | `spotlight` | A large image of the latest card cast, for a few seconds | `GET /api/live?since=` |
@@ -68,7 +68,8 @@ Rules:
   controls go, the sort shows as a label, there is no hover card (the spotlight
   covers card art), and the sideboard stays open beside the panel, level with
   its foot like the in-game flyout, or below it. Lands show as one row or each
-  land. A long singleton (Brawl) list is taller than any source and is clipped.
+  land. A list taller than the source (a 100-card Brawl deck) fits the source's
+  height and scrolls itself slowly: a pause at the top, down, a pause, back up.
 - Game-scoped widgets (`overlay`, `deck`, `matchup`) hide between games unless
   `idle=show`; the record and recent-games widgets always show while
   the tracker runs.
@@ -97,6 +98,35 @@ The server listens on 127.0.0.1 only and has destructive POST routes (reset,
 update install). Opening it to the LAN needs a separate listener that serves
 only `stream.html`, its assets and the two read-only GETs, off by default, with
 the address shown in Settings.
+
+### 1b. More widgets (built)
+
+Ideas from 2026-11-05. The first six are built and checked with sample data; like
+phase 1 they need a live check in OBS during real games (a Bo3 for the scorebug's
+score and the result's match line, a flood for the meter, a ranked session for the
+rank climb). Each reads the endpoints the Stream Kit already uses, plus a few small
+additions to `/api/live`.
+
+| Widget | Shows | New data |
+| --- | --- | --- |
+| `scorebug` | A slim TV-style bar: both names and life totals (a change flashes and shows the difference), turn number, whose turn it is with a turn timer, and in Bo3 the game number and match score | `now.match_score` (finished games of the current match) |
+| `result` | After each game, a VICTORY / DEFEAT card for a few seconds: deck, opponent, turns, length, play or draw, the session's or today's record after it (`period`), and one notable fact (flawless win, flood, screw, won on the draw) | `now.draw_quality` (below), frozen with the last game |
+| `opponent` | "What they're on": the opponent's likely deck, colors and your record against it, then every card they've played this game, grouped by type with mana costs and copies, lands folded into one line | `now.opponent_seen`: name, type, mana cost and times played per card, from the tracker |
+| `lands` | Flood / screw meter: lands seen against the deck's expected count on a gauge, the verdict Game Detail would give (normal, flood, screw, land streak), and the chance the next draw is a land | `now.draw_quality`: `draw_quality_metrics` run live by the tracker on the opening hand and draws |
+| `break` | An intermission card for a "be right back" or between-games scene: a title the streamer types, the session's (with its length) or today's record and its results as W/L squares (`period`), the current deck's record, and rank (with the climb this session) | `now.rank.start`, the rank when the session began |
+| `deckstats` | One deck's record (a streamer's request): win rate and record, then Deck Manager's splits as a strip of columns, each optional: ranked / casual, play / draw, recent form (dots). Columns with no games drop out; under five games a column (and the headline) shows the record, not a rate | `now.deck_record` gains the ranked / unranked / play / draw splits and the last ten results |
+
+Later, not started:
+
+- **Draft and event run tracker.** Win/loss pips for the current event run
+  (●●●●○ ✕). Arena's log reports a run's wins and losses, but the tracker doesn't
+  read them yet; this needs parser work first.
+- **Session goal.** "Road to Mythic", "10 wins tonight": the goal goes in the
+  widget's link and a bar fills as the session goes. Rank goals need the rank
+  steps between tiers.
+- **Brawl commanders.** Both commanders' card images side by side in Brawl.
+- **Two-PC streaming** (see "Not in this phase" above) arguably matters more than
+  any new widget: many streamers run OBS on a second computer.
 
 ### 2. Chat bot and shareable deck page
 

@@ -451,7 +451,10 @@ def _rich_db(path: Path, session: str, game_ids, cards) -> Path:
     return path
 
 
-def test_merge_unions_games_translates_card_ids_and_is_idempotent(tmp_path):
+def test_merge_unions_games_translates_card_ids_and_is_idempotent(tmp_path, monkeypatch):
+    # Fixture dates are months old; this test is about the repair, not the
+    # console_logs retention window, so keep every line.
+    monkeypatch.setattr(AnalyticsStore, "CONSOLE_LOG_RETENTION_DAYS", 100_000)
     desktop = _rich_db(tmp_path / "desktop.sqlite3", "S-desktop", ["d1", "d2"], ["Smaug the Magnificent", "Mountain"])
     laptop = _rich_db(tmp_path / "laptop.sqlite3", "S-laptop", ["l1", "l2", "l3"], ["Mountain", "Edge Rover"])
     settings = _settings(tmp_path / "settings.json")
@@ -740,3 +743,24 @@ def test_merge_keeps_a_recorded_replay_identical_apart_from_row_ids(tmp_path, mo
     new_ids = [e["row_id"] for e in after["events"] if e["row_id"] is not None]
     assert len(new_ids) == len(old_ids) and new_ids != old_ids
     assert sorted(new_ids) == new_ids
+
+
+def test_merge_clears_the_startup_maintenance_watermarks(tmp_path):
+    """Merged rows are older than every watermark, so the next launch must
+    run its repair passes over everything once more."""
+    desktop = _rich_db(tmp_path / "desktop.sqlite3", "S-desktop", ["d1"], ["Mountain"])
+    laptop = _rich_db(tmp_path / "laptop.sqlite3", "S-laptop", ["l1"], ["Mountain"])
+    conn = sqlite3.connect(desktop)
+    with conn:
+        conn.execute(
+            "INSERT INTO maintenance_state (name, value, updated_at) VALUES ('event_reassignment', '1:99', 'now')"
+        )
+    conn.close()
+    settings = _settings(tmp_path / "settings.json")
+    laptop_backup = backup.export_backup(laptop, tmp_path / "cloud", settings_path=settings, machine="Laptop", overlay_path=tmp_path / "none", deckfinder_path=tmp_path / "none")
+
+    backup.merge_backup(laptop_backup["path"], desktop, tracker_control=FakeTracker(running=False), settings_path=settings, overlay_path=tmp_path / "none", deckfinder_path=tmp_path / "none")
+
+    conn = sqlite3.connect(desktop)
+    assert conn.execute("SELECT COUNT(*) FROM maintenance_state").fetchone() == (0,)
+    conn.close()

@@ -283,23 +283,10 @@ def _find_pid_macos(process_name: str) -> Optional[int]:
 
 def _find_pid_windows(process_name: str) -> Optional[int]:
     """PID of a running process by image name — tasklist, no psutil."""
-    try:
-        out = subprocess.run(
-            ["tasklist", "/FI", f"IMAGENAME eq {process_name}", "/FO", "CSV", "/NH"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    for row in out.stdout.splitlines():
-        parts = [p.strip('"') for p in row.split('","')]
-        if len(parts) >= 2 and parts[0].lower() == process_name.lower():
-            try:
-                return int(parts[1])
-            except ValueError:
-                continue
-    return None
+    from .paths import windows_process_ids
+
+    pids = windows_process_ids(process_name, timeout=10)
+    return pids[0] if pids else None
 
 
 # --- The pure scan core (unit-tested; no process access) --------------------
@@ -457,37 +444,67 @@ def _validate_block(
 # --- Anchors from the tracker's own decklists -------------------------------
 
 
-def derive_anchors(conn, limit: int = 16) -> List[Anchor]:
+def derive_anchors(conn, limit: int = 24) -> List[Anchor]:
     """Locator arena_ids from cards the player's decklists prove they own.
 
-    Cards that appear as 4-ofs in the player's submitted decklists are cards
-    they definitely own — reliable memory locators, no typing, no saved
-    file. Ranked by how many distinct decks agree, so the most confidently
-    owned cards are tried first.
+    Every non-basic card in the player's submitted decklists is a card they
+    own, so it is a memory locator that needs no typing. Playsets rank
+    first, then cards more decks agree on. Singleton decks count too: a
+    Brawl-only player has no 4-ofs at all, and without anchors the scan fell
+    through to the strict sweep, which a new player's few known cards can
+    never pass (issue #52). Cards run more than four times (basic lands) are
+    left out: Arena does not keep basics in the collection.
+
+    Deck Manager's saved library adds decks the player built but has not
+    played with the tracker running.
 
     The scan matches on the arena_id ALONE (checking that a plausible
     quantity follows), so it locates the card at whatever quantity it's
-    actually owned — a card run as a 4-of but owned as a full playset of 4,
-    or opened six times, is found either way. The quantity here is only a
-    hint for the (unused) exact-match scoring bonus.
+    actually owned. The quantity here is only a hint for the exact-match
+    scoring bonus.
     """
-    try:
-        rows = conn.execute(
-            """
-            SELECT dc.arena_id, COUNT(DISTINCT dc.game_id) AS decks, MAX(dc.display_name)
-            FROM game_deck_cards dc
-            JOIN participants p ON p.id = dc.participant_id AND p.role = 'player'
-            WHERE dc.deck_zone = 'deck' AND dc.quantity = 4
-              AND dc.arena_id BETWEEN ? AND ?
-            GROUP BY dc.arena_id
-            ORDER BY decks DESC, dc.arena_id
-            LIMIT ?
-            """,
-            (MIN_ARENA_ID, MAX_ARENA_ID - 1, limit),
-        ).fetchall()
-    except Exception:
-        return []
-    return [Anchor(int(aid), 4, str(name or "")) for aid, _decks, name in rows]
+    sources = (
+        # Decklists Arena submitted to tracked games.
+        """
+        SELECT dc.arena_id, COUNT(DISTINCT dc.game_id), MAX(dc.quantity), MAX(dc.display_name)
+        FROM game_deck_cards dc
+        JOIN participants p ON p.id = dc.participant_id AND p.role = 'player'
+        WHERE dc.deck_zone IN ('deck', 'sideboard') AND dc.arena_id BETWEEN ? AND ?
+        GROUP BY dc.arena_id
+        """,
+        # Deck Manager's saved library (current revisions only).
+        """
+        SELECT c.arena_id, COUNT(DISTINCT d.id), MAX(c.quantity), MAX(c.name)
+        FROM managed_deck_cards c
+        JOIN managed_decks d ON d.current_revision_id = c.revision_id
+        WHERE c.arena_id BETWEEN ? AND ?
+        GROUP BY c.arena_id
+        """,
+    )
+    merged: Dict[int, List[Any]] = {}
+    for query in sources:
+        try:
+            rows = conn.execute(query, (MIN_ARENA_ID, MAX_ARENA_ID - 1)).fetchall()
+        except Exception:
+            continue
+        for arena_id, decks, most, name in rows:
+            try:
+                key = int(arena_id)
+            except (TypeError, ValueError):
+                continue
+            entry = merged.setdefault(key, [0, 0, ""])
+            entry[0] += int(decks or 0)
+            entry[1] = max(entry[1], int(most or 0))
+            entry[2] = entry[2] or str(name or "")
+    ranked = sorted(
+        (
+            (arena_id, decks, most, name)
+            for arena_id, (decks, most, name) in merged.items()
+            if 1 <= most <= 4
+        ),
+        key=lambda row: (-row[2], -row[1], row[0]),
+    )
+    return [Anchor(arena_id, most, name) for arena_id, _decks, most, name in ranked[:limit]]
 
 
 def known_arena_ids(conn) -> Set[int]:
@@ -561,6 +578,8 @@ def scan_collection(
     # collection (the 34-cards-exported bug). Only an unambiguously
     # collection-sized block ends the scan early.
     blocks: List[Tuple[Dict[int, int], int]] = []
+    anchor_hits = 0
+    largest = 0
     for index, (addr, size) in enumerate(regions):
         if index % 4 == 0:
             progress(f"Scanning Arena's memory… {int(100 * index / total)}%")
@@ -584,6 +603,7 @@ def scan_collection(
                 start = pos + 1
         if not hits:
             continue
+        anchor_hits += len(hits)
         found_new = False
         for pos in _cluster_positions(hits):
             lo = max(0, pos - SCAN_WINDOW_BYTES // 2)
@@ -601,6 +621,8 @@ def scan_collection(
     if result is not None:
         progress(f"Mapping {len(result)} cards…")
         return result
+    largest = max((len(block) for block, _dupes in blocks), default=0)
+    first_pass_blocks = len(blocks)
 
     # Pass 2: anchorless full sweep — only reached when nothing matched an
     # anchor (e.g. no recorded decklists). Slow; the UI warns it can take a
@@ -619,7 +641,12 @@ def scan_collection(
         progress(f"Mapping {len(result)} cards…")
         return result
 
-    raise CollectionNotFound()
+    raise CollectionNotFound(
+        anchors=len(anchors),
+        anchor_hits=anchor_hits,
+        blocks=first_pass_blocks + len(blocks),
+        largest=max([largest] + [len(block) for block, _dupes in blocks]),
+    )
 
 
 def _cluster_positions(positions: List[int]) -> List[int]:
@@ -632,7 +659,49 @@ def _cluster_positions(positions: List[int]) -> List[int]:
 
 
 class CollectionNotFound(RuntimeError):
-    """No valid collection block was found in MTGA's memory."""
+    """No valid collection block was found in MTGA's memory.
+
+    Carries what the scan saw, so a failure report says why: no locator
+    cards at all, locators that never matched, or only deck-sized blocks.
+    """
+
+    def __init__(self, anchors: int = 0, anchor_hits: int = 0, blocks: int = 0, largest: int = 0):
+        self.anchors = anchors
+        self.anchor_hits = anchor_hits
+        self.blocks = blocks
+        self.largest = largest
+        super().__init__(self.details())
+
+    def details(self) -> str:
+        return (
+            f"anchors={self.anchors} hits={self.anchor_hits} "
+            f"blocks={self.blocks} largest={self.largest}"
+        )
+
+    @classmethod
+    def from_details(cls, text: str) -> "CollectionNotFound":
+        values = {}
+        for part in (text or "").split():
+            key, _, value = part.partition("=")
+            if value.isdigit():
+                values[key] = int(value)
+        return cls(
+            anchors=values.get("anchors", 0),
+            anchor_hits=values.get("hits", 0),
+            blocks=values.get("blocks", 0),
+            largest=values.get("largest", 0),
+        )
+
+    def summary(self) -> str:
+        """One plain sentence for the error message."""
+        if not self.anchors:
+            found = "none of your deck cards to look for"
+        else:
+            found = f"{self.anchors} of your deck cards to look for, {self.anchor_hits} found"
+        return (
+            f"Scan details: {found}; largest card list {self.largest} cards "
+            f"(a collection needs at least {MIN_COLLECTION_SIZE})."
+        )
 
 
 # --- Formatting -------------------------------------------------------------
@@ -1047,8 +1116,8 @@ def run_scan_cli(argv: Optional[Sequence[str]] = None) -> int:
     except PermissionError:
         print("ERROR permission_denied", file=sys.stderr)
         return 5
-    except CollectionNotFound:
-        print("ERROR no_collection", file=sys.stderr)
+    except CollectionNotFound as exc:
+        print(f"ERROR no_collection {exc.details()}", file=sys.stderr)
         return 6
     except Exception as exc:  # noqa: BLE001 - helper must not leak a traceback
         print(f"ERROR scan_failed {exc}", file=sys.stderr)

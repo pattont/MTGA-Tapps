@@ -99,6 +99,11 @@ class TrackerRenderingMixin:
         inferred = self._turn_for_seat(seat_id)
         if inferred > 0:
             return int(inferred)
+        if self.game_state.awaiting_first_turn:
+            # Before turn 1 (a Leyline put onto the battlefield from the
+            # opening hand): no turn header yet, or the real turn 1 header
+            # would be lost and the line stamped with no turn (issue #55).
+            return 0
         if (
             self.game_state.in_match
             and self.game_state.last_turn_announced == 0
@@ -349,6 +354,16 @@ class TrackerRenderingMixin:
             return
 
         if self.game_state.last_turn_announced == 0:
+            # Turn 1 has begun and its header waits for the active player's
+            # first action. The other seat's event (an opening-hand Leyline)
+            # happens in that turn: announce it, do not invent one for the
+            # other seat (two "Turn 1" headers, issue #55).
+            if self.game_state.pending_player_turn_header:
+                self._flush_pending_player_turn_header()
+                return
+            if self.game_state.pending_opponent_turn_header:
+                self._flush_pending_opponent_turn_header()
+                return
             if seat_id == self.game_state.player_seat_id:
                 self.game_state.pending_player_turn_header = self._turn_header_snapshot(
                     turn_num, seat_id

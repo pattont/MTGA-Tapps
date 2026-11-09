@@ -238,7 +238,10 @@ def test_event_format_migration_repairs_existing_matches(tmp_path):
         ).fetchone()[0] == 1
 
 
-def test_audit_repairs_missing_exact_turn_timings_from_console_history(tmp_path):
+def test_audit_repairs_missing_exact_turn_timings_from_console_history(tmp_path, monkeypatch):
+    # Fixture dates are months old; this test is about the repair, not the
+    # console_logs retention window, so keep every line.
+    monkeypatch.setattr(AnalyticsStore, "CONSOLE_LOG_RETENTION_DAYS", 100_000)
     db_path = tmp_path / "analytics.sqlite3"
     with sqlite3.connect(db_path) as conn:
         AnalyticsStore.ensure_schema(conn)
@@ -544,7 +547,10 @@ def test_repair_database_deletes_only_empty_unknown_game(tmp_path):
     assert session == (1, 1, 0)
 
 
-def test_repair_database_recovers_completed_missing_game_but_not_incomplete_game(tmp_path):
+def test_repair_database_recovers_completed_missing_game_but_not_incomplete_game(tmp_path, monkeypatch):
+    # Fixture dates are months old; this test is about the repair, not the
+    # console_logs retention window, so keep every line.
+    monkeypatch.setattr(AnalyticsStore, "CONSOLE_LOG_RETENTION_DAYS", 100_000)
     db_path = tmp_path / "analytics.sqlite3"
     with sqlite3.connect(db_path) as conn:
         AnalyticsStore.ensure_schema(conn)

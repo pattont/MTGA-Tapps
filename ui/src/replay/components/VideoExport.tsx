@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_TARGET_WIDTH, LOG_PX, frameLayout } from '../export/frameComposer';
 import { encoderCodec, estimateBytes, projectedBytes, qualityIgnored, sizeNote } from '../export/mp4Encoder';
-import type { VideoQuality } from '../export/mp4Encoder';
+import type { VideoFormat, VideoQuality } from '../export/mp4Encoder';
 import { buildVideoPlan } from '../export/videoPlan';
 import { openingEndIndex } from '../scrub';
 import type { ExportOptions, VideoExportController } from '../hooks/useVideoExport';
@@ -41,17 +41,22 @@ const QUALITIES: ReadonlyArray<{ value: VideoQuality; label: string }> = [
   { value: 'best', label: 'Best quality' },
 ];
 
+const FORMATS: ReadonlyArray<{ value: VideoFormat; label: string }> = [
+  { value: 'h264', label: 'H.264 (plays everywhere)' },
+  { value: 'vp9', label: 'VP9 (sharper in Chrome and Edge)' },
+];
+
 /**
  * True once the encoder Firefox would use for this size is known to ignore
  * the Quality choice. Other browsers skip the check.
  */
-function useQualityLocked(width: number, height: number, fps: number): boolean {
-  const key = `${width}x${height}@${fps}`;
+function useQualityLocked(width: number, height: number, fps: number, format: VideoFormat): boolean {
+  const key = `${width}x${height}@${fps}/${format}`;
   const [locked, setLocked] = useState<{ key: string; value: boolean } | null>(null);
   useEffect(() => {
     if (!/firefox/i.test(navigator.userAgent)) return;
     let live = true;
-    encoderCodec(width, height, fps).then(
+    encoderCodec(width, height, fps, format).then(
       (codec) => {
         if (live) setLocked({ key, value: qualityIgnored(codec, navigator.userAgent) });
       },
@@ -62,7 +67,7 @@ function useQualityLocked(width: number, height: number, fps: number): boolean {
     return () => {
       live = false;
     };
-  }, [key, width, height, fps]);
+  }, [key, width, height, fps, format]);
   return locked?.key === key && locked.value;
 }
 
@@ -87,6 +92,7 @@ function OptionsForm({
   const [targetWidth, setTargetWidth] = useState(DEFAULT_TARGET_WIDTH);
   const [includeLog, setIncludeLog] = useState(true);
   const [quality, setQuality] = useState<VideoQuality>('balanced');
+  const [format, setFormat] = useState<VideoFormat>('h264');
   const plan = useMemo(
     () => buildVideoPlan(stream.events, { speed, pacing, fromIndex: range === 'here' ? currentIndex : openingEndIndex(stream.events) }),
     [stream.events, speed, pacing, range, currentIndex],
@@ -96,7 +102,7 @@ function OptionsForm({
     const layout = frameLayout(size.width, size.height, targetWidth, includeLog);
     return { layout, bytes: estimateBytes(layout.width, layout.height, plan.fps, quality, plan.seconds) };
   }, [stageSize, targetWidth, includeLog, quality, plan]);
-  const qualityLocked = useQualityLocked(estimate.layout.width, estimate.layout.height, plan.fps);
+  const qualityLocked = useQualityLocked(estimate.layout.width, estimate.layout.height, plan.fps, format);
   return (
     <>
       <p className="replay-export-lead">
@@ -153,6 +159,16 @@ function OptionsForm({
             ))}
           </select>
         </label>
+        <label>
+          <span>Format</span>
+          <select value={format} onChange={(event) => setFormat(event.target.value as VideoFormat)}>
+            {FORMATS.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="replay-export-check">
           <input type="checkbox" checked={includeLog} onChange={(event) => setIncludeLog(event.target.checked)} />
           <span>Actions log beside the table ({LOG_PX} px column)</span>
@@ -171,15 +187,20 @@ function OptionsForm({
       ) : (
         <p className="replay-export-note">
           That&apos;s a ceiling, not a forecast: the table is mostly still, and the encoder spends less on still frames,
-          so most files come out well under it. Chrome and Edge follow the Quality setting; Firefox often sets its own
-          quality, and its files are usually much smaller.
+          so most files come out well under it. Firefox often sets its own quality, and its files are usually much
+          smaller.
         </p>
       )}
+      <p className="replay-export-note">
+        {format === 'vp9'
+          ? "VP9 follows the Quality setting in Chrome and Edge. It plays in browsers, VLC, Discord and Windows' Media Player, but not in QuickTime or on iPhone."
+          : 'If Best quality looks no sharper than Balanced in Chrome or Edge, the browser is using its software H.264 encoder, which ignores Quality. Choose VP9 instead.'}
+      </p>
       <div className="replay-export-actions">
         <button
           type="button"
           className="replay-btn replay-btn-primary"
-          onClick={() => onStart({ speed, pacing, range, targetWidth, includeLog, quality })}
+          onClick={() => onStart({ speed, pacing, range, targetWidth, includeLog, quality, format })}
         >
           Export
         </button>

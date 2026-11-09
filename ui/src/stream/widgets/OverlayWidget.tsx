@@ -1,10 +1,11 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { ColorPips } from '../../components/ColorPips';
 import type { DeckRow } from '../deckRows';
-import type { DeckSort, StreamOptions } from '../options';
+import { shows, type DeckSort, type StreamOptions } from '../options';
 import { deckColors, oddsTone, overlaySections, shortFormat, showsLibrary, tintAlpha } from '../overlayView';
 import type { OverlayPayload, OverlaySideCard, OverlayState } from '../types';
 import { useOverlay } from '../useOverlay';
+import { AutoScroll } from './AutoScroll';
 import { Brand } from './Brand';
 import { ManaCost } from './ManaCost';
 
@@ -100,7 +101,8 @@ function headLine(state: OverlayState, payload: OverlayPayload, options: StreamO
   if (format) parts.push(format);
   if (state.opponent_name) {
     const h2h = payload.head_to_head;
-    parts.push(`vs ${options.opponent ? state.opponent_name : 'Opponent'}${h2h ? ` (${h2h.wins}–${h2h.losses})` : ''}`);
+    const record = h2h && shows(options, 'h2h') ? ` (${h2h.wins}–${h2h.losses})` : '';
+    parts.push(`vs ${options.opponent ? state.opponent_name : 'Opponent'}${record}`);
   }
   return `${state.game_over ? 'Game over · ' : ''}${parts.join(' · ')}`;
 }
@@ -126,25 +128,29 @@ export function OverlayView({ payload, options }: { payload: OverlayPayload; opt
         </div>
         <div className="corner">
           <Brand show={options.brand} />
-          <div className="turn">
-            TURN<b>{state.turn_number ?? '—'}</b>
-          </div>
+          {shows(options, 'turn') ? (
+            <div className="turn">
+              TURN<b>{state.turn_number ?? '—'}</b>
+            </div>
+          ) : null}
         </div>
       </div>
-      <div className="lands">
-        <div className="t">
-          Land drops
-          <small>
-            {state.lands_left} of {state.library_size} left
-          </small>
-        </div>
-        {(['1', '2', '3'] as const).map((n) => (
-          <div key={n} className={`odd${n === '1' ? ' now' : ''}`}>
-            <small>{n === '1' ? 'NEXT' : `IN ${n}`}</small>
-            <b>{Math.round(state.land_odds[n])}%</b>
+      {shows(options, 'drops') ? (
+        <div className="lands">
+          <div className="t">
+            Land drops
+            <small>
+              {state.lands_left} of {state.library_size} left
+            </small>
           </div>
-        ))}
-      </div>
+          {(['1', '2', '3'] as const).map((n) => (
+            <div key={n} className={`odd${n === '1' ? ' now' : ''}`}>
+              <small>{n === '1' ? 'NEXT' : `IN ${n}`}</small>
+              <b>{Math.round(state.land_odds[n])}%</b>
+            </div>
+          ))}
+        </div>
+      ) : null}
       <div className="tools">
         <span>Sort</span>
         <span className="seg" aria-label="Sorted by">
@@ -156,14 +162,16 @@ export function OverlayView({ payload, options }: { payload: OverlayPayload; opt
         </span>
         {state.game_over ? (
           <span className="pd over">FINAL</span>
-        ) : state.on_play === null || state.on_play === undefined ? null : (
+        ) : !shows(options, 'order') || state.on_play === null || state.on_play === undefined ? null : (
           <span className={`pd ${state.on_play ? 'play' : 'draw'}`}>{state.on_play ? 'PLAY' : 'DRAW'}</span>
         )}
-        <span className="lib">
-          Library <b>{state.library_size}</b> / {state.deck_size}
-        </span>
+        {shows(options, 'library') ? (
+          <span className="lib">
+            Library <b>{state.library_size}</b> / {state.deck_size}
+          </span>
+        ) : null}
       </div>
-      <div className="list" aria-label="Library">
+      <AutoScroll frameClassName="list-frame" className="list" label="Library">
         {spells.map((row) => (
           <CardRow key={row.key} row={row} />
         ))}
@@ -192,7 +200,7 @@ export function OverlayView({ payload, options }: { payload: OverlayPayload; opt
             {unaccounted} card{unaccounted === 1 ? '' : 's'} in the library the tracker can't name
           </div>
         ) : null}
-      </div>
+      </AutoScroll>
     </>
   );
 }

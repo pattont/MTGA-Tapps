@@ -130,7 +130,7 @@ EDHREC and Cube Cobra send today:
 
 | Store | How the list gets there | Affiliate parameter |
 | --- | --- | --- |
-| TCGplayer | `store.tcgplayer.com/massentry?c=` with entries joined by `\|\|`. With set codes on, each entry reads `qty Name [SET] number`. | Impact tracking link with the Mass Entry URL as `u` |
+| TCGplayer | `www.tcgplayer.com/massentry?productline=Magic&c=` with entries joined by `\|\|`. With set codes on, each entry reads `qty Name [SET] number`. Mass Entry opens with the list filled in, and one Add to Cart click puts it all in the cart; the page has no parameter that adds to the cart by itself. | Impact tracking link with the Mass Entry URL as `u` and `subId1=tappstracker` |
 | Card Kingdom | `cardkingdom.com/builder?c=`, one card per line | `partner` (in-house program) |
 | Mana Pool | `manapool.com/add-deck?deck=`, the list as UTF-8, URL-safe base64 (`-` and `_` for `+` and `/`, no `=` padding), per Mana Pool's affiliate instructions. They also accept `qty Name [SET] number`; we don't send it, because the printing we know is TCGplayer's and Mana Pool's cart could then cost more than its total here. | `ref`, set to `tappstracker` |
 | StarCityGames | Coming soon. Kept for later: copy the list and open the deck builder for pasting | none found |
@@ -147,11 +147,12 @@ Fill in `AFFILIATE` in `ui/src/paperVendors.ts`. An empty value sends a plain
 link. A store whose code is set gets the tracked link, and the dialog then
 shows a commission disclosure for that store.
 
-- **TCGplayer**: join through Impact. See the
+- **TCGplayer**: approved through Impact. The tracking link
+  `https://partner.tcgplayer.com/c/7992527/1780961/21018` is set; the Mass
+  Entry URL rides along as `u` (encoded once more, so names with `&` or `,`
+  survive Impact decoding it), and Impact redirects there with its click id
+  added. See the
   [affiliate docs](https://docs.tcgplayer.com/docs/tcgplayer-affiliate-program).
-  Set the tracking link without a query, for example
-  `https://partner.tcgplayer.com/c/<publisher>/1830156/21018`, and copy the
-  exact IDs from the Impact dashboard.
 - **Card Kingdom**: there's no public signup page; ask Card Kingdom for a
   partner code.
 - **Mana Pool**: approved. The referral code `tappstracker` is set and sent as

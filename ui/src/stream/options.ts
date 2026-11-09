@@ -1,13 +1,102 @@
+import type { Period } from './liveView';
 /**
  * Stream Kit options. Everything a widget needs is in its URL, so OBS keeps
  * the settings with the browser source and the tracker stores nothing.
  */
 
-export type WidgetId = 'overlay' | 'deck' | 'record' | 'games' | 'matchup' | 'spotlight';
+export type WidgetId =
+  | 'overlay'
+  | 'deck'
+  | 'scorebug'
+  | 'record'
+  | 'games'
+  | 'deckstats'
+  | 'matchup'
+  | 'opponent'
+  | 'lands'
+  | 'result'
+  | 'spotlight'
+  | 'break';
 export type Background = 'solid' | 'glass' | 'none';
 export type DeckSort = 'mana' | 'odds' | 'name';
 export type SpotlightWho = 'both' | 'opponent' | 'you';
 export type SideboardPlace = 'right' | 'left' | 'below' | 'off';
+
+/**
+ * Each widget's optional parts, in display order, with their Settings label.
+ * Everything shows unless the link's `hide` lists it, so a streamer running
+ * several widgets can turn off what another one already shows.
+ */
+export const WIDGET_PARTS: Record<WidgetId, ReadonlyArray<readonly [string, string]>> = {
+  overlay: [
+    ['h2h', 'Head-to-head'],
+    ['turn', 'Turn number'],
+    ['drops', 'Land-drop odds'],
+    ['order', 'Play / draw'],
+    ['library', 'Library count'],
+  ],
+  deck: [
+    ['library', 'Library count'],
+    ['odds', 'Land next draw'],
+  ],
+  scorebug: [
+    ['yourdeck', 'Your deck'],
+    ['theirdeck', 'Their deck'],
+    ['timer', 'Turn timer'],
+    ['match', 'Bo3 score'],
+  ],
+  record: [
+    ['turn', 'Play / draw'],
+    ['rank', 'Rank'],
+    ['deck', 'Deck record'],
+  ],
+  games: [
+    ['record', 'Record'],
+    ['turn', 'Play / draw totals'],
+    ['order', 'Play / draw per game'],
+    ['details', 'Turns and length'],
+  ],
+  deckstats: [
+    ['queues', 'Ranked / casual'],
+    ['turn', 'Play / draw'],
+    ['form', 'Last 10 games'],
+  ],
+  matchup: [
+    ['order', 'Play / draw'],
+    ['game', 'Bo3 game'],
+    ['turn', 'Turn number'],
+    ['h2h', 'Head-to-head'],
+  ],
+  opponent: [
+    ['record', 'Your record vs their deck'],
+    ['art', 'Card art'],
+  ],
+  lands: [
+    ['odds', 'Next draw odds'],
+    ['reason', 'Explanation'],
+  ],
+  result: [
+    ['match', 'Match score'],
+    ['details', 'Turns, length, play / draw'],
+    ['facts', 'Highlights'],
+    ['record', 'Record'],
+  ],
+  spotlight: [],
+  break: [
+    ['session', 'Record'],
+    ['results', 'Results'],
+    ['deck', 'Deck'],
+    ['rank', 'Rank climb'],
+  ],
+};
+
+/** Whether a widget shows one of its optional parts. */
+export function shows(options: Pick<StreamOptions, 'hide'>, part: string): boolean {
+  return !options.hide.includes(part);
+}
+
+/** Longest intermission title. */
+export const TITLE_MAX = 40;
 
 export interface StreamOptions {
   widget: WidgetId | null;
@@ -37,8 +126,12 @@ export interface StreamOptions {
   names: 'type' | 'white';
   /** Recent games: how many to list, newest first. */
   count: number;
-  /** Recent games: the session record in the heading. */
-  record: boolean;
+  /** Record widget: this session's games or today's. */
+  period: Period;
+  /** The widget's optional parts that are turned off (WIDGET_PARTS). */
+  hide: string[];
+  /** Intermission card: its heading. */
+  title: string;
 }
 
 export interface WidgetInfo {
@@ -70,7 +163,7 @@ export const WIDGETS: WidgetInfo[] = [
       'The in-game overlay as one source: deck, land-drop odds, every card left with its odds, and the sideboard.',
     width: OVERLAY_SIZE.width + OVERLAY_SIZE.side,
     height: OVERLAY_SIZE.height,
-    options: ['opacity', 'sideboard', 'sort', 'lands', 'names', 'opponent', 'idle'],
+    options: ['opacity', 'sideboard', 'sort', 'lands', 'names', 'opponent', 'idle', 'hide'],
     shared: ['scale', 'brand'],
     size: (options) => {
       if (options.sideboard === 'below') return { width: OVERLAY_SIZE.width, height: OVERLAY_SIZE.height + OVERLAY_SIZE.below };
@@ -84,26 +177,50 @@ export const WIDGETS: WidgetInfo[] = [
     description: 'Your deck with copies left in the library and the odds of drawing each card next.',
     width: 320,
     height: 720,
-    options: ['idle', 'sort', 'lands'],
+    options: ['idle', 'sort', 'lands', 'hide'],
+  },
+  {
+    id: 'scorebug',
+    title: 'Scorebug',
+    description: 'A TV-style bar: both players, life totals that flash when they change, the turn and whose it is, and the match score in Bo3.',
+    width: 900,
+    height: 110,
+    options: ['opponent', 'idle', 'hide'],
   },
   {
     id: 'record',
-    title: 'Session record',
-    description: 'Wins and losses this session, win rate, rank, and today’s record with the current deck.',
-    width: 380,
+    title: 'Record',
+    description: 'Wins and losses this session or today, win rate, on the play and on the draw, rank, and your record with the current deck.',
+    width: 440,
     height: 110,
-    options: [],
+    options: ['period', 'hide'],
   },
   {
     id: 'games',
     title: 'Recent games',
-    description: 'Today’s games, newest first: win or loss, play or draw, deck, opponent, turns and length, under the session record.',
+    description: 'Today’s games, newest first: win or loss, play or draw, deck, opponent, turns and length, under your session’s or today’s record.',
     width: GAMES_SIZE.width,
     height: GAMES_SIZE.head + GAMES_SIZE.record + 10 * GAMES_SIZE.row,
-    options: ['count', 'record', 'opponent'],
+    options: ['count', 'opponent', 'period', 'hide'],
     size: (options) => ({
       width: GAMES_SIZE.width,
-      height: GAMES_SIZE.head + (options.record ? GAMES_SIZE.record : 0) + options.count * GAMES_SIZE.row,
+      height: GAMES_SIZE.head + (shows(options, 'record') ? GAMES_SIZE.record : 0) + options.count * GAMES_SIZE.row,
+    }),
+  },
+  {
+    id: 'deckstats',
+    title: 'Deck stats',
+    description: 'The deck you’re playing: its win rate and record, with ranked and casual, play and draw, and recent form.',
+    width: 440,
+    height: 230,
+    options: ['idle', 'hide'],
+    // The headline, then a strip for ranked/casual and play/draw, and the recent-form row.
+    size: (options) => ({
+      width: 440,
+      height:
+        100 +
+        (shows(options, 'queues') || shows(options, 'turn') ? 85 : 0) +
+        (shows(options, 'form') ? 45 : 0),
     }),
   },
   {
@@ -112,7 +229,31 @@ export const WIDGETS: WidgetInfo[] = [
     description: 'Who you’re playing, their colors and likely deck, your record against them, play or draw.',
     width: 440,
     height: 150,
-    options: ['idle', 'opponent'],
+    options: ['idle', 'opponent', 'hide'],
+  },
+  {
+    id: 'opponent',
+    title: 'What they’re on',
+    description: 'The opponent’s likely deck and your record against it, then every card they’ve played this game, grouped by type.',
+    width: 360,
+    height: 560,
+    options: ['lands', 'opponent', 'idle', 'hide'],
+  },
+  {
+    id: 'lands',
+    title: 'Flood / screw meter',
+    description: 'Lands you’ve seen against what your deck should give you, Game Detail’s flood or screw verdict, and the chance the next draw is a land.',
+    width: 380,
+    height: 190,
+    options: ['idle', 'hide'],
+  },
+  {
+    id: 'result',
+    title: 'Game result',
+    description: 'A Victory or Defeat card for a few seconds after each game, with turns, length, the match score and a highlight.',
+    width: 560,
+    height: 300,
+    options: ['seconds', 'opponent', 'period', 'hide'],
   },
   {
     id: 'spotlight',
@@ -121,6 +262,18 @@ export const WIDGETS: WidgetInfo[] = [
     width: 300,
     height: 470,
     options: ['who', 'seconds'],
+  },
+  {
+    id: 'break',
+    title: 'Intermission',
+    description: 'For a “be right back” or between-games scene: your title, your session’s or today’s record and results, the deck and your rank climb.',
+    width: 560,
+    height: 380,
+    options: ['title', 'period', 'hide'],
+    size: (options) => ({
+      width: 560,
+      height: 110 + WIDGET_PARTS.break.filter(([part]) => shows(options, part)).length * 66,
+    }),
   },
 ];
 
@@ -141,7 +294,9 @@ export const DEFAULT_OPTIONS: StreamOptions = {
   sideboard: 'right',
   names: 'type',
   count: 10,
-  record: true,
+  period: 'session',
+  hide: [],
+  title: 'Be right back',
 };
 
 /** Options every widget reads. */
@@ -159,6 +314,11 @@ function pick<T extends string>(value: string | null, allowed: readonly T[], fal
 function flag(value: string | null, fallback: boolean): boolean {
   if (value === null) return fallback;
   return !['0', 'false', 'no', 'off'].includes(value.toLowerCase());
+}
+
+function text(value: string | null, fallback: string): string {
+  if (value === null) return fallback;
+  return value.replace(/\s+/g, ' ').trim().slice(0, TITLE_MAX);
 }
 
 function bounded(value: string | null, [low, high]: [number, number], fallback: number): number {
@@ -179,12 +339,22 @@ export function widgetSize(widget: WidgetInfo, options: StreamOptions): { width:
   return { width: Math.round(base.width * scale), height: Math.round(base.height * scale) };
 }
 
+/** The widget's parts listed in `hide`, in its own order; unknown names are dropped. */
+function hiddenParts(params: URLSearchParams, widget: WidgetId | null): string[] {
+  if (!widget) return [];
+  const listed = new Set((params.get('hide') ?? '').split(',').map((part) => part.trim()));
+  // Recent games links from 0.7.5–0.7.6 hid the session record with record=0.
+  if (widget === 'games' && params.get('record') !== null && !flag(params.get('record'), true)) listed.add('record');
+  return WIDGET_PARTS[widget].map(([part]) => part).filter((part) => listed.has(part));
+}
+
 export function parseStreamOptions(search: string): StreamOptions {
   const params = new URLSearchParams(search);
   const d = DEFAULT_OPTIONS;
   const widget = params.get('widget');
+  const known = WIDGETS.some((info) => info.id === widget) ? (widget as WidgetId) : null;
   return {
-    widget: WIDGETS.some((info) => info.id === widget) ? (widget as WidgetId) : null,
+    widget: known,
     scale: bounded(params.get('scale'), SCALE_RANGE, d.scale),
     bg: pick(params.get('bg'), ['solid', 'glass', 'none'] as const, d.bg),
     brand: flag(params.get('brand'), d.brand),
@@ -200,12 +370,15 @@ export function parseStreamOptions(search: string): StreamOptions {
     sideboard: pick(params.get('sideboard'), ['right', 'left', 'below', 'off'] as const, d.sideboard),
     names: pick(params.get('names'), ['type', 'white'] as const, d.names),
     count: bounded(params.get('count'), COUNT_RANGE, d.count),
-    record: flag(params.get('record'), d.record),
+    period: pick(params.get('period'), ['session', 'today'] as const, d.period),
+    hide: hiddenParts(params, known),
+    title: text(params.get('title'), d.title),
   };
 }
 
 function encode(value: StreamOptions[keyof StreamOptions]): string {
   if (typeof value === 'boolean') return value ? '1' : '0';
+  if (Array.isArray(value)) return value.join(',');
   return String(value);
 }
 
@@ -223,7 +396,7 @@ export function streamUrl(
   const merged = { ...DEFAULT_OPTIONS, ...options };
   const info = widgetInfo(widget);
   for (const key of [...(info.shared ?? COMMON), ...info.options]) {
-    if (merged[key] !== DEFAULT_OPTIONS[key]) {
+    if (encode(merged[key]) !== encode(DEFAULT_OPTIONS[key])) {
       params.set(key, encode(merged[key]));
     }
   }

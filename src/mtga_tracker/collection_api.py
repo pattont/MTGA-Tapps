@@ -225,8 +225,8 @@ def _scan(db_path: Optional[Path], progress) -> Dict[int, int]:
         raise _ExportError("arena_not_running", _ERROR_TEXT["arena_not_running"])
     except PermissionError:
         raise _ExportError("permission_denied", _ERROR_TEXT["permission_denied"])
-    except ce.CollectionNotFound:
-        raise _ExportError("no_collection", _ERROR_TEXT["no_collection"])
+    except ce.CollectionNotFound as exc:
+        raise _ExportError("no_collection", _no_collection_text(exc))
     except sqlite3.Error as exc:
         raise _ExportError("scan_failed", f"Database error: {exc}")
     finally:
@@ -297,6 +297,11 @@ def _scan_macos_elevated(db_path: Optional[Path], progress) -> Dict[int, int]:
         if "-128" in combined or "user canceled" in combined or "cancelled" in combined:
             raise _ExportError("permission_denied", _ERROR_TEXT["permission_denied"])
         code = _parse_helper_error(stderr)
+        if code == "no_collection":
+            from . import collection_export as ce
+
+            details = ce.CollectionNotFound.from_details(_helper_error_details(stderr))
+            raise _ExportError(code, _no_collection_text(details))
         raise _ExportError(code, _ERROR_TEXT.get(code, "The scan failed."))
 
     progress("Reading the scan result…")
@@ -326,6 +331,23 @@ def _parse_helper_error(stderr: str) -> str:
             token = line.split()[1] if len(line.split()) > 1 else "scan_failed"
             return token
     return "scan_failed"
+
+
+def _helper_error_details(stderr: str) -> str:
+    """The text after `ERROR <code>` on the helper's error line."""
+    for line in (stderr or "").splitlines():
+        if line.startswith("ERROR "):
+            return " ".join(line.split()[2:])
+    return ""
+
+
+def _no_collection_text(exc) -> str:
+    """The not-found message plus what the scan saw, for bug reports."""
+    try:
+        summary = exc.summary()
+    except Exception:  # noqa: BLE001 - details are a bonus, never a crash
+        summary = ""
+    return f"{_ERROR_TEXT['no_collection']} {summary}".strip()
 
 
 _ERROR_TEXT = {

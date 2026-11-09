@@ -62,7 +62,7 @@ export interface OverlaySession extends Score {
 }
 
 export interface OverlayPayload {
-  tracker: { state: 'live' | 'idle' | 'offline'; updated_at: string | null; session_id: string | null };
+  tracker: { state: 'live' | 'idle' | 'offline'; session_id: string | null };
   state: OverlayState | null;
   head_to_head: Score | null;
   /** Absent from trackers older than the footer. */

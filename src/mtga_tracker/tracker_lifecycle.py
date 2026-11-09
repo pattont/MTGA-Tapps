@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from .log_parser import tail_lines
 from .opening_hand import state_has_opening_hand_zone
 from .settings import DEFAULT_SESSION_BREAK_HOURS, session_break_hours
 from .state import GameState
@@ -34,6 +35,16 @@ class TrackerLifecycleMixin:
         self._session_last_game_end: Optional[datetime] = None
         # Match ordinals are per session (they are part of the match id).
         self._arena_match_ordinal_by_id: Dict[str, int] = {}
+        # Set once this session's tracker_sessions row is committed.
+        self._session_row_written = False
+
+    def _start_session_after_reset(self) -> None:
+        """The dashboard reset the database under a running tracker: begin a
+        new session with zeroed totals, and forget the frozen scoreboard so
+        the heartbeat stops writing the pre-reset game back to live_status."""
+        self._start_session(datetime.now())
+        self._last_in_game_live_row = None
+        self._last_in_game_live_json = None
 
     def _start_new_session_after_break(self) -> bool:
         """Start a new session when a new match begins after a long break.
@@ -66,20 +77,52 @@ class TrackerLifecycleMixin:
         self._session_stats_recorded_this_game = False
 
     def _find_nested(self, data: Any, key: str) -> Any:
-        """Find a key in nested data structure."""
-        if isinstance(data, dict):
-            if key in data:
-                return data[key]
-            for value in data.values():
-                result = self._find_nested(value, key)
-                if result is not None:
-                    return result
-        elif isinstance(data, list):
-            for item in data:
-                result = self._find_nested(item, key)
-                if result is not None:
-                    return result
-        return None
+        """The first non-null value of `key` in a nested structure, in
+        pre-order (a dict's own keys before its children, children in order).
+
+        A GRE message is asked this a dozen times, mostly for keys it does
+        not have, and each miss used to walk the whole message: 32 million
+        recursive calls over ten games. One walk now indexes every key's
+        first value, kept for the handful of objects one log line is asked
+        about (each is a whole GRE batch, so the cache stays small).
+        """
+        if not isinstance(data, (dict, list)):
+            return None
+        cache = self.__dict__.setdefault("_nested_index_cache", {})
+        entry = cache.get(id(data))
+        if entry is None or entry[0] is not data:
+            if len(cache) >= 4:
+                cache.clear()
+            entry = (data, self._index_nested(data))
+            cache[id(data)] = entry
+        return entry[1].get(key)
+
+    @staticmethod
+    def _index_nested(data: Any) -> Dict[str, Any]:
+        """Every key's first non-null value, in the order the recursive search
+        walked: a dict's own keys, then its children in order. A dict that
+        has the key (even as null) ends the search inside it, exactly as the
+        recursion returned there instead of descending, so such a key is
+        blocked for that dict's children."""
+        index: Dict[str, Any] = {}
+        stack: List[Tuple[Any, frozenset]] = [(data, frozenset())]
+        while stack:
+            node, blocked = stack.pop()
+            if isinstance(node, dict):
+                children = []
+                for key, value in node.items():
+                    if value is not None and key not in index and key not in blocked:
+                        index[key] = value
+                    if isinstance(value, (dict, list)):
+                        children.append(value)
+                if children:
+                    child_blocked = blocked.union(node) if not blocked.issuperset(node) else blocked
+                    stack.extend((child, child_blocked) for child in reversed(children))
+            elif isinstance(node, list):
+                stack.extend(
+                    (item, blocked) for item in reversed(node) if isinstance(item, (dict, list))
+                )
+        return index
 
     @staticmethod
     def _normalize_seat_id(value: Any) -> Optional[int]:
@@ -251,9 +294,7 @@ class TrackerLifecycleMixin:
     def _check_if_mid_game(self):
         """Only set mid-game if the tail of the log shows an active game and no match-end (lobby = match already ended)."""
         try:
-            with open(self.parser.log_path, "r", encoding="utf-8", errors="ignore") as f:
-                lines = f.readlines()
-            tail = lines[-300:] if len(lines) > 300 else lines
+            tail = tail_lines(self.parser.log_path, 300)
 
             # If the tail contains match-end, we're in lobby or between games — not mid-game
             match_end_markers = (
@@ -1289,9 +1330,7 @@ class TrackerLifecycleMixin:
         if self.game_state.winner_seat is not None:
             return
         try:
-            with open(self.parser.log_path, "r", encoding="utf-8", errors="ignore") as f:
-                lines = f.readlines()
-            tail = lines[-100:] if len(lines) > 100 else lines
+            tail = tail_lines(self.parser.log_path, 100)
             for line in reversed(tail):
                 data = self.parser.parse_json_from_line(line)
                 if not data:

@@ -597,7 +597,7 @@ def test_gameplay_reset_preserves_collections_and_membership(tmp_path):
     with dm.library_connection(path) as conn:
         group = dc.save_collection(conn, "Control")
         saved = dm.save_deck(conn, dm.parse_import(TEXT), collection_id=group["id"])
-    reset_database(path)
+    reset_database(path, arena_probe=lambda: False)
     with dm.library_connection(path) as conn:
         assert dc.list_collections(conn)[0]["id"] == group["id"]
         assert dm.deck_detail(conn, saved["id"])["collection_id"] == group["id"]

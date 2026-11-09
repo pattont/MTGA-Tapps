@@ -2,6 +2,9 @@ import { useEffect, useId, useState } from 'react';
 import { Copy, ExternalLink, Heart } from 'lucide-react';
 import {
   DEFAULT_OPTIONS,
+  shows,
+  TITLE_MAX,
+  WIDGET_PARTS,
   WIDGETS,
   streamUrl,
   widgetSize,
@@ -9,6 +12,7 @@ import {
   type WidgetId,
   type WidgetInfo,
 } from '../stream/options';
+import { STREAM_KIT_STORAGE_KEY } from '../stream/previewSync';
 
 /**
  * Settings → Streaming: builds the OBS browser-source links for the Stream
@@ -16,7 +20,6 @@ import {
  * the choices in the browser for next time; the tracker stores nothing.
  */
 
-const STORAGE_KEY = 'mtga-stream-kit';
 const SCALES = [75, 100, 125, 150, 200];
 const SECONDS = [5, 8, 12, 20];
 const GAME_COUNTS = [1, 3, 5, 10, 15, 20, 25];
@@ -31,7 +34,7 @@ interface Saved {
 function loadSaved(): Saved {
   const fallback: Saved = { shared: { scale: DEFAULT_OPTIONS.scale, bg: DEFAULT_OPTIONS.bg, brand: DEFAULT_OPTIONS.brand }, widgets: {} };
   try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null') as Partial<Saved> | null;
+    const parsed = JSON.parse(localStorage.getItem(STREAM_KIT_STORAGE_KEY) ?? 'null') as Partial<Saved> | null;
     if (!parsed || typeof parsed !== 'object') return fallback;
     return { shared: { ...fallback.shared, ...parsed.shared }, widgets: { ...parsed.widgets } };
   } catch {
@@ -82,6 +85,86 @@ function Range({ label, value, onChange }: { label: string; value: number; onCha
   );
 }
 
+/** A group of checkboxes for a list option, kept in the option's own order. */
+function Checks<T extends string>({
+  label,
+  all,
+  value,
+  names,
+  onChange,
+}: {
+  label: string;
+  all: readonly T[];
+  value: T[];
+  names: Record<T, string>;
+  onChange: (value: T[]) => void;
+}) {
+  return (
+    <fieldset className="settings-field stream-kit-checks">
+      <legend>{label}</legend>
+      {all.map((item) => (
+        <label key={item} className="settings-check">
+          <input
+            checked={value.includes(item)}
+            type="checkbox"
+            onChange={(event) =>
+              onChange(all.filter((other) => (other === item ? event.target.checked : value.includes(other))))
+            }
+          />
+          {names[item]}
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
+function TextField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <label className="settings-field stream-kit-wide">
+      <span>{label}</span>
+      <input maxLength={TITLE_MAX} type="text" value={value} onChange={(event) => onChange(event.target.value)} />
+    </label>
+  );
+}
+
+const OPPONENT_NAME = 'opponent-name';
+
+/**
+ * The widget's optional parts as "Show" checkboxes. The link stores the ones
+ * turned off (`hide`), so a new part shows on links made before it existed.
+ */
+function ShowParts({
+  widget,
+  options,
+  onChange,
+}: {
+  widget: WidgetInfo;
+  options: StreamOptions;
+  onChange: (patch: Partial<StreamOptions>) => void;
+}) {
+  const parts = WIDGET_PARTS[widget.id];
+  // The opponent's name has its own link option (`opponent`), kept from 0.7.5.
+  const name = widget.options.includes('opponent') ? [[OPPONENT_NAME, 'Opponent name'] as const] : [];
+  const items = [...name, ...parts];
+  if (items.length === 0) return null;
+  const all = items.map(([part]) => part);
+  const own = parts.map(([part]) => part);
+  return (
+    <Checks
+      label="Show"
+      all={all}
+      value={all.filter((part) => (part === OPPONENT_NAME ? options.opponent : shows(options, part)))}
+      names={Object.fromEntries(items)}
+      onChange={(visible) =>
+        onChange({
+          ...(name.length > 0 ? { opponent: visible.includes(OPPONENT_NAME) } : {}),
+          hide: own.filter((part) => !visible.includes(part)),
+        })
+      }
+    />
+  );
+}
+
 function WidgetOptions({
   widget,
   options,
@@ -114,15 +197,15 @@ function WidgetOptions({
       onChange={(sort) => onChange({ sort })}
     />
   );
-  const opponent = (
+  const period = (
     <Select
-      label="Opponent name"
-      value={options.opponent ? 'show' : 'hide'}
+      label="Record"
+      value={options.period}
       choices={[
-        ['show', 'Show'],
-        ['hide', 'Hide'],
+        ['session', 'Session'],
+        ['today', 'Today'],
       ]}
-      onChange={(value) => onChange({ opponent: value === 'show' })}
+      onChange={(period) => onChange({ period })}
     />
   );
   switch (widget.id) {
@@ -160,7 +243,6 @@ function WidgetOptions({
             ]}
             onChange={(names) => onChange({ names })}
           />
-          {opponent}
           {idle}
         </>
       );
@@ -189,23 +271,63 @@ function WidgetOptions({
             choices={GAME_COUNTS.map((count) => [count, count === 1 ? 'Last game only' : `Last ${count}`] as [number, string])}
             onChange={(count) => onChange({ count })}
           />
-          <Select
-            label="Session record"
-            value={options.record ? 'show' : 'hide'}
-            choices={[
-              ['show', 'Show at the top'],
-              ['hide', 'Hide'],
-            ]}
-            onChange={(value) => onChange({ record: value === 'show' })}
-          />
-          {opponent}
+          {period}
         </>
       );
     case 'matchup':
       return (
         <>
-          {opponent}
           {idle}
+        </>
+      );
+    case 'scorebug':
+      return (
+        <>
+          {idle}
+        </>
+      );
+    case 'record':
+      return (
+        <>
+          {period}
+        </>
+      );
+    case 'deckstats':
+      return idle;
+    case 'opponent':
+      return (
+        <>
+          <Select
+            label="Lands"
+            value={options.lands}
+            choices={[
+              ['grouped', 'One line'],
+              ['all', 'With the cards'],
+            ]}
+            onChange={(lands) => onChange({ lands })}
+          />
+          {idle}
+        </>
+      );
+    case 'lands':
+      return idle;
+    case 'result':
+      return (
+        <>
+          <Select
+            label="Show for"
+            value={options.seconds}
+            choices={SECONDS.map((seconds) => [seconds, `${seconds} seconds`] as [number, string])}
+            onChange={(seconds) => onChange({ seconds })}
+          />
+          {period}
+        </>
+      );
+    case 'break':
+      return (
+        <>
+          <TextField label="Title" value={options.title} onChange={(title) => onChange({ title })} />
+          {period}
         </>
       );
     case 'spotlight':
@@ -276,6 +398,7 @@ function WidgetCard({
       {widget.options.length > 0 ? (
         <div className="stream-kit-options">
           <WidgetOptions widget={widget} options={options} onChange={onChange} />
+          <ShowParts widget={widget} options={options} onChange={onChange} />
         </div>
       ) : null}
       <div className="stream-kit-link">
@@ -311,7 +434,7 @@ export function StreamKitSettings({ origin = window.location.origin }: { origin?
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+      localStorage.setItem(STREAM_KIT_STORAGE_KEY, JSON.stringify(saved));
     } catch {
       // Private mode or full storage: the choices just aren't remembered.
     }
@@ -327,11 +450,15 @@ export function StreamKitSettings({ origin = window.location.origin }: { origin?
         <p className="settings-hint">
           In OBS or Streamlabs, add a <strong>Browser</strong> source for each widget, paste its link and set the size
           shown. Widgets are transparent and appear only when there is something to show, while the tracker runs.
-          Preview opens a widget with sample data.
+          Preview opens a widget with sample data, and follows your changes here while it is open.
         </p>
         <p className="settings-hint stream-kit-idle-note">
           <strong>Not streaming?</strong> You can ignore this. Nothing here runs until a widget is open in OBS or a
           browser, so it uses no extra memory, CPU or network.
+        </p>
+        <p className="settings-hint">
+          <strong>Using several widgets?</strong> Each has a <strong>Show</strong> list: turn off anything another
+          widget already shows, so the same number isn’t on screen twice.
         </p>
       </div>
       <div className="stream-kit-shared">

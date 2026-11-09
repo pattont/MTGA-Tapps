@@ -221,6 +221,10 @@ class TrackerTurnStateMixin:
             self._finish_active_turn_timer(self._now())
 
         previous_phase = self.game_state.phase
+        if turn_num:
+            self.game_state.awaiting_first_turn = False
+        elif (self.game_state.turn_number or 0) < 1:
+            self.game_state.awaiting_first_turn = True
         if turn_num is not None:
             self.game_state.turn_number = turn_num
         if active_player is not None:

@@ -52,7 +52,7 @@ def test_extract_game_state_events_preserves_gre_message_order():
         '{"type":"GREMessageType_GameStateMessage","gameStateMessage":{"gameStateId":7,"gameInfo":{"matchState":"MatchState_GameComplete"}}},'
         '{"type":"GREMessageType_GameStateMessage","gameStateMessage":{"gameStateId":8,"gameInfo":{"matchState":"MatchState_MatchComplete"}}},'
         '{"type":"GREMessageType_GameStateMessage","gameStateMessage":{"gameStateId":9,"turnInfo":{"turnNumber":1,"activePlayer":1}}}'
-        ']}}'
+        "]}}"
     )
 
     events = parser.extract_game_state_events(line)
@@ -139,3 +139,57 @@ def test_constructed_parser_smoke_fixture_routes_expected_entries():
         "event_lifecycle",
         "inventory",
     ]
+
+
+def test_iter_lines_reversed_matches_readlines(tmp_path):
+    from mtga_tracker.log_parser import iter_lines_reversed, tail_lines
+
+    path = tmp_path / "Player.log"
+    lines = [f"line {i} " + "x" * (i * 700 % 2000) + "\n" for i in range(400)]
+    lines[5] = '[UnityCrossThreadLogger]caf\u00e9 {"k": 1}\n'
+    path.write_text("".join(lines), encoding="utf-8")
+
+    with open(path, encoding="utf-8") as handle:
+        expected = handle.readlines()
+    assert list(iter_lines_reversed(path, chunk_size=1000)) == list(reversed(expected))
+    assert tail_lines(path, 7) == expected[-7:]
+    assert tail_lines(path, 10_000) == expected
+
+
+def test_iter_lines_reversed_handles_no_final_newline_and_crlf(tmp_path):
+    from mtga_tracker.log_parser import iter_lines_reversed, tail_lines
+
+    path = tmp_path / "Player.log"
+    path.write_bytes(b"first\r\nsecond\r\nlast partial")
+
+    assert list(iter_lines_reversed(path, chunk_size=4)) == ["last partial", "second\n", "first\n"]
+    assert tail_lines(path, 2) == ["second\n", "last partial"]
+    empty = tmp_path / "empty.log"
+    empty.write_bytes(b"")
+    assert list(iter_lines_reversed(empty)) == []
+    assert tail_lines(empty, 5) == []
+
+
+def test_unchanged_log_is_not_reopened(tmp_path, monkeypatch):
+    import builtins
+
+    from mtga_tracker.log_parser import MTGALogParser
+
+    log = tmp_path / "Player.log"
+    log.write_text("[UnityCrossThreadLogger]1/2/2026 1:00:00 PM\n{\"a\": 1}\n", encoding="utf-8")
+    parser = MTGALogParser(log_path=str(log))
+    parser.last_position = 0
+    assert len(list(parser.read_new_entries())) == 1
+
+    real_open = builtins.open
+
+    def refusing_open(*args, **kwargs):  # a second read of an unchanged file must not happen
+        raise AssertionError("log reopened without new bytes")
+
+    monkeypatch.setattr(builtins, "open", refusing_open)
+    assert list(parser.read_new_entries()) == []
+    monkeypatch.setattr(builtins, "open", real_open)
+
+    with real_open(log, "a", encoding="utf-8") as handle:
+        handle.write("[UnityCrossThreadLogger]1/2/2026 1:00:01 PM\n{\"b\": 2}\n")
+    assert len(list(parser.read_new_entries())) == 1

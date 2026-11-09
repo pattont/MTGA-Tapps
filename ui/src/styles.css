@@ -4199,7 +4199,58 @@ span.sidebar-update-mini {
   font-style: italic;
 }
 
-/* ---- DB Health danger zone (Reset Database) ---- */
+/* ---- Reset Tracker Data page (#/reset) ---- */
+
+.reset-lists {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+  margin: 8px 16px 16px;
+}
+
+.reset-list {
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.reset-list-deleted {
+  border-left-color: var(--danger);
+}
+
+.reset-list-kept {
+  border-left-color: var(--success);
+}
+
+.reset-list h3 {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.reset-list ul,
+.reset-notes {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.reset-notes {
+  margin: 8px 16px 4px;
+  padding-left: 34px;
+}
+
+.reset-notes a {
+  color: var(--text);
+}
+
+/* ---- Reset danger panel and confirmation (Reset Tracker Data page) ---- */
 
 .danger-zone-panel {
   display: flex;
@@ -5661,6 +5712,15 @@ tr.deck-change-row-out .card-link {
 /* Paths under the tiles; Log DB carries the small Database health link. */
 .settings-paths .settings-info-row {
   grid-template-columns: 150px minmax(0, 1fr) auto;
+}
+
+.settings-quiet-links {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+  color: var(--subtle);
+  font-size: 0.76rem;
+  white-space: nowrap;
 }
 
 .settings-quiet-link {
@@ -8348,9 +8408,38 @@ a.sidebar-deck-finder {
   gap: 10px;
 }
 
-.stream-kit .settings-field select {
+.stream-kit .settings-field select,
+.stream-kit .settings-field input[type='text'] {
   width: 100%;
   min-width: 0;
+}
+
+/* A list option's checkboxes take a whole row of the options grid. */
+.stream-kit-checks {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+  gap: 6px 18px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.stream-kit-checks legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 2px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.stream-kit-wide {
+  grid-column: 1 / -1;
 }
 
 .stream-kit-link {

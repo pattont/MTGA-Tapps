@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 from .analytics import AnalyticsStore
+from .date_repair import repair_swapped_log_dates
 from .format_normalizer import trusted_queue_raw
 from .paths import DATA_DIR
 
@@ -279,6 +280,25 @@ def _missing_turn_timing_findings(conn: sqlite3.Connection) -> Iterable[AuditFin
             ),
             current_value=str(timed_turns),
             suggested_value=f"recover {len(recoverable)} missing turn timing row(s)",
+            repairable=True,
+        )
+
+
+def _swapped_date_findings(conn: sqlite3.Connection) -> Iterable[AuditFinding]:
+    """Report rows whose dates were stored with month and day swapped."""
+    count = repair_swapped_log_dates(conn, dry_run=True)
+    if count:
+        yield AuditFinding(
+            code="SWAPPED_LOG_DATES",
+            severity="error",
+            table_name="games",
+            row_id="*",
+            message=(
+                f"{count} row(s) store a log date with month and day swapped "
+                "(11 April for 4 November); their session's clock shows the true date."
+            ),
+            current_value=str(count),
+            suggested_value="swap month and day back",
             repairable=True,
         )
 
@@ -753,6 +773,7 @@ def audit_database(
         findings.extend(_format_queue_findings(conn))
         findings.extend(_turn_count_findings(conn))
         findings.extend(_missing_turn_timing_findings(conn))
+        findings.extend(_swapped_date_findings(conn))
         findings.extend(_missing_deck_name_findings(conn))
         findings.extend(_ghost_game_findings(conn))
         findings.extend(_unknown_card_label_findings(conn))
@@ -762,15 +783,18 @@ def audit_database(
         return findings
 
 
-def _repair_game_event_assignments(conn: sqlite3.Connection) -> int:
+def _repair_game_event_assignments(
+    conn: sqlite3.Connection, *, min_event_id: Optional[int] = None
+) -> int:
     """Reassign events whose timestamp falls inside a DIFFERENT game's window.
 
     Events outside every game window are left alone on purpose: post-game
     tails, Bo3 sideboarding gaps, and rank updates legitimately carry
     timestamps after their game's ended_at, and detaching them (the old
     behavior) stripped real timeline rows. Only a confident cross-game
-    placement is corrected. Idempotent and cheap enough for startup
-    maintenance (idx_games_session_window supports the range probe).
+    placement is corrected. Idempotent, and with `min_event_id` limited to
+    the events written after that id (the startup pass resumes from its
+    watermark; `--repair` always checks every event).
     """
     conn.execute("DROP TABLE IF EXISTS temp.game_event_assignment_repairs")
     conn.execute(
@@ -811,7 +835,9 @@ def _repair_game_event_assignments(conn: sqlite3.Connection) -> int:
                 LIMIT 1
             )
         FROM game_events e
-        """
+        {"WHERE e.id > ?" if min_event_id is not None else ""}
+        """,
+        (int(min_event_id),) if min_event_id is not None else (),
     )
     repaired = int(
         conn.execute(
@@ -1074,6 +1100,8 @@ def repair_database(db_path: Path = DEFAULT_DB_PATH, *, backup: bool = False) ->
                 record = missing_records.get(finding.row_id)
                 if record is not None:
                     repaired_count += _repair_missing_completed_game(conn, record)
+            elif finding.code == "SWAPPED_LOG_DATES":
+                repaired_count += repair_swapped_log_dates(conn)
             elif finding.code == "GAME_EVENT_ASSIGNMENT_MISMATCH":
                 repaired_count += _repair_game_event_assignments(conn)
             elif finding.code == "EMPTY_GAME_RECORD":

@@ -47,6 +47,7 @@ import { SettingsPage } from './components/SettingsPage';
 import { MetricCard } from './components/MetricCard';
 import { WildcardStrip } from './components/WildcardStrip';
 import { AuditPage } from './components/AuditPage';
+import { ResetPage } from './components/ResetPage';
 import { OpponentDetailPage } from './components/OpponentDetailPage';
 import { OpponentsPage } from './components/OpponentsPage';
 import { OpponentLink } from './components/OpponentLink';
@@ -60,7 +61,7 @@ import { ManaReadinessTable } from './components/ManaReadinessTable';
 import { bestDeckMetric, formatPercent, metricCards } from './dashboardData';
 import type { MetricDefinition } from './dashboardData';
 import { formatCardName, formatDateTime, formatDuration, formatNumber, formatTimeAgo, outcomeLabel, outcomeTone, shortFormatLabel } from './format';
-import { auditNavItems,
+import { auditNavItems, resetNavItems,
   deckFinderNavItems, deckManagerNavItems, cardNavItems, deckNavItems, gameNavItems, gamesNavItems, opponentNavItems,
   opponentsNavItems, liveNavItems, replayNavItems, settingsNavItems } from './nav';
 import { quickFilterPredicate } from './quickFilters';
@@ -74,6 +75,7 @@ import {
   parseOpponentsRoute,
   OPPONENTS_ROUTE_HASH,
   parseAuditRoute,
+  parseResetRoute,
   parseDeckFinderRoute,
   parseDeckManagerRoute,
   parseLiveRoute,
@@ -913,6 +915,7 @@ export default function App() {
   const cardRoute = useMemo(() => parseCardRoute(routeHash), [routeHash]);
   const opponentRoute = useMemo(() => parseOpponentRoute(routeHash), [routeHash]);
   const auditRoute = useMemo(() => parseAuditRoute(routeHash), [routeHash]);
+  const resetRoute = useMemo(() => parseResetRoute(routeHash), [routeHash]);
   const deckFinderRoute = useMemo(() => parseDeckFinderRoute(routeHash), [routeHash]);
   const deckManagerRoute = useMemo(() => parseDeckManagerRoute(routeHash), [routeHash]);
   const settingsRoute = useMemo(() => parseSettingsRoute(routeHash), [routeHash]);
@@ -1017,6 +1020,7 @@ export default function App() {
       || cardRoute
       || opponentRoute
       || auditRoute
+      || resetRoute
       || deckFinderRoute
       || deckManagerRoute
       || settingsRoute
@@ -1035,7 +1039,7 @@ export default function App() {
     } else if (sectionId && !sectionId.startsWith('/')) {
       document.getElementById(sectionId)?.scrollIntoView?.({ block: 'start' });
     }
-  }, [auditRoute, cardRoute, deckFinderRoute, deckManagerRoute, deckRoute, gameRoute, gamesRoute, liveRoute, loadState.status, opponentRoute, opponentsRoute, replayRoute, routeHash, settingsRoute]);
+  }, [auditRoute, cardRoute, deckFinderRoute, deckManagerRoute, deckRoute, gameRoute, gamesRoute, liveRoute, loadState.status, opponentRoute, opponentsRoute, replayRoute, resetRoute, routeHash, settingsRoute]);
 
   useEffect(() => {
     if (replayRoute?.gameId) {
@@ -1056,6 +1060,8 @@ export default function App() {
             ? pageTitle(opponentRoute.name)
             : auditRoute
               ? pageTitle('DB Health')
+              : resetRoute
+              ? pageTitle('Reset Tracker Data')
               : gamesRoute
                 ? pageTitle('All Games')
                 : opponentsRoute
@@ -1063,10 +1069,12 @@ export default function App() {
                   : deckFinderRoute
                     ? pageTitle('Deck Finder')
                     : pageTitle('Overview');
-  }, [auditRoute, deckRoute, gameRoute, gamesRoute, cardRoute, opponentRoute, opponentsRoute, deckFinderRoute, deckManagerRoute, replayRoute]);
+  }, [auditRoute, resetRoute, deckRoute, gameRoute, gamesRoute, cardRoute, opponentRoute, opponentsRoute, deckFinderRoute, deckManagerRoute, replayRoute]);
 
   useEffect(() => {
-    if (deckManagerRoute || deckName || gameId || cardName || opponentRoute || auditRoute || gamesRoute || opponentsRoute || deckFinderRoute || replayRoute) {
+    // Live Scoreboard and Settings show nothing from the snapshot; without
+    // them here the Overview kept refetching its 400 KB every 20 s there.
+    if (deckManagerRoute || deckName || gameId || cardName || opponentRoute || auditRoute || resetRoute || gamesRoute || opponentsRoute || deckFinderRoute || replayRoute || liveRoute || settingsRoute) {
       return;
     }
     let ignore = false;
@@ -1106,7 +1114,7 @@ export default function App() {
       activeController?.abort();
       window.clearInterval(refreshId);
     };
-  }, [filters, trendRange, deckName, gameId, cardName, opponentRoute, auditRoute, gamesRoute, opponentsRoute, deckFinderRoute, deckManagerRoute, replayRoute]);
+  }, [filters, trendRange, deckName, gameId, cardName, opponentRoute, auditRoute, resetRoute, gamesRoute, opponentsRoute, deckFinderRoute, deckManagerRoute, replayRoute, liveRoute, settingsRoute]);
 
   const playerName =
     loadState.status === 'loaded' ? loadState.snapshot.summary.player_name : undefined;
@@ -1147,6 +1155,8 @@ export default function App() {
             ? gamesNavItems
           : auditRoute
             ? auditNavItems
+          : resetRoute
+            ? resetNavItems
           : deckManagerRoute
             ? deckManagerNavItems
           : deckFinderRoute
@@ -1165,7 +1175,7 @@ export default function App() {
                   ? opponentNavItems
                   : undefined
         }
-        heading={replayRoute ? 'Replay' : opponentsRoute ? 'Opponents' : gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckManagerRoute ? 'Deck Manager' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Live Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute ? 'Opponent Information' : dashboardTitle)}
+        heading={replayRoute ? 'Replay' : opponentsRoute ? 'Opponents' : gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : resetRoute ? 'Reset Tracker Data' : deckManagerRoute ? 'Deck Manager' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Live Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute ? 'Opponent Information' : dashboardTitle)}
         headingBadge={deckManagerRoute ? <span className="deck-manager-beta deck-manager-heading-beta">Beta</span>
           : replayRoute ? <span className="deck-manager-beta deck-manager-heading-beta replay-heading-beta">Beta</span> : undefined}
         mainClassName={liveRoute ? 'live-page-main' : replayRoute?.gameId ? 'replay-page-main' : undefined}
@@ -1195,6 +1205,8 @@ export default function App() {
           />
         ) : auditRoute ? (
           <AuditPage />
+        ) : resetRoute ? (
+          <ResetPage />
         ) : deckManagerRoute ? (
           <DeckManagerPage />
         ) : deckFinderRoute ? (

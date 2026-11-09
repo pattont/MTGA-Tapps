@@ -64,3 +64,72 @@ def test_extract_entry_timestamp_from_header_line():
 
 def test_extract_entry_timestamp_returns_none_for_non_timestamp_header():
     assert extract_entry_timestamp("[UnityCrossThreadLogger]STATE CHANGED") is None
+
+
+def _gre_entry(header_date: str, epoch_local: datetime) -> str:
+    millis = int(epoch_local.timestamp() * 1000)
+    return (
+        f"[UnityCrossThreadLogger]{header_date}: Match to ABC: GreToClientEvent\n"
+        f'{{ "transactionId": "1", "requestId": 2, "timestamp": "{millis}", '
+        '"greToClientEvent": {} }'
+    )
+
+
+def _force_locale(monkeypatch, day_first: bool) -> None:
+    from mtga_tracker import log_timestamp
+
+    monkeypatch.setattr(log_timestamp, "_system_day_first", day_first)
+
+
+def test_embedded_epoch_settles_month_first_date_despite_day_first_locale(monkeypatch):
+    # Issue #51: a US Windows with a custom day-first short date. Arena still
+    # logs month-first, and every GRE entry carries the true epoch time.
+    _force_locale(monkeypatch, day_first=True)
+    body = _gre_entry("11/4/2026 10:52:18 PM", datetime(2026, 11, 4, 22, 52, 18))
+
+    assert extract_entry_timestamp(body) == datetime(2026, 11, 4, 22, 52, 18)
+    # ...and the learned order carries to entries without an epoch field.
+    assert extract_entry_timestamp(
+        "[UnityCrossThreadLogger]11/3/2026 7:43:22 PM: STATE CHANGED"
+    ) == datetime(2026, 11, 3, 19, 43, 22)
+
+
+def test_embedded_epoch_settles_day_first_date_despite_month_first_locale(monkeypatch):
+    # Issue #51, Italian Windows: 04/11/2026 is 4 November.
+    _force_locale(monkeypatch, day_first=False)
+    body = _gre_entry("04/11/2026 21:54:39", datetime(2026, 11, 4, 21, 54, 39))
+
+    assert extract_entry_timestamp(body) == datetime(2026, 11, 4, 21, 54, 39)
+
+
+def test_embedded_epoch_outranks_a_wrongly_learned_order():
+    # Something taught month-first; the entry's own epoch says day-first.
+    assert parse_log_timestamp("8/13/2026 11:17:32 AM") == datetime(2026, 8, 13, 11, 17, 32)
+    body = _gre_entry("04/11/2026 21:54:39", datetime(2026, 11, 4, 21, 54, 39))
+
+    assert extract_entry_timestamp(body) == datetime(2026, 11, 4, 21, 54, 39)
+
+
+def test_clock_picks_the_recent_reading_before_anything_is_learned(monkeypatch):
+    from mtga_tracker import log_timestamp
+
+    monkeypatch.setattr(log_timestamp, "_clock", lambda: datetime(2026, 11, 4, 23, 0))
+    _force_locale(monkeypatch, day_first=True)
+    # Read day-first, 11/3 is 11 March, months ago; month-first it is yesterday.
+    assert parse_log_timestamp("11/3/2026 7:43:22 PM") == datetime(2026, 11, 3, 19, 43, 22)
+    # The clock's answer is learned for older ambiguous lines of the same log.
+    assert parse_log_timestamp("5/8/2026 10:15:01 PM") == datetime(2026, 5, 8, 22, 15, 1)
+
+
+def test_clock_handles_day_first_logs_with_a_month_first_locale(monkeypatch):
+    from mtga_tracker import log_timestamp
+
+    monkeypatch.setattr(log_timestamp, "_clock", lambda: datetime(2026, 11, 4, 23, 0))
+    _force_locale(monkeypatch, day_first=False)
+    assert parse_log_timestamp("04/11/2026 21:54:39") == datetime(2026, 11, 4, 21, 54, 39)
+
+
+def test_locale_is_the_last_resort_when_no_reading_is_recent(monkeypatch):
+    _force_locale(monkeypatch, day_first=True)
+    # Clock pinned to 1999 by conftest: neither reading is recent.
+    assert parse_log_timestamp("5/8/2026 10:15:01 PM") == datetime(2026, 8, 5, 22, 15, 1)

@@ -15,6 +15,55 @@ from .event_router import EventRouter, RoutedLogEvent
 from .client_actions import parse_client_action
 
 
+def iter_lines_reversed(path, chunk_size: int = 1 << 20):
+    """Yield the file's lines last to first, reading it from the end in
+    chunks, so a caller that wants the newest match-room line or the last
+    few hundred lines never loads a whole Player.log (tens to hundreds of
+    MB during a long Arena session). Lines carry a trailing newline like
+    readlines(), with Windows' carriage return dropped. The file is opened
+    before the first line is asked for, so a missing log raises here, inside
+    the caller's try, not from inside its loop.
+    """
+    handle = open(path, "rb")  # noqa: SIM115 - handed to the generator below
+    return _lines_reversed(handle, chunk_size)
+
+
+def _lines_reversed(handle, chunk_size: int):
+    with handle:
+        handle.seek(0, 2)
+        position = handle.tell()
+        carry = b""
+        newest = True
+        while position > 0:
+            size = min(chunk_size, position)
+            position -= size
+            handle.seek(position)
+            parts = (handle.read(size) + carry).split(b"\n")
+            carry = parts[0]
+            for part in reversed(parts[1:]):
+                if newest:
+                    newest = False
+                    if not part:  # the file ends with a newline
+                        continue
+                    yield part.rstrip(b"\r").decode("utf-8", errors="ignore")
+                    continue
+                yield part.rstrip(b"\r").decode("utf-8", errors="ignore") + "\n"
+        if carry:
+            line = carry.rstrip(b"\r").decode("utf-8", errors="ignore")
+            yield line if newest else line + "\n"
+
+
+def tail_lines(path, count: int) -> List[str]:
+    """The last `count` lines of the file, oldest first (readlines()[-count:])."""
+    lines: List[str] = []
+    for line in iter_lines_reversed(path):
+        lines.append(line)
+        if len(lines) >= count:
+            break
+    lines.reverse()
+    return lines
+
+
 class MTGALogParser:
     """Parser for MTGA Player.log files."""
 
@@ -87,6 +136,11 @@ class MTGALogParser:
     def _read_new_entries(self) -> Generator[LogEntry, None, None]:
         """Read complete entries from the log file since last read."""
         try:
+            # The live loop asks four times a second; when Arena has written
+            # nothing one stat answers it (the buffer is always flushed at the
+            # end of a read, so an unchanged size means nothing is pending).
+            if os.path.getsize(self.log_path) == self.last_position:
+                return
             with open(self.log_path, "r", encoding="utf-8", errors="ignore") as f:
                 # If file was truncated or rotated (e.g. new match, MTGA restart), start from beginning
                 file_size = f.seek(0, 2)
@@ -186,7 +240,7 @@ class MTGALogParser:
 
         # Check if this line contains a card event indicator
         has_pattern = any(pattern in line_lower for pattern in card_event_patterns)
-        
+
         # Also check if line starts with JSON (might be a JSON-only line)
         line_stripped = line.strip()
         is_json_line = line_stripped.startswith("{") and line_stripped.endswith("}")

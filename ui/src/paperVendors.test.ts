@@ -41,16 +41,30 @@ describe('paper store requests', () => {
     PAPER_VENDORS.forEach((vendor) => expect(vendor.icon).toMatch(/\/stores\/[a-z]+\.(png|ico)$/u));
   });
 
-  it('builds TCGplayer Mass Entry, with set codes on request and the Impact wrapper when configured', () => {
-    expect(link('tcgplayer').searchParams.get('c')).toBe('4 Fable of the Mirror-Breaker||2 Lightning Bolt');
-    expect(link('tcgplayer', true).searchParams.get('c')).toBe('4 Fable of the Mirror-Breaker [NEO] 141||2 Lightning Bolt');
-
-    AFFILIATE.tcgplayer = 'https://partner.tcgplayer.com/c/123/1830156/21018';
-    const wrapped = link('tcgplayer');
-    expect(wrapped.origin + wrapped.pathname).toBe('https://partner.tcgplayer.com/c/123/1830156/21018');
-    const target = new URL(wrapped.searchParams.get('u')!);
-    expect(target.origin + target.pathname).toBe('https://store.tcgplayer.com/massentry');
+  it('builds TCGplayer Mass Entry inside the shipped Impact link, and plain when it is cleared', () => {
+    const massEntry = (url: URL) => {
+      expect(url.origin + url.pathname).toBe('https://partner.tcgplayer.com/c/7992527/1780961/21018');
+      expect(url.searchParams.get('subId1')).toBe('tappstracker');
+      return new URL(url.searchParams.get('u')!);
+    };
+    const target = massEntry(link('tcgplayer'));
+    expect(target.origin + target.pathname).toBe('https://www.tcgplayer.com/massentry');
+    expect(target.searchParams.get('productline')).toBe('Magic');
     expect(target.searchParams.get('c')).toBe('4 Fable of the Mirror-Breaker||2 Lightning Bolt');
+    expect(massEntry(link('tcgplayer', true)).searchParams.get('c')).toBe('4 Fable of the Mirror-Breaker [NEO] 141||2 Lightning Bolt');
+
+    // A name with & or , must survive Impact decoding `u` once.
+    const minsc = vendorById('tcgplayer')!.buildRequest(
+      [{ name: 'Minsc & Boo, Timeless Heroes', quantity: 1, set: null, collector_number: null }],
+      { setCodes: false },
+    );
+    if (minsc.kind !== 'link') throw new Error('expected a link');
+    expect(massEntry(new URL(minsc.url)).searchParams.get('c')).toBe('1 Minsc & Boo, Timeless Heroes');
+
+    AFFILIATE.tcgplayer = '';
+    const plain = link('tcgplayer');
+    expect(plain.origin + plain.pathname).toBe('https://www.tcgplayer.com/massentry');
+    expect(plain.searchParams.get('c')).toBe('4 Fable of the Mirror-Breaker||2 Lightning Bolt');
   });
 
   it('builds Card Kingdom and Mana Pool links, adding partner codes only when set', () => {
