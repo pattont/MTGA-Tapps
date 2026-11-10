@@ -3836,6 +3836,83 @@ def test_a_game_in_progress_only_invalidates_the_pages_that_show_its_events(tmp_
     dash.clear_response_cache()
 
 
+def test_a_page_asked_for_twice_at_once_is_built_once(tmp_path):
+    import threading
+
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    dash.clear_response_cache()
+    started, release = threading.Event(), threading.Event()
+    builds = []
+    bodies = []
+
+    def compute():
+        builds.append(1)
+        started.set()
+        assert release.wait(5)
+        return b'{"built": %d}' % len(builds)
+
+    def ask():
+        bodies.append(dash.cached_response(db_path, "/api/snapshot", "", compute))
+
+    first = threading.Thread(target=ask)
+    first.start()
+    assert started.wait(5)
+    second = threading.Thread(target=ask)
+    second.start()
+    # Another page is not held up by the one being built.
+    assert dash.cached_response(db_path, "/api/games", "", lambda: b"[]") == b"[]"
+    release.set()
+    first.join(5)
+    second.join(5)
+
+    assert bodies == [b'{"built": 1}', b'{"built": 1}']
+    assert len(builds) == 1
+    assert dash._response_builds == {}
+
+    # A build that fails leaves nothing behind, and the next request builds.
+    def broken():
+        raise RuntimeError("no such deck")
+
+    with pytest.raises(RuntimeError):
+        dash.cached_response(db_path, "/api/deck", "name=x", broken)
+    assert dash._response_builds == {}
+    assert dash.cached_response(db_path, "/api/deck", "name=x", lambda: b"{}") == b"{}"
+    dash.clear_response_cache()
+
+
+def test_response_cache_is_bounded_by_bytes(tmp_path, monkeypatch):
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    dash.clear_response_cache()
+    monkeypatch.setattr(dash, "_RESPONSE_CACHE_MAX_BYTES", 100)
+    built = []
+
+    def page(name, size):
+        def compute():
+            built.append(name)
+            return b"x" * size
+
+        return dash.cached_response(db_path, "/api/games", name, compute)
+
+    page("a", 40)
+    page("b", 40)
+    page("c", 40)  # 120 bytes held: the oldest body goes
+    page("b", 40)
+    page("c", 40)
+    assert built == ["a", "b", "c"]
+    page("a", 40)
+    assert built == ["a", "b", "c", "a"]
+    # A body larger than the whole allowance is still kept while it is the newest.
+    page("huge", 500)
+    page("huge", 500)
+    assert built[-2:] == ["a", "huge"]
+    assert len(dash._response_cache) == 1
+    dash.clear_response_cache()
+
+
 def test_response_cache_keeps_a_slow_page_longer(tmp_path, monkeypatch):
     from mtga_tracker import dashboard as dash
 

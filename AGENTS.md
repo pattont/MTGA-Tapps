@@ -128,7 +128,10 @@ Primary code paths:
   other faces), never by walking a set.
   A page costs what it shows, not the whole history: a query filtered by `{where}` starts
   `FROM games g CROSS JOIN participants p ... CROSS JOIN <card table>` (left to itself the
-  planner scans the card table and tests each row's game); the deck filter is an id list
+  planner scans the card table and tests each row's game, or starts from every player
+  row and looks its game up, which under a date filter joins the whole history); the
+  Overview's and the deck page's recent games pick their 30 games first
+  (`_NEWEST_GAMES_CTE`) and only then read the per-game subqueries; the deck filter is an id list
   from the `(role, deck_name)` index; `_deck_color_map` and `_deck_visuals` take the deck
   names a page shows; `_games_filter(..., db_path=...)` leaves the Jump In / Midweek test
   out when the database holds no such match. Check any query change with
@@ -136,7 +139,9 @@ Primary code paths:
   it must print `0 differ`) and time it on a `scripts/build_scaled_db.py` copy.
   The response cache keys on the event log only for `_EVENT_LOG_PATHS` (the game page), so
   a game in progress does not rebuild the Overview on every poll; its TTL is 60 s or 30
-  times the page's build time, capped at ten minutes.
+  times the page's build time, capped at ten minutes. A page is built by one request at a
+  time (`_response_builds`; others asking for it wait and take that body), and the cache
+  holds at most 64 bodies and 64 MB, oldest dropped first.
   The card page finds a card's rows by name first (`CROSS JOIN` from the card table) through
   `_card_name_clause`: the exact name, or the name before a " (Type)" suffix in any case.
   Both halves are written for the `display_name COLLATE NOCASE` indexes
@@ -157,7 +162,17 @@ Primary code paths:
   returned it, the submitted deck's colours, and the opponent's colour letters.
   `_draw_quality_batch`, `_participant_deck_color_map` and `_opponent_letters` read a
   current row and call their `_compute_*` twin for any game without one, so every page is
-  identical with the table empty, part filled or full. `store` is the only writer and
+  identical with the table empty, part filled or full.
+  A row also carries the few numbers pages read for every game in view
+  (`SUMMARY_COLUMNS`): opening-hand cards and lands and the turn of each land drawn
+  (`_opener_land_rows`, `_mana_readiness_rows`), and the dict's counts and flood / screw /
+  land-streak verdicts (`_draw_summary_batch`: All Games, `_deck_land_profile`). A reader of
+  a whole list uses those, never `_draw_quality_batch` (decoding 38,000 dicts was a third
+  of All Games). In SQL a stored column is read as `_stored_or(join, column, live_sql)`
+  with `_derived_join`, which is `COALESCE(gd.column, <the live subquery>)`: one statement,
+  the same number with or without a row. `columns_ready` is false for a table made before
+  these columns (until the tracker next opens the database); readers then compute live and
+  the pass writes nothing. `store` is the only writer and
   calls those same `_compute_*` functions: the tracker runs it at game end, after the
   game's card rows are saved, and a daemon thread (`start_backfill`, after "Now ready to
   track") runs it for games with no current row, 500 a transaction, newest first. Both
@@ -168,7 +183,9 @@ Primary code paths:
   computed live. Anything that changes a stored row's inputs must drop the row:
   `_backfill_card_metadata` (a colour or cost learned for a card: `invalidate_for_cards`),
   the "Card #N" label repair and `db_audit --repair` (`invalidate_all`). Change what
-  `draw_quality_metrics`, `score_deck_colors` or `normalize_colors` return and bump
+  `draw_quality_metrics`, `score_deck_colors` or `normalize_colors` return, how the
+  opening hand's lands or a land draw are counted (`_OPENING_LANDS_SQL`,
+  `_compute_land_draw_turns`), or which columns a row holds, and bump
   `RULES_VERSION` (rows of another version are ignored and recomputed;
   `tests/test_game_derived.py` holds a digest that fails without the bump). The table is
   created empty by the schema baseline, never filled by a migration; it is in
@@ -836,6 +853,7 @@ UI changes require vitest, tsc, lint, and a fresh `npm run build` (the dashboard
   tag-derived package version in the artifact name. Never change the installer's `AppId`
   GUID — it is what makes newer setups upgrade in place.
 - The release workflow's `manifest` job (tags only, after both builds) writes `latest.json`,
+# (a dump's "last N days" count back from the newest game in the copy, so both sides agree whenever they run)
   signs it with the `UPDATE_SIGNING_KEY` secret (Ed25519; the matching public key is
   embedded in `updater.py`, add a second key before rotating), writes `SHA256SUMS`, and
   attaches them to the same draft; the macOS leg also publishes `MTGA-Tracker-<ver>-macos.zip`
@@ -1248,8 +1266,11 @@ Important tables:
 - `game_derived`: one row per finished game, keyed by the player's `participant_id`:
   `draw_quality_json` (NULL when the land rate is borrowed or estimated), `deck_colors`
   (NULL when no decklist was submitted), `opp_revealed` / `opp_commander` colour letters,
-  `rules_version`. Derived data only: safe to empty, never read without the live-compute
-  fallback. See `game_derived.py` above.
+  `rules_version`, and the summary columns (`opening_cards`, `opening_lands`,
+  `land_draw_turns` as "2,3,7" with "?" for an unknown turn; `cards_seen`, `lands_seen`,
+  `land_seen_pct`, `total_draws`, `land_draws`, `land_flags` copied from the dict, NULL
+  when it is). The schema baseline adds them to a table that lacks them. Derived data
+  only: safe to empty, never read without the live-compute fallback. See `game_derived.py` above.
 - `maintenance_state`: watermarks for startup repair passes that would otherwise re-check all
   history at every launch (`turn_time_recovery` by `games.rowid`, `event_reassignment` by
   `game_events.id`), stored as `"<pass version>:<watermark>"`. A pass resumes from its watermark

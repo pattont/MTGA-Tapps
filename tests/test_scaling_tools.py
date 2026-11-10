@@ -176,6 +176,11 @@ def test_payload_dump_is_repeatable_and_diff_reports_a_changed_number(tmp_path, 
     assert (first / "games.json").is_file()
     assert json.loads((first / dashboard_payloads.TIMINGS_FILE).read_text())["snapshot"]["bytes"]
     assert dashboard_payloads.diff(first, second, 8) == 0
+    # "Last 7 days" counts back from the newest game in the copy (the sample's
+    # games are months old), and the dashboard's own clock is left alone.
+    week = json.loads((first / "snapshot.days-7.json").read_text())
+    assert week["summary"]["games"] >= 1
+    assert dashboard.datetime.__name__ == "datetime"
 
     games = json.loads((second / "games.json").read_text())
     games["games"][0]["total_turns"] = 99

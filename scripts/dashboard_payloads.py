@@ -18,8 +18,9 @@ the Overview under several filters, All Games, the most-played decks, games
 spread across the history, opponents and cards. Each payload is written as
 one JSON file, with the cold time and size of every request printed and saved
 as ``timings.json``. Use a copy of the database (``build_scaled_db.py`` or
-SQLite's ``.backup``), never the live file's path: day-window filters depend
-on the clock, so dump both sides within the same day.
+SQLite's ``.backup``), never the live file's path. Day-window filters ("last
+7 days") count back from the newest game in the copy, not from the clock, so
+two dumps of one copy agree whenever they are made.
 
 Every connection is opened with SQLite's bound-parameter limit set to 32,766,
 the limit in the Windows build's SQLite (the macOS build allows far more), so
@@ -38,6 +39,7 @@ import re
 import sqlite3
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
@@ -232,6 +234,30 @@ def build_requests(
     return unique
 
 
+def pin_clock(dashboard: Any, db_path: Path) -> Optional[datetime]:
+    """Make the dashboard's "last N days" filters count back from the newest
+    game in the database instead of from the wall clock. A game that crosses
+    the edge of a window between two dumps would otherwise read as a change.
+    Returns the pinned time, or None when the database has no dated game."""
+    conn = sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)
+    try:
+        newest = conn.execute("SELECT MAX(COALESCE(started_at, ended_at)) FROM games").fetchone()[0]
+    finally:
+        conn.close()
+    try:
+        pinned = datetime.fromisoformat(str(newest)).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+    class PinnedClock(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:
+            return pinned if tz is None else pinned.astimezone(tz)
+
+    dashboard.datetime = PinnedClock
+    return pinned
+
+
 def dump(db_path: Path, out_dir: Path, sample: int, limit: int, src: Optional[Path]) -> int:
     if src is not None:
         sys.path.insert(0, str(src.resolve()))
@@ -251,29 +277,36 @@ def dump(db_path: Path, out_dir: Path, sample: int, limit: int, src: Optional[Pa
         else:
             print("warning: this Python cannot pin SQLite limits (needs 3.11+)", file=sys.stderr)
     db_path = db_path.expanduser().resolve()
+    wall_clock = dashboard.datetime
+    pinned = pin_clock(dashboard, db_path)
+    if pinned is not None:
+        print(f"day windows count back from the newest game, {pinned.isoformat()}")
     out_dir.mkdir(parents=True, exist_ok=True)
     for stale in out_dir.glob("*.json"):
         stale.unlink()
 
     timings: Dict[str, Dict[str, Any]] = {}
     errors = 0
-    for name, call in build_requests(dashboard, db_path, sample):
-        # Cold: nothing a request built is kept for the next one.
-        dashboard.clear_response_cache()
-        started = time.perf_counter()
-        try:
-            payload = call()
-        except Exception as exc:  # noqa: BLE001 - the failure is the finding
-            payload = {"__error__": f"{type(exc).__name__}: {exc}"}
-            errors += 1
-        elapsed_ms = (time.perf_counter() - started) * 1000.0
-        size = len(dashboard.render_snapshot_json(payload))
-        (out_dir / f"{name}.json").write_text(
-            json.dumps(payload, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8"
-        )
-        timings[name] = {"ms": round(elapsed_ms, 1), "bytes": size}
-        if isinstance(payload, dict) and "__error__" in payload:
-            timings[name]["error"] = payload["__error__"]
+    try:
+        for name, call in build_requests(dashboard, db_path, sample):
+            # Cold: nothing a request built is kept for the next one.
+            dashboard.clear_response_cache()
+            started = time.perf_counter()
+            try:
+                payload = call()
+            except Exception as exc:  # noqa: BLE001 - the failure is the finding
+                payload = {"__error__": f"{type(exc).__name__}: {exc}"}
+                errors += 1
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            size = len(dashboard.render_snapshot_json(payload))
+            (out_dir / f"{name}.json").write_text(
+                json.dumps(payload, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8"
+            )
+            timings[name] = {"ms": round(elapsed_ms, 1), "bytes": size}
+            if isinstance(payload, dict) and "__error__" in payload:
+                timings[name]["error"] = payload["__error__"]
+    finally:
+        dashboard.datetime = wall_clock
     (out_dir / TIMINGS_FILE).write_text(json.dumps(timings, indent=1), encoding="utf-8")
 
     print(f"\n{'request':<44}{'ms':>9}{'KB':>10}")

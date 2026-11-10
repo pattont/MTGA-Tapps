@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import functools
 import hashlib
 import html
 import json
@@ -199,8 +200,11 @@ _TYPE_SUFFIX_RE = re.compile(r"\s*\([^()]*\)\s*$")
 _BRACKET_CONTENT_RE = re.compile(r"\[([^\]\n]+)\]")
 
 
+@functools.lru_cache(maxsize=65536)
 def _clean_card_name(display_name: Optional[str]) -> Optional[str]:
-    """Strip the trailing '(Type)' suffix tracker display names carry."""
+    """Strip the trailing '(Type)' suffix tracker display names carry.
+    Remembered: a deck page asks for the same few hundred names half a
+    million times."""
     if not display_name:
         return display_name
     cleaned = _TYPE_SUFFIX_RE.sub("", display_name).strip()
@@ -445,6 +449,97 @@ def _draw_quality_batch(
             )
         )
     return {pid: found[pid] for pid in ids if pid in found}
+
+
+def _draw_summary_batch(
+    conn: sqlite3.Connection,
+    participants: List[Tuple[str, Optional[int]]],
+) -> Tuple[Dict[str, game_derived.DrawSummary], Dict[str, Dict[str, Any]]]:
+    """participant_id -> the draw-quality numbers a list of games shows
+    (cards and lands seen, flood / screw / land streak), for many games.
+
+    The same answers as ``_draw_quality_batch`` gives, without decoding a
+    stored game's whole dict to read them. Also returns the full dicts of the
+    games that had to be computed, keyed the same way.
+    """
+    ids = [pid for pid, _ in participants if pid]
+    if not ids:
+        return {}, {}
+    summaries = game_derived.load_draw_summaries(conn, ids)
+    computed: Dict[str, Dict[str, Any]] = {}
+    if len(summaries) < len(ids):
+        computed = _compute_draw_quality_batch(
+            conn, [(pid, size) for pid, size in participants if pid and pid not in summaries]
+        )
+        for pid, quality in computed.items():
+            summaries[pid] = game_derived.draw_summary(quality)
+    return summaries, computed
+
+
+#: A player's opening hand as the Overview counts it. Both statements name the
+#: player's participant ``p``; ``game_derived`` stores what they return.
+_OPENING_CARDS_SQL = (
+    "(SELECT COUNT(*) FROM game_opening_hand_cards oh WHERE oh.participant_id = p.id)"
+)
+_OPENING_LANDS_SQL = """(
+    SELECT COUNT(*) FROM game_opening_hand_cards oh
+    WHERE oh.participant_id = p.id
+      AND (oh.type_category = 'Land' OR oh.display_name LIKE '%(Land)')
+)"""
+
+
+def _derived_join(conn: sqlite3.Connection) -> str:
+    """``LEFT JOIN`` of each player's current stored row as ``gd`` for a
+    statement that names the player's participant ``p``; empty when this
+    database has no stored summaries to join (see ``_stored_or``)."""
+    if not game_derived.columns_ready(conn):
+        return ""
+    return (
+        f"LEFT JOIN {game_derived.TABLE} gd ON gd.participant_id = p.id "
+        f"AND gd.rules_version = {int(game_derived.RULES_VERSION)}"
+    )
+
+
+def _stored_or(join: str, column: str, live_sql: str) -> str:
+    """The stored column where the game has a current row, else the live
+    expression: one statement gives the same number either way."""
+    return f"COALESCE(gd.{column}, {live_sql})" if join else live_sql
+
+
+def _compute_opening_lands(
+    conn: sqlite3.Connection, participant_ids: Iterable[Any]
+) -> Dict[str, Tuple[int, int]]:
+    """participant_id -> (cards, lands) in the opening hand, computed."""
+    result: Dict[str, Tuple[int, int]] = {}
+    for placeholders, chunk in _in_chunks(participant_ids):
+        for pid, cards, lands in conn.execute(
+            f"SELECT p.id, {_OPENING_CARDS_SQL}, {_OPENING_LANDS_SQL} "
+            f"FROM participants p WHERE p.id IN ({placeholders})",
+            chunk,
+        ):
+            result[str(pid)] = (int(cards or 0), int(lands or 0))
+    return result
+
+
+def _compute_land_draw_turns(
+    conn: sqlite3.Connection, participant_ids: Iterable[Any]
+) -> Dict[str, List[Optional[int]]]:
+    """participant_id -> the turn of each land the player visibly drew (None
+    for a draw whose turn was not captured), computed. A player who drew no
+    land is absent."""
+    turns: Dict[str, List[Optional[int]]] = {}
+    for placeholders, chunk in _in_chunks(participant_ids):
+        for pid, turn in conn.execute(
+            f"""
+            SELECT participant_id, turn_number
+            FROM game_drawn_cards
+            WHERE participant_id IN ({placeholders})
+              AND (type_category = 'Land' OR display_name LIKE '%(Land)')
+            """,
+            chunk,
+        ):
+            turns.setdefault(str(pid), []).append(turn)
+    return turns
 
 
 def _compute_draw_quality_batch(
@@ -1185,7 +1280,7 @@ def _opponent_threat_rows(
             SELECT
               s.display_name,
               COALESCE(s.type_category, 'Other') AS type_category,
-              COUNT(DISTINCT g.id) AS games,
+              COUNT(DISTINCT g.rowid) AS games,
               COALESCE(SUM(s.played_count), 0) AS plays,
               SUM(g.outcome = 'win') AS wins,
               SUM(g.outcome = 'loss') AS losses,
@@ -1195,7 +1290,7 @@ def _opponent_threat_rows(
             CROSS JOIN game_card_summary s ON s.participant_id = p.id AND s.game_id = g.id
             WHERE {where} AND s.played_count > 0
             GROUP BY s.display_name
-            HAVING COUNT(DISTINCT g.id) >= 2
+            HAVING COUNT(DISTINCT g.rowid) >= 2
             ORDER BY loss_rate DESC, games DESC, s.display_name COLLATE NOCASE
             LIMIT 30
             """,
@@ -1225,8 +1320,8 @@ def _matchup_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> Li
               SUM(g.outcome = 'loss') AS losses,
               ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
             FROM games g
-            JOIN participants pp ON pp.game_id = g.id AND pp.role = 'player'
-            JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
+            CROSS JOIN participants pp ON pp.game_id = g.id AND pp.role = 'player'
+            CROSS JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
             WHERE {where}
             GROUP BY COALESCE(pp.deck_name, '(unknown)'), COALESCE(po.deck_archetype, '(unidentified)')
             ORDER BY COALESCE(pp.deck_name, '(unknown)') COLLATE NOCASE, games DESC
@@ -1245,8 +1340,8 @@ def _opponent_color_rows(
             f"""
             SELECT g.id, g.outcome, m.format
             FROM games g
-            JOIN matches m ON m.id = g.match_id
-            JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
+            CROSS JOIN matches m ON m.id = g.match_id
+            CROSS JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
             WHERE {where}
             """,
             params,
@@ -1254,12 +1349,16 @@ def _opponent_color_rows(
     except sqlite3.OperationalError:
         return []
     opp_letters = _opponent_letters(conn, (row[0] for row in games))
-    rows = [
-        (game_id, outcome, raw_format, *opp_letters.get(str(game_id), ("", "")))
-        for game_id, outcome, raw_format in games
-    ]
+    # Count the games of each distinct (format, letters, outcome) first: a
+    # history has a few hundred of those, and the colours and their label
+    # depend on nothing else. Kept in first-seen order.
+    tallies: Dict[Tuple[Any, str, str, Any], int] = {}
+    for game_id, outcome, raw_format in games:
+        letters, commander_letters = opp_letters.get(str(game_id), ("", ""))
+        key = (raw_format, letters, commander_letters, outcome)
+        tallies[key] = tallies.get(key, 0) + 1
     buckets: Dict[str, Dict[str, Any]] = {}
-    for _game_id, outcome, raw_format, letters, commander_letters in rows:
+    for (raw_format, letters, commander_letters, outcome), count in tallies.items():
         colors = _display_opponent_colors(raw_format, letters, commander_letters)
         label = color_combo_label(colors)
         if not label:
@@ -1268,11 +1367,11 @@ def _opponent_color_rows(
         entry = buckets.setdefault(
             label, {"color_label": label, "colors": colors, "games": 0, "wins": 0, "losses": 0}
         )
-        entry["games"] += 1
+        entry["games"] += count
         if outcome == "win":
-            entry["wins"] += 1
+            entry["wins"] += count
         elif outcome == "loss":
-            entry["losses"] += 1
+            entry["losses"] += count
     total_games = sum(entry["games"] for entry in buckets.values())
     result = []
     for entry in buckets.values():
@@ -1298,8 +1397,8 @@ def _brawl_summary(conn: sqlite3.Connection, where: str, params: List[Any]) -> D
             f"""
             SELECT m.format, g.outcome
             FROM games g
-            JOIN matches m ON m.id = g.match_id
-            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            CROSS JOIN matches m ON m.id = g.match_id
+            CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
             WHERE {where}
             """,
             params,
@@ -1706,6 +1805,7 @@ def _opener_land_rows(
     conn: sqlite3.Connection, where: str, params: List[Any]
 ) -> List[Dict[str, Any]]:
     """Win rate by number of lands in the kept opening hand."""
+    stored = _derived_join(conn)
     rows = _dict_rows(
         conn.execute(
             f"""
@@ -1720,17 +1820,11 @@ def _opener_land_rows(
               SELECT
                 g.outcome,
                 COALESCE(p.mulligans, 0) AS mulligans,
-                (
-                  SELECT COUNT(*) FROM game_opening_hand_cards oh
-                  WHERE oh.participant_id = p.id
-                    AND (oh.type_category = 'Land' OR oh.display_name LIKE '%(Land)')
-                ) AS opener_lands,
-                (
-                  SELECT COUNT(*) FROM game_opening_hand_cards oh
-                  WHERE oh.participant_id = p.id
-                ) AS opener_cards
+                {_stored_or(stored, "opening_lands", _OPENING_LANDS_SQL)} AS opener_lands,
+                {_stored_or(stored, "opening_cards", _OPENING_CARDS_SQL)} AS opener_cards
               FROM games g
-              JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+              CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+              {stored}
               WHERE {where} AND g.outcome IN ('win', 'loss')
             )
             WHERE opener_cards > 0
@@ -1755,66 +1849,51 @@ def _mana_readiness_rows(
     Games with unknown-turn land draws are excluded per threshold to avoid
     counting a land as late/early when its draw turn was not captured.
     """
-    games = _dict_rows(
-        conn.execute(
-            f"""
-            SELECT
-              g.id AS game_id,
-              g.outcome,
-              p.id AS participant_id,
-              (
-                SELECT COUNT(*) FROM game_opening_hand_cards oh
-                WHERE oh.participant_id = p.id
-                  AND (oh.type_category = 'Land' OR oh.display_name LIKE '%(Land)')
-              ) AS opening_lands,
-              (
-                SELECT COUNT(*) FROM game_opening_hand_cards oh
-                WHERE oh.participant_id = p.id
-              ) AS opening_cards
-            FROM games g
-            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-            WHERE {where} AND g.outcome IN ('win', 'loss')
-            """,
-            params,
-        )
-    )
+    stored = _derived_join(conn)
+    games = conn.execute(
+        f"""
+        SELECT
+          g.outcome,
+          p.id,
+          {_stored_or(stored, "opening_cards", _OPENING_CARDS_SQL)},
+          {_stored_or(stored, "opening_lands", _OPENING_LANDS_SQL)},
+          {"gd.land_draw_turns" if stored else "NULL"}
+        FROM games g
+        CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+        {stored}
+        WHERE {where} AND g.outcome IN ('win', 'loss')
+        """,
+        params,
+    ).fetchall()
     if not games:
         return []
-    land_draws: Dict[str, List[Optional[int]]] = {}
-    for placeholders, chunk in _in_chunks(row["participant_id"] for row in games):
-        for row in _dict_rows(
-            conn.execute(
-                f"""
-                SELECT participant_id, turn_number
-                FROM game_drawn_cards
-                WHERE participant_id IN ({placeholders})
-                  AND (type_category = 'Land' OR display_name LIKE '%(Land)')
-                """,
-                chunk,
-            )
-        ):
-            land_draws.setdefault(row["participant_id"], []).append(row["turn_number"])
+    # Land draws of the games with no stored turns are read from their rows.
+    land_draws = _compute_land_draw_turns(conn, (row[1] for row in games if row[4] is None))
+    thresholds = (2, 3, 4, 5)
+    eligible = 0
+    # Per threshold: [on-time wins, on-time losses, behind wins, behind losses].
+    counts = [[0, 0, 0, 0] for _ in thresholds]
+    for outcome, participant_id, opening_cards, opening_lands, stored_turns in games:
+        if not int(opening_cards or 0):
+            continue
+        draws = (
+            game_derived.decode_turns(stored_turns)
+            if stored_turns is not None
+            else land_draws.get(str(participant_id), [])
+        )
+        if any(turn is None for turn in draws):
+            continue
+        eligible += 1
+        lost = 0 if outcome == "win" else 1
+        opening_lands = int(opening_lands or 0)
+        for index, threshold in enumerate(thresholds):
+            lands_by_turn = opening_lands + sum(1 for turn in draws if int(turn) <= threshold)
+            counts[index][(0 if lands_by_turn >= threshold else 2) + lost] += 1
 
     rows: List[Dict[str, Any]] = []
-    for threshold in (2, 3, 4, 5):
-        on_time = {"wins": 0, "losses": 0}
-        behind = {"wins": 0, "losses": 0}
-        eligible = 0
-        for game in games:
-            if not int(game.get("opening_cards") or 0):
-                continue
-            draws = land_draws.get(game["participant_id"], [])
-            if any(turn is None for turn in draws):
-                continue
-            eligible += 1
-            lands_by_turn = int(game.get("opening_lands") or 0) + sum(
-                1 for turn in draws if turn is not None and int(turn) <= threshold
-            )
-            bucket = on_time if lands_by_turn >= threshold else behind
-            if game.get("outcome") == "win":
-                bucket["wins"] += 1
-            else:
-                bucket["losses"] += 1
+    for threshold, tally in zip(thresholds, counts):
+        on_time = {"wins": tally[0], "losses": tally[1]}
+        behind = {"wins": tally[2], "losses": tally[3]}
         if not eligible:
             continue
         on_time_games = on_time["wins"] + on_time["losses"]
@@ -2345,8 +2424,11 @@ def _deck_visual_rows(
     played_only: bool = False,
 ) -> List[Dict[str, Any]]:
     """Each deck's best-ranked card: nonlands first, then played over opener
-    over drawn, then the most often seen."""
+    over drawn, then the most often seen. ``played_only`` reads played
+    nonland cards alone (the caller keeps no land from that pass), which
+    leaves the lands, a third of the rows, out of the grouping."""
     sources = _DECK_VISUAL_SOURCES[:1] if played_only else _DECK_VISUAL_SOURCES
+    nonland = "\n                AND COALESCE({alias}.type_category, 'Other') != 'Land'"
     candidates = "\n              UNION ALL\n".join(
         f"""              SELECT
                 COALESCE(p.deck_name, '(unknown)') AS deck_name,
@@ -2357,7 +2439,7 @@ def _deck_visual_rows(
                 {rank} AS source_rank
               FROM participants p
               JOIN {table} {alias} ON {alias}.participant_id = p.id
-              WHERE p.role = 'player'{deck_filter}
+              WHERE p.role = 'player'{deck_filter}{nonland.format(alias=alias) if played_only else ""}
               GROUP BY p.deck_name, {alias}.card_id, {alias}.display_name, {alias}.type_category"""
         for table, alias, activity, rank in sources
     )
@@ -2748,6 +2830,21 @@ def _with_commander_block(text: Optional[str], commanders: List[Dict[str, Any]])
     return f"{head}\n\n{block}{marker}{tail}"
 
 
+#: The 30 newest games in view, picked before their per-game columns are
+#: read: sorting whole rows and then keeping 30 ran every correlated subquery
+#: (opponent colours, commanders, turn times) once per game in view. Games
+#: first, so an unfiltered view walks the ``started_at`` index and stops at 30.
+_NEWEST_GAMES_CTE = """WITH newest AS (
+                  SELECT g.id AS game_id, p.id AS participant_id
+                  FROM games g
+                  CROSS JOIN matches m ON m.id = g.match_id
+                  CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                  WHERE {where}
+                  ORDER BY g.started_at DESC
+                  LIMIT 30
+                )"""
+
+
 def dashboard_snapshot(
     db_path: Path = DEFAULT_DB_PATH,
     deck: Optional[str] = None,
@@ -2813,7 +2910,7 @@ def dashboard_snapshot(
                   ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate,
                   MAX(COALESCE(g.started_at, g.ended_at)) AS last_played
                 FROM games g
-                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
                 WHERE {where}
                 GROUP BY p.deck_name
                 ORDER BY games DESC, win_rate DESC
@@ -2852,7 +2949,7 @@ def dashboard_snapshot(
                   SUM(g.outcome = 'loss') AS losses,
                   ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
                 FROM games g
-                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
                 WHERE {where}
                 GROUP BY p.deck_name, p.went_first
                 ORDER BY deck_name, play_draw
@@ -2917,8 +3014,8 @@ def dashboard_snapshot(
                 f"""
                 SELECT COUNT(DISTINCT o.display_name)
                 FROM games g
-                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-                JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
+                CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                CROSS JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
                 WHERE {where} AND o.display_name IS NOT NULL AND o.display_name NOT IN ('', 'Opponent')
                 """,
                 params,
@@ -2945,8 +3042,8 @@ def dashboard_snapshot(
                     SUM(g.outcome = 'loss') AS ml,
                     MAX(g.started_at) AS last_started
                   FROM games g
-                  JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-                  JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
+                  CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                  CROSS JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
                   WHERE {where} AND o.display_name IS NOT NULL AND o.display_name NOT IN ('', 'Opponent')
                   GROUP BY o.display_name, g.match_id
                 )
@@ -2964,7 +3061,7 @@ def dashboard_snapshot(
                   d.display_name,
                   COALESCE(d.type_category, 'Other') AS type_category,
                   COUNT(*) AS times_drawn,
-                  COUNT(DISTINCT d.game_id) AS games_seen
+                  COUNT(DISTINCT g.rowid) AS games_seen
                 FROM games g
                 CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
                 CROSS JOIN game_drawn_cards d ON d.participant_id = p.id AND d.game_id = g.id
@@ -3011,6 +3108,7 @@ def dashboard_snapshot(
         recent_rows = _dict_rows(
             conn.execute(
                 f"""
+                {_NEWEST_GAMES_CTE.format(where=where)}
                 SELECT
                   g.id AS game_id,
                   g.match_id,
@@ -3069,12 +3167,11 @@ def dashboard_snapshot(
                     JOIN cards c ON c.name = pc.card_name
                     WHERE po.game_id = g.id AND po.role = 'opponent'
                   ) AS opponent_commander_colors
-                FROM games g
-                JOIN matches m ON m.id = g.match_id
-                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-                WHERE {where}
+                FROM newest n
+                CROSS JOIN games g ON g.id = n.game_id
+                CROSS JOIN matches m ON m.id = g.match_id
+                CROSS JOIN participants p ON p.id = n.participant_id
                 ORDER BY g.started_at DESC
-                LIMIT 30
                 """,
                 params,
             )
@@ -3649,6 +3746,7 @@ def deck_detail(
         recent_rows = _dict_rows(
             conn.execute(
                 f"""
+                {_NEWEST_GAMES_CTE.format(where=where)}
                 SELECT
                   g.id AS game_id,
                   g.started_at,
@@ -3706,12 +3804,11 @@ def deck_detail(
                     JOIN cards c ON c.name = pc.card_name
                     WHERE po.game_id = g.id AND po.role = 'opponent'
                   ) AS opponent_commander_colors
-                FROM games g
-                JOIN matches m ON m.id = g.match_id
-                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-                WHERE {where}
+                FROM newest n
+                CROSS JOIN games g ON g.id = n.game_id
+                CROSS JOIN matches m ON m.id = g.match_id
+                CROSS JOIN participants p ON p.id = n.participant_id
                 ORDER BY g.started_at DESC
-                LIMIT 30
                 """,
                 params,
             )
@@ -4062,31 +4159,48 @@ def _deck_land_profile(conn: sqlite3.Connection, where: str, params: List[Any]) 
     flood = screw = normal = 0
     sum_cards_seen = sum_lands_seen = sum_draws = sum_land_draws = 0
     expected_land_pct: Optional[float] = None
-    qualities = _draw_quality_batch(
+    summaries, computed = _draw_summary_batch(
         conn, [(participant_id, row_deck_size) for _, participant_id, row_deck_size in game_rows]
     )
+    # The two games whose whole draw quality is read: the newest (rows are
+    # newest-first) with its own submitted list, and the newest classified.
+    newest_listed: Optional[Tuple[str, Optional[int]]] = None
+    newest_classified: Optional[Tuple[str, Optional[int]]] = None
     for game_id, participant_id, row_deck_size in game_rows:
-        quality = qualities.get(participant_id)
-        if quality is None:
+        summary = summaries.get(participant_id)
+        if summary is None:
             continue
-        if deck_size is None and quality.get("land_rate_source") == "decklist":
-            # Newest game (rows are newest-first) with its own submitted list.
-            deck_size = int(quality.get("deck_size") or 0) or None
-            lands = quality.get("deck_lands")
-        if not quality.get("total_cards_seen"):
+        if newest_listed is None and (
+            # A stored summary is always of a game with its own list.
+            participant_id not in computed
+            or computed[participant_id].get("land_rate_source") == "decklist"
+        ):
+            newest_listed = (participant_id, row_deck_size)
+        if not summary.cards_seen:
             continue
-        sum_cards_seen += int(quality.get("total_cards_seen") or 0)
-        sum_lands_seen += int(quality.get("lands_seen") or 0)
-        sum_draws += int(quality.get("total_draws") or 0)
-        sum_land_draws += int(quality.get("land_draws") or 0)
-        if expected_land_pct is None:
-            expected_land_pct = quality.get("expected_land_rate")
-        if quality.get("is_flood"):
+        sum_cards_seen += int(summary.cards_seen or 0)
+        sum_lands_seen += int(summary.lands_seen or 0)
+        sum_draws += int(summary.total_draws or 0)
+        sum_land_draws += int(summary.land_draws or 0)
+        if newest_classified is None:
+            newest_classified = (participant_id, row_deck_size)
+        if summary.is_flood:
             flood += 1
-        elif quality.get("is_screw"):
+        elif summary.is_screw:
             screw += 1
         else:
             normal += 1
+    wanted = [entry for entry in (newest_listed, newest_classified) if entry is not None]
+    details = {pid: computed[pid] for pid, _ in wanted if pid in computed}
+    details.update(
+        _draw_quality_batch(conn, [entry for entry in wanted if entry[0] not in details])
+    )
+    if newest_listed is not None and newest_listed[0] in details:
+        listed = details[newest_listed[0]]
+        deck_size = int(listed.get("deck_size") or 0) or None
+        lands = listed.get("deck_lands")
+    if newest_classified is not None and newest_classified[0] in details:
+        expected_land_pct = details[newest_classified[0]].get("expected_land_rate")
     classified = flood + screw + normal
     # The deck's land ratio comes from its newest submitted decklist (the same
     # numbers shown in Land Statistics); only decks with no decklist at all
@@ -5529,7 +5643,7 @@ def all_games(
             revealed, commander = opp_letters.get(str(row.get("game_id")), ("", ""))
             row["opp_color_letters"] = revealed
             row["opp_commander_letters"] = commander
-        qualities = _draw_quality_batch(
+        summaries, _computed = _draw_summary_batch(
             conn,
             [(row["player_participant_id"], row.get("deck_size")) for row in rows],
         )
@@ -5539,19 +5653,20 @@ def all_games(
         deck_color_map = _deck_color_map(conn, _decks_without_game_colors(rows, game_deck_colors))
         _attach_replay_availability(conn, rows)
 
+    no_draws = game_derived.draw_summary(draw_quality_metrics([], [], 0, 60))
     for row in rows:
         participant_id = row.pop("player_participant_id", None)
         row["deck_colors"] = game_deck_colors.get(str(participant_id)) or deck_color_map.get(
             str(row.get("deck_name") or ""), ""
         )
         row.pop("deck_size", None)
-        quality = qualities.get(participant_id) or draw_quality_metrics([], [], 0, 60)
-        row["is_flood"] = quality["is_flood"]
-        row["is_screw"] = quality["is_screw"]
-        row["is_land_streak"] = quality["is_land_streak"]
-        row["cards_seen"] = quality["total_cards_seen"]
-        row["lands_seen"] = quality["lands_seen"]
-        row["land_seen_pct"] = quality["land_seen_pct"]
+        summary = summaries.get(participant_id) or no_draws
+        row["is_flood"] = summary.is_flood
+        row["is_screw"] = summary.is_screw
+        row["is_land_streak"] = summary.is_land_streak
+        row["cards_seen"] = summary.cards_seen
+        row["lands_seen"] = summary.lands_seen
+        row["land_seen_pct"] = summary.land_seen_pct
         row["format_label"] = format_label(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )
@@ -6165,10 +6280,16 @@ _RESPONSE_CACHE_TTL_MAX_SECONDS = 600.0
 #: Endpoints whose payload includes rows of the event log.
 _EVENT_LOG_PATHS = frozenset({"/api/game"})
 _RESPONSE_CACHE_MAX_ENTRIES = 64
+#: All bodies together. All Games is 22 MB at 38,000 games: a count alone
+#: would let a few filters of it hold hundreds of megabytes.
+_RESPONSE_CACHE_MAX_BYTES = 64 * 1024 * 1024
 _response_cache: (
     "collections.OrderedDict[Tuple[str, str, str], Tuple[Tuple[Any, ...], float, bytes]]"
 ) = collections.OrderedDict()
 _response_cache_lock = threading.Lock()
+#: One lock per page being built, so requests for the same page that arrive
+#: during its build wait for that body instead of each building their own.
+_response_builds: Dict[Tuple[str, str, str], threading.Lock] = {}
 
 _FINGERPRINT_SQL = """
 SELECT
@@ -6204,32 +6325,60 @@ def _analytics_fingerprint(db_path: Path, *, event_log: bool = True) -> Optional
         return None
 
 
+def _cached_body(key: Tuple[str, str, str], fingerprint: Tuple[Any, ...]) -> Optional[bytes]:
+    with _response_cache_lock:
+        entry = _response_cache.get(key)
+        if entry is not None and entry[0] == fingerprint and entry[1] > time.monotonic():
+            _response_cache.move_to_end(key)
+            return entry[2]
+    return None
+
+
 def cached_response(db_path: Path, path: str, query: str, compute: "Callable[[], bytes]") -> bytes:
     """Return the cached JSON body for (db, path, query) while the analytics
     fingerprint is unchanged and the entry is younger than the TTL; otherwise
-    compute, store, and return it."""
+    compute, store, and return it. A page is built by one request at a time:
+    others asking for it meanwhile wait and take the body it stored."""
     fingerprint = _analytics_fingerprint(db_path, event_log=path in _EVENT_LOG_PATHS)
     if fingerprint is None:
         return compute()
     key = (str(db_path), path, query)
-    now = time.monotonic()
+    body = _cached_body(key, fingerprint)
+    if body is not None:
+        return body
     with _response_cache_lock:
-        entry = _response_cache.get(key)
-        if entry is not None and entry[0] == fingerprint and entry[1] > now:
-            _response_cache.move_to_end(key)
-            return entry[2]
-    body = compute()
-    built = time.monotonic()
-    ttl = min(
-        _RESPONSE_CACHE_TTL_MAX_SECONDS,
-        max(_RESPONSE_CACHE_TTL_SECONDS, (built - now) * _RESPONSE_CACHE_TTL_PER_BUILD_SECOND),
-    )
-    with _response_cache_lock:
-        _response_cache[key] = (fingerprint, built + ttl, body)
-        _response_cache.move_to_end(key)
-        while len(_response_cache) > _RESPONSE_CACHE_MAX_ENTRIES:
-            _response_cache.popitem(last=False)
-    return body
+        building = _response_builds.setdefault(key, threading.Lock())
+    with building:
+        try:
+            body = _cached_body(key, fingerprint)
+            if body is not None:
+                return body
+            started = time.monotonic()
+            body = compute()
+            built = time.monotonic()
+            ttl = min(
+                _RESPONSE_CACHE_TTL_MAX_SECONDS,
+                max(
+                    _RESPONSE_CACHE_TTL_SECONDS,
+                    (built - started) * _RESPONSE_CACHE_TTL_PER_BUILD_SECOND,
+                ),
+            )
+            with _response_cache_lock:
+                _response_cache[key] = (fingerprint, built + ttl, body)
+                _response_cache.move_to_end(key)
+                held = sum(len(entry[2]) for entry in _response_cache.values())
+                # Oldest first; the body just built always stays.
+                while len(_response_cache) > 1 and (
+                    len(_response_cache) > _RESPONSE_CACHE_MAX_ENTRIES
+                    or held > _RESPONSE_CACHE_MAX_BYTES
+                ):
+                    _, dropped = _response_cache.popitem(last=False)
+                    held -= len(dropped[2])
+            return body
+        finally:
+            with _response_cache_lock:
+                if _response_builds.get(key) is building:
+                    del _response_builds[key]
 
 
 def clear_response_cache() -> None:

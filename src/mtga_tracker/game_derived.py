@@ -25,6 +25,13 @@ Rules that keep a stored row exactly equal to a fresh computation:
 
 Readers never wait: a game without a current row is computed the old way.
 
+Beside the draw-quality dict a row carries the few numbers that pages read for
+every game in view (``SUMMARY_COLUMNS``): the lands in the opening hand and
+the turn each land was drawn (land availability on curve, win rate by opening
+lands), and the dict's own counts and verdicts (the flood / screw split, All
+Games). They are copies made by ``store`` from the same computation, so a
+page that needs them never decodes 38,000 dicts to read five numbers each.
+
 The same background pass builds the card-name indexes (``CARD_NAME_INDEXES``)
 on a database that has none yet: on a long history that takes seconds, which
 the schema baseline would spend on the launcher's main thread before tracking
@@ -44,7 +51,7 @@ from typing import Any, Dict, Iterable, Iterator, List, NamedTuple, Optional, Tu
 #: Bump when a stored value's computation changes (see the module docstring;
 #: tests/test_game_derived.py fails when the draw-quality output changes
 #: without it).
-RULES_VERSION = 1
+RULES_VERSION = 2
 #: Games computed and written per transaction by the background pass.
 BATCH = 500
 TABLE = "game_derived"
@@ -61,6 +68,24 @@ CARD_NAME_INDEXES: Tuple[Tuple[str, str], ...] = (
     ("idx_drawn_cards_name_nocase", "game_drawn_cards"),
     ("idx_game_deck_cards_name_nocase", "game_deck_cards"),
 )
+
+#: (column, declared type) of the per-game numbers kept beside the dict. The
+#: schema baseline adds any a table made by an earlier build lacks.
+SUMMARY_COLUMNS: Tuple[Tuple[str, str], ...] = (
+    # Opening hand size and its lands, as the Overview's SQL counts them.
+    ("opening_cards", "INTEGER"),
+    ("opening_lands", "INTEGER"),
+    # Turn of each land drawn ("2,3,7"; "?" for a draw with no turn).
+    ("land_draw_turns", "TEXT"),
+    # From the draw-quality dict; NULL exactly when draw_quality_json is.
+    ("cards_seen", "INTEGER"),
+    ("lands_seen", "INTEGER"),
+    ("land_seen_pct", "REAL"),
+    ("total_draws", "INTEGER"),
+    ("land_draws", "INTEGER"),
+    ("land_flags", "INTEGER"),
+)
+_FLOOD, _SCREW, _LAND_STREAK = 1, 2, 4
 
 #: Held by the tracker while it saves a finished game and by the background
 #: pass while it computes and writes a batch, so the pass never reads a game
@@ -81,6 +106,47 @@ class Stored(NamedTuple):
     opp_commander: str
 
 
+class DrawSummary(NamedTuple):
+    """The draw-quality numbers that pages show for every game in view."""
+
+    cards_seen: int
+    lands_seen: int
+    land_seen_pct: Optional[float]
+    total_draws: int
+    land_draws: int
+    is_flood: bool
+    is_screw: bool
+    is_land_streak: bool
+
+
+def draw_summary(quality: Dict[str, Any]) -> DrawSummary:
+    """A draw-quality dict's summary: what ``store`` keeps in columns and
+    what a reader takes from a dict it had to compute."""
+    return DrawSummary(
+        quality["total_cards_seen"],
+        quality["lands_seen"],
+        quality["land_seen_pct"],
+        quality["total_draws"],
+        quality["land_draws"],
+        bool(quality["is_flood"]),
+        bool(quality["is_screw"]),
+        bool(quality["is_land_streak"]),
+    )
+
+
+def encode_turns(turns: Iterable[Optional[int]]) -> str:
+    """Turn numbers as stored text: known turns ascending, then a "?" for
+    each draw whose turn was not captured."""
+    turns = list(turns)
+    known = sorted(int(turn) for turn in turns if turn is not None)
+    unknown = len(turns) - len(known)
+    return ",".join([str(turn) for turn in known] + ["?"] * unknown)
+
+
+def decode_turns(text: Optional[str]) -> List[Optional[int]]:
+    return [None if part == "?" else int(part) for part in str(text or "").split(",") if part]
+
+
 def _chunks(values: Iterable[Any]) -> Iterator[Tuple[str, List[Any]]]:
     items = list(values)
     for start in range(0, len(items), _CHUNK):
@@ -95,6 +161,17 @@ def table_exists(conn: sqlite3.Connection) -> bool:
         ).fetchone()
         is not None
     )
+
+
+def columns_ready(conn: sqlite3.Connection) -> bool:
+    """True when the table exists with every summary column. A table made by
+    an earlier build lacks them until the tracker next opens the database; a
+    reader then computes every game live, as it does with no table at all."""
+    try:
+        present = {row[1] for row in conn.execute(f"PRAGMA table_info({TABLE})")}
+    except sqlite3.Error:
+        return False
+    return all(name in present for name, _type in SUMMARY_COLUMNS)
 
 
 def canonical_letters(letters: Optional[str]) -> str:
@@ -154,6 +231,42 @@ def load_by_game(conn: sqlite3.Connection, game_ids: Iterable[Any]) -> Dict[str,
     return {row.game_id: row for row in _load(conn, "game_id", game_ids, draw_quality=False)}
 
 
+def load_draw_summaries(
+    conn: sqlite3.Connection, participant_ids: Iterable[Any]
+) -> Dict[str, DrawSummary]:
+    """The draw summary of each of these player participants whose current
+    row holds the game's own draw quality, read without decoding the dict."""
+    found: Dict[str, DrawSummary] = {}
+    try:
+        if not columns_ready(conn):
+            return found
+        for placeholders, chunk in _chunks(participant_ids):
+            for pid, cards, lands, pct, draws, land_draws, flags in conn.execute(
+                f"""
+                SELECT participant_id, cards_seen, lands_seen, land_seen_pct,
+                       total_draws, land_draws, land_flags
+                FROM {TABLE}
+                WHERE rules_version = ? AND participant_id IN ({placeholders})
+                  AND draw_quality_json IS NOT NULL AND cards_seen IS NOT NULL
+                """,
+                [RULES_VERSION, *chunk],
+            ):
+                flags = int(flags or 0)
+                found[str(pid)] = DrawSummary(
+                    cards,
+                    lands,
+                    pct,
+                    draws,
+                    land_draws,
+                    bool(flags & _FLOOD),
+                    bool(flags & _SCREW),
+                    bool(flags & _LAND_STREAK),
+                )
+    except sqlite3.Error:
+        return {}
+    return found
+
+
 def store(conn: sqlite3.Connection, participant_ids: Iterable[Any]) -> int:
     """Compute and write the rows of these player participants. The caller
     owns the transaction. Returns the number of rows written."""
@@ -176,6 +289,8 @@ def store(conn: sqlite3.Connection, participant_ids: Iterable[Any]) -> int:
     quality = dashboard._compute_draw_quality_batch(conn, [(pid, size) for pid, _, size in players])
     deck_colors = dashboard._compute_participant_deck_color_map(conn, ids)
     letters = dashboard._compute_opponent_letters(conn, [game_id for _, game_id, _ in players])
+    opening = dashboard._compute_opening_lands(conn, ids)
+    land_turns = dashboard._compute_land_draw_turns(conn, ids)
     now = datetime.now().isoformat(timespec="seconds")
     rows = []
     for pid, game_id, _size in players:
@@ -183,6 +298,16 @@ def store(conn: sqlite3.Connection, participant_ids: Iterable[Any]) -> int:
         # Only a land rate from the game's own decklist is this game's alone.
         own = game_quality is not None and game_quality.get("land_rate_source") == "decklist"
         revealed, commander = letters.get(game_id, ("", ""))
+        opening_cards, opening_lands = opening.get(pid, (0, 0))
+        summary: Tuple[Any, ...] = (None,) * 6
+        if own:
+            line = draw_summary(game_quality)
+            flags = (
+                (_FLOOD if line.is_flood else 0)
+                | (_SCREW if line.is_screw else 0)
+                | (_LAND_STREAK if line.is_land_streak else 0)
+            )
+            summary = (*line[:5], flags)
         rows.append(
             (
                 pid,
@@ -193,14 +318,19 @@ def store(conn: sqlite3.Connection, participant_ids: Iterable[Any]) -> int:
                 canonical_letters(revealed),
                 canonical_letters(commander),
                 now,
+                opening_cards,
+                opening_lands,
+                encode_turns(land_turns.get(pid, [])),
+                *summary,
             )
         )
+    columns = ", ".join(name for name, _type in SUMMARY_COLUMNS)
     conn.executemany(
         f"""
         INSERT OR REPLACE INTO {TABLE} (
             participant_id, game_id, rules_version, draw_quality_json, deck_colors,
-            opp_revealed, opp_commander, computed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            opp_revealed, opp_commander, computed_at, {columns}
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, {", ".join("?" * len(SUMMARY_COLUMNS))})
         """,
         rows,
     )
@@ -361,7 +491,7 @@ def run_backfill(
 
 def _store_pending(conn: sqlite3.Connection, stop: Optional[threading.Event], pause: float) -> int:
     written = 0
-    if not table_exists(conn):
+    if not columns_ready(conn):
         return 0
     with WRITE_LOCK, conn:
         # Rows of games deleted since (an audit repair, a deleted match).

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from . import game_derived
 from .date_repair import repair_swapped_log_dates
 from .log_sanitize import scrub_raw_log
 from .payload_codec import compress_payload, decode_payload
@@ -580,7 +581,16 @@ class AnalyticsStore:
                 deck_colors TEXT,
                 opp_revealed TEXT NOT NULL DEFAULT '',
                 opp_commander TEXT NOT NULL DEFAULT '',
-                computed_at TEXT NOT NULL
+                computed_at TEXT NOT NULL,
+                opening_cards INTEGER,
+                opening_lands INTEGER,
+                land_draw_turns TEXT,
+                cards_seen INTEGER,
+                lands_seen INTEGER,
+                land_seen_pct REAL,
+                total_draws INTEGER,
+                land_draws INTEGER,
+                land_flags INTEGER
             );
 
             CREATE INDEX IF NOT EXISTS idx_game_derived_game
@@ -591,6 +601,9 @@ class AnalyticsStore:
             """
         )
         AnalyticsStore.ensure_table_column(conn, "game_events", "player_life", "INTEGER")
+        # A game_derived table made before its summary columns existed.
+        for column_name, column_type in game_derived.SUMMARY_COLUMNS:
+            AnalyticsStore.ensure_table_column(conn, "game_derived", column_name, column_type)
         AnalyticsStore.ensure_table_column(conn, "game_events", "opponent_life", "INTEGER")
         # Replay capture (see docs/REPLAY_FORMAT.md): structured fields on every
         # event row plus silent replay-only rows (visible = 0).

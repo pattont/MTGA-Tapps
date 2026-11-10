@@ -176,6 +176,129 @@ def test_a_game_that_borrows_a_decklist_is_never_answered_from_storage(tmp_path)
     assert (borrowed["deck_size"], borrowed["deck_lands"]) == (40, 17)
 
 
+def _land_sections(conn):
+    """The Overview sections answered from the summary columns."""
+    return json.loads(
+        json.dumps(
+            {
+                "readiness": dashboard._mana_readiness_rows(conn, "1 = 1", []),
+                "opener": dashboard._opener_land_rows(conn, "1 = 1", []),
+                "profile": dashboard._deck_land_profile(conn, "1 = 1", []),
+            }
+        )
+    )
+
+
+def test_summary_columns_equal_the_dict_and_the_card_rows(tmp_path):
+    db_path = _history_db(tmp_path)
+    for unknown_turn in (False, True):
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("delete from game_derived")
+            if unknown_turn:
+                # One land of the flooding game was drawn on a turn not captured.
+                conn.execute(
+                    "update game_drawn_cards set turn_number = NULL "
+                    "where participant_id = 'player-b' and draw_position = 3"
+                )
+            conn.commit()
+            players = _players(conn)
+            ids = [pid for pid, _ in players]
+            computed = dashboard._compute_draw_quality_batch(conn, players)
+            live, live_dicts = dashboard._draw_summary_batch(conn, players)
+            assert live_dicts == computed
+            own = {
+                pid
+                for pid, quality in computed.items()
+                if quality["land_rate_source"] == "decklist"
+            }
+            assert "player-b" in own and "player-c" not in own
+            opening = dashboard._compute_opening_lands(conn, ids)
+            turns = dashboard._compute_land_draw_turns(conn, ids)
+            sections = _land_sections(conn)
+
+            game_derived.store(conn, ids)
+            conn.commit()
+
+            stored, recomputed = dashboard._draw_summary_batch(conn, players)
+            # Only a game with its own decklist is answered from its row.
+            assert set(ids) - set(recomputed) == own
+            assert stored == live
+            for pid in ids:
+                assert stored[pid] == game_derived.draw_summary(computed[pid])
+                assert [type(value) for value in stored[pid]] == [
+                    type(value) for value in game_derived.draw_summary(computed[pid])
+                ]
+            assert stored["player-b"].is_flood is True
+            for pid, cards, lands, text, seen in conn.execute(
+                "select participant_id, opening_cards, opening_lands, land_draw_turns, "
+                "cards_seen from game_derived"
+            ):
+                assert (cards, lands) == opening[pid]
+                unknown_last = sorted(turns.get(pid, []), key=lambda turn: (turn is None, turn))
+                assert game_derived.decode_turns(text) == unknown_last
+                assert (seen is None) == (pid not in own)
+            assert _land_sections(conn) == sections
+    with sqlite3.connect(db_path) as conn:
+        text = conn.execute(
+            "select land_draw_turns from game_derived where participant_id = 'player-b'"
+        ).fetchone()[0]
+    assert text == "1,2,4,5,6,7,?"
+
+
+def test_land_draw_turns_keep_every_draw():
+    for turns in ([], [3], [5, 2, 2], [None], [4, None, 1, None]):
+        text = game_derived.encode_turns(turns)
+        assert sorted(
+            game_derived.decode_turns(text), key=lambda turn: (turn is None, turn)
+        ) == sorted(turns, key=lambda turn: (turn is None, turn))
+    assert game_derived.encode_turns([]) == ""
+    assert game_derived.decode_turns(None) == []
+
+
+def test_a_table_made_before_the_summary_columns_is_read_as_empty(tmp_path):
+    db_path = _history_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+    before = _pages(db_path)
+    with sqlite3.connect(db_path) as conn:
+        sections = _land_sections(conn)
+        total = len(_players(conn))
+        conn.executescript(
+            """
+            DROP TABLE game_derived;
+            CREATE TABLE game_derived (
+                participant_id TEXT PRIMARY KEY,
+                game_id TEXT NOT NULL,
+                rules_version INTEGER NOT NULL,
+                draw_quality_json TEXT,
+                deck_colors TEXT,
+                opp_revealed TEXT NOT NULL DEFAULT '',
+                opp_commander TEXT NOT NULL DEFAULT '',
+                computed_at TEXT NOT NULL
+            );
+            INSERT INTO game_derived
+            VALUES ('player-b', 'game-b', 1, '{"is_flood": "stale"}', 'WUBRG', '', '', 'x');
+            """
+        )
+        assert not game_derived.columns_ready(conn)
+        assert game_derived.load_draw_summaries(conn, ["player-b"]) == {}
+        assert _land_sections(conn) == sections
+    assert _pages(db_path) == before
+    # Nothing is written until the tracker has opened the database.
+    assert game_derived.run_backfill(db_path, pause=0.0) == 0
+
+    with sqlite3.connect(db_path) as conn:
+        AnalyticsStore.ensure_schema(conn)
+        conn.commit()
+        assert game_derived.columns_ready(conn)
+    assert game_derived.run_backfill(db_path, pause=0.0) == total
+    with sqlite3.connect(db_path) as conn:
+        assert _land_sections(conn) == sections
+        found = game_derived.load_draw_summaries(conn, ["player-b", "player-c"])
+        assert set(found) == {"player-b"}
+    assert _pages(db_path) == before
+
+
 def test_rows_from_older_rules_are_ignored_and_recomputed(tmp_path):
     db_path = _history_db(tmp_path)
     with sqlite3.connect(db_path) as conn:
@@ -370,14 +493,16 @@ def test_canonical_letters_keep_what_colour_normalisation_reads():
 
 
 #: draw_quality_metrics' answers for the fixed games below, at RULES_VERSION.
-EXPECTED_RULES_DIGEST = "a443010e51d7e266"
+EXPECTED_RULES_DIGEST = "ee339fce73d28576"
 
 
 def test_rules_version_is_bumped_when_draw_quality_changes():
     """Stored rows hold draw_quality_metrics' output. If this digest changes,
     the function now answers differently for a finished game: bump
     game_derived.RULES_VERSION (so every stored row is recomputed) and update
-    EXPECTED_RULES_DIGEST in the same change."""
+    EXPECTED_RULES_DIGEST in the same change. The version is part of the
+    digest, so a bump for another reason (version 2 added the summary
+    columns) changes it too."""
 
     def hand(lands, spells):
         return [{"display_name": "Island", "type_category": "Land"}] * lands + [
