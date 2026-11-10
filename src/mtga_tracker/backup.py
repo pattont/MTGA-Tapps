@@ -891,6 +891,8 @@ def restore_backup(
 #: Tables the merge never touches: this computer's live row and diagnostics,
 #: and SQLite's own bookkeeping.
 MERGE_SKIP_TABLES = {"live_status", "raw_game_payloads", "schema_migrations", "sqlite_sequence", "cards", "managed_deck_transfers", "maintenance_state",
+                     # Derived per game from this database's own cards table; recomputed for merged games.
+                     "game_derived",
                      "managed_decks", "managed_deck_revisions", "managed_deck_cards", "managed_deck_bindings", "managed_deck_collections"}
 
 

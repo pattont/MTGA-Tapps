@@ -115,6 +115,11 @@ class TrackerRuntimeMixin:
         self._print_line("\n Press Ctrl+C to stop")
         self._print_line("=" * 75 + "\n")
 
+        # Games recorded before the stored per-game values existed (or under
+        # older rules) get theirs now, on a background thread: seconds of
+        # work on a long history, and tracking must not wait for it.
+        self._start_game_derived_backfill()
+
         # Start from current end of file
         self.parser.reset_position()
 
@@ -160,12 +165,23 @@ class TrackerRuntimeMixin:
             self._print_summary()
             self._print_line("=" * 75)
         finally:
+            self._stop_game_derived_backfill()
             self.analytics.close()
 
     def stop(self):
         """Stop tracking cards."""
         self.running = False
+        self._stop_game_derived_backfill()
         self.analytics.close()
+
+    @staticmethod
+    def _stop_game_derived_backfill() -> None:
+        try:
+            from . import game_derived
+
+            game_derived.stop_backfill()
+        except Exception:
+            return
 
     def request_stop(self) -> None:
         """Ask the polling loop to stop and let its owning thread close resources."""

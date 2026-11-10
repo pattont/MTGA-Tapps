@@ -32,6 +32,7 @@ from .draw_quality import (
 )
 from .colors import _MANA_PIP_RE, color_combo_label, normalize_colors
 from .colors import score_deck_colors as _score_deck_colors
+from . import game_derived
 from .format_normalizer import format_label, normalize_match_format
 from .paths import DATA_DIR
 
@@ -416,6 +417,31 @@ def _draw_quality_batch(
 ) -> Dict[str, Dict[str, Any]]:
     """participant_id -> draw-quality metrics for many games at once.
 
+    A finished game's metrics are read from ``game_derived`` when it has a
+    current row with its own land rate; every other game (one recorded since
+    the last background pass, or one that borrows another game's decklist)
+    is computed by ``_compute_draw_quality_batch``. Both give the same dict.
+    """
+    ids = [pid for pid, _ in participants if pid]
+    if not ids:
+        return {}
+    stored = game_derived.load_by_participant(conn, ids, draw_quality=True)
+    found = {pid: row.draw_quality for pid, row in stored.items() if row.draw_quality is not None}
+    if len(found) < len(ids):
+        found.update(
+            _compute_draw_quality_batch(
+                conn, [(pid, size) for pid, size in participants if pid and pid not in found]
+            )
+        )
+    return {pid: found[pid] for pid in ids if pid in found}
+
+
+def _compute_draw_quality_batch(
+    conn: sqlite3.Connection,
+    participants: List[Tuple[str, Optional[int]]],
+) -> Dict[str, Dict[str, Any]]:
+    """participant_id -> draw-quality metrics for many games at once, computed.
+
     Same rules as _game_draw_quality (this game's decklist, else the nearest
     same-deck decklist, else the size heuristic) but in a handful of set
     queries instead of three per game — the difference between the overview
@@ -568,6 +594,68 @@ def _draw_quality_batch(
             quality["land_rate_source"] = source
         result[pid] = quality
     return result
+
+
+def _opponent_letters(
+    conn: sqlite3.Connection, game_ids: Iterable[Any]
+) -> Dict[str, Tuple[str, str]]:
+    """game_id -> (revealed-card colour letters, commander colour letters) of
+    the opponent, for ``_display_opponent_colors``: read from ``game_derived``
+    where a game has a current row, computed otherwise. A game with neither
+    may be absent."""
+    ids = list(dict.fromkeys(str(value) for value in game_ids if value))
+    if not ids:
+        return {}
+    stored = game_derived.load_by_game(conn, ids)
+    result = {game_id: (row.opp_revealed, row.opp_commander) for game_id, row in stored.items()}
+    missing = [game_id for game_id in ids if game_id not in stored]
+    if missing:
+        result.update(_compute_opponent_letters(conn, missing))
+    return result
+
+
+def _compute_opponent_letters(
+    conn: sqlite3.Connection, game_ids: Iterable[Any]
+) -> Dict[str, Tuple[str, str]]:
+    """Opponent colour letters per game from the cards the opponent revealed
+    and, for Brawl, their recorded commanders. One grouped pass per slice of
+    games (a correlated subquery per row costs far more over a history)."""
+    revealed: Dict[str, str] = {}
+    commander: Dict[str, str] = {}
+    try:
+        for placeholders, chunk in _in_chunks(game_ids):
+            for game_id, letters in conn.execute(
+                f"""
+                SELECT s.game_id,
+                       GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
+                FROM game_card_summary s
+                JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
+                JOIN cards c ON c.id = s.card_id
+                WHERE s.game_id IN ({placeholders})
+                GROUP BY s.game_id
+                """,
+                chunk,
+            ):
+                revealed[str(game_id)] = str(letters or "")
+            for game_id, letters in conn.execute(
+                f"""
+                SELECT po.game_id,
+                       GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
+                FROM participant_commanders pc
+                JOIN participants po ON po.id = pc.participant_id AND po.role = 'opponent'
+                JOIN cards c ON c.name = pc.card_name
+                WHERE po.game_id IN ({placeholders})
+                GROUP BY po.game_id
+                """,
+                chunk,
+            ):
+                commander[str(game_id)] = str(letters or "")
+    except sqlite3.OperationalError:
+        return {}
+    return {
+        game_id: (revealed.get(game_id, ""), commander.get(game_id, ""))
+        for game_id in set(revealed) | set(commander)
+    }
 
 
 def _display_opponent_colors(
@@ -1135,47 +1223,23 @@ def _opponent_color_rows(
 ) -> List[Dict[str, Any]]:
     """Win/loss record grouped by the opponent's known color combination."""
     try:
-        rows = conn.execute(
+        games = conn.execute(
             f"""
-            WITH opponents AS (
-              SELECT po.id
-              FROM games g
-              JOIN matches m ON m.id = g.match_id
-              JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
-              WHERE {where}
-            ), revealed AS (
-              SELECT s.game_id, s.participant_id,
-                     GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL
-                                       THEN c.color_identity || 'C' END, '') AS letters
-              FROM game_card_summary s
-              JOIN cards c ON c.id = s.card_id
-              WHERE s.participant_id IN (SELECT id FROM opponents)
-              GROUP BY s.game_id, s.participant_id
-            ), commander_identity AS (
-              SELECT pc.participant_id,
-                     GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL
-                                       THEN c.color_identity || 'C' END, '') AS letters
-              FROM participant_commanders pc
-              JOIN cards c ON c.name = pc.card_name
-              GROUP BY pc.participant_id
-            )
-            SELECT
-              g.id,
-              g.outcome,
-              m.format,
-              revealed.letters,
-              commander_identity.letters
+            SELECT g.id, g.outcome, m.format
             FROM games g
             JOIN matches m ON m.id = g.match_id
             JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
-            LEFT JOIN revealed ON revealed.game_id = g.id AND revealed.participant_id = po.id
-            LEFT JOIN commander_identity ON commander_identity.participant_id = po.id
             WHERE {where}
             """,
-            [*params, *params],
+            params,
         ).fetchall()
     except sqlite3.OperationalError:
         return []
+    opp_letters = _opponent_letters(conn, (row[0] for row in games))
+    rows = [
+        (game_id, outcome, raw_format, *opp_letters.get(str(game_id), ("", "")))
+        for game_id, outcome, raw_format in games
+    ]
     buckets: Dict[str, Dict[str, Any]] = {}
     for _game_id, outcome, raw_format, letters, commander_letters in rows:
         colors = _display_opponent_colors(raw_format, letters, commander_letters)
@@ -2031,28 +2095,58 @@ def _combat_split_rows(
     )
 
 
+#: Matches of modes the tracker does not track (Jump In, Midweek Magic).
+_UNTRACKED_MATCH_SQL = """(
+            mj.format LIKE 'Jump!_In%' ESCAPE '!'
+            OR mj.format LIKE 'MWM%'
+            OR mj.format LIKE 'Midweek%'
+            OR COALESCE(mj.queue, '') LIKE 'MWM%'
+            OR COALESCE(mj.event_name, '') LIKE 'MWM%'
+          )"""
+
+
+def _has_untracked_matches(db_path: Path) -> bool:
+    """Whether any match of an untracked mode lingers in this database. True
+    when it cannot be told."""
+    try:
+        db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
+        with sqlite3.connect(db_uri, uri=True) as conn:
+            conn.execute("PRAGMA query_only = ON")
+            return (
+                conn.execute(
+                    f"SELECT 1 FROM matches mj WHERE {_UNTRACKED_MATCH_SQL} LIMIT 1"
+                ).fetchone()
+                is not None
+            )
+    except (sqlite3.Error, OSError):
+        return True
+
+
 def _games_filter(
     deck: Optional[str],
     fmt: Optional[str],
     days: Optional[int],
     since: Optional[str] = None,
     until: Optional[str] = None,
+    *,
+    db_path: Optional[Path] = None,
 ) -> Tuple[str, List[Any]]:
-    """WHERE fragment (referencing games alias `g`) plus bound params."""
-    # Jump In and Midweek Magic games are intentionally untracked; hide them
-    # from every aggregate even if legacy rows linger in the database.
-    clauses = [
-        """NOT EXISTS (
+    """WHERE fragment (referencing games alias `g`) plus bound params.
+
+    Jump In and Midweek Magic games are intentionally untracked; they are
+    hidden from every aggregate even if legacy rows linger in the database.
+    That test runs for every game in every statement of a page, so with
+    ``db_path`` it is asked once up front and left out when the database
+    holds no such match (they have not been saved for a long time).
+    """
+    clauses: List[str] = []
+    if db_path is None or _has_untracked_matches(db_path):
+        clauses.append(
+            f"""NOT EXISTS (
           SELECT 1 FROM matches mj
-          WHERE mj.id = g.match_id AND (
-            mj.format LIKE 'Jump!_In%' ESCAPE '!'
-            OR mj.format LIKE 'MWM%'
-            OR mj.format LIKE 'Midweek%'
-            OR COALESCE(mj.queue, '') LIKE 'MWM%'
-            OR COALESCE(mj.event_name, '') LIKE 'MWM%'
-          )
+          WHERE mj.id = g.match_id AND {_UNTRACKED_MATCH_SQL}
         )"""
-    ]
+        )
     params: List[Any] = []
     if deck:
         # An id list read from the (role, deck_name) index, so a statement
@@ -2088,7 +2182,7 @@ def _games_filter(
     if until:
         clauses.append("COALESCE(g.started_at, g.ended_at) <= ?")
         params.append(f"{until}T23:59:59" if len(until) == 10 else until)
-    return " AND ".join(clauses), params
+    return " AND ".join(clauses) or "1 = 1", params
 
 
 def _win_rate(wins: int, losses: int) -> Optional[float]:
@@ -2390,6 +2484,24 @@ def _deck_color_map(
 def _participant_deck_color_map(
     conn: sqlite3.Connection, participant_ids: Iterable[Any]
 ) -> Dict[str, str]:
+    """WUBRG colors from each game's submitted player deck snapshot: read
+    from ``game_derived`` where a game has a current row, computed otherwise.
+    A game that submitted no decklist is absent from the result either way.
+    """
+    ids = list(dict.fromkeys(str(value) for value in participant_ids if value))
+    if not ids:
+        return {}
+    stored = game_derived.load_by_participant(conn, ids)
+    result = {pid: row.deck_colors for pid, row in stored.items() if row.deck_colors is not None}
+    missing = [pid for pid in ids if pid not in stored]
+    if missing:
+        result.update(_compute_participant_deck_color_map(conn, missing))
+    return result
+
+
+def _compute_participant_deck_color_map(
+    conn: sqlite3.Connection, participant_ids: Iterable[Any]
+) -> Dict[str, str]:
     """WUBRG colors from each game's submitted player deck snapshot.
 
     A deck name can represent several revisions, especially during a draft.
@@ -2622,9 +2734,14 @@ def dashboard_snapshot(
     db_path = Path(db_path).expanduser()
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
-    where, params = _games_filter(deck, fmt, days, since, until)
+    where, params = _games_filter(deck, fmt, days, since, until, db_path=db_path)
     trend_where, trend_params = (
-        _games_filter(deck, fmt, None if trend_games is not None else (trend_days or None))
+        _games_filter(
+            deck,
+            fmt,
+            None if trend_games is not None else (trend_days or None),
+            db_path=db_path,
+        )
         if trend_days is not None or trend_games is not None
         else (where, params)
     )
@@ -3258,7 +3375,7 @@ def deck_detail(
     db_path = Path(db_path).expanduser()
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
-    where, params = _games_filter(deck_name, fmt, days, since, until)
+    where, params = _games_filter(deck_name, fmt, days, since, until, db_path=db_path)
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
@@ -3278,7 +3395,7 @@ def deck_detail(
         if not summary or not summary[0]:
             raise LookupError(f"No recorded games for deck: {deck_name}")
         # Last played ignores the page filters: it describes the deck itself.
-        deck_where, deck_params = _games_filter(deck_name, None, None)
+        deck_where, deck_params = _games_filter(deck_name, None, None, db_path=db_path)
         last_played = conn.execute(
             f"SELECT MAX(COALESCE(g.started_at, g.ended_at)) FROM games g WHERE {deck_where}",
             deck_params,
@@ -3756,6 +3873,7 @@ RESET_TABLES = (
     "rank_snapshots",
     "tracker_sessions",
     "maintenance_state",
+    "game_derived",
 )
 
 #: Tables a reset leaves alone, on purpose. Every table in the schema is in
@@ -4668,7 +4786,7 @@ def opponent_detail(
     requested_name = str(opponent_name or "").strip()
     if not requested_name:
         raise LookupError("Opponent name is required")
-    where, filter_params = _games_filter(deck, fmt, days, since, until)
+    where, filter_params = _games_filter(deck, fmt, days, since, until, db_path=db_path)
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
@@ -5090,7 +5208,7 @@ def card_detail(
     db_path = Path(db_path).expanduser()
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
-    where, filter_params = _games_filter(deck, fmt, days, since, until)
+    where, filter_params = _games_filter(deck, fmt, days, since, until, db_path=db_path)
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
@@ -5322,7 +5440,7 @@ def all_games(
     db_path = Path(db_path).expanduser()
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
-    where, params = _games_filter(deck, fmt, days, since, until)
+    where, params = _games_filter(deck, fmt, days, since, until, db_path=db_path)
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
@@ -5365,42 +5483,11 @@ def all_games(
                 params,
             )
         )
-        # Opponent colors for every game in one grouped pass (a correlated
-        # subquery per row costs ~15x more over the full history).
-        opp_letters: Dict[str, str] = {}
-        opp_commander_letters: Dict[str, str] = {}
-        try:
-            for game_id, letters in conn.execute(
-                f"""
-                SELECT s.game_id,
-                       GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
-                FROM game_card_summary s
-                JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
-                JOIN cards c ON c.id = s.card_id
-                WHERE s.game_id IN (SELECT g.id FROM games g WHERE {where})
-                GROUP BY s.game_id
-                """,
-                params,
-            ):
-                opp_letters[str(game_id)] = str(letters or "")
-            for game_id, letters in conn.execute(
-                f"""
-                SELECT po.game_id,
-                       GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
-                FROM participant_commanders pc
-                JOIN participants po ON po.id = pc.participant_id AND po.role = 'opponent'
-                JOIN cards c ON c.name = pc.card_name
-                WHERE po.game_id IN (SELECT g.id FROM games g WHERE {where})
-                GROUP BY po.game_id
-                """,
-                params,
-            ):
-                opp_commander_letters[str(game_id)] = str(letters or "")
-        except sqlite3.OperationalError:
-            opp_letters = {}
+        opp_letters = _opponent_letters(conn, (row.get("game_id") for row in rows))
         for row in rows:
-            row["opp_color_letters"] = opp_letters.get(str(row.get("game_id")), "")
-            row["opp_commander_letters"] = opp_commander_letters.get(str(row.get("game_id")), "")
+            revealed, commander = opp_letters.get(str(row.get("game_id")), ("", ""))
+            row["opp_color_letters"] = revealed
+            row["opp_commander_letters"] = commander
         qualities = _draw_quality_batch(
             conn,
             [(row["player_participant_id"], row.get("deck_size")) for row in rows],

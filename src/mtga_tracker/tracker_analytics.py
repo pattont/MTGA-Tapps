@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from .analytics import AnalyticsStore, SessionSnapshot
+from . import game_derived
 from .analytics_persistence import (
     analytics_card_base_name,
     persist_card_summary,
@@ -950,17 +951,30 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
         if conn is None:
             return
         try:
-            index = self.card_db.color_identity_index_by_name()
-            if index:
-                AnalyticsStore.backfill_card_colors(conn, index)
-            mana_index = self.card_db.mana_cost_index_by_name()
-            if mana_index:
-                AnalyticsStore.backfill_card_mana(conn, mana_index)
-            stats_index = self.card_db.stats_index_by_name()
-            if stats_index:
-                AnalyticsStore.backfill_card_stats(conn, stats_index)
+            self._backfill_card_metadata(conn)
         except (AttributeError, sqlite3.Error, OSError, TypeError, ValueError):
             return
+
+    def _backfill_card_metadata(self, conn: sqlite3.Connection) -> None:
+        """Fill cards' colours, mana costs and printed stats from the Arena
+        card database, then forget the stored per-game values of games that
+        used a card whose colour or cost was just learned: their deck and
+        opponent colours were worked out without it."""
+        missing_color, missing_cost = game_derived.cards_missing_metadata(conn)
+        index = self.card_db.color_identity_index_by_name()
+        if index:
+            AnalyticsStore.backfill_card_colors(conn, index)
+        mana_index = self.card_db.mana_cost_index_by_name()
+        if mana_index:
+            AnalyticsStore.backfill_card_mana(conn, mana_index)
+        stats_index = self.card_db.stats_index_by_name()
+        if stats_index:
+            AnalyticsStore.backfill_card_stats(conn, stats_index)
+        if missing_color or missing_cost:
+            still_color, still_cost = game_derived.cards_missing_metadata(conn)
+            learned = (missing_color - still_color) | (missing_cost - still_cost)
+            if learned and game_derived.invalidate_for_cards(conn, learned):
+                self._game_derived_refill_needed = True
 
     #: Every table whose display_name can carry a "Card #N" placeholder.
     _CARD_LABEL_TABLES = (
@@ -1044,6 +1058,10 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
                     # every single launch.
                     if conn.total_changes != changes_before:
                         resolved += 1
+                if resolved:
+                    # A renamed row can change a card's type (a land that
+                    # was "Card #N" counted as a spell): recompute everything.
+                    game_derived.invalidate_all(conn)
         except sqlite3.Error:
             return
         if resolved:
@@ -2004,15 +2022,7 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
             refresh_display_name=self._refresh_fallback_name_text,
         )
         try:
-            color_index = self.card_db.color_identity_index_by_name()
-            if color_index:
-                AnalyticsStore.backfill_card_colors(conn, color_index)
-            mana_index = self.card_db.mana_cost_index_by_name()
-            if mana_index:
-                AnalyticsStore.backfill_card_mana(conn, mana_index)
-            stats_index = self.card_db.stats_index_by_name()
-            if stats_index:
-                AnalyticsStore.backfill_card_stats(conn, stats_index)
+            self._backfill_card_metadata(conn)
         except (AttributeError, sqlite3.Error, OSError, TypeError, ValueError):
             pass
         try:
@@ -2111,6 +2121,26 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
 
         Returns True once the core game row is saved (the replay link is only
         worth printing then)."""
+        # The stored-values pass must not read this game between its core
+        # row and its card rows (see game_derived.WRITE_LOCK).
+        with game_derived.WRITE_LOCK:
+            saved = self._persist_game_analytics_locked(outcome, reason)
+        if getattr(self, "_game_derived_refill_needed", False):
+            # A card's colour or cost was learned: older games that used it
+            # lost their stored rows. Refill them off this thread.
+            self._game_derived_refill_needed = False
+            self._start_game_derived_backfill()
+        return saved
+
+    def _start_game_derived_backfill(self) -> None:
+        """Compute stored per-game values for games that have none, on a
+        background thread. Never blocks tracking."""
+        try:
+            game_derived.start_backfill(self._analytics_store().path)
+        except Exception:
+            return
+
+    def _persist_game_analytics_locked(self, outcome: str, reason: str) -> bool:
         if self._is_untracked_match():
             return False
         # A "game" with no turns, no opening hand, and no draws is a ghost:
@@ -2215,6 +2245,15 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
                 self._run_analytics_write(conn, persist_details)
             except sqlite3.Error as exc:
                 self._report_analytics_persistence_error("game details", game_id, exc)
+
+            # Everything the dashboard derives from this game is final now:
+            # store it once, with the functions the dashboard computes with.
+            try:
+                self._run_analytics_write(
+                    conn, lambda: game_derived.store(conn, [player_participant_id])
+                )
+            except Exception as exc:  # noqa: BLE001 - an optimisation must never cost a game
+                self._report_analytics_persistence_error("derived values", game_id, exc)
 
             try:
                 self._run_analytics_write(

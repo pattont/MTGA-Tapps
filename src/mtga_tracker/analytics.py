@@ -570,6 +570,22 @@ class AnalyticsStore:
                 updated_at TEXT NOT NULL
             );
 
+            -- Values the dashboard derives from a finished game, stored once
+            -- (game_derived.py). Derived data: safe to empty at any time.
+            CREATE TABLE IF NOT EXISTS game_derived (
+                participant_id TEXT PRIMARY KEY,
+                game_id TEXT NOT NULL,
+                rules_version INTEGER NOT NULL,
+                draw_quality_json TEXT,
+                deck_colors TEXT,
+                opp_revealed TEXT NOT NULL DEFAULT '',
+                opp_commander TEXT NOT NULL DEFAULT '',
+                computed_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_game_derived_game
+            ON game_derived(game_id);
+
             INSERT OR IGNORE INTO schema_migrations(version, applied_at)
             VALUES (1, datetime('now'));
             """
