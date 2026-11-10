@@ -270,7 +270,7 @@ factor would turn a 2.4 s Overview into more than 10 s.
 `NSProcessInfo` activity (user initiated, idle system sleep allowed), the
 documented way out of App Nap, and holds it for the life of the process.
 
-Checked in the running app after a restart (2026-11-10, read-only, 5 to 15
+Checked in the running app after a restart (2026-11-10, read-only, 5 to 10
 minutes after launch): every thread at priority 20 instead of 4, and an
 uncached Overview over HTTP in 128 ms against 123 ms for a direct call from a
 terminal (before: 500 ms against 95 ms). Priority 20 is the utility band, not
