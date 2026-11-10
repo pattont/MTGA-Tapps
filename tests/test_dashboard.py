@@ -3920,6 +3920,9 @@ def test_response_cache_keeps_a_slow_page_longer(tmp_path, monkeypatch):
     dash.clear_response_cache()
     clock = {"now": 1000.0}
     monkeypatch.setattr(dash.time, "monotonic", lambda: clock["now"])
+    # How long a body is kept, on its own: no page here counts as slow enough
+    # to be sent past its TTL (the tests below).
+    monkeypatch.setattr(dash, "_WARM_MIN_BUILD_SECONDS", 1e9)
     built = []
 
     def page(seconds):
@@ -3946,6 +3949,323 @@ def test_response_cache_keeps_a_slow_page_longer(tmp_path, monkeypatch):
     dash.cached_response(db_path, "/api/snapshot", "glacial", page(120.0))
     assert built[-2:] == [120.0, 120.0]
     dash.clear_response_cache()
+
+
+def _keep_ready(dash, monkeypatch, clock=None):
+    """Every page counts as slow, and a game-end watch takes milliseconds."""
+    dash.clear_response_cache()
+    dash.forget_warm_views()
+    monkeypatch.setattr(dash, "_WARM_MIN_BUILD_SECONDS", 0.0)
+    monkeypatch.setattr(dash, "_WARM_SETTLE_SECONDS", 0.01)
+    monkeypatch.setattr(dash, "_WARM_WATCH_SECONDS", 0.5)
+    if clock is not None:
+        monkeypatch.setattr(dash.time, "monotonic", lambda: clock["now"])
+
+
+def _pin_now(dash, monkeypatch, moment):
+    from datetime import datetime
+
+    class Pinned(datetime):
+        current = moment
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current
+
+    monkeypatch.setattr(dash, "datetime", Pinned)
+    return Pinned
+
+
+def _add_game(db_path, game_id, started_at):
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "insert into games (id, session_id, match_id, game_number, started_at, outcome) "
+            "values (?, 'session-1', 'match-1', 9, ?, 'win')",
+            (game_id, started_at),
+        )
+
+
+def test_a_slow_page_past_its_ttl_is_sent_at_once_and_rebuilt_behind(tmp_path, monkeypatch):
+    import threading
+
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    clock = {"now": 1000.0}
+    _keep_ready(dash, monkeypatch, clock)
+    started, release = threading.Event(), threading.Event()
+    builds = []
+
+    def compute():
+        builds.append(1)
+        if len(builds) == 2:
+            started.set()
+            assert release.wait(5)
+        return b'{"built": %d}' % len(builds)
+
+    def ask():
+        return dash.cached_response(db_path, "/api/snapshot", "", compute)
+
+    assert ask() == b'{"built": 1}'
+    clock["now"] += dash._RESPONSE_CACHE_TTL_SECONDS + 1.0
+    # Past its TTL with nothing changed: the body it has, without waiting for
+    # the rebuild, which is held here until released.
+    assert ask() == b'{"built": 1}'
+    assert started.wait(5)
+    key = (str(db_path), "/api/snapshot", "")
+    refresh = dash._refreshing[key]
+    # More requests during the rebuild start no second one.
+    assert ask() == b'{"built": 1}'
+    release.set()
+    refresh.join(5)
+    assert ask() == b'{"built": 2}'
+    assert len(builds) == 2
+    assert dash._refreshing == {} and dash._response_builds == {}
+
+    # A changed fingerprint is never answered from the old body.
+    _add_game(db_path, "game-9", "2026-06-05T00:00:00")
+    assert ask() == b'{"built": 3}'
+
+    # A rebuild that fails behind a request leaves no body: the next request
+    # builds the page itself and reports the error.
+    def broken():
+        raise RuntimeError("database went away")
+
+    clock["now"] += dash._RESPONSE_CACHE_TTL_SECONDS + 1.0
+    assert dash.cached_response(db_path, "/api/snapshot", "", broken) == b'{"built": 3}'
+    for thread in list(dash._refreshing.values()):
+        thread.join(5)
+    with pytest.raises(RuntimeError):
+        dash.cached_response(db_path, "/api/snapshot", "", broken)
+    dash.clear_response_cache()
+    dash.forget_warm_views()
+
+
+def test_a_page_is_sent_past_its_ttl_only_while_the_clock_cannot_change_it(tmp_path, monkeypatch):
+    """ "Last N days" is the one way a page reads the clock. A window keeps
+    its games until the oldest turns N days old; from then on the body is
+    rebuilt before it is sent, as it always was."""
+    from datetime import datetime, timedelta
+
+    from mtga_tracker import dashboard as dash
+    from mtga_tracker.dashboard import all_games, render_snapshot_json
+
+    db_path = _sample_dashboard_db(tmp_path)
+    clock = {"now": 1000.0}
+    _keep_ready(dash, monkeypatch, clock)
+    monkeypatch.setattr(dash, "_CLOCK_SLIDE_SECONDS", 0.0)
+    # The sample's games start at 00:01 and 00:10 on 2026-06-04.
+    built_at = datetime(2026, 6, 10, 12, 0, 0)
+    pinned = _pin_now(dash, monkeypatch, built_at)
+    oldest_leaves = datetime(2026, 6, 4, 0, 1, 0) + timedelta(days=7)
+
+    assert dash._clock_valid_until(db_path, {7}, built_at) == oldest_leaves
+    assert dash._clock_valid_until(db_path, {7, 30}, built_at) == oldest_leaves
+    # No window, or a window holding no game: the clock never changes the body.
+    assert dash._clock_valid_until(db_path, set(), built_at) == datetime.max
+    assert dash._clock_valid_until(db_path, {1}, built_at) == datetime.max
+    # The oldest game's time not written the way the cutoff is: it cannot be
+    # counted forward.
+    _add_game(db_path, "game-odd", "2026-06-04 00:00:30")
+    assert dash._clock_valid_until(db_path, {7}, built_at) is None
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("delete from games where id = 'game-odd'")
+    assert dash._clock_valid_until(tmp_path / "missing.sqlite3", {7}, built_at) is None
+
+    # The claim itself, on a real page: the same body up to that moment, and
+    # another one after it.
+    def page():
+        return render_snapshot_json(all_games(db_path, days=7))
+
+    at_build = page()
+    pinned.current = oldest_leaves - timedelta(seconds=1)
+    assert page() == at_build
+    pinned.current = oldest_leaves + timedelta(seconds=1)
+    assert page() != at_build
+
+    # And through the cache.
+    pinned.current = built_at
+    builds = []
+
+    def compute():
+        builds.append(1)
+        return page()
+
+    def ask():
+        return dash.cached_response(db_path, "/api/games", "days=7", compute)
+
+    first = ask()
+    key = (str(db_path), "/api/games", "days=7")
+    assert dash._response_cache[key].clock_until == oldest_leaves
+    clock["now"] += dash._RESPONSE_CACHE_TTL_SECONDS + 1.0
+    pinned.current = oldest_leaves - timedelta(seconds=1)
+    assert ask() == first
+    for thread in list(dash._refreshing.values()):
+        thread.join(5)
+    assert len(builds) == 2  # sent at once, rebuilt behind
+
+    clock["now"] += dash._RESPONSE_CACHE_TTL_SECONDS + 1.0
+    pinned.current = oldest_leaves + timedelta(seconds=1)
+    after = ask()
+    assert after != first  # the request waited for the rebuild
+    assert len(builds) == 3 and dash._refreshing == {}
+
+    # With a slide allowed, a window that moved on less than that ago is
+    # still sent first; one that moved on longer ago is waited for.
+    monkeypatch.setattr(dash, "_CLOCK_SLIDE_SECONDS", 600.0)
+    newer_leaves = datetime(2026, 6, 4, 0, 10, 0) + timedelta(days=7)
+    assert dash._response_cache[key].clock_until == newer_leaves
+    clock["now"] += dash._RESPONSE_CACHE_TTL_SECONDS + 1.0
+    pinned.current = newer_leaves + timedelta(seconds=599)
+    assert ask() == after
+    for thread in list(dash._refreshing.values()):
+        thread.join(5)
+    assert len(builds) == 4
+    # (the window is empty now: the clock can no longer change this page)
+    assert dash._response_cache[key].clock_until == datetime.max
+    dash.clear_response_cache()
+    dash.forget_warm_views()
+
+
+def test_a_quick_page_is_never_kept_ready(tmp_path, monkeypatch):
+    """A normal history builds every page in well under the threshold, so
+    nothing is sent past its TTL and nothing is rebuilt at game end."""
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    clock = {"now": 1000.0}
+    _keep_ready(dash, monkeypatch, clock)
+    monkeypatch.setattr(dash, "_WARM_MIN_BUILD_SECONDS", 0.25)
+    builds = []
+
+    def compute():
+        builds.append(1)
+        return b"%d" % len(builds)
+
+    assert dash.cached_response(db_path, "/api/snapshot", "", compute) == b"1"
+    assert dash._warm_views == {}
+    assert dash.note_game_finished(db_path) is None
+    clock["now"] += dash._RESPONSE_CACHE_TTL_SECONDS + 1.0
+    assert dash.cached_response(db_path, "/api/snapshot", "", compute) == b"2"
+    assert dash._refreshing == {}
+    dash.clear_response_cache()
+
+
+def test_slow_pages_asked_for_lately_are_rebuilt_when_a_game_ends(tmp_path, monkeypatch):
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    _keep_ready(dash, monkeypatch)
+    builds = []
+
+    def page(name):
+        def compute():
+            builds.append(name)
+            return b"%s %d" % (name.encode(), builds.count(name))
+
+        return compute
+
+    def ask(path, name):
+        return dash.cached_response(db_path, path, name, page(name))
+
+    assert ask("/api/snapshot", "overview") == b"overview 1"
+    assert ask("/api/games", "games") == b"games 1"
+    # One game's page is not rebuilt by a later game.
+    assert ask("/api/game", "one-game") == b"one-game 1"
+    assert [view.query for view in dash._warm_views.values()] == ["overview", "games"]
+
+    _add_game(db_path, "game-9", "2026-06-05T00:00:00")
+    # The tracker may spell the path another way.
+    watch = dash.note_game_finished(tmp_path / "." / "analytics.sqlite3")
+    assert watch is not None
+    # A second game during the watch extends it; no second thread.
+    assert dash.note_game_finished(db_path) is None
+    watch.join(10)
+    assert not watch.is_alive()
+    assert sorted(builds) == ["games", "games", "one-game", "overview", "overview"]
+    assert dash._warm_watches == {}
+    # Ready: opening them builds nothing.
+    assert ask("/api/snapshot", "overview") == b"overview 2"
+    assert ask("/api/games", "games") == b"games 2"
+    assert len(builds) == 5
+
+    # Another database's game end touches none of them.
+    assert dash.note_game_finished(tmp_path / "other.sqlite3") is None
+    # Emptying the cache (every POST does) keeps the record of what to rebuild.
+    dash.clear_response_cache()
+    assert len(dash._warm_views) == 2
+    dash.forget_warm_views()
+    assert dash.note_game_finished(db_path) is None
+
+
+def test_a_rebuild_nobody_waits_for_gives_way_to_a_request(tmp_path, monkeypatch):
+    """Two builds at once share one interpreter lock, so a rebuild behind the
+    scenes starts only when no request is building a page of its own."""
+    import threading
+
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    _keep_ready(dash, monkeypatch)
+    order = []
+    started, release = threading.Event(), threading.Event()
+
+    def overview():
+        order.append("overview")
+        return b"overview"
+
+    def deck():
+        order.append("deck starts")
+        started.set()
+        assert release.wait(5)
+        order.append("deck ends")
+        return b"deck"
+
+    assert dash.cached_response(db_path, "/api/snapshot", "", overview) == b"overview"
+    _add_game(db_path, "game-9", "2026-06-05T00:00:00")
+    # A request is building the deck page when the game-end rebuild is due.
+    request = threading.Thread(
+        target=lambda: dash.cached_response(db_path, "/api/deck", "name=x", deck)
+    )
+    request.start()
+    assert started.wait(5)
+    watch = dash.note_game_finished(db_path)
+    watch.join(0.3)  # several settle intervals: the rebuild is due and held
+    assert order == ["overview", "deck starts"]
+    release.set()
+    request.join(5)
+    watch.join(10)
+    assert order[:4] == ["overview", "deck starts", "deck ends", "overview"]
+    assert dash._requests_building == [0]
+    dash.clear_response_cache()
+    dash.forget_warm_views()
+
+
+def test_only_the_last_few_slow_pages_are_kept_ready_and_not_for_ever(tmp_path, monkeypatch):
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    clock = {"now": 1000.0}
+    _keep_ready(dash, monkeypatch, clock)
+    monkeypatch.setattr(dash, "_WARM_VIEWS_MAX", 2)
+
+    def ask(name):
+        clock["now"] += 1.0
+        return dash.cached_response(db_path, "/api/deck", name, lambda: name.encode())
+
+    for name in ("a", "b", "c"):
+        ask(name)
+    assert [view.query for view in dash._warm_views.values()] == ["b", "c"]
+    ask("b")  # asked for again: now the most recent
+    assert [view.query for view in dash._warm_views.values()] == ["c", "b"]
+
+    database = db_path.resolve()
+    assert len(dash._views_to_warm(database, clock["now"])) == 2
+    clock["now"] += dash._WARM_VIEW_IDLE_SECONDS
+    assert dash._views_to_warm(database, clock["now"]) == []
+    assert dash.note_game_finished(db_path) is None
+    dash.clear_response_cache()
+    dash.forget_warm_views()
 
 
 def test_combat_profile_covers_every_deck_not_just_the_first_forty(tmp_path):

@@ -469,6 +469,50 @@ def test_a_failed_derived_write_never_costs_the_game(tmp_path, monkeypatch, caps
     assert not game_derived.WRITE_LOCK.locked()
 
 
+def test_tracker_tells_the_dashboard_when_a_game_is_saved(tmp_path, monkeypatch):
+    """So the dashboard can rebuild the slow pages of a very long history
+    before anyone looks (dashboard.note_game_finished). It is told once the
+    game is saved, never for a game that was not, and a failure in it never
+    costs the game."""
+
+    def ready_tracker():
+        tracker = make_tracker()
+        tracker._console_db_path = tmp_path / "analytics.sqlite3"
+        tracker.game_state.in_match = True
+        tracker.game_state.player_seat_id = 1
+        tracker.game_state.opponent_seat_id = 2
+        tracker.game_state.game_start_time = datetime(2026, 7, 22, 12, 0, 0)
+        tracker.game_state.game_end_time = datetime(2026, 7, 22, 12, 3, 0)
+        return tracker
+
+    told = []
+
+    def note(db_path):
+        with sqlite3.connect(db_path) as conn:
+            told.append(conn.execute("select count(*) from game_derived").fetchone()[0])
+
+    monkeypatch.setattr(dashboard, "note_game_finished", note)
+    tracker = ready_tracker()
+    tracker.game_state.turns_taken_by_seat[1].add(1)
+    assert tracker._persist_game_analytics("win", "Opponent conceded") is True
+    assert told == [1]  # after the game's rows and its stored values
+    assert not game_derived.WRITE_LOCK.locked()
+
+    # A ghost game (no turns, no cards) is not saved, and nothing is told.
+    assert ready_tracker()._persist_game_analytics("unknown", "") is False
+    assert told == [1]
+
+    def broken(_db_path):
+        raise RuntimeError("a bug in the dashboard")
+
+    monkeypatch.setattr(dashboard, "note_game_finished", broken)
+    tracker = ready_tracker()
+    tracker.game_state.turns_taken_by_seat[1].add(1)
+    tracker.game_state.game_start_time = datetime(2026, 7, 22, 13, 0, 0)
+    tracker.game_state.game_end_time = datetime(2026, 7, 22, 13, 3, 0)
+    assert tracker._persist_game_analytics("loss", "Life reached 0") is True
+
+
 def test_stored_values_are_local_and_emptied_by_a_reset(tmp_path):
     assert game_derived.TABLE in MERGE_SKIP_TABLES
     assert game_derived.TABLE in dashboard.RESET_TABLES

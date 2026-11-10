@@ -2270,8 +2270,11 @@ def _games_filter(
         )
         params.append(fmt)
     if days:
+        # The one place a page reads the clock; the response cache is told
+        # (see _clock_valid_until), so add any other there too.
+        _note_clock_window(days)
         cutoff = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
-        clauses.append("COALESCE(g.started_at, g.ended_at) >= ?")
+        clauses.append(f"{_GAME_TIME_SQL.format(alias='g.')} >= ?")
         params.append(cutoff)
     if since:
         clauses.append("COALESCE(g.started_at, g.ended_at) >= ?")
@@ -6297,6 +6300,24 @@ def render_snapshot_json(snapshot: Dict[str, Any]) -> bytes:
 # The TTL grows with what a page costs to build, so the safety-net rebuild of
 # a page that takes seconds (a very long history) stays a small share of one
 # core instead of running once a minute.
+#
+# Nobody waits for a slow page that was built before (slow: a build of
+# _WARM_MIN_BUILD_SECONDS or more, which a normal history never reaches, so
+# none of this runs for one):
+# - Past its TTL with the fingerprint unchanged, the body is sent at once and
+#   rebuilt behind the request. A page reads the clock only through "last N
+#   days" (_games_filter), and a window's games stay the same until its
+#   oldest one turns N days old (_clock_valid_until): until then the body
+#   sent is the one a rebuild would give. It is still sent for
+#   _CLOCK_SLIDE_SECONDS after that moment (a window's far edge may be that
+#   much out of date until the page's next poll); later than that the request
+#   waits for the rebuild, as every request past the TTL used to.
+# - When a game ends the tracker calls note_game_finished, and the slow pages
+#   asked for lately (_warm_views) are rebuilt on a daemon thread once the
+#   game's late writes (a rank change, an AI archetype) have settled.
+# Rebuilds nobody is waiting for run one at a time, and wait for a request
+# that is building a page of its own (two builds at once share one
+# interpreter lock: 6 s became 9 s for the request).
 # ---------------------------------------------------------------------------
 
 _RESPONSE_CACHE_TTL_SECONDS = 60.0
@@ -6309,13 +6330,110 @@ _RESPONSE_CACHE_MAX_ENTRIES = 64
 #: All bodies together. All Games is 22 MB at 38,000 games: a count alone
 #: would let a few filters of it hold hundreds of megabytes.
 _RESPONSE_CACHE_MAX_BYTES = 64 * 1024 * 1024
-_response_cache: (
-    "collections.OrderedDict[Tuple[str, str, str], Tuple[Tuple[Any, ...], float, bytes]]"
-) = collections.OrderedDict()
+#: A page that took this long to build is kept ready (see above).
+_WARM_MIN_BUILD_SECONDS = 0.25
+#: The pages a finished game changes. One game's page or replay is not among
+#: them: a later game leaves it as it was.
+_WARM_PATHS = frozenset(
+    {"/api/snapshot", "/api/games", "/api/deck", "/api/opponents", "/api/opponent", "/api/card"}
+)
+#: How many slow pages are rebuilt when a game ends: the ones asked for most
+#: recently, and only within this long of being asked for.
+_WARM_VIEWS_MAX = 4
+_WARM_VIEW_IDLE_SECONDS = 4 * 3600.0
+#: After a game the fingerprint is read this often, for this long; pages are
+#: rebuilt once it has stopped moving for one interval.
+_WARM_SETTLE_SECONDS = 2.0
+_WARM_WATCH_SECONDS = 90.0
+#: How far a "last N days" window may have moved on since a slow page was
+#: built and the page still be sent before its rebuild: about a long game, so
+#: nothing is waited for between one game's end and the next. 0 = never.
+_CLOCK_SLIDE_SECONDS = 30 * 60.0
+#: How long a rebuild nobody is waiting for holds back for requests' builds.
+_BEHIND_WAIT_SECONDS = 60.0
+
+_PageKey = Tuple[str, str, str]
+
+
+class _CachedPage(NamedTuple):
+    fingerprint: Tuple[Any, ...]
+    expires: float  # time.monotonic()
+    body: bytes
+    #: Until when (local wall clock) the passing of time cannot change the
+    #: body. None: not worked out, so the page is rebuilt when it expires.
+    clock_until: Optional[datetime]
+
+
+class _WarmView(NamedTuple):
+    database: Path  # resolved, to match the path the tracker names
+    db_path: Path
+    path: str
+    query: str
+    compute: "Callable[[], bytes]"
+    asked: float  # time.monotonic()
+
+
+_response_cache: "collections.OrderedDict[_PageKey, _CachedPage]" = collections.OrderedDict()
 _response_cache_lock = threading.Lock()
 #: One lock per page being built, so requests for the same page that arrive
 #: during its build wait for that body instead of each building their own.
-_response_builds: Dict[Tuple[str, str, str], threading.Lock] = {}
+_response_builds: Dict[_PageKey, threading.Lock] = {}
+#: Pages being rebuilt behind a request that was sent the body it replaces.
+_refreshing: Dict[_PageKey, threading.Thread] = {}
+#: Held by the one rebuild nobody is waiting for that may run.
+_behind_builds = threading.Lock()
+#: Requests building a page or waiting for one being built (one-item list:
+#: read and written under _response_cache_lock).
+_requests_building = [0]
+#: The slow pages asked for lately, most recent last.
+_warm_views: "collections.OrderedDict[_PageKey, _WarmView]" = collections.OrderedDict()
+#: Databases with a game-end watch running, and when each watch ends.
+_warm_watches: Dict[Path, float] = {}
+
+#: A game's time as the "last N days" filter reads it.
+_GAME_TIME_SQL = "COALESCE({alias}started_at, {alias}ended_at)"
+_clock_windows = threading.local()
+
+
+def _note_clock_window(days: int) -> None:
+    """Record that the page being built on this thread counts back ``days``
+    from now. Nothing is recorded outside a cached build."""
+    windows = getattr(_clock_windows, "days", None)
+    if windows is not None:
+        windows.add(days)
+
+
+def _clock_valid_until(
+    db_path: Path, windows: Iterable[Any], since: datetime
+) -> Optional[datetime]:
+    """Until when a body built at ``since`` stays what a rebuild would give,
+    as far as the clock goes. A "last N days" window holds the same games
+    until the oldest of them turns N days old, so that moment, the earliest
+    over the page's windows, is the answer; with no window, or none holding a
+    game, the clock never changes the body. None when it cannot be told."""
+    until = datetime.max
+    try:
+        db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
+        with sqlite3.connect(db_uri, uri=True) as conn:
+            game_time = _GAME_TIME_SQL.format(alias="")
+            for days in windows:
+                span = timedelta(days=days)
+                oldest = conn.execute(
+                    f"SELECT MIN({game_time}) FROM games WHERE {game_time} >= ?",
+                    ((since - span).isoformat(timespec="seconds"),),
+                ).fetchone()[0]
+                if oldest is None:
+                    continue
+                # The filter compares text, and so must this: only a time
+                # written the way the cutoff is can be counted forward.
+                text = str(oldest)
+                if len(text) < 19 or text[10] != "T":
+                    return None
+                until = min(until, datetime.fromisoformat(text[:19]) + span)
+    except (sqlite3.Error, OSError, ValueError, OverflowError, TypeError):
+        return None
+    return until
+
 
 _FINGERPRINT_SQL = """
 SELECT
@@ -6351,12 +6469,16 @@ def _analytics_fingerprint(db_path: Path, *, event_log: bool = True) -> Optional
         return None
 
 
-def _cached_body(key: Tuple[str, str, str], fingerprint: Tuple[Any, ...]) -> Optional[bytes]:
+def _cached_body(key: _PageKey, fingerprint: Tuple[Any, ...]) -> Optional[bytes]:
     with _response_cache_lock:
         entry = _response_cache.get(key)
-        if entry is not None and entry[0] == fingerprint and entry[1] > time.monotonic():
+        if (
+            entry is not None
+            and entry.fingerprint == fingerprint
+            and entry.expires > time.monotonic()
+        ):
             _response_cache.move_to_end(key)
-            return entry[2]
+            return entry.body
     return None
 
 
@@ -6364,23 +6486,77 @@ def cached_response(db_path: Path, path: str, query: str, compute: "Callable[[],
     """Return the cached JSON body for (db, path, query) while the analytics
     fingerprint is unchanged and the entry is younger than the TTL; otherwise
     compute, store, and return it. A page is built by one request at a time:
-    others asking for it meanwhile wait and take the body it stored."""
+    others asking for it meanwhile wait and take the body it stored. A slow
+    page past its TTL is sent as it is and rebuilt behind the request while
+    the fingerprint is unchanged and no "last N days" window of it has moved
+    past a game for longer than _CLOCK_SLIDE_SECONDS.
+
+    ``compute`` may be called again later, from another thread (a rebuild
+    behind a request, or after a game): it must read only the database and
+    the values it was made with."""
+    return _page_body(db_path, path, query, compute, asked=True)
+
+
+def _page_body(
+    db_path: Path, path: str, query: str, compute: "Callable[[], bytes]", *, asked: bool
+) -> bytes:
+    """``cached_response``; ``asked`` is False for a rebuild nobody is waiting
+    for, which always builds a page that is not current."""
     fingerprint = _analytics_fingerprint(db_path, event_log=path in _EVENT_LOG_PATHS)
     if fingerprint is None:
         return compute()
     key = (str(db_path), path, query)
-    body = _cached_body(key, fingerprint)
-    if body is not None:
-        return body
+    now = time.monotonic()
+    kept: Optional[bytes] = None
+    with _response_cache_lock:
+        view = _warm_views.get(key)
+        if asked and view is not None:
+            # The newest request's closure, so an old handler can be freed.
+            _warm_views[key] = view._replace(compute=compute, asked=now)
+            _warm_views.move_to_end(key)
+        entry = _response_cache.get(key)
+        if entry is not None and entry.fingerprint == fingerprint:
+            if entry.expires > now:
+                _response_cache.move_to_end(key)
+                return entry.body
+            if (
+                asked
+                and entry.clock_until is not None
+                and datetime.now() - timedelta(seconds=_CLOCK_SLIDE_SECONDS) < entry.clock_until
+            ):
+                kept = entry.body
+    if kept is not None and _refresh_behind(db_path, path, query, compute, key):
+        return kept
+    return _build_page(db_path, path, query, compute, key, fingerprint, asked=asked)
+
+
+def _build_page(
+    db_path: Path,
+    path: str,
+    query: str,
+    compute: "Callable[[], bytes]",
+    key: _PageKey,
+    fingerprint: Tuple[Any, ...],
+    *,
+    asked: bool,
+) -> bytes:
     with _response_cache_lock:
         building = _response_builds.setdefault(key, threading.Lock())
-    with building:
+        if asked:
+            _requests_building[0] += 1
+    try:
+        building.acquire()
         try:
             body = _cached_body(key, fingerprint)
             if body is not None:
                 return body
+            clock_started = datetime.now()
             started = time.monotonic()
-            body = compute()
+            _clock_windows.days = windows = set()
+            try:
+                body = compute()
+            finally:
+                del _clock_windows.days
             built = time.monotonic()
             ttl = min(
                 _RESPONSE_CACHE_TTL_MAX_SECONDS,
@@ -6389,22 +6565,147 @@ def cached_response(db_path: Path, path: str, query: str, compute: "Callable[[],
                     (built - started) * _RESPONSE_CACHE_TTL_PER_BUILD_SECOND,
                 ),
             )
+            slow = built - started >= _WARM_MIN_BUILD_SECONDS
+            clock_until = _clock_valid_until(db_path, windows, clock_started) if slow else None
             with _response_cache_lock:
-                _response_cache[key] = (fingerprint, built + ttl, body)
+                _response_cache[key] = _CachedPage(fingerprint, built + ttl, body, clock_until)
                 _response_cache.move_to_end(key)
-                held = sum(len(entry[2]) for entry in _response_cache.values())
+                held = sum(len(entry.body) for entry in _response_cache.values())
                 # Oldest first; the body just built always stays.
                 while len(_response_cache) > 1 and (
                     len(_response_cache) > _RESPONSE_CACHE_MAX_ENTRIES
                     or held > _RESPONSE_CACHE_MAX_BYTES
                 ):
                     _, dropped = _response_cache.popitem(last=False)
-                    held -= len(dropped[2])
+                    held -= len(dropped.body)
+                if slow and asked and path in _WARM_PATHS:
+                    database = Path(db_path).expanduser().resolve()
+                    _warm_views[key] = _WarmView(database, db_path, path, query, compute, built)
+                    _warm_views.move_to_end(key)
+                    while len(_warm_views) > _WARM_VIEWS_MAX:
+                        _warm_views.popitem(last=False)
             return body
         finally:
             with _response_cache_lock:
                 if _response_builds.get(key) is building:
                     del _response_builds[key]
+            building.release()
+    finally:
+        if asked:
+            with _response_cache_lock:
+                _requests_building[0] -= 1
+
+
+def _build_behind(db_path: Path, path: str, query: str, compute: "Callable[[], bytes]") -> None:
+    """Bring a page up to date with nobody waiting for it: one such build at
+    a time, and after the builds requests are waiting for."""
+    with _behind_builds:
+        give_up = time.monotonic() + _BEHIND_WAIT_SECONDS
+        while _requests_building[0] and time.monotonic() < give_up:
+            time.sleep(0.05)
+        _page_body(db_path, path, query, compute, asked=False)
+
+
+def _refresh_behind(
+    db_path: Path, path: str, query: str, compute: "Callable[[], bytes]", key: _PageKey
+) -> bool:
+    """Rebuild a page on a daemon thread while its request is sent the body
+    it has. False when no thread could be started (the request then builds
+    the page itself); True also when a rebuild is already under way."""
+
+    def work() -> None:
+        try:
+            _build_behind(db_path, path, query, compute)
+        except Exception:
+            # The next request builds the page itself and reports the error.
+            with _response_cache_lock:
+                _response_cache.pop(key, None)
+        finally:
+            with _response_cache_lock:
+                _refreshing.pop(key, None)
+
+    with _response_cache_lock:
+        if key in _refreshing or key in _response_builds:
+            return True
+        thread = threading.Thread(target=work, name="page-refresh", daemon=True)
+        _refreshing[key] = thread
+    try:
+        thread.start()
+    except RuntimeError:
+        with _response_cache_lock:
+            _refreshing.pop(key, None)
+        return False
+    return True
+
+
+def note_game_finished(db_path: Path) -> Optional[threading.Thread]:
+    """A finished game has been saved: rebuild the slow pages asked for
+    lately, so the next look at them does not wait. The tracker calls this at
+    game end. It returns at once; the work is a daemon thread that watches
+    the fingerprint for a while (a rank change and an AI archetype are
+    written seconds after the game) and rebuilds once it has settled. Does
+    nothing when no such page is on record, which is every normal history.
+    Returns the thread it started, if any."""
+    database = Path(db_path).expanduser().resolve()
+    now = time.monotonic()
+    with _response_cache_lock:
+        if not _views_to_warm(database, now):
+            return None
+        watching = database in _warm_watches
+        _warm_watches[database] = now + _WARM_WATCH_SECONDS
+        if watching:
+            return None
+    thread = threading.Thread(
+        target=_watch_and_warm, args=(database,), name="page-warm", daemon=True
+    )
+    try:
+        thread.start()
+    except RuntimeError:
+        with _response_cache_lock:
+            _warm_watches.pop(database, None)
+        return None
+    return thread
+
+
+def _views_to_warm(database: Path, now: float) -> List[_WarmView]:
+    """This database's slow pages asked for lately. Holds no lock itself."""
+    return [
+        view
+        for view in _warm_views.values()
+        if view.database == database and now - view.asked < _WARM_VIEW_IDLE_SECONDS
+    ]
+
+
+def _watch_and_warm(database: Path) -> None:
+    seen: Optional[Tuple[Any, ...]] = None
+    warmed: Optional[Tuple[Any, ...]] = None
+    while True:
+        time.sleep(_WARM_SETTLE_SECONDS)
+        now = time.monotonic()
+        with _response_cache_lock:
+            views = _views_to_warm(database, now)
+            if not views or now >= _warm_watches.get(database, 0.0):
+                _warm_watches.pop(database, None)
+                return
+        fingerprint = _analytics_fingerprint(database, event_log=False)
+        settled = fingerprint is not None and fingerprint == seen
+        seen = fingerprint
+        if not settled or fingerprint == warmed:
+            continue
+        warmed = fingerprint
+        # The page asked for last is the likeliest to be opened next.
+        for view in reversed(views):
+            try:
+                _build_behind(view.db_path, view.path, view.query, view.compute)
+            except Exception:
+                # Whoever opens the page builds it and sees what went wrong.
+                pass
+
+
+def forget_warm_views() -> None:
+    """Drop the record of slow pages (tests; the bodies are another matter)."""
+    with _response_cache_lock:
+        _warm_views.clear()
 
 
 def clear_response_cache() -> None:

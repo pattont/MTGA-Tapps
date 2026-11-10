@@ -1,8 +1,8 @@
 # Scaling to tens of thousands of games
 
-Status: Steps 0 to 6 are built on the `scaling-large-histories` branch
-(2026-11-10). Steps 0 to 6 passed a live check on the dev Mac; Windows has
-not been run in the real app yet.
+Status: Steps 0 to 7 are built on the `scaling-large-histories` branch
+(2026-11-10). Steps 0 to 6 passed a live check on the dev Mac; Step 7 and
+Windows have not been run in the real app yet.
 What is left is listed under "Still to do".
 The question this answers: what happens to a player who logs 2,000–3,000
 ranked games a month, a year from now?
@@ -306,6 +306,59 @@ map had no key: each of 4.7 million event rows read all 2,263 entries twice.
 With the map keyed by the snapshot's id the merge takes 34 s, and all 31
 tables of the merged database are row-for-row identical to the slow merge's.
 
+### Step 7 — slow pages are ready before they are opened
+
+Travis's decision (2026-11-10): rebuild at game end rather than show the last
+copy with a game missing. Everything here applies only to a page whose build
+took 0.25 s or more; a normal history never has one, and its pages behave as
+before.
+
+**At game end.** The tracker tells the dashboard a game was saved
+(`note_game_finished`, 0.2 ms). The slow pages asked for in the last four
+hours (at most four, most recent first) are rebuilt on a daemon thread once
+the fingerprint has stopped moving for two seconds: a rank change and an AI
+archetype land seconds after the game, and a rebuild before them would be
+thrown away. The fingerprint is watched for 90 s after each game.
+
+**Past the TTL.** The TTL is a safety net; while the fingerprint is unchanged
+a rebuild gives the same body unless a "last N days" window has moved past a
+game. `_games_filter` is the one place a page reads the clock, so the cache
+records each build's windows and works out when the oldest game in one
+leaves it. Until then a page past its TTL is sent as it is and rebuilt behind
+the request. That alone was not enough: a daily player's 30-day trend loses a
+game every few minutes during the hours they played a month ago, and each
+loss would have meant a wait. So the old body is also sent for 30 minutes
+after that moment (`_CLOCK_SLIDE_SECONDS`), which leaves a window's far edge
+up to that much out of date until the page's next poll, 20 s later. The cache
+always allowed this for as long as the TTL (up to ten minutes for the slowest
+pages). The alternative that keeps the edge exact is a timer rebuilding each
+kept page whenever a game ages out of a window, several times an hour whether
+or not anyone looks; set the constant to 0 for exact-or-wait.
+
+Measured through the real HTTP handler on a 38,520-game copy of the mixed
+history (dev Mac, terminal, 2026-11-10):
+
+| | Before | After |
+| --- | --- | --- |
+| Overview, opened after a game | 5.1 s | 14 ms |
+| All Games, opened after a game | 3.7 s | 25 ms |
+| Overview, opened past its TTL, nothing new | 5.1 s | 33 ms |
+| Overview, opened one second after a game (before the rebuild) | 5.1 s | 5.4 s |
+| First open of a page since launch, or of a filter not opened lately | 5.1 s | 5.1 s |
+
+Both pages were rebuilt 14 s after the game was saved, with a busy Python
+thread running beside them. That thread ran at about 61% of its speed alone
+while the rebuild lasted: the cost to the log reader of a rebuild is the same
+as that of a page opened by hand, for those seconds. Rebuilds nobody waits
+for run one at a time and hold back while a request builds a page; before
+that rule a request that overlapped a rebuild took 9.4 s instead of 5.4 s.
+Payload diff against the previous commit on the 1,284-game copy:
+`136 identical, 0 differ`.
+
+Not covered: the first open after the app starts (nothing is on record yet),
+a filter not asked for in the last four hours, and the second or two between
+a game's end and its rebuild.
+
 ## Still to do
 
 In the order they are worth doing.
@@ -333,7 +386,7 @@ In the order they are worth doing.
    0.5 s, and every statement changes), or run the statements on several
    read connections at once (SQLite releases the GIL; the same work on more
    cores, which a streamer's machine may not have spare).
-4. **All Games is 22 MB at 37,800 games**, about 600 bytes a game, nearly all
+4. **All Games is 22 MB at 37,800 games** (decided 2026-11-10: leave it), about 600 bytes a game, nearly all
    of it rendered. It now builds in a second, so the size is the cost: page it
    on the server (sorting and search then move there too) or accept it.
    Measured 2026-11-10 on a 38,520-game body (23.5 MB): the browser's side is
@@ -341,15 +394,12 @@ In the order they are worth doing.
    20 ms, a text filter 6 ms), and the page shows 30 rows whatever the total.
    The size only costs on a network; gzip takes the body to 1.7 MB, which is
    the answer if the dashboard is ever served to a second PC.
-5. **If the Overview must open instantly at any size**: serve the last built
-   body at once and rebuild behind the page. That changes what a user sees
-   (numbers up to one refresh old after a game), so it is a product decision,
-   not an optimisation. It only helps a view the running app has built
-   before: an open page already keeps its numbers on screen while a refresh
-   runs, and a filter never opened has nothing to show. Rebuilding the views
-   last asked for when a game ends (as search is warmed) gives the same
-   instant open with no stale numbers.
-6. `game_events` is the one table that still grows with the history. In the
+5. **The first open after the app starts** still builds each slow page once
+   (Step 7 keeps pages ready only once they have been asked for). Remembering
+   the last few pages across a restart and rebuilding them after the
+   background pass would cover it. Not built.
+6. `game_events` is the one table that still grows with the history
+   (decided 2026-11-10: leave it for now). In the
    1,284-game database (2026-11-10) the table and its two indexes are 62 MB of
    109 MB, about 395 bytes a row. A game recorded with replay capture holds
    about 200 rows (half of them silent replay rows) against 110 for an older

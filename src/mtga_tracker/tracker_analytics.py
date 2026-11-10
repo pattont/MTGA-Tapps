@@ -2130,7 +2130,20 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
             # lost their stored rows. Refill them off this thread.
             self._game_derived_refill_needed = False
             self._start_game_derived_backfill()
+        if saved:
+            self._tell_dashboard_game_finished()
         return saved
+
+    def _tell_dashboard_game_finished(self) -> None:
+        """Let the dashboard rebuild, off this thread, the slow pages someone
+        opened lately, so they are ready when next looked at (a very long
+        history; nothing happens otherwise). Never blocks tracking."""
+        try:
+            from . import dashboard  # lazy: dashboard is heavy
+
+            dashboard.note_game_finished(self._analytics_store().path)
+        except Exception:
+            return
 
     def _start_game_derived_backfill(self) -> None:
         """Compute stored per-game values for games that have none, on a

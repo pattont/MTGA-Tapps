@@ -149,6 +149,22 @@ Primary code paths:
   times the page's build time, capped at ten minutes. A page is built by one request at a
   time (`_response_builds`; others asking for it wait and take that body), and the cache
   holds at most 64 bodies and 64 MB, oldest dropped first.
+  Nobody waits for a slow page that was built before. Slow means a build of
+  `_WARM_MIN_BUILD_SECONDS` (0.25 s) or more, which a normal history never reaches, so none
+  of this runs for one. Such a page past its TTL with the fingerprint unchanged is sent as
+  it is and rebuilt behind the request (`_refresh_behind`). A page reads the clock only
+  through `_games_filter`'s "last N days", which reports each window to the cache
+  (`_note_clock_window`); `_clock_valid_until` works out when the window's oldest game
+  leaves it, and the old body is sent until `_CLOCK_SLIDE_SECONDS` (30 minutes) after that,
+  later than which the request waits for the rebuild. Add any new clock read to a page the
+  same way, or the cache will send it stale. When a game is saved the tracker calls
+  `dashboard.note_game_finished` (`_tell_dashboard_game_finished`, returns at once): the
+  slow pages of `_WARM_PATHS` asked for in the last four hours, at most four
+  (`_warm_views`), are rebuilt on a daemon thread once the fingerprint has stopped moving
+  (a rank change and an AI archetype are written seconds after the game; it watches for
+  90 s). Rebuilds nobody waits for run one at a time and hold back while a request is
+  building a page (`_build_behind`). A `compute` passed to `cached_response` may be called
+  again later from another thread, so it must read only the database and its own values.
   The card page finds a card's rows by name first (`CROSS JOIN` from the card table) through
   `_card_name_clause`: the exact name, or the name before a " (Type)" suffix in any case.
   Both halves are written for the `display_name COLLATE NOCASE` indexes
