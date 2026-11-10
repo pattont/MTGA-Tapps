@@ -160,7 +160,8 @@ Primary code paths:
   Card search (`search_cards`) answers from `_card_search_index`: `game_card_summary` summed
   once per display name (games, plays, last seen, the rowids of its games and of the
   players who had it, from which a result's decks are counted) and kept in memory under the response cache's fingerprint and TTL, built once however many
-  requests arrive (`_card_search_lock`). A keystroke compares the query with those names
+  requests arrive (`_card_search_lock`), and ahead of the first search: serving the
+  Overview calls `warm_card_search`, which brings it up to date on a daemon thread. A keystroke compares the query with those names
   the way `LIKE '%query%'` does (ASCII letters without case). A card's names ("Opt",
   "Opt (Instant)") merge per query, counting a game once; the test file keeps the old
   row-by-row search as the answer the summary must give.

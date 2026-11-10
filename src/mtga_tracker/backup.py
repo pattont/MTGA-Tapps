@@ -929,8 +929,13 @@ def merge_snapshot_into(conn: sqlite3.Connection, snapshot_path: Path) -> Dict[s
             """
         )
         conn.execute("DROP TABLE IF EXISTS temp.card_map")
+        # Keyed by the snapshot's id: every copied row with a card column
+        # looks its card up here, and without a key each lookup read the
+        # whole map (seven of the eight minutes a 38,000-game merge took).
+        conn.execute("CREATE TEMP TABLE card_map (src_id INTEGER PRIMARY KEY, local_id INTEGER)")
         conn.execute(
-            "CREATE TEMP TABLE card_map AS SELECT s.id AS src_id, m.id AS local_id FROM src.cards s JOIN main.cards m ON m.name = s.name"
+            "INSERT OR IGNORE INTO temp.card_map (src_id, local_id) "
+            "SELECT s.id, m.id FROM src.cards s JOIN main.cards m ON m.name = s.name"
         )
         conn.execute("DROP TABLE IF EXISTS temp.new_sessions")
         conn.execute("CREATE TEMP TABLE new_sessions AS SELECT id FROM src.tracker_sessions WHERE id NOT IN (SELECT id FROM main.tracker_sessions)")

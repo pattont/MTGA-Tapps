@@ -764,3 +764,31 @@ def test_merge_clears_the_startup_maintenance_watermarks(tmp_path):
     conn = sqlite3.connect(desktop)
     assert conn.execute("SELECT COUNT(*) FROM maintenance_state").fetchone() == (0,)
     conn.close()
+
+
+def test_merge_looks_each_card_up_by_key(tmp_path):
+    """Every copied row with a card column asks the card map for its local
+    id. Without a key each lookup read the whole map: a 38,000-game merge
+    spent seven of its eight minutes there."""
+    desktop = _rich_db(tmp_path / "desktop.sqlite3", "S-desktop", ["d1"], ["Mountain"])
+    laptop = _rich_db(tmp_path / "laptop.sqlite3", "S-laptop", ["l1", "l2"], ["Mountain", "Edge Rover"])
+    conn = sqlite3.connect(desktop, isolation_level=None)
+    statements = []
+    conn.set_trace_callback(statements.append)
+    try:
+        counts = backup.merge_snapshot_into(conn, laptop)
+        created = [sql for sql in statements if "TEMP TABLE card_map" in sql]
+        # The map is dropped when the merge ends: build it again as the merge
+        # declared it and read the plan of one lookup.
+        conn.execute(created[0])
+        plan = [
+            row[3]
+            for row in conn.execute(
+                "EXPLAIN QUERY PLAN SELECT local_id FROM temp.card_map WHERE src_id = 7"
+            )
+        ]
+    finally:
+        conn.close()
+    assert counts["games"] == 2
+    assert len(created) == 1
+    assert plan and all("SEARCH" in step for step in plan)

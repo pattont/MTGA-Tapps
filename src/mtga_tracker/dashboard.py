@@ -6030,6 +6030,32 @@ def _card_search_index(db_path: Path) -> _CardSearchIndex:
         return index
 
 
+#: Held by the one thread that is warming the search summary.
+_card_search_warming = threading.Lock()
+
+
+def warm_card_search(db_path: Path) -> Optional[threading.Thread]:
+    """Bring the search summary up to date on a daemon thread, so the first
+    search after a new game does not wait for it (0.9 s at 38,000 games).
+    Called whenever the Overview is served; does nothing while an earlier
+    call is still at work. Returns the thread it started, if any."""
+    if not _card_search_warming.acquire(blocking=False):
+        return None
+
+    def work() -> None:
+        try:
+            _card_search_index(Path(db_path).expanduser())
+        except Exception:
+            # A search builds it itself and reports what went wrong.
+            pass
+        finally:
+            _card_search_warming.release()
+
+    thread = threading.Thread(target=work, name="card-search-warm", daemon=True)
+    thread.start()
+    return thread
+
+
 def search_cards(
     db_path: Path = DEFAULT_DB_PATH, query: str = "", limit: int = 8
 ) -> List[Dict[str, Any]]:
@@ -7142,6 +7168,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             _send_bytes(
                 self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"}
             )
+            # The page is on its way; have search ready before anyone types.
+            warm_card_search(self.db_path)
             return
         if request_path == "/api/deck":
             query = parse_qs(parsed.query)

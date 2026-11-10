@@ -356,6 +356,40 @@ def test_search_summary_is_built_once_and_again_when_the_history_changes(tmp_pat
     assert len(builds) == 3
 
 
+def test_the_summary_can_be_built_ahead_of_the_first_search(tmp_path, monkeypatch):
+    db_path = _card_db(tmp_path)
+    dashboard.clear_response_cache()
+    builds = []
+    real_build = dashboard._build_card_search_index
+
+    def counting_build(conn):
+        builds.append(1)
+        return real_build(conn)
+
+    monkeypatch.setattr(dashboard, "_build_card_search_index", counting_build)
+
+    thread = dashboard.warm_card_search(db_path)
+    thread.join(5)
+    assert len(builds) == 1
+    assert dashboard.search_cards(db_path, "opt")
+    assert len(builds) == 1
+
+    # Up to date already: the next warm-up reads the fingerprint and stops.
+    dashboard.warm_card_search(db_path).join(5)
+    assert len(builds) == 1
+
+    # While one is at work another is not started, and a database that is
+    # not there never breaks the page that asked.
+    assert dashboard._card_search_warming.acquire(blocking=False)
+    try:
+        assert dashboard.warm_card_search(db_path) is None
+    finally:
+        dashboard._card_search_warming.release()
+    dashboard.warm_card_search(tmp_path / "missing.sqlite3").join(5)
+    assert not dashboard._card_search_warming.locked()
+    dashboard.clear_response_cache()
+
+
 def test_a_search_result_cannot_change_the_summary_it_came_from(tmp_path):
     db_path = _card_db(tmp_path)
     first = dashboard.search_cards(db_path, "opt")

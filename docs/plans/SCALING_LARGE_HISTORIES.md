@@ -1,8 +1,9 @@
 # Scaling to tens of thousands of games
 
-Status: Steps 0 to 5 are built on the `scaling-large-histories` branch
+Status: Steps 0 to 6 are built on the `scaling-large-histories` branch
 (2026-11-10). Steps 0 to 4 passed a live check on the dev Mac; Step 5 (the
-macOS App Nap opt-out) and Windows have not been run in the real app yet.
+macOS App Nap opt-out), Step 6 and Windows have not been run in the real app
+yet.
 What is left is listed under "Still to do".
 The question this answers: what happens to a player who logs 2,000–3,000
 ranked games a month, a year from now?
@@ -277,6 +278,30 @@ within two minutes, so the fix could not be shown on anything but the app.
 Windows has no App Nap; the live check there should still compare a page's
 time in the app with the numbers above.
 
+### Step 6 — search ready before the first keystroke; backup, restore and merge at size
+
+**Search.** Serving the Overview starts `warm_card_search`, a daemon thread
+that brings the search summary up to date. The first search after a new game
+no longer pays the 0.9 s (at 38,000 games) unless it is typed within that
+second of the page opening, in which case it waits for the build already
+under way.
+
+**Backup, restore and merge** were measured on a 38,520-game copy with its
+event log (4.7 million event rows, a 3.0 GB file), dev Mac, 2026-11-10:
+
+| Operation | Time | Notes |
+| --- | --- | --- |
+| Backup | 33 s | 13 s snapshot, 20 s compression; the file is 300 MB |
+| Restore onto another database | 2.6 s | includes the safety copy of the 1,284-game database it replaced |
+| Merge into a 1,284-game database | 507 s → 34 s | 37,236 games added |
+| Background pass after the merge | 15 s | the merged games' stored values |
+
+The merge was the only one out of line. Every copied row that has a card
+column looks up this computer's id for the card in a temporary map, and the
+map had no key: each of 4.7 million event rows read all 2,263 entries twice.
+With the map keyed by the snapshot's id the merge takes 34 s, and all 31
+tables of the merged database are row-for-row identical to the slow merge's.
+
 ## Still to do
 
 In the order they are worth doing.
@@ -309,11 +334,6 @@ In the order they are worth doing.
    body at once and rebuild behind the page. That changes what a user sees
    (numbers up to one refresh old after a game), so it is a product decision,
    not an optimisation.
-6. **Search on first use.** If 0.9 s on the first search after a game is too
-   long at this size, build the summary on a background thread when the
-   Overview is loaded, so it is ready before anyone types.
-7. **Housekeeping.** Measure backup, restore and merge on a 30x copy built
-   with `--events`.
-8. `game_events` (`visible = 1`) is the one table that still grows with the
+6. `game_events` (`visible = 1`) is the one table that still grows with the
    history, roughly 1.7 GB at 37k games; the [raw log archive](RAW_LOG_ARCHIVE.md)
    plan decides whether the originals replace any of it.
