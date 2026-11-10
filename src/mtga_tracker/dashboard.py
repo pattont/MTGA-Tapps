@@ -6037,9 +6037,7 @@ SELECT
 """
 
 
-def _analytics_fingerprint(
-    db_path: Path, *, event_log: bool = True
-) -> Optional[Tuple[Any, ...]]:
+def _analytics_fingerprint(db_path: Path, *, event_log: bool = True) -> Optional[Tuple[Any, ...]]:
     """Cheap snapshot of "has anything the read endpoints depend on changed?".
     None when it cannot be computed (missing table on an old DB) — callers
     then skip the cache rather than risk serving stale data. ``event_log``

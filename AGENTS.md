@@ -118,6 +118,38 @@ Primary code paths:
   page's endpoint over more games than a pinned limit allows.
   `_card_mana_map` looks a two-part card up in a fixed order (front face, joined name,
   other faces), never by walking a set.
+  A page costs what it shows, not the whole history: a query filtered by `{where}` starts
+  `FROM games g CROSS JOIN participants p ... CROSS JOIN <card table>` (left to itself the
+  planner scans the card table and tests each row's game); the deck filter is an id list
+  from the `(role, deck_name)` index; `_deck_color_map` and `_deck_visuals` take the deck
+  names a page shows; `_games_filter(..., db_path=...)` leaves the Jump In / Midweek test
+  out when the database holds no such match. Check any query change with
+  `scripts/dashboard_payloads.py` (dump before and after on a database copy, then diff:
+  it must print `0 differ`) and time it on a `scripts/build_scaled_db.py` copy.
+  The response cache keys on the event log only for `_EVENT_LOG_PATHS` (the game page), so
+  a game in progress does not rebuild the Overview on every poll; its TTL is 60 s or 30
+  times the page's build time, capped at ten minutes.
+- `src/mtga_tracker/game_derived.py`: each finished game's derived values, stored once in
+  the `game_derived` table: the draw-quality dict exactly as `draw_quality_metrics`
+  returned it, the submitted deck's colours, and the opponent's colour letters.
+  `_draw_quality_batch`, `_participant_deck_color_map` and `_opponent_letters` read a
+  current row and call their `_compute_*` twin for any game without one, so every page is
+  identical with the table empty, part filled or full. `store` is the only writer and
+  calls those same `_compute_*` functions: the tracker runs it at game end, after the
+  game's card rows are saved, and a daemon thread (`start_backfill`, after "Now ready to
+  track") runs it for games with no current row, 500 a transaction, newest first. Both
+  hold `WRITE_LOCK`, so the pass never stores an answer from a half-saved game. A failed
+  derived write is reported and never costs the game.
+  Only what belongs to the game alone is stored: a game with no decklist of its own
+  borrows another game's for its land rate, so its draw quality is stored as NULL and
+  computed live. Anything that changes a stored row's inputs must drop the row:
+  `_backfill_card_metadata` (a colour or cost learned for a card: `invalidate_for_cards`),
+  the "Card #N" label repair and `db_audit --repair` (`invalidate_all`). Change what
+  `draw_quality_metrics`, `score_deck_colors` or `normalize_colors` return and bump
+  `RULES_VERSION` (rows of another version are ignored and recomputed;
+  `tests/test_game_derived.py` holds a digest that fails without the bump). The table is
+  created empty by the schema baseline, never filled by a migration; it is in
+  `RESET_TABLES` and `MERGE_SKIP_TABLES`, and an older build ignores it.
   The handler speaks HTTP/1.1 with keep-alive: every response must carry a
   Content-Length (`_send_bytes`) or be bodiless (304, `send_error`); POSTs close the
   connection because not every branch drains its body. Built files under `assets/` are
@@ -1183,6 +1215,11 @@ Important tables:
   (explicit memory scan/export job), and `/api/update/*` (update check, download, install,
   skip, acknowledge; `install` restarts the app and carries the Deck Manager-style Origin
   and Content-Type guard). Do not describe the entire dashboard as read-only.
+- `game_derived`: one row per finished game, keyed by the player's `participant_id`:
+  `draw_quality_json` (NULL when the land rate is borrowed or estimated), `deck_colors`
+  (NULL when no decklist was submitted), `opp_revealed` / `opp_commander` colour letters,
+  `rules_version`. Derived data only: safe to empty, never read without the live-compute
+  fallback. See `game_derived.py` above.
 - `maintenance_state`: watermarks for startup repair passes that would otherwise re-check all
   history at every launch (`turn_time_recovery` by `games.rowid`, `event_reassignment` by
   `game_events.id`), stored as `"<pass version>:<watermark>"`. A pass resumes from its watermark

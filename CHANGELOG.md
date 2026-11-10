@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**Built for long histories: pages stay quick with tens of thousands of games.**
+
+### Faster with a long history
+
+- **The Overview, All Games and deck pages load several times faster** once you have thousands of games. In our tests with about 38,000 games, the Overview opened in under 4 seconds instead of 9, All Games in 1 second instead of 5, and a typical deck page in under half a second instead of 5.
+- **Filters cost what they show.** A week of games, one deck or one opponent no longer reads your whole history. A 7-day Overview that took 3 seconds at that size now takes under half a second.
+- **No slowdown while you play.** An Overview left open no longer recalculates every 20 seconds during a game.
+- **Nothing to do after updating.** The first launch prepares your existing games in the background (a few seconds for a very long history) while tracking starts right away. Every page shows the same numbers as before.
+
 ### Fixes
 
 - **Very long histories load on Windows.** Past 32,766 recorded games the Overview and All Games failed to load on Windows. They now load at any size.
