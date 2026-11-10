@@ -98,6 +98,17 @@ pub fn fit_height(content_height: i32, work_area: &Rect, max_height: u32) -> i32
     content_height.clamp(PANEL_MIN_HEIGHT, max)
 }
 
+/// Should the window let the mouse through to Arena? The panel window is wider
+/// than the panel: its transparent gutter, where the hover card, the sideboard
+/// and the settings fly out, lies over the board and the player's hand. So it
+/// takes the mouse only while the cursor is on the panel (`cursor_on_overlay`),
+/// something clickable is flown out into the gutter, or the window is being
+/// dragged. `always` is the Click-through when pinned preference. The rail
+/// window is exactly its rail and always takes the mouse.
+pub fn click_through(layout: Layout, always: bool, cursor_on_overlay: bool, flown_out: bool, dragging: bool) -> bool {
+    layout == Layout::Panel && (always || !(cursor_on_overlay || flown_out || dragging))
+}
+
 /// Top-left corner for a window of `size` docked to `dock` on `work_area`.
 /// `y` is the remembered vertical offset (top edge, absolute), or None to
 /// centre vertically. Float returns `float_at` clamped on screen, or the
@@ -195,6 +206,21 @@ mod tests {
     use super::*;
 
     const WORK: Rect = Rect { x: 0, y: 25, width: 1920, height: 1055 };
+
+    #[test]
+    fn the_gutter_lets_the_mouse_through_to_the_board() {
+        // Cursor off the panel (in the gutter, or elsewhere): Arena gets the mouse.
+        assert!(click_through(Layout::Panel, false, false, false, false));
+        // On the panel, with the sideboard or settings out, or mid-drag: ours.
+        assert!(!click_through(Layout::Panel, false, true, false, false));
+        assert!(!click_through(Layout::Panel, false, false, true, false));
+        assert!(!click_through(Layout::Panel, false, false, false, true));
+        // Click-through when pinned wins over all of it.
+        assert!(click_through(Layout::Panel, true, true, true, true));
+        // The rail has no gutter and always takes clicks.
+        assert!(!click_through(Layout::Rail, false, false, false, false));
+        assert!(!click_through(Layout::Rail, true, false, false, false));
+    }
 
     #[test]
     fn rail_and_panel_sizes() {

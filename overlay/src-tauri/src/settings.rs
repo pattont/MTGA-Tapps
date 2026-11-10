@@ -80,9 +80,23 @@ pub struct Positions {
     pub float_y: Option<i32>,
 }
 
+/// Revision of the defaults a settings file was written under. Bump it when a
+/// default changes and files still holding the old one should follow it once
+/// (`Settings::migrated`).
+pub const SETTINGS_VERSION: u32 = 1;
+
+/// The Max panel height default before revision 1. It cut a 16-row list
+/// (an ordinary 60-card deck) off by a few pixels.
+const PANEL_MAX_HEIGHT_V0: u32 = 800;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
+    /// `SETTINGS_VERSION` when the file was written; 0 (absent) in files from
+    /// before the field existed. The field-level default overrides the
+    /// struct's, so a missing value reads as 0, not as current.
+    #[serde(default)]
+    pub settings_version: u32,
     /// The background slider, 0.0–1.0. Text, lines and numbers are always
     /// fully visible; this only drives the charcoal ground, which tops out
     /// at about 88 % at 1.0 and is gone at 0.0.
@@ -125,10 +139,11 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            settings_version: SETTINGS_VERSION,
             opacity: 0.8,
             rail_opacity: 0.9,
             scale: 100,
-            panel_max_height: 800,
+            panel_max_height: 850,
             dock: Dock::Left,
             return_after_seconds: 4,
             panel_open: false,
@@ -164,6 +179,16 @@ impl Settings {
         }
     }
 
+    /// Brings a stored file up to `SETTINGS_VERSION`: a default that changed
+    /// replaces the old default once, and a value the player picked is kept.
+    pub fn migrated(mut self) -> Self {
+        if self.settings_version < 1 && self.panel_max_height == PANEL_MAX_HEIGHT_V0 {
+            self.panel_max_height = Settings::default().panel_max_height;
+        }
+        self.settings_version = SETTINGS_VERSION;
+        self
+    }
+
     pub fn clamped(mut self) -> Self {
         let defaults = Settings::default();
         if !(0.0..=1.0).contains(&self.opacity) || self.opacity.is_nan() {
@@ -190,6 +215,7 @@ impl Settings {
     pub fn load(path: &PathBuf) -> Self {
         match std::fs::read(path) {
             Ok(bytes) => serde_json::from_slice::<Settings>(&bytes)
+                .map(Settings::migrated)
                 .map(Settings::clamped)
                 .unwrap_or_default(),
             Err(_) => Settings::default(),
@@ -220,7 +246,7 @@ mod tests {
         let fixed = weird.clamped();
         assert_eq!(fixed.opacity, 0.8);
         assert_eq!(fixed.rail_opacity, 0.9);
-        assert_eq!(fixed.panel_max_height, 800);
+        assert_eq!(fixed.panel_max_height, 850);
         assert_eq!(fixed.return_after_seconds, 1);
         assert_eq!(fixed.api_url, "http://127.0.0.1:8765");
         // Missing fields take defaults (a file from an older version keeps working).
@@ -236,9 +262,29 @@ mod tests {
         // A settings file written before the height became pixels carries
         // panelMaxHeightPct, which is simply unknown now.
         let old: Settings = serde_json::from_str(r#"{"panelMaxHeightPct": 70}"#).unwrap();
-        assert_eq!(old.clamped().panel_max_height, 800);
+        assert_eq!(old.clamped().panel_max_height, 850);
         let tiny: Settings = serde_json::from_str(r#"{"panelMaxHeight": 10}"#).unwrap();
         assert_eq!(tiny.clamped().panel_max_height, 200);
+    }
+
+    #[test]
+    fn the_old_default_height_follows_the_new_default_once() {
+        // A file from before the version field still holds the old 800 default.
+        let old: Settings = serde_json::from_str(r#"{"panelMaxHeight": 800}"#).unwrap();
+        assert_eq!(old.settings_version, 0);
+        let moved = old.migrated();
+        assert_eq!(moved.panel_max_height, 850);
+        assert_eq!(moved.settings_version, SETTINGS_VERSION);
+        // A height the player picked is kept.
+        let picked: Settings = serde_json::from_str(r#"{"panelMaxHeight": 600}"#).unwrap();
+        assert_eq!(picked.migrated().panel_max_height, 600);
+        // 800 chosen after the change (a current file) stays 800.
+        let current: Settings = serde_json::from_str(r#"{"settingsVersion": 1, "panelMaxHeight": 800}"#).unwrap();
+        assert_eq!(current.migrated().panel_max_height, 800);
+        // What is written carries the version, so the move never repeats.
+        let saved = serde_json::to_string(&Settings { panel_max_height: 800, ..moved }).unwrap();
+        let back: Settings = serde_json::from_str(&saved).unwrap();
+        assert_eq!(back.migrated().panel_max_height, 800);
     }
 
     #[test]

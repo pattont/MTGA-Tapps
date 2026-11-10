@@ -75,6 +75,11 @@ struct Runtime {
     /// The sideboard flies out into the transparent gutter: while it shows,
     /// the whole window counts as "over the panel" for the cursor watch.
     sideboard_open: bool,
+    /// The cursor watch's last answer: the cursor is on the rail or panel
+    /// (or anywhere in the window while something is flown out).
+    cursor_on_overlay: bool,
+    /// What the window was last told about ignoring the mouse.
+    click_through: Option<bool>,
     /// Hovering the rail opens the panel — but not straight after the panel
     /// folded away under the cursor (game end, return timer): the cursor has
     /// to leave the rail once first, or it would spring back open.
@@ -97,6 +102,8 @@ impl Default for Runtime {
             last_arena: ArenaStatus::default(),
             flyout_open: false,
             sideboard_open: false,
+            cursor_on_overlay: false,
+            click_through: None,
             rail_hover_armed: true,
         }
     }
@@ -430,13 +437,31 @@ fn set_layout_inner(app: &AppHandle, layout: Layout, why: Why) {
     emit_layout(app);
 }
 
+/// Tells the window whether to ignore the mouse (`dock::click_through`), when
+/// that changed. The cursor watch calls this on every pass, so the panel's
+/// gutter never keeps clicks, drags and hovers from the cards under it.
 fn apply_click_through(app: &AppHandle) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else { return };
-    let through = {
-        let state = app.state::<AppState>();
+    let state = app.state::<AppState>();
+    // One lock at a time, and none across the window call (see apply_geometry).
+    let always = {
         let settings = state.settings.lock().unwrap();
-        let runtime = state.runtime.lock().unwrap();
-        runtime.layout == Layout::Panel && settings.panel_pinned && settings.click_through_when_pinned
+        settings.panel_pinned && settings.click_through_when_pinned
+    };
+    let through = {
+        let mut runtime = state.runtime.lock().unwrap();
+        let through = dock::click_through(
+            runtime.layout,
+            always,
+            runtime.cursor_on_overlay,
+            runtime.flyout_open || runtime.sideboard_open,
+            runtime.drag.is_some(),
+        );
+        if runtime.click_through == Some(through) {
+            return;
+        }
+        runtime.click_through = Some(through);
+        through
     };
     let _ = window.set_ignore_cursor_events(through);
 }
@@ -625,6 +650,9 @@ fn update_settings(app: AppHandle, state: tauri::State<AppState>, settings: Sett
         // copy can be stale — never let a slider save overwrite them.
         next.panel_open = current.panel_open;
         next.panel_pinned = current.panel_pinned;
+        // The page's Restore defaults builds its own object without the
+        // version; what is saved from here is always current.
+        next.settings_version = settings::SETTINGS_VERSION;
         let hotkeys_changed = current.hotkeys() != next.hotkeys();
         *current = next.clone();
         (hotkeys_changed, next)
@@ -751,6 +779,8 @@ fn set_page_open(app: AppHandle, flyout: bool, sideboard: bool) {
     if resize {
         apply_geometry(&app);
     }
+    // The gutter takes clicks only while something is flown out into it.
+    apply_click_through(&app);
     if was_forced {
         refresh_visibility(&app);
         emit_layout(&app);
@@ -862,9 +892,18 @@ fn start_cursor_watch(app: AppHandle) {
                 } else {
                     inside_since = None;
                     outside_since.get_or_insert(now);
-                    let state = app.state::<AppState>();
-                    state.runtime.lock().unwrap().rail_hover_armed = true;
                 }
+                {
+                    let state = app.state::<AppState>();
+                    let mut runtime = state.runtime.lock().unwrap();
+                    runtime.cursor_on_overlay = inside;
+                    if !inside {
+                        runtime.rail_hover_armed = true;
+                    }
+                }
+                // Off the panel the window hands the mouse to Arena; back on
+                // it (or once a drag has settled) it takes it again.
+                apply_click_through(&app);
                 match layout {
                     // Hover only means something once the player has turned
                     // the panel on and left it unpinned: then the rail is the

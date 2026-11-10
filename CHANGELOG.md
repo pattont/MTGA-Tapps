@@ -14,6 +14,8 @@
 ### Fixes
 
 - **Very long histories load on Windows.** Past 32,766 recorded games the Overview and All Games failed to load on Windows. They now load at any size.
+- **Cards beside the open overlay can be clicked and dragged.** The overlay's window kept the space where its card preview and sideboard appear, so on a smaller screen the leftmost cards in your hand ignored the mouse until you collapsed the panel. That space now belongs to Arena unless the sideboard or the settings are open in it.
+- **The overlay's panel is a little taller by default.** **Max panel height** (⚙ in the overlay) now defaults to 850 pixels instead of 800, which cut a 16-row deck list off by a few pixels. A height you chose yourself is kept.
 - **Rooms and split cards show one cost.** A two-part card's mana cost on the deck and game pages could change between launches (the first door's, the second's, or both joined). It is now always the front face's.
 
 ## 0.7.7

@@ -239,7 +239,7 @@ describe('Flyout', () => {
     render(<Flyout settings={defaultSettings()} platform="windows" onChange={() => undefined} onClose={() => undefined} onQuit={() => undefined} />);
     const labels = Array.from(document.querySelectorAll('.fly label.r > span:first-child')).map((el) => el.textContent);
     expect(labels.slice(0, 4)).toEqual(['Scale', 'Rail opacity', 'Panel opacity', 'Max panel height']);
-    expect(screen.getByText('800 px')).toBeTruthy();
+    expect(screen.getByText('850 px')).toBeTruthy();
   });
 
   it('switches the session record between off, one line and split', () => {
@@ -275,7 +275,7 @@ describe('Flyout', () => {
     expect(next.opacity).toBe(0.8);
     expect(next.railOpacity).toBe(0.9);
     expect(next.scale).toBe(100);
-    expect(next.panelMaxHeight).toBe(800);
+    expect(next.panelMaxHeight).toBe(850);
     expect(next.dock).toBe('left');
     expect(next.sessionRecord).toBe('scoreboard');
     expect(next.hotkeysWindows.toggle).toBe('Alt+Shift+T');

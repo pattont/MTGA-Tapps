@@ -25,6 +25,14 @@ Repo layout:
   by the overlay setting `sessionRecord` (`off`/`scoreboard`/`split`, default
   `scoreboard`, mirrored in `settings.rs`). Its digits are sized to the rows on
   purpose, not the Stream Kit's large ones.
+  Max panel height (`panelMaxHeight`) defaults to 850 px. To change a default for
+  files already saved, bump `SETTINGS_VERSION` and swap the old default in
+  `Settings::migrated` (`overlay.json` has no other migration).
+  The panel window is the panel plus a transparent gutter (hover card, sideboard,
+  settings) that lies over the board and the player's hand. The window ignores the
+  mouse (`dock::click_through`, applied by the 100 ms cursor watch) unless the
+  cursor is on the panel, the sideboard or settings are open, or it is being
+  dragged. Never leave the gutter taking clicks; the rail window has none.
 - `tests/`: pytest suite, including `tests/deck_downloader/`. `tests/deprecated/` holds
   non-test debug scripts and is not part of the suite.
 - `packaging/` + `scripts/`: PyInstaller specs, entry points, and OS build scripts.

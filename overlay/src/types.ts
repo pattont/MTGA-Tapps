@@ -85,7 +85,6 @@ export interface Settings {
   railOpacity: number;
   /** Size of everything, percent (50–200). */
   scale: number;
-  /** The panel never grows past this share of the screen height (30–100). */
   /** The panel's height cap in logical pixels (before Scale); the screen caps it too. */
   panelMaxHeight: number;
   dock: Dock;

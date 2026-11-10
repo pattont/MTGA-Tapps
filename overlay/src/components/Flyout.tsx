@@ -144,7 +144,7 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
           type="range"
           min="300"
           max="1600"
-          step="20"
+          step="10"
           value={settings.panelMaxHeight}
           onInput={(event) => onChange({ ...settings, panelMaxHeight: Number((event.currentTarget as HTMLInputElement).value) })}
           aria-label="Max panel height, pixels"

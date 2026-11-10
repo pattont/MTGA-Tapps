@@ -61,7 +61,10 @@ every dependency once. Both scripts also skip `npm ci` unless
 
 ## Behavior and diagnostics
 
-The panel's pin keeps it open; click-through is a separate preference. An
+The panel's pin keeps it open; click-through is a separate preference. The
+panel window also covers a transparent gutter beside the panel, where the
+hover card, sideboard and settings appear; it passes the mouse to Arena
+there unless the sideboard or settings are open. An
 unpinned open panel folds to the rail after its return delay. Final library
 state remains marked FINAL through Arena's results screen. The shell follows
 Arena's display and focus; macOS supports its fullscreen Space, while Windows
