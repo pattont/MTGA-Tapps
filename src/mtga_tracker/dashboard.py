@@ -2273,9 +2273,8 @@ def _games_filter(
         # The one place a page reads the clock; the response cache is told
         # (see _clock_valid_until), so add any other there too.
         _note_clock_window(days)
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
         clauses.append(f"{_GAME_TIME_SQL.format(alias='g.')} >= ?")
-        params.append(cutoff)
+        params.append(_day_window_start(days, datetime.now()).isoformat(timespec="seconds"))
     if since:
         clauses.append("COALESCE(g.started_at, g.ended_at) >= ?")
         params.append(f"{since}T00:00:00" if len(since) == 10 else since)
@@ -2863,7 +2862,8 @@ def dashboard_snapshot(
 
     Optional filters narrow aggregates: `deck` matches the player's deck name,
     `fmt` matches the raw queue/format string, and `days` keeps games started
-    within the last N days. A trend range overrides the overview's
+    today or in the N - 1 days before it (whole calendar days, local time:
+    `_day_window_start`). A trend range overrides the overview's
     days/since/until range; game-count ranges include 29 earlier games so the
     first plotted point can use the full 30-game rolling window.
     """
@@ -6306,12 +6306,11 @@ def render_snapshot_json(snapshot: Dict[str, Any]) -> bytes:
 # none of this runs for one):
 # - Past its TTL with the fingerprint unchanged, the body is sent at once and
 #   rebuilt behind the request. A page reads the clock only through "last N
-#   days" (_games_filter), and a window's games stay the same until its
-#   oldest one turns N days old (_clock_valid_until): until then the body
-#   sent is the one a rebuild would give. It is still sent for
-#   _CLOCK_SLIDE_SECONDS after that moment (a window's far edge may be that
-#   much out of date until the page's next poll); later than that the request
-#   waits for the rebuild, as every request past the TTL used to.
+#   days" (_games_filter), whose window is whole calendar days and so moves
+#   only at local midnight; its games stay the same until the midnight that
+#   drops the day of its oldest one (_clock_valid_until). Until then the body
+#   sent is the one a rebuild would give; from then on the request waits for
+#   the rebuild, as every request past the TTL used to.
 # - When a game ends the tracker calls note_game_finished, and the slow pages
 #   asked for lately (_warm_views) are rebuilt on a daemon thread once the
 #   game's late writes (a rank change, an AI archetype) have settled.
@@ -6345,10 +6344,6 @@ _WARM_VIEW_IDLE_SECONDS = 4 * 3600.0
 #: rebuilt once it has stopped moving for one interval.
 _WARM_SETTLE_SECONDS = 2.0
 _WARM_WATCH_SECONDS = 90.0
-#: How far a "last N days" window may have moved on since a slow page was
-#: built and the page still be sent before its rebuild: about a long game, so
-#: nothing is waited for between one game's end and the next. 0 = never.
-_CLOCK_SLIDE_SECONDS = 30 * 60.0
 #: How long a rebuild nobody is waiting for holds back for requests' builds.
 _BEHIND_WAIT_SECONDS = 60.0
 
@@ -6403,24 +6398,34 @@ def _note_clock_window(days: int) -> None:
         windows.add(days)
 
 
+def _day_window_start(days: int, now: datetime) -> datetime:
+    """Where "last N days" begins: local midnight, N - 1 days before today.
+    Today and the N - 1 days before it, so the window is N calendar days and
+    a game leaves it at midnight with the rest of its day, never by the
+    minute. (One day is today, as the Live Scoreboard's Today is.)"""
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight - timedelta(days=days - 1)
+
+
 def _clock_valid_until(
     db_path: Path, windows: Iterable[Any], since: datetime
 ) -> Optional[datetime]:
     """Until when a body built at ``since`` stays what a rebuild would give,
     as far as the clock goes. A "last N days" window holds the same games
-    until the oldest of them turns N days old, so that moment, the earliest
-    over the page's windows, is the answer; with no window, or none holding a
-    game, the clock never changes the body. None when it cannot be told."""
+    until the midnight that drops the day of its oldest one, so that
+    midnight, the earliest over the page's windows, is the answer; with no
+    window, or none holding a game, the clock never changes the body. None
+    when it cannot be told."""
     until = datetime.max
     try:
         db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
         with sqlite3.connect(db_uri, uri=True) as conn:
             game_time = _GAME_TIME_SQL.format(alias="")
             for days in windows:
-                span = timedelta(days=days)
+                start = _day_window_start(days, since)
                 oldest = conn.execute(
                     f"SELECT MIN({game_time}) FROM games WHERE {game_time} >= ?",
-                    ((since - span).isoformat(timespec="seconds"),),
+                    (start.isoformat(timespec="seconds"),),
                 ).fetchone()[0]
                 if oldest is None:
                     continue
@@ -6429,7 +6434,8 @@ def _clock_valid_until(
                 text = str(oldest)
                 if len(text) < 19 or text[10] != "T":
                     return None
-                until = min(until, datetime.fromisoformat(text[:19]) + span)
+                oldest_day = datetime.fromisoformat(text[:10])
+                until = min(until, oldest_day + timedelta(days=days))
     except (sqlite3.Error, OSError, ValueError, OverflowError, TypeError):
         return None
     return until
@@ -6489,7 +6495,7 @@ def cached_response(db_path: Path, path: str, query: str, compute: "Callable[[],
     others asking for it meanwhile wait and take the body it stored. A slow
     page past its TTL is sent as it is and rebuilt behind the request while
     the fingerprint is unchanged and no "last N days" window of it has moved
-    past a game for longer than _CLOCK_SLIDE_SECONDS.
+    past a game (which happens only at midnight).
 
     ``compute`` may be called again later, from another thread (a rebuild
     behind a request, or after a game): it must read only the database and
@@ -6519,11 +6525,7 @@ def _page_body(
             if entry.expires > now:
                 _response_cache.move_to_end(key)
                 return entry.body
-            if (
-                asked
-                and entry.clock_until is not None
-                and datetime.now() - timedelta(seconds=_CLOCK_SLIDE_SECONDS) < entry.clock_until
-            ):
+            if asked and entry.clock_until is not None and datetime.now() < entry.clock_until:
                 kept = entry.body
     if kept is not None and _refresh_behind(db_path, path, query, compute, key):
         return kept

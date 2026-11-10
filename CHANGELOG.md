@@ -14,11 +14,12 @@
 - **Merging a big backup takes seconds, not minutes.** Adding 37,000 games from another computer's backup took over 8 minutes in our tests; it now takes about half a minute, with the same result.
 - **Less memory with a long history.** The dashboard keeps recently opened pages ready to show again. That store is now limited to 64 MB however large your pages grow, and a page opened in two tabs at once is built once.
 - **macOS: the dashboard runs at full speed.** macOS treated the tracker as an idle background app and slowed it down, so every dashboard page took about four times as long as it should. The tracker now tells macOS it is working. Your Mac still sleeps as usual.
-- **Nothing to do after updating.** The first launch prepares your existing games in the background (a few seconds for a very long history) while tracking starts right away. Every page shows the same numbers as before.
+- **Nothing to do after updating.** The first launch prepares your existing games in the background (a few seconds for a very long history) while tracking starts right away. Every page shows the same numbers as before (see "Last 7 days" under Fixes for the one deliberate change).
 
 ### Fixes
 
 - **Very long histories load on Windows.** Past 32,766 recorded games the Overview and All Games failed to load on Windows. They now load at any size.
+- **"Last 7 days" means seven calendar days.** The Period filter and the Win Rate Trend's day ranges counted back in hours from the current minute, so games dropped out one at a time through the day. They now cover today and the days before it, from midnight: Last 30 days is today plus the 29 days before, and the trend's Day is today. A day's games all leave together at midnight.
 - **Cards beside the open overlay can be clicked and dragged.** The overlay's window kept the space where its card preview and sideboard appear, so on a smaller screen the leftmost cards in your hand ignored the mouse until you collapsed the panel. That space now belongs to Arena unless the sideboard or the settings are open in it.
 - **The overlay's panel is a little taller by default.** **Max panel height** (⚙ in the overlay) now defaults to 850 pixels instead of 800, which cut a 16-row deck list off by a few pixels. A height you chose yourself is kept.
 - **Rooms and split cards show one cost.** A two-part card's mana cost on the deck and game pages could change between launches (the first door's, the second's, or both joined). It is now always the front face's.

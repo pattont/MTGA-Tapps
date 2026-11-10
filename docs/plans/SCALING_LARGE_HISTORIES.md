@@ -32,7 +32,9 @@ remaining work.
   between two dumps. **"The pages and their numbers do not change" means this
   prints `0 differ`.** "Last 7 days" in a dump counts back from the newest
   game in the copy, not from the clock: two dumps made half an hour apart
-  once differed by the one game that had left the window in between.
+  once differed by the one game that had left the window in between (windows
+  were hours then; they are calendar days since Step 7, and a dump made on
+  another day would still differ without the pin).
 - Both pin SQLite's bound-parameter limit to 32,766 on every connection, so a
   Mac run fails where a Windows user would.
 
@@ -325,15 +327,28 @@ a rebuild gives the same body unless a "last N days" window has moved past a
 game. `_games_filter` is the one place a page reads the clock, so the cache
 records each build's windows and works out when the oldest game in one
 leaves it. Until then a page past its TTL is sent as it is and rebuilt behind
-the request. That alone was not enough: a daily player's 30-day trend loses a
-game every few minutes during the hours they played a month ago, and each
-loss would have meant a wait. So the old body is also sent for 30 minutes
-after that moment (`_CLOCK_SLIDE_SECONDS`), which leaves a window's far edge
-up to that much out of date until the page's next poll, 20 s later. The cache
-always allowed this for as long as the TTL (up to ten minutes for the slowest
-pages). The alternative that keeps the edge exact is a timer rebuilding each
-kept page whenever a game ages out of a window, several times an hour whether
-or not anyone looks; set the constant to 0 for exact-or-wait.
+the request; from then on the request waits for the rebuild.
+
+As first built (553ddb4) a window counted back N times 24 hours from the
+current minute, so a daily player's 30-day trend lost a game every few
+minutes during the hours they played a month ago. Waiting on each loss would
+have undone the step, so the old body was also sent for 30 minutes after one,
+with the window's far edge that much out of date. Travis's correction
+(2026-11-10): a window is days, not hours, and nothing should fall off by the
+minute. "Last N days" is now today and the N - 1 days before it, from local
+midnight (`_day_window_start`): the same games as a From date of that first
+day. A window moves once a day, the 30-minute allowance is gone, and a page
+sent past its TTL is exactly what a rebuild would give. The first request for
+a slow page after midnight waits for it once, unless a game ended since (the
+game-end rebuild already used the new day).
+
+This changes numbers on purpose, the one place this plan does: a "last N
+days" page no longer holds the games between N times 24 hours ago and the
+midnight after. Checked on a copy of the 1,284-game history at four clock
+times: 54 pages (Overview, All Games, three decks, four cards, at 1, 2, 7,
+30, 60 and 90 days) are byte-identical to what the previous commit gives for
+the matching From date, and the 136-page dump differs from the previous
+commit only in the 7-day Overview.
 
 Measured through the real HTTP handler on a 38,520-game copy of the mixed
 history (dev Mac, terminal, 2026-11-10):
@@ -356,8 +371,9 @@ Payload diff against the previous commit on the 1,284-game copy:
 `136 identical, 0 differ`.
 
 Not covered: the first open after the app starts (nothing is on record yet),
-a filter not asked for in the last four hours, and the second or two between
-a game's end and its rebuild.
+a filter not asked for in the last four hours, the second or two between
+a game's end and its rebuild, and the first open of a "last N days" page
+after midnight when no game has ended since.
 
 ## Still to do
 

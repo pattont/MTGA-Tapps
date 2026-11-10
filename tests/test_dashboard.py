@@ -920,6 +920,47 @@ def test_dashboard_snapshot_days_filter_keeps_recent_games(tmp_path):
     assert snapshot["filters"]["days"] == 7
 
 
+def test_last_n_days_is_whole_calendar_days(tmp_path, monkeypatch):
+    """ "Last 7 days" is today and the six days before it, from local
+    midnight: a game stays in for its whole last day and leaves at midnight
+    with the rest of that day, not seven times 24 hours after it started."""
+    from datetime import datetime
+
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)  # games at 00:01 and 00:10 on 2026-06-04
+    pinned = _pin_now(dash, monkeypatch, datetime(2026, 6, 10, 0, 30, 0))
+
+    def games(**filters):
+        return [row["game_id"] for row in dash.all_games(db_path, **filters)["games"]]
+
+    both = games()
+    assert len(both) == 2
+    # More than seven times 24 hours after both games, at any hour of the
+    # seventh day:
+    assert games(days=7) == both
+    pinned.current = datetime(2026, 6, 10, 23, 59, 59)
+    assert games(days=7) == both
+    # The same games a From date of that first day gives.
+    assert games(since="2026-06-04") == both
+    snapshot = dash.dashboard_snapshot(db_path, days=7)
+    by_date = dash.dashboard_snapshot(db_path, since="2026-06-04")
+    assert snapshot["summary"] == by_date["summary"]
+    assert snapshot["trend"] == dash.dashboard_snapshot(db_path, trend_days=7)["trend"]
+    assert len(snapshot["trend"]) == 2
+
+    pinned.current = datetime(2026, 6, 11, 0, 0, 0)
+    assert games(days=7) == []
+    assert games(days=8) == both
+
+    # One day is today.
+    pinned.current = datetime(2026, 6, 4, 23, 0, 0)
+    assert games(days=1) == both
+    pinned.current = datetime(2026, 6, 5, 0, 5, 0)
+    assert games(days=1) == []
+    assert games(days=2) == both
+
+
 def test_dashboard_snapshot_includes_win_rate_trend(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
     snapshot = dashboard_snapshot(db_path)
@@ -4042,9 +4083,10 @@ def test_a_slow_page_past_its_ttl_is_sent_at_once_and_rebuilt_behind(tmp_path, m
 
 
 def test_a_page_is_sent_past_its_ttl_only_while_the_clock_cannot_change_it(tmp_path, monkeypatch):
-    """ "Last N days" is the one way a page reads the clock. A window keeps
-    its games until the oldest turns N days old; from then on the body is
-    rebuilt before it is sent, as it always was."""
+    """ "Last N days" is the one way a page reads the clock, and its window
+    moves only at midnight. It keeps its games until the midnight that drops
+    its oldest game's day; from then on the body is rebuilt before it is
+    sent, as it always was."""
     from datetime import datetime, timedelta
 
     from mtga_tracker import dashboard as dash
@@ -4053,34 +4095,37 @@ def test_a_page_is_sent_past_its_ttl_only_while_the_clock_cannot_change_it(tmp_p
     db_path = _sample_dashboard_db(tmp_path)
     clock = {"now": 1000.0}
     _keep_ready(dash, monkeypatch, clock)
-    monkeypatch.setattr(dash, "_CLOCK_SLIDE_SECONDS", 0.0)
     # The sample's games start at 00:01 and 00:10 on 2026-06-04.
     built_at = datetime(2026, 6, 10, 12, 0, 0)
     pinned = _pin_now(dash, monkeypatch, built_at)
-    oldest_leaves = datetime(2026, 6, 4, 0, 1, 0) + timedelta(days=7)
+    day_leaves = datetime(2026, 6, 11, 0, 0, 0)
 
-    assert dash._clock_valid_until(db_path, {7}, built_at) == oldest_leaves
-    assert dash._clock_valid_until(db_path, {7, 30}, built_at) == oldest_leaves
+    assert dash._clock_valid_until(db_path, {7}, built_at) == day_leaves
+    assert dash._clock_valid_until(db_path, {7, 30}, built_at) == day_leaves
+    assert dash._clock_valid_until(db_path, {30}, built_at) == datetime(2026, 7, 4)
     # No window, or a window holding no game: the clock never changes the body.
     assert dash._clock_valid_until(db_path, set(), built_at) == datetime.max
     assert dash._clock_valid_until(db_path, {1}, built_at) == datetime.max
+    assert dash._clock_valid_until(db_path, {6}, built_at) == datetime.max
     # The oldest game's time not written the way the cutoff is: it cannot be
     # counted forward.
-    _add_game(db_path, "game-odd", "2026-06-04 00:00:30")
-    assert dash._clock_valid_until(db_path, {7}, built_at) is None
+    _add_game(db_path, "game-odd", "2026-06-06 00:00:30")
+    assert dash._clock_valid_until(db_path, {6}, built_at) is None
     with sqlite3.connect(db_path) as conn:
         conn.execute("delete from games where id = 'game-odd'")
     assert dash._clock_valid_until(tmp_path / "missing.sqlite3", {7}, built_at) is None
 
-    # The claim itself, on a real page: the same body up to that moment, and
-    # another one after it.
+    # The claim itself, on a real page: the same body all day, whatever the
+    # hour it was built at, and another one from midnight.
     def page():
         return render_snapshot_json(all_games(db_path, days=7))
 
     at_build = page()
-    pinned.current = oldest_leaves - timedelta(seconds=1)
+    pinned.current = datetime(2026, 6, 10, 0, 0, 0)
     assert page() == at_build
-    pinned.current = oldest_leaves + timedelta(seconds=1)
+    pinned.current = day_leaves - timedelta(seconds=1)
+    assert page() == at_build
+    pinned.current = day_leaves
     assert page() != at_build
 
     # And through the cache.
@@ -4096,31 +4141,19 @@ def test_a_page_is_sent_past_its_ttl_only_while_the_clock_cannot_change_it(tmp_p
 
     first = ask()
     key = (str(db_path), "/api/games", "days=7")
-    assert dash._response_cache[key].clock_until == oldest_leaves
+    assert dash._response_cache[key].clock_until == day_leaves
     clock["now"] += dash._RESPONSE_CACHE_TTL_SECONDS + 1.0
-    pinned.current = oldest_leaves - timedelta(seconds=1)
+    pinned.current = day_leaves - timedelta(seconds=1)
     assert ask() == first
     for thread in list(dash._refreshing.values()):
         thread.join(5)
     assert len(builds) == 2  # sent at once, rebuilt behind
 
     clock["now"] += dash._RESPONSE_CACHE_TTL_SECONDS + 1.0
-    pinned.current = oldest_leaves + timedelta(seconds=1)
+    pinned.current = day_leaves
     after = ask()
     assert after != first  # the request waited for the rebuild
     assert len(builds) == 3 and dash._refreshing == {}
-
-    # With a slide allowed, a window that moved on less than that ago is
-    # still sent first; one that moved on longer ago is waited for.
-    monkeypatch.setattr(dash, "_CLOCK_SLIDE_SECONDS", 600.0)
-    newer_leaves = datetime(2026, 6, 4, 0, 10, 0) + timedelta(days=7)
-    assert dash._response_cache[key].clock_until == newer_leaves
-    clock["now"] += dash._RESPONSE_CACHE_TTL_SECONDS + 1.0
-    pinned.current = newer_leaves + timedelta(seconds=599)
-    assert ask() == after
-    for thread in list(dash._refreshing.values()):
-        thread.join(5)
-    assert len(builds) == 4
     # (the window is empty now: the clock can no longer change this page)
     assert dash._response_cache[key].clock_until == datetime.max
     dash.clear_response_cache()

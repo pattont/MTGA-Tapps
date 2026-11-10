@@ -154,9 +154,10 @@ Primary code paths:
   of this runs for one. Such a page past its TTL with the fingerprint unchanged is sent as
   it is and rebuilt behind the request (`_refresh_behind`). A page reads the clock only
   through `_games_filter`'s "last N days", which reports each window to the cache
-  (`_note_clock_window`); `_clock_valid_until` works out when the window's oldest game
-  leaves it, and the old body is sent until `_CLOCK_SLIDE_SECONDS` (30 minutes) after that,
-  later than which the request waits for the rebuild. Add any new clock read to a page the
+  (`_note_clock_window`). The window is whole calendar days (see Tracker Invariants), so
+  it moves only at local midnight; `_clock_valid_until` works out the midnight that drops
+  the day of the window's oldest game, the old body is sent until then, and from then on
+  the request waits for the rebuild. Add any new clock read to a page the
   same way, or the cache will send it stale. When a game is saved the tracker calls
   `dashboard.note_game_finished` (`_tell_dashboard_game_finished`, returns at once): the
   slow pages of `_WARM_PATHS` asked for in the last four hours, at most four
@@ -994,6 +995,11 @@ Preserve these behaviors unless the user explicitly changes requirements:
   player/opponent average-turn columns. Its deck colors, and those in All Games and opponent
   history, come from that game's submitted `game_deck_cards` snapshot; deck-level pages use
   the newest submitted revision for the named deck.
+- "Last N days" (the Period filter, the trend's day ranges, `days=` on every endpoint)
+  is whole calendar days in local time: today and the N - 1 days before it, from midnight
+  (`dashboard._day_window_start`), the same games as a From date of that first day. A
+  game leaves at midnight with the rest of its day, never N times 24 hours after it
+  started, and one day is today. Never count a window back from the current time.
 - Overview Win Rate Trend uses one compact selector for 1/7/30/60/90 days, all
   time, or the last 10/25/50/100 games (default: 30 days), independent of the
   overview Period and From/To filters. It uses a rolling window of 30 finished
