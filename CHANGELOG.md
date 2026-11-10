@@ -8,6 +8,7 @@
 
 - **The Overview, All Games and deck pages load several times faster** once you have thousands of games. In our tests with about 38,000 games, the Overview opened in under 4 seconds instead of 9, All Games in 1 second instead of 5, and a typical deck page in under half a second instead of 5.
 - **Filters cost what they show.** A week of games, one deck or one opponent no longer reads your whole history. A 7-day Overview that took 3 seconds at that size now takes under half a second.
+- **Card pages and search keep up.** At that size a card's page opens in about a third of a second instead of 2. Search used to take from a fifth of a second to over 2 seconds for every letter typed; it now takes about a second once after a new game and answers each letter instantly after that.
 - **No slowdown while you play.** An Overview left open no longer recalculates every 20 seconds during a game.
 - **Nothing to do after updating.** The first launch prepares your existing games in the background (a few seconds for a very long history) while tracking starts right away. Every page shows the same numbers as before.
 

@@ -137,6 +137,21 @@ Primary code paths:
   The response cache keys on the event log only for `_EVENT_LOG_PATHS` (the game page), so
   a game in progress does not rebuild the Overview on every poll; its TTL is 60 s or 30
   times the page's build time, capped at ten minutes.
+  The card page finds a card's rows by name first (`CROSS JOIN` from the card table) through
+  `_card_name_clause`: the exact name, or the name before a " (Type)" suffix in any case.
+  Both halves are written for the `display_name COLLATE NOCASE` indexes
+  (`game_derived.CARD_NAME_INDEXES`); a plain `display_name = ?` cannot use them and turns
+  the page back into a table scan (`tests/test_card_lookup.py` checks the plan). Without the
+  indexes the same rows come from a scan, so never branch on whether they exist.
+  `_card_multiplicity` reads per-game totals only for the games the card was in, and
+  `_card_opponent_playable` reads opponent colours through `_opponent_letters`.
+  Card search (`search_cards`) answers from `_card_search_index`: `game_card_summary` summed
+  once per display name (games, plays, last seen, the rowids of its games and of the
+  players who had it, from which a result's decks are counted) and kept in memory under the response cache's fingerprint and TTL, built once however many
+  requests arrive (`_card_search_lock`). A keystroke compares the query with those names
+  the way `LIKE '%query%'` does (ASCII letters without case). A card's names ("Opt",
+  "Opt (Instant)") merge per query, counting a game once; the test file keeps the old
+  row-by-row search as the answer the summary must give.
 - `src/mtga_tracker/game_derived.py`: each finished game's derived values, stored once in
   the `game_derived` table: the draw-quality dict exactly as `draw_quality_metrics`
   returned it, the submitted deck's colours, and the opponent's colour letters.
@@ -158,6 +173,10 @@ Primary code paths:
   `tests/test_game_derived.py` holds a digest that fails without the bump). The table is
   created empty by the schema baseline, never filled by a migration; it is in
   `RESET_TABLES` and `MERGE_SKIP_TABLES`, and an older build ignores it.
+  The same pass then builds the card-name indexes a database lacks
+  (`build_card_name_indexes`, one transaction each under `WRITE_LOCK`). They are not in
+  the schema baseline on purpose: on a long history they take seconds, which the baseline
+  would spend on the launcher's main thread before tracking starts.
   The handler speaks HTTP/1.1 with keep-alive: every response must carry a
   Content-Length (`_send_bytes`) or be bodiless (304, `send_error`); POSTs close the
   connection because not every branch drains its body. Built files under `assets/` are
@@ -1198,7 +1217,10 @@ Important tables:
   They live in the schema baseline (`CREATE INDEX IF NOT EXISTS`), so existing databases
   pick them up at the next launch. A dashboard query that filters by `participant_id` or
   `match_id` alone must use them — that was the difference between 800 ms and 200 ms on the
-  overview at ~1000 games.
+  overview at ~1000 games. The four `display_name COLLATE NOCASE` indexes
+  (`idx_card_summary_name_nocase`, `idx_opening_hand_name_nocase`,
+  `idx_drawn_cards_name_nocase`, `idx_game_deck_cards_name_nocase`) are the exception:
+  the background pass in `game_derived.py` builds them after launch.
 - `raw_game_payloads`: sanitized raw payload archive. `payload_json` is stored
   **zlib-compressed** (migration v11 converted legacy rows) — always read it through
   `payload_codec.decode_payload`, or use `python -m mtga_tracker.payload_dump <game_id>`;

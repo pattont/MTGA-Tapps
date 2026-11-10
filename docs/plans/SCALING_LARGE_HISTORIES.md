@@ -1,8 +1,9 @@
 # Scaling to tens of thousands of games
 
-Status: Steps 0, 1 and 2 are built on the `scaling-large-histories` branch
-(2026-11-09) and need a live check in the real app on macOS and Windows.
-What is left is listed under "Still to do".
+Status: Steps 0 to 3 are built on the `scaling-large-histories` branch
+(2026-11-09). Steps 0 to 2 passed a live check on the dev Mac; Step 3 (card
+page and search) and Windows have not been run in the real app yet. What is
+left is listed under "Still to do".
 The question this answers: what happens to a player who logs 2,000–3,000
 ranked games a month, a year from now?
 
@@ -23,7 +24,10 @@ remaining work.
   under several filters, All Games, decks, games, opponents, cards, search,
   audit), writes each payload as JSON, and prints the cold time and size of
   each. `--src <other checkout>/src` runs another checkout's code, so `main`
-  and a branch are compared on the same file.
+  and a branch are compared on the same file. Cards are the most-played ones
+  plus a spread of rarer ones and the two-part cards; the card page is also
+  read under each filter, and search as it is typed (one, two, three letters,
+  a card type, a half of a two-part card).
 - `scripts/dashboard_payloads.py diff A B` lists every value that differs
   between two dumps. **"The pages and their numbers do not change" means this
   prints `0 differ`.**
@@ -54,8 +58,10 @@ on Windows); "after" is this branch with the stored values filled in.
 | Deck page, average of 17 decks | 1.5 s → 0.14 s | 4.8 s → 0.44 s | 4.6 s → 0.42 s |
 | Deck page, the most-played deck | 1.8 s → 0.5 s | 5.9 s → 1.6 s | 6.6 s → 2.6 s |
 | Opponent page | 0.19 s → 0.01 s | 0.55 s → 0.05 s | 0.52 s → 0.09 s |
-| Card page (`/api/card`) | 0.8 s (unchanged) | 2.5 s (unchanged) | 2.3 s (unchanged) |
-| Card search, per keystroke | 0.09 s (unchanged) | 0.28 s (unchanged) | 0.27 s (unchanged) |
+| Card page (`/api/card`), median of 26 cards | not measured | 2.0 s → 0.3 s | 1.7 s → 0.26 s |
+| Card page, a basic land (half of all games) | not measured | 2.4 s → 0.9 s | 2.1 s → 0.8 s |
+| Card search, the first after a new game | not measured | 0.2–2.6 s → 0.9 s | 0.2–1.6 s → 0.9 s |
+| Card search, each keystroke after that | not measured | 0.2–2.6 s → 0.01 s | 0.2–1.6 s → 0.01 s |
 | Opponents list | 0.04 s, 1.8 MB | 0.11 s, 5.4 MB | 0.11 s, 4.5 MB |
 | Game page | 0.07 s | 0.2 s | 0.2 s |
 
@@ -63,10 +69,17 @@ The mixed copy gains less on the Overview and All Games because 47% of its
 games have no decklist of their own, and those are computed live on purpose
 (see "What is stored"). A real history has at most a few thousand such games.
 
+The card and search rows were measured on new copies of the same two shapes
+(38,136 and 38,100 games); "before" for them is Step 2. A search used to cost
+0.2 s for a selective query and up to 2.6 s for a single letter, every
+keystroke.
+
 Payloads: `0 differ` between the Step 0 code and this branch on the real
 database, both mixed copies and both modern copies, with the stored table
 absent, part filled and full. One difference from 0.7.7 is intended: a
-two-part card's mana cost (Step 0).
+two-part card's mana cost (Step 0). Step 3: `0 differ` against Step 2 on the
+real database and both 38k copies (136 payloads each), with the card-name
+indexes absent and present.
 
 Upgrade, simulated on the 37,800-game modern copy: the new build's first open
 (schema and maintenance) took 0.2 s; the background pass stored all 37,800
@@ -141,24 +154,61 @@ The pass runs on a daemon thread after "Now ready to track", in batches of
 stores an answer computed from a half-written game. It can stop at any point
 and continue at the next launch. An older build ignores the table.
 
+### Step 3 — the card page and card search
+
+**Card page.** Every statement scanned a whole card table for the name, and
+two parts read the whole history whatever the card:
+
+- The name match (`display_name = ? OR display_name LIKE 'Name (%'`) is now
+  written so both halves use an index on `display_name COLLATE NOCASE`, with
+  the same rows: LIKE was always case-insensitive, and the exact half asks the
+  index for any case and keeps the exact spelling. Four indexes (card summary,
+  opening hands, draws, decklists): 45–55 MB on a 1.1–1.3 GB file at 38,000
+  games, about 4%. Until they exist the same rows come from a scan and the
+  page takes about 1 s.
+- The background pass builds them after it has stored the derived values:
+  1.2 s in total at 38,100 games, during which a concurrent write waited
+  385 ms at worst. They are not in the schema baseline because that runs
+  before tracking starts.
+- Repeat draws read each game's hand, draw and deck totals only for the games
+  the card was in (it used to total every game ever recorded).
+- "How often could they have cast it" reads the opponent colours stored in
+  Step 2. It still reads every game in view, about 0.1 s at 38,000 games,
+  which is most of what a rarely played card's page now costs.
+
+A card in half of all games (a basic land) still costs 0.9 s: about 20,000
+games' rows are read by six statements, and the repeat-draw table does its
+arithmetic per game.
+
+**Search** matches anywhere in the name and ranks by games, so no index
+narrows it. The card table is instead summed once per display name (one
+statement, 0.7 s at 38,000 games) and kept in memory under the response
+cache's fingerprint and TTL; a keystroke compares the query with a few
+thousand names. The first search after a new game pays the 0.9 s; requests
+that arrive while it is being built wait for it instead of building their own.
+A card recorded under several names ("Opt", "Opt (Instant)") is merged per
+query, counting a game once; deck counts and last-seen dates are worked out
+only for the results returned. Which row names a result and gives its type
+used to depend on the query plan; it is now the card's earliest row.
+
+Tried and dropped: finding search matches through the name index. Reading a
+card's rows through an index costs about seven times a sequential read per
+row, so it only won for queries matching under 4% of rows.
+
 ## Still to do
 
 In the order they are worth doing.
 
-1. **Live check.** Run this branch against a copy of a real database on the
-   Mac Studio and on Windows: first launch after the "update" (the pass runs,
-   tracking starts at once), a few real games (a row per game appears in
-   `game_derived`), and the same pages before and after. Then the payload diff
-   once more on that copy.
-2. **Card page and card search.** Untouched: 2.5 s and 0.28 s per keystroke
-   at 37,800 games. The name match is `display_name = ? OR display_name LIKE
-   'Name (%'`, which no index serves today. Candidate: an index on
-   `display_name COLLATE NOCASE` for the three card tables and the clause
-   rewritten so both halves use it, with the same results. The indexes cost
-   about a second to build once on a 38k-game database, on the launcher's
-   main thread: build them from the background pass instead. Search matches
-   anywhere in a name and needs a different approach (search the `cards`
-   table, then read stats for the matches).
+1. **Live check on Windows.** Run this branch against a copy of a real
+   database: first launch after the "update" (the pass runs, tracking starts
+   at once), a few real games (a row per game appears in `game_derived`), and
+   the same pages before and after. Then the payload diff once more on that
+   copy. Done on the dev Mac on 2026-11-09 (1,264 games, then six played): the
+   pass stored all 1,264 within a second of launch, each new game got its row
+   at game end, no earlier row of the game tables changed, and the payload
+   diff printed `0 differ` with the table full against emptied.
+2. **Live check of Step 3** on the Mac and on Windows: the four indexes
+   appear after launch, card pages and search show the same results.
 3. **The Overview's last second.** At 12,825 games it takes 1.1 s; the target
    is under 1 s, and under 3 s at 37,800 (now 3.6 s). What is left, largest
    first: land availability on curve (`_mana_readiness_rows`, about 13%; its
@@ -173,10 +223,13 @@ In the order they are worth doing.
    body at once and rebuild behind the page. That changes what a user sees
    (numbers up to one refresh old after a game), so it is a product decision,
    not an optimisation.
-6. **Housekeeping.** Bound the response cache by bytes, not entries (the
+6. **Search on first use.** If 0.9 s on the first search after a game is too
+   long at this size, build the summary on a background thread when the
+   Overview is loaded, so it is ready before anyone types.
+7. **Housekeeping.** Bound the response cache by bytes, not entries (the
    process held about 10 KB of RSS per game). Make it single-flight, so two
    requests for the same uncached page do not both build it. Measure backup,
    restore and merge on a 30x copy built with `--events`.
-7. `game_events` (`visible = 1`) is the one table that still grows with the
+8. `game_events` (`visible = 1`) is the one table that still grows with the
    history, roughly 1.7 GB at 37k games; the [raw log archive](RAW_LOG_ARCHIVE.md)
    plan decides whether the originals replace any of it.

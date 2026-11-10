@@ -24,6 +24,11 @@ Rules that keep a stored row exactly equal to a fresh computation:
   labels and audit repairs (``invalidate_all``).
 
 Readers never wait: a game without a current row is computed the old way.
+
+The same background pass builds the card-name indexes (``CARD_NAME_INDEXES``)
+on a database that has none yet: on a long history that takes seconds, which
+the schema baseline would spend on the launcher's main thread before tracking
+starts.
 """
 
 from __future__ import annotations
@@ -44,6 +49,18 @@ RULES_VERSION = 1
 BATCH = 500
 TABLE = "game_derived"
 _CHUNK = 900
+
+#: (index, table): ``display_name COLLATE NOCASE`` on the per-game card tables.
+#: The card page finds a card's rows through them
+#: (``dashboard._card_name_clause``); without them the same rows come from a
+#: scan of each table. Built by the background pass, never by the schema
+#: baseline (see the module docstring).
+CARD_NAME_INDEXES: Tuple[Tuple[str, str], ...] = (
+    ("idx_card_summary_name_nocase", "game_card_summary"),
+    ("idx_opening_hand_name_nocase", "game_opening_hand_cards"),
+    ("idx_drawn_cards_name_nocase", "game_drawn_cards"),
+    ("idx_game_deck_cards_name_nocase", "game_deck_cards"),
+)
 
 #: Held by the tracker while it saves a finished game and by the background
 #: pass while it computes and writes a batch, so the pass never reads a game
@@ -262,6 +279,47 @@ def cards_missing_metadata(conn: sqlite3.Connection) -> Tuple[set, set]:
     return no_color, no_cost
 
 
+def index_exists(conn: sqlite3.Connection, name: str) -> bool:
+    try:
+        return (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?", (name,)
+            ).fetchone()
+            is not None
+        )
+    except sqlite3.Error:
+        return False
+
+
+def build_card_name_indexes(
+    conn: sqlite3.Connection, stop: Optional[threading.Event] = None
+) -> int:
+    """Create the card-name indexes this database lacks, one transaction
+    each. Returns how many were built. An index cannot be built in parts, so
+    each holds the write lock for its whole build (a second and a half for
+    the largest table at 38,000 games); the game-end save waits on
+    ``WRITE_LOCK`` rather than on SQLite's busy timeout."""
+    built = 0
+    for name, table in CARD_NAME_INDEXES:
+        if stop is not None and stop.is_set():
+            break
+        if index_exists(conn, name):
+            continue
+        if (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+            ).fetchone()
+            is None
+        ):
+            continue
+        with WRITE_LOCK, conn:
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS {name} ON {table}(display_name COLLATE NOCASE)"
+            )
+        built += 1
+    return built
+
+
 # --- background pass ---------------------------------------------------------
 
 _worker: Optional[threading.Thread] = None
@@ -283,34 +341,46 @@ def run_backfill(
     db_path: Path, stop: Optional[threading.Event] = None, *, pause: float = 0.01
 ) -> int:
     """Store a row for every recorded game that has no current one, in
-    batches, newest games first. Returns the number of rows written. Safe to
-    stop at any point: what is left is found again on the next run."""
+    batches, newest games first, then build any missing card-name index.
+    Returns the number of rows written. Safe to stop at any point: what is
+    left is found again on the next run."""
     written = 0
     conn = sqlite3.connect(db_path, timeout=10.0)
     try:
         conn.execute("PRAGMA busy_timeout = 10000")
-        if not table_exists(conn):
-            return 0
-        with WRITE_LOCK, conn:
-            # Rows of games deleted since (an audit repair, a deleted match).
-            conn.execute(
-                f"DELETE FROM {TABLE} WHERE participant_id NOT IN (SELECT id FROM participants)"
-            )
-        while stop is None or not stop.is_set():
-            # One look for everything outstanding, then batches: asking again
-            # before every batch re-reads the whole history each time.
-            outstanding = pending(conn, 1_000_000_000)
-            if not outstanding and not _take_refill_request():
+        while True:
+            written += _store_pending(conn, stop, pause)
+            build_card_name_indexes(conn, stop)
+            # Rows dropped while an index was being built are stored now.
+            if (stop is not None and stop.is_set()) or not _take_refill_request():
                 break
-            for start in range(0, len(outstanding), BATCH):
-                if stop is not None and stop.is_set():
-                    break
-                with WRITE_LOCK, conn:
-                    written += store(conn, outstanding[start : start + BATCH])
-                # Let the tracker thread take the lock (and the GIL) between batches.
-                time.sleep(pause)
     finally:
         conn.close()
+    return written
+
+
+def _store_pending(conn: sqlite3.Connection, stop: Optional[threading.Event], pause: float) -> int:
+    written = 0
+    if not table_exists(conn):
+        return 0
+    with WRITE_LOCK, conn:
+        # Rows of games deleted since (an audit repair, a deleted match).
+        conn.execute(
+            f"DELETE FROM {TABLE} WHERE participant_id NOT IN (SELECT id FROM participants)"
+        )
+    while stop is None or not stop.is_set():
+        # One look for everything outstanding, then batches: asking again
+        # before every batch re-reads the whole history each time.
+        outstanding = pending(conn, 1_000_000_000)
+        if not outstanding and not _take_refill_request():
+            break
+        for start in range(0, len(outstanding), BATCH):
+            if stop is not None and stop.is_set():
+                break
+            with WRITE_LOCK, conn:
+                written += store(conn, outstanding[start : start + BATCH])
+            # Let the tracker thread take the lock (and the GIL) between batches.
+            time.sleep(pause)
     return written
 
 

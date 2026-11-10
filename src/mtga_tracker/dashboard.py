@@ -20,7 +20,18 @@ import sys
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    NamedTuple,
+    Optional,
+    Set,
+    Tuple,
+)
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .draw_quality import (
@@ -751,13 +762,20 @@ def _split_name_variants(conn: sqlite3.Connection, clean_name: str) -> List[str]
 
 
 def _card_name_clause(alias: str, variants: List[str]) -> str:
-    """SQL fragment matching a display-name column against every variant."""
+    """SQL fragment matching a display-name column against every variant:
+    the exact name, or the name followed by a "(Type)" suffix.
+
+    Both halves are written so the ``display_name COLLATE NOCASE`` indexes
+    (``CARD_NAME_INDEXES``) can serve them: LIKE is case-insensitive, and the
+    exact half asks the index for the name in any case and then keeps only the
+    exact spelling. Without the indexes the same rows come from a scan."""
     column = f"{alias}.display_name" if alias else "display_name"
-    return "(" + " OR ".join([f"{column} = ? OR {column} LIKE ?"] * len(variants)) + ")"
+    one = f"({column} = ? COLLATE NOCASE AND {column} = ?) OR {column} LIKE ?"
+    return "(" + " OR ".join([one] * len(variants)) + ")"
 
 
 def _card_name_params(variants: List[str]) -> Tuple[str, ...]:
-    return tuple(param for variant in variants for param in (variant, f"{variant} (%"))
+    return tuple(param for variant in variants for param in (variant, variant, f"{variant} (%"))
 
 
 def _card_image_url(arena_id: Optional[int], card_name: Optional[str]) -> Optional[str]:
@@ -4932,55 +4950,64 @@ def _card_multiplicity(conn: sqlite3.Connection, variants: List[str]) -> Dict[st
     """
     name_clause = _card_name_clause("", variants)
     name_params = _card_name_params(variants)
+    # The card's rows are found first (by name), and the per-game totals are
+    # then read for those games only. Reading every game's totals to keep a
+    # few was most of this page's cost on a long history.
     seen_rows = _dict_rows(
         conn.execute(
             f"""
+            WITH
+            oh AS (
+              SELECT participant_id, COUNT(*) AS copies
+              FROM game_opening_hand_cards
+              WHERE {name_clause}
+              GROUP BY participant_id
+            ),
+            dr AS (
+              SELECT participant_id, COUNT(*) AS copies
+              FROM game_drawn_cards
+              WHERE {name_clause}
+              GROUP BY participant_id
+            ),
+            dc AS (
+              SELECT participant_id, SUM(quantity) AS quantity
+              FROM game_deck_cards
+              WHERE deck_zone = 'deck' AND {name_clause}
+              GROUP BY participant_id
+            ),
+            hit(participant_id) AS (
+              SELECT participant_id FROM oh
+              UNION
+              SELECT participant_id FROM dr
+              UNION
+              SELECT participant_id FROM dc WHERE quantity > 0
+            )
             SELECT
               g.id AS game_id,
               g.outcome,
               p.id AS participant_id,
               COALESCE(oh.copies, 0) + COALESCE(dr.copies, 0) AS copies_seen,
-              COALESCE(oh_total.total, 0) + COALESCE(dr_total.total, 0) AS cards_seen,
+              (
+                SELECT COUNT(*) FROM game_opening_hand_cards t
+                WHERE t.participant_id = p.id
+              ) + (
+                SELECT COUNT(*) FROM game_drawn_cards t
+                WHERE t.participant_id = p.id
+              ) AS cards_seen,
               dc.quantity AS copies_in_deck,
-              dc_total.deck_size AS deck_size
-            FROM games g
-            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-            LEFT JOIN (
-              SELECT participant_id, COUNT(*) AS copies
-              FROM game_opening_hand_cards
-              WHERE {name_clause}
-              GROUP BY participant_id
-            ) oh ON oh.participant_id = p.id
-            LEFT JOIN (
-              SELECT participant_id, COUNT(*) AS copies
-              FROM game_drawn_cards
-              WHERE {name_clause}
-              GROUP BY participant_id
-            ) dr ON dr.participant_id = p.id
-            LEFT JOIN (
-              SELECT participant_id, COUNT(*) AS total
-              FROM game_opening_hand_cards
-              GROUP BY participant_id
-            ) oh_total ON oh_total.participant_id = p.id
-            LEFT JOIN (
-              SELECT participant_id, COUNT(*) AS total
-              FROM game_drawn_cards
-              GROUP BY participant_id
-            ) dr_total ON dr_total.participant_id = p.id
-            LEFT JOIN (
-              SELECT participant_id, SUM(quantity) AS quantity
-              FROM game_deck_cards
-              WHERE deck_zone = 'deck' AND {name_clause}
-              GROUP BY participant_id
-            ) dc ON dc.participant_id = p.id
-            LEFT JOIN (
-              SELECT participant_id, SUM(quantity) AS deck_size
-              FROM game_deck_cards
-              WHERE deck_zone = 'deck'
-              GROUP BY participant_id
-            ) dc_total ON dc_total.participant_id = p.id
-            WHERE COALESCE(dc.quantity, 0) > 0
-               OR COALESCE(oh.copies, 0) + COALESCE(dr.copies, 0) > 0
+              (
+                SELECT SUM(t.quantity) FROM game_deck_cards t
+                WHERE t.participant_id = p.id AND t.deck_zone = 'deck'
+              ) AS deck_size
+            FROM hit
+            CROSS JOIN participants p ON p.id = hit.participant_id AND p.role = 'player'
+            CROSS JOIN games g ON g.id = p.game_id
+            LEFT JOIN oh ON oh.participant_id = p.id
+            LEFT JOIN dr ON dr.participant_id = p.id
+            LEFT JOIN dc ON dc.participant_id = p.id
+            -- The order the old whole-history statement returned its rows in,
+            -- so the expected-draws sums below add up in the same order.
+            ORDER BY p.deck_name, p.rowid
             """,
             name_params * 3,
         )
@@ -5067,8 +5094,8 @@ def _card_opponent_multiplicity(conn: sqlite3.Connection, variants: List[str]) -
               SUM(MAX(COALESCE(s.played_count, 0), COALESCE(s.drawn_count, 0)))
                 AS copies_seen
             FROM game_card_summary s
-            JOIN participants p ON p.id = s.participant_id AND p.role = 'opponent'
-            JOIN games g ON g.id = s.game_id
+            CROSS JOIN participants p ON p.id = s.participant_id AND p.role = 'opponent'
+            CROSS JOIN games g ON g.id = s.game_id
             WHERE {name_clause}
               AND (COALESCE(s.played_count, 0) > 0 OR COALESCE(s.drawn_count, 0) > 0)
             GROUP BY g.id, g.outcome
@@ -5165,31 +5192,34 @@ def _card_opponent_playable(
     if cost_row is None:
         return None
     pip_options = _pip_color_options(str(cost_row[0] or ""))
+    played = {
+        (str(game_id), str(participant_id))
+        for game_id, participant_id in conn.execute(
+            f"""
+            SELECT s.game_id, s.participant_id
+            FROM game_card_summary s
+            WHERE s.played_count > 0 AND {_card_name_clause('s', variants)}
+            """,
+            _card_name_params(variants),
+        )
+    }
     rows = conn.execute(
         f"""
-        SELECT
-          g.id,
-          (
-            SELECT GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
-            FROM game_card_summary s
-            JOIN cards c ON c.id = s.card_id
-            WHERE s.game_id = g.id AND s.participant_id = po.id
-          ) AS letters,
-          EXISTS (
-            SELECT 1 FROM game_card_summary s2
-            WHERE s2.game_id = g.id AND s2.participant_id = po.id
-              AND s2.played_count > 0 AND {_card_name_clause('s2', variants)}
-          ) AS played_it
+        SELECT g.id, po.id
         FROM games g
         JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
         WHERE {where}
         """,
-        (*_card_name_params(variants), *filter_params),
+        tuple(filter_params),
     ).fetchall()
+    # A card with no coloured pip is castable in every game: no colours to read.
+    letters = _opponent_letters(conn, (row[0] for row in rows)) if pip_options else {}
     games_possible = 0
     games_played = 0
-    for _game_id, letters, played_it in rows:
-        shown = {ch for ch in str(letters or "") if ch in "WUBRG"}
+    for game_id, participant_id in rows:
+        revealed, _commander = letters.get(str(game_id), ("", ""))
+        shown = {ch for ch in revealed if ch in "WUBRG"}
+        played_it = (str(game_id), str(participant_id)) in played
         castable = all(options & shown for options in pip_options)
         if played_it or castable:
             games_possible += 1
@@ -5236,36 +5266,22 @@ def card_detail(
         name_clause_h = _card_name_clause("h", variants)
         name_clause_d = _card_name_clause("d", variants)
         match_params = (*_card_name_params(variants), *filter_params)
+        # Every statement here finds the card's rows by name first (CROSS JOIN
+        # keeps that order), so the page costs the games the card appeared in.
         all_usage = conn.execute(
             f"""
             SELECT
               COUNT(DISTINCT g.id) AS games_seen,
               COALESCE(SUM(s.played_count), 0) AS total_played
             FROM game_card_summary s
-            JOIN participants p ON p.id = s.participant_id
-            JOIN games g ON g.id = s.game_id
+            CROSS JOIN participants p ON p.id = s.participant_id
+            CROSS JOIN games g ON g.id = s.game_id
             WHERE {name_clause_s} AND {where}
             """,
             match_params,
         ).fetchone()
         if not all_usage or not all_usage[0]:
             raise LookupError(f"No recorded card for name: {clean_name}")
-        summary = conn.execute(
-            f"""
-            SELECT
-              COUNT(DISTINCT g.id) AS games_seen,
-              COALESCE(SUM(s.played_count), 0) AS total_played,
-              SUM(g.outcome = 'win') AS wins,
-              SUM(g.outcome = 'loss') AS losses,
-              ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
-            FROM game_card_summary s
-            JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
-            JOIN games g ON g.id = s.game_id
-            WHERE {name_clause_s}
-              AND s.played_count > 0 AND {where}
-            """,
-            match_params,
-        ).fetchone()
         by_role = _dict_rows(
             conn.execute(
                 f"""
@@ -5282,8 +5298,8 @@ def card_detail(
                     1
                   ) AS win_rate
                 FROM game_card_summary s
-                JOIN participants p ON p.id = s.participant_id
-                JOIN games g ON g.id = s.game_id
+                CROSS JOIN participants p ON p.id = s.participant_id
+                CROSS JOIN games g ON g.id = s.game_id
                 WHERE {name_clause_s}
                   AND s.played_count > 0 AND {where}
                 GROUP BY p.role
@@ -5291,6 +5307,13 @@ def card_detail(
                 """,
                 match_params,
             )
+        )
+        # Your own plays of the card: the 'player' row above, or zeros.
+        own = next((row for row in by_role if row["role"] == "player"), None)
+        summary = (
+            (own["games_seen"], own["total_played"], own["wins"], own["losses"], own["win_rate"])
+            if own
+            else (0, 0, None, None, None)
         )
         by_deck = _dict_rows(
             conn.execute(
@@ -5303,8 +5326,8 @@ def card_detail(
                   SUM(g.outcome = 'loss') AS losses,
                   ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
                 FROM game_card_summary s
-                JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
-                JOIN games g ON g.id = s.game_id
+                CROSS JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
+                CROSS JOIN games g ON g.id = s.game_id
                 WHERE {name_clause_s}
                   AND s.played_count > 0 AND {where}
                 GROUP BY p.deck_name
@@ -5322,8 +5345,8 @@ def card_detail(
               SUM(g.outcome = 'loss') AS losses,
               ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
             FROM game_opening_hand_cards h
-            JOIN participants p ON p.id = h.participant_id AND p.role = 'player'
-            JOIN games g ON g.id = h.game_id
+            CROSS JOIN participants p ON p.id = h.participant_id AND p.role = 'player'
+            CROSS JOIN games g ON g.id = h.game_id
             WHERE {name_clause_h} AND {where}
             """,
             match_params,
@@ -5332,8 +5355,8 @@ def card_detail(
             f"""
             SELECT COUNT(*) AS times_drawn
             FROM game_drawn_cards d
-            JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
-            JOIN games g ON g.id = d.game_id
+            CROSS JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
+            CROSS JOIN games g ON g.id = d.game_id
             WHERE {name_clause_d} AND {where}
             """,
             match_params,
@@ -5727,6 +5750,171 @@ def global_search(
     return {"cards": cards, "decks": decks, "opponents": opponents}
 
 
+# ---------------------------------------------------------------------------
+# Card search. A query matches anywhere in a card's display name, so no index
+# narrows it, and ranking needs every match's game count: read row by row,
+# one keystroke cost the whole card table (1.5 s for one letter at 38,000
+# games). The table is instead summed up once per display name and kept
+# while the analytics fingerprint holds; a keystroke then compares the query
+# against a few thousand names.
+# ---------------------------------------------------------------------------
+
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+_JUMP_IN_MATCH_SQL = """EXISTS (
+    SELECT 1 FROM matches mj
+    WHERE mj.id = g.match_id AND mj.format LIKE 'Jump!_In%' ESCAPE '!'
+)"""
+
+
+class _SearchName(NamedTuple):
+    """Everything recorded under one ``game_card_summary.display_name``."""
+
+    #: The display name with ASCII letters lowered: what SQLite's LIKE compares.
+    folded: str
+    #: Names that are one card share a key ("Opt", "Opt (Instant)").
+    key: str
+    first_row: int
+    card_name: str
+    type_category: str
+    games: int
+    played: int
+    last_seen: Optional[str]
+    #: Comma-joined rowids of the games the name appears in, kept only for a
+    #: card with several names: their games are counted once between them.
+    game_rows: str
+    #: Comma-joined rowids of the player participants who had the card, to
+    #: count the decks of the few results a search returns.
+    player_rows: str
+
+
+class _CardSearchIndex(NamedTuple):
+    names: Tuple[_SearchName, ...]
+    #: key -> how many display names share it.
+    variants: Dict[str, int]
+    #: key -> games across all of a card's names, filled in as searches ask.
+    games_across: Dict[str, int]
+    #: player participant rowid (as text) -> deck name.
+    deck_of: Dict[str, str]
+
+
+def _search_games(index: _CardSearchIndex, key: str, names: List[_SearchName]) -> int:
+    """Games holding any of these names of one card, each game once."""
+    if len(names) == 1:
+        return names[0].games
+    whole = len(names) == index.variants[key]
+    games = index.games_across.get(key) if whole else None
+    if games is None:
+        games = len(set().union(*(name.game_rows.split(",") for name in names)))
+        if whole:
+            index.games_across[key] = games
+    return games
+
+
+def _build_card_search_index(conn: sqlite3.Connection) -> _CardSearchIndex:
+    rows = conn.execute(
+        f"""
+        SELECT
+          s.display_name,
+          MIN(s.id),
+          COUNT(DISTINCT g.rowid),
+          SUM(s.played_count),
+          MAX(NULLIF(COALESCE(g.started_at, g.ended_at), '')),
+          GROUP_CONCAT(g.rowid),
+          GROUP_CONCAT(CASE WHEN p.role = 'player' THEN p.rowid END)
+        FROM games g
+        CROSS JOIN game_card_summary s ON s.game_id = g.id
+        CROSS JOIN participants p ON p.id = s.participant_id
+        WHERE NOT {_JUMP_IN_MATCH_SQL}
+        GROUP BY s.display_name
+        """
+    ).fetchall()
+    deck_of = {
+        str(rowid): deck_name
+        for rowid, deck_name in conn.execute(
+            "SELECT rowid, deck_name FROM participants "
+            "WHERE role = 'player' AND deck_name IS NOT NULL AND deck_name != '(unknown)'"
+        )
+    }
+    # The card type shown is the one on the card's earliest row.
+    type_by_row: Dict[int, Optional[str]] = {}
+    for placeholders, chunk in _in_chunks(row[1] for row in rows):
+        type_by_row.update(
+            conn.execute(
+                f"SELECT id, type_category FROM game_card_summary WHERE id IN ({placeholders})",
+                chunk,
+            )
+        )
+    names: List[_SearchName] = []
+    variants: Dict[str, int] = {}
+    for display_name, first_row, games, played, last_seen, game_rows, player_rows in rows:
+        card_name = _clean_card_name(display_name) or display_name
+        key = card_name.casefold()
+        variants[key] = variants.get(key, 0) + 1
+        names.append(
+            _SearchName(
+                folded=display_name.translate(_ASCII_LOWER),
+                key=key,
+                first_row=int(first_row),
+                card_name=card_name,
+                type_category=type_by_row.get(first_row) or "Other",
+                games=int(games or 0),
+                played=int(played or 0),
+                last_seen=last_seen,
+                game_rows=str(game_rows or ""),
+                player_rows=str(player_rows or ""),
+            )
+        )
+    return _CardSearchIndex(
+        names=tuple(
+            name if variants[name.key] > 1 else name._replace(game_rows="") for name in names
+        ),
+        variants=variants,
+        games_across={},
+        deck_of=deck_of,
+    )
+
+
+_card_search_memo: Dict[str, Tuple[Tuple[Any, ...], float, _CardSearchIndex]] = {}
+#: Held while an index is built, so the requests of one typed word build it once.
+_card_search_lock = threading.Lock()
+
+
+def _card_search_index(db_path: Path) -> _CardSearchIndex:
+    """The search index of this database: kept while the analytics
+    fingerprint is unchanged and, like a cached response, no longer than a
+    TTL that covers what the fingerprint cannot see."""
+    fingerprint = _analytics_fingerprint(db_path, event_log=False)
+    key = str(db_path)
+    with _card_search_lock:
+        entry = _card_search_memo.get(key)
+        started = time.monotonic()
+        if (
+            fingerprint is not None
+            and entry is not None
+            and entry[0] == fingerprint
+            and entry[1] > started
+        ):
+            return entry[2]
+        db_uri = db_path.resolve().as_uri() + "?mode=ro"
+        with sqlite3.connect(db_uri, uri=True) as conn:
+            conn.execute("PRAGMA query_only = ON")
+            index = _build_card_search_index(conn)
+        _card_search_memo.pop(key, None)
+        if fingerprint is not None:
+            built = time.monotonic()
+            ttl = min(
+                _RESPONSE_CACHE_TTL_MAX_SECONDS,
+                max(
+                    _RESPONSE_CACHE_TTL_SECONDS,
+                    (built - started) * _RESPONSE_CACHE_TTL_PER_BUILD_SECOND,
+                ),
+            )
+            while len(_card_search_memo) >= 4:
+                _card_search_memo.pop(next(iter(_card_search_memo)))
+            _card_search_memo[key] = (fingerprint, built + ttl, index)
+        return index
+
+
 def search_cards(
     db_path: Path = DEFAULT_DB_PATH, query: str = "", limit: int = 8
 ) -> List[Dict[str, Any]]:
@@ -5739,83 +5927,46 @@ def search_cards(
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
 
-    escaped_query = clean_query.replace("!", "!!").replace("%", "!%").replace("_", "!_")
-    db_uri = db_path.resolve().as_uri() + "?mode=ro"
-    with sqlite3.connect(db_uri, uri=True) as conn:
-        conn.execute("PRAGMA query_only = ON")
-        rows = _dict_rows(
-            conn.execute(
-                """
-                SELECT
-                  s.game_id,
-                  s.display_name,
-                  s.type_category,
-                  s.played_count,
-                  p.role,
-                  COALESCE(p.deck_name, '(unknown)') AS deck_name,
-                  COALESCE(g.started_at, g.ended_at) AS seen_at
-                FROM game_card_summary s
-                JOIN participants p ON p.id = s.participant_id
-                JOIN games g ON g.id = s.game_id
-                WHERE s.display_name LIKE ? ESCAPE '!' COLLATE NOCASE
-                  AND NOT EXISTS (
-                    SELECT 1 FROM matches mj
-                    WHERE mj.id = g.match_id AND mj.format LIKE 'Jump!_In%' ESCAPE '!'
-                  )
-                """,
-                (f"%{escaped_query}%",),
-            )
-        )
-
-    matches: Dict[str, Dict[str, Any]] = {}
-    for row in rows:
-        card_name = _clean_card_name(row.get("display_name")) or row["display_name"]
-        key = card_name.casefold()
-        entry = matches.setdefault(
-            key,
-            {
-                "card_name": card_name,
-                "type_category": row.get("type_category") or "Other",
-                "game_ids": set(),
-                "deck_names": set(),
-                "total_played": 0,
-                "last_seen_at": None,
-            },
-        )
-        entry["game_ids"].add(row["game_id"])
-        if row["role"] == "player" and row["deck_name"] != "(unknown)":
-            entry["deck_names"].add(row["deck_name"])
-        entry["total_played"] += int(row.get("played_count") or 0)
-        if row.get("seen_at") and (
-            entry["last_seen_at"] is None or row["seen_at"] > entry["last_seen_at"]
-        ):
-            entry["last_seen_at"] = row["seen_at"]
+    index = _card_search_index(db_path)
+    # What `display_name LIKE '%query%'` matches: the query anywhere in the
+    # name, ASCII letters compared without case.
+    needle = clean_query.translate(_ASCII_LOWER)
+    matched: Dict[str, List[_SearchName]] = {}
+    for name in index.names:
+        if needle in name.folded:
+            matched.setdefault(name.key, []).append(name)
 
     query_folded = clean_query.casefold()
-    ranked = sorted(
-        matches.values(),
-        key=lambda item: (
-            (
-                0
-                if item["card_name"].casefold() == query_folded
-                else 1 if item["card_name"].casefold().startswith(query_folded) else 2
-            ),
-            -len(item["game_ids"]),
-            -item["total_played"],
-            item["card_name"].casefold(),
-        ),
-    )
-    return [
-        {
-            "card_name": item["card_name"],
-            "type_category": item["type_category"],
-            "games_seen": len(item["game_ids"]),
-            "deck_count": len(item["deck_names"]),
-            "total_played": item["total_played"],
-            "last_seen_at": item["last_seen_at"],
+    ranked = []
+    for key, names in matched.items():
+        first = min(names, key=lambda name: name.first_row)
+        folded = first.card_name.casefold()
+        games = _search_games(index, key, names)
+        played = sum(name.played for name in names)
+        place = 0 if folded == query_folded else 1 if folded.startswith(query_folded) else 2
+        ranked.append((place, -games, -played, folded, first, names))
+    ranked.sort(key=lambda item: item[:4])
+
+    results = []
+    for _place, games, played, _folded, first, names in ranked[: max(1, min(limit, 25))]:
+        seen = [name.last_seen for name in names if name.last_seen]
+        decks = {
+            index.deck_of[row]
+            for name in names
+            for row in name.player_rows.split(",")
+            if row in index.deck_of
         }
-        for item in ranked[: max(1, min(limit, 25))]
-    ]
+        results.append(
+            {
+                "card_name": first.card_name,
+                "type_category": first.type_category,
+                "games_seen": -games,
+                "deck_count": len(decks),
+                "total_played": -played,
+                "last_seen_at": max(seen) if seen else None,
+            }
+        )
+    return results
 
 
 def _table(headers: List[str], rows: List[Dict[str, Any]]) -> str:
@@ -6084,6 +6235,8 @@ def cached_response(db_path: Path, path: str, query: str, compute: "Callable[[],
 def clear_response_cache() -> None:
     with _response_cache_lock:
         _response_cache.clear()
+    with _card_search_lock:
+        _card_search_memo.clear()
     # A write (a reset that replaces the file, above all) must not leave the
     # overlay poll reading a connection to the old database.
     from . import live_api

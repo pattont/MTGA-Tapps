@@ -64,6 +64,20 @@ def pin_sql_variable_limit(limit: int) -> bool:
     return True
 
 
+#: Request families whose times are reported together ("card.<name>", ...).
+TIMED_GROUPS = (
+    "deck",
+    "game",
+    "opponent",
+    "card",
+    "card-days-30",
+    "card-deck",
+    "card-format",
+    "cards",
+    "typed",
+)
+
+
 def _slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "-", text).strip("-")[:60] or "x"
 
@@ -114,14 +128,19 @@ def build_requests(
                 (sample,),
             )
         ]
-        cards = [
+        by_plays = [
             str(row[0])
             for row in conn.execute(
                 "SELECT display_name FROM game_card_summary GROUP BY 1 "
-                "ORDER BY SUM(COALESCE(played_count, 0)) DESC, 1 LIMIT ?",
-                (sample,),
+                "ORDER BY SUM(COALESCE(played_count, 0)) DESC, 1"
             )
         ]
+        # The most-played cards carry the cost; cards spread through the rest
+        # and the two-part cards carry the edge cases (rare names, suffixes).
+        split_cards = [name for name in by_plays if " // " in name][:3]
+        cards = list(
+            dict.fromkeys(by_plays[:sample] + _spread(by_plays[sample:], sample) + split_cards)
+        )
         try:
             season = conn.execute("SELECT MAX(season_ordinal) FROM rank_snapshots").fetchone()[0]
         except sqlite3.Error:
@@ -176,6 +195,34 @@ def build_requests(
         requests.append(
             (f"cards.{_slug(name)}", lambda name=name: d.search_cards(db_path, name[:5], 8))
         )
+    # The card page under each filter, for the cards with the most rows.
+    for name in cards[:3]:
+        slug = _slug(name)
+        requests.append(
+            (f"card-days-30.{slug}", lambda name=name: d.card_detail(db_path, name, days=30))
+        )
+        if top_deck:
+            requests.append(
+                (
+                    f"card-deck.{slug}",
+                    lambda name=name: d.card_detail(db_path, name, deck=top_deck),
+                )
+            )
+        if top_format:
+            requests.append(
+                (
+                    f"card-format.{slug}",
+                    lambda name=name: d.card_detail(db_path, name, fmt=top_format),
+                )
+            )
+    # Searches as they are typed (one, two, three letters), a card type (it
+    # matches the "(Type)" suffix of older rows), one half of a two-part card.
+    typed = [name[:length] for name in cards[:4] for length in (1, 2, 3)]
+    halves = [name.split(" // ")[-1][:6] for name in split_cards]
+    for text in dict.fromkeys(typed + ["land", "creature", "(", "1/1", "zzzz"] + halves):
+        requests.append(
+            (f"typed.{_slug(text)}", lambda text=text: d.search_cards(db_path, text, 25))
+        )
     # Distinct names can share a slug; keep every request.
     seen: Dict[str, int] = {}
     unique: List[Tuple[str, Callable[[], Any]]] = []
@@ -211,6 +258,8 @@ def dump(db_path: Path, out_dir: Path, sample: int, limit: int, src: Optional[Pa
     timings: Dict[str, Dict[str, Any]] = {}
     errors = 0
     for name, call in build_requests(dashboard, db_path, sample):
+        # Cold: nothing a request built is kept for the next one.
+        dashboard.clear_response_cache()
         started = time.perf_counter()
         try:
             payload = call()
@@ -234,7 +283,7 @@ def dump(db_path: Path, out_dir: Path, sample: int, limit: int, src: Optional[Pa
         if name.split(".", 1)[0] in ("snapshot", "games", "opponents", "audit") or "error" in entry:
             note = f"  {entry['error']}" if "error" in entry else ""
             print(f"{name:<44}{entry['ms']:>9.0f}{entry['bytes'] / 1024:>10.0f}{note}")
-    for group in ("deck", "game", "opponent", "card", "cards"):
+    for group in TIMED_GROUPS:
         entries = groups.get(group)
         if entries:
             worst = max(entry["ms"] for entry in entries)
@@ -299,7 +348,7 @@ def diff(first: Path, second: Path, show: int) -> int:
                 f"{name:<34}{before[name]['ms']:>10.0f}{after[name]['ms']:>11.0f}"
                 f"{before[name]['bytes'] / 1024:>10.0f}{after[name]['bytes'] / 1024:>11.0f}"
             )
-    for group in ("deck", "game", "opponent", "card"):
+    for group in TIMED_GROUPS:
         a = [entry["ms"] for name, entry in before.items() if name.startswith(group + ".")]
         b = [entry["ms"] for name, entry in after.items() if name.startswith(group + ".")]
         if a and b:
