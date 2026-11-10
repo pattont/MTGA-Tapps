@@ -2265,13 +2265,35 @@ def _deck_visuals(
 
     ``deck_names`` limits the work to the decks a page shows; a deck's card
     is judged from its whole history either way.
+
+    Played cards outrank opening-hand and drawn cards, and nonlands outrank
+    lands, so a deck that has played any nonland card is settled by its
+    played cards alone. Only the decks that have not (no plays recorded, or
+    only lands) read their openers and draws as well.
     """
-    rows: List[Dict[str, Any]] = []
+    if deck_names is not None:
+        deck_names = list(deck_names)
+    rows: Dict[str, Dict[str, Any]] = {}
     for deck_filter, deck_params in _deck_name_filters(deck_names, missing_as_unknown=True):
-        rows.extend(_deck_visual_rows(conn, deck_filter, deck_params))
+        for row in _deck_visual_rows(conn, deck_filter, deck_params, played_only=True):
+            if (row.get("type_category") or "Other") != "Land":
+                rows[row["deck_name"]] = row
+    if deck_names is None:
+        every_deck = [
+            str(row[0])
+            for row in conn.execute(
+                "SELECT DISTINCT COALESCE(deck_name, '(unknown)') FROM participants "
+                "WHERE role = 'player'"
+            )
+        ]
+    else:
+        every_deck = [str(name) for name in deck_names if name is not None]
+    unsettled = [name for name in every_deck if name not in rows]
+    for deck_filter, deck_params in _deck_name_filters(unsettled, missing_as_unknown=True):
+        for row in _deck_visual_rows(conn, deck_filter, deck_params):
+            rows[row["deck_name"]] = row
     visuals: Dict[str, Dict[str, Any]] = {}
-    for row in rows:
-        deck_name = row["deck_name"]
+    for deck_name, row in rows.items():
         card_name = row.get("card_name") or _clean_card_name(row.get("display_name"))
         image_url = _card_image_url(row.get("arena_id"), card_name)
         # New sets often reach Scryfall before their Arena-ID mapping does;
@@ -2288,48 +2310,44 @@ def _deck_visuals(
     return visuals
 
 
+#: (card table, alias, how often a card counts, source rank) per kind of
+#: evidence for a deck's card, best first.
+_DECK_VISUAL_SOURCES = (
+    ("game_card_summary", "s", "SUM(COALESCE(s.played_count, 0))", 1),
+    ("game_opening_hand_cards", "h", "COUNT(*)", 2),
+    ("game_drawn_cards", "d", "COUNT(*)", 3),
+)
+
+
 def _deck_visual_rows(
-    conn: sqlite3.Connection, deck_filter: str, deck_params: List[Any]
+    conn: sqlite3.Connection,
+    deck_filter: str,
+    deck_params: List[Any],
+    *,
+    played_only: bool = False,
 ) -> List[Dict[str, Any]]:
+    """Each deck's best-ranked card: nonlands first, then played over opener
+    over drawn, then the most often seen."""
+    sources = _DECK_VISUAL_SOURCES[:1] if played_only else _DECK_VISUAL_SOURCES
+    candidates = "\n              UNION ALL\n".join(
+        f"""              SELECT
+                COALESCE(p.deck_name, '(unknown)') AS deck_name,
+                {alias}.card_id,
+                {alias}.display_name,
+                COALESCE({alias}.type_category, 'Other') AS type_category,
+                {activity} AS activity_count,
+                {rank} AS source_rank
+              FROM participants p
+              JOIN {table} {alias} ON {alias}.participant_id = p.id
+              WHERE p.role = 'player'{deck_filter}
+              GROUP BY p.deck_name, {alias}.card_id, {alias}.display_name, {alias}.type_category"""
+        for table, alias, activity, rank in sources
+    )
     return _dict_rows(
         conn.execute(
             f"""
             WITH candidate_cards AS (
-              SELECT
-                COALESCE(p.deck_name, '(unknown)') AS deck_name,
-                s.card_id,
-                s.display_name,
-                COALESCE(s.type_category, 'Other') AS type_category,
-                SUM(COALESCE(s.played_count, 0)) AS activity_count,
-                1 AS source_rank
-              FROM participants p
-              JOIN game_card_summary s ON s.participant_id = p.id
-              WHERE p.role = 'player'{deck_filter}
-              GROUP BY p.deck_name, s.card_id, s.display_name, s.type_category
-              UNION ALL
-              SELECT
-                COALESCE(p.deck_name, '(unknown)') AS deck_name,
-                h.card_id,
-                h.display_name,
-                COALESCE(h.type_category, 'Other') AS type_category,
-                COUNT(*) AS activity_count,
-                2 AS source_rank
-              FROM participants p
-              JOIN game_opening_hand_cards h ON h.participant_id = p.id
-              WHERE p.role = 'player'{deck_filter}
-              GROUP BY p.deck_name, h.card_id, h.display_name, h.type_category
-              UNION ALL
-              SELECT
-                COALESCE(p.deck_name, '(unknown)') AS deck_name,
-                d.card_id,
-                d.display_name,
-                COALESCE(d.type_category, 'Other') AS type_category,
-                COUNT(*) AS activity_count,
-                3 AS source_rank
-              FROM participants p
-              JOIN game_drawn_cards d ON d.participant_id = p.id
-              WHERE p.role = 'player'{deck_filter}
-              GROUP BY p.deck_name, d.card_id, d.display_name, d.type_category
+{candidates}
             ),
             ranked AS (
               SELECT
@@ -2362,7 +2380,7 @@ def _deck_visual_rows(
             LEFT JOIN cards c ON c.id = r.card_id
             WHERE r.rank = 1
             """,
-            deck_params * 3,
+            deck_params * len(sources),
         )
     )
 
@@ -5978,9 +5996,23 @@ def render_snapshot_json(snapshot: Dict[str, Any]) -> bytes:
 # or a database reset all move the fingerprint; a live_status heartbeat does
 # not, so the cache survives an idle tracker. A short TTL is the safety net
 # for anything the fingerprint cannot see (a repair, a date-window rollover).
+#
+# The event log is part of the key only for the pages that show it (the game
+# page's timeline). It grows with every line of a game in progress, and that
+# game is in no other page until it ends: keyed on it, a visible Overview was
+# rebuilt on every 20-second poll for as long as a game lasted.
+#
+# The TTL grows with what a page costs to build, so the safety-net rebuild of
+# a page that takes seconds (a very long history) stays a small share of one
+# core instead of running once a minute.
 # ---------------------------------------------------------------------------
 
 _RESPONSE_CACHE_TTL_SECONDS = 60.0
+#: A body that took N seconds to build is kept at least this many times N.
+_RESPONSE_CACHE_TTL_PER_BUILD_SECOND = 30.0
+_RESPONSE_CACHE_TTL_MAX_SECONDS = 600.0
+#: Endpoints whose payload includes rows of the event log.
+_EVENT_LOG_PATHS = frozenset({"/api/game"})
 _RESPONSE_CACHE_MAX_ENTRIES = 64
 _response_cache: (
     "collections.OrderedDict[Tuple[str, str, str], Tuple[Tuple[Any, ...], float, bytes]]"
@@ -5992,7 +6024,7 @@ SELECT
   (SELECT COUNT(*) FROM games),
   (SELECT MAX(rowid) FROM games),
   (SELECT MAX(ended_at) FROM games),
-  (SELECT MAX(id) FROM game_events),
+  {event_log},
   (SELECT COUNT(*) FROM participants),
   (SELECT COUNT(deck_archetype) FROM participants),
   (SELECT COUNT(*) FROM game_annotations),
@@ -6005,15 +6037,19 @@ SELECT
 """
 
 
-def _analytics_fingerprint(db_path: Path) -> Optional[Tuple[Any, ...]]:
+def _analytics_fingerprint(
+    db_path: Path, *, event_log: bool = True
+) -> Optional[Tuple[Any, ...]]:
     """Cheap snapshot of "has anything the read endpoints depend on changed?".
     None when it cannot be computed (missing table on an old DB) — callers
-    then skip the cache rather than risk serving stale data."""
+    then skip the cache rather than risk serving stale data. ``event_log``
+    adds the event log's newest row, for the pages that show events."""
+    newest_event = "(SELECT MAX(id) FROM game_events)" if event_log else "NULL"
     try:
         db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
         with sqlite3.connect(db_uri, uri=True) as conn:
             conn.execute("PRAGMA query_only = ON")
-            row = conn.execute(_FINGERPRINT_SQL).fetchone()
+            row = conn.execute(_FINGERPRINT_SQL.format(event_log=newest_event)).fetchone()
         return tuple(row) if row is not None else None
     except (sqlite3.Error, OSError):
         return None
@@ -6023,7 +6059,7 @@ def cached_response(db_path: Path, path: str, query: str, compute: "Callable[[],
     """Return the cached JSON body for (db, path, query) while the analytics
     fingerprint is unchanged and the entry is younger than the TTL; otherwise
     compute, store, and return it."""
-    fingerprint = _analytics_fingerprint(db_path)
+    fingerprint = _analytics_fingerprint(db_path, event_log=path in _EVENT_LOG_PATHS)
     if fingerprint is None:
         return compute()
     key = (str(db_path), path, query)
@@ -6034,8 +6070,13 @@ def cached_response(db_path: Path, path: str, query: str, compute: "Callable[[],
             _response_cache.move_to_end(key)
             return entry[2]
     body = compute()
+    built = time.monotonic()
+    ttl = min(
+        _RESPONSE_CACHE_TTL_MAX_SECONDS,
+        max(_RESPONSE_CACHE_TTL_SECONDS, (built - now) * _RESPONSE_CACHE_TTL_PER_BUILD_SECOND),
+    )
     with _response_cache_lock:
-        _response_cache[key] = (fingerprint, now + _RESPONSE_CACHE_TTL_SECONDS, body)
+        _response_cache[key] = (fingerprint, built + ttl, body)
         _response_cache.move_to_end(key)
         while len(_response_cache) > _RESPONSE_CACHE_MAX_ENTRIES:
             _response_cache.popitem(last=False)

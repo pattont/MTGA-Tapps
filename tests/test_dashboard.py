@@ -3806,6 +3806,71 @@ def test_response_cache_serves_until_analytics_change(tmp_path):
     assert dash.cached_response(empty, "/api/snapshot", "", compute) == b'{"n": 7}'
 
 
+def test_a_game_in_progress_only_invalidates_the_pages_that_show_its_events(tmp_path):
+    """The event log grows with every line of a live game. Keyed on it, the
+    Overview was rebuilt on every poll for as long as a game lasted."""
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    dash.clear_response_cache()
+    calls = {"/api/snapshot": 0, "/api/games": 0, "/api/deck": 0, "/api/game": 0}
+
+    def ask(path):
+        def compute():
+            calls[path] += 1
+            return b"{}"
+
+        return dash.cached_response(db_path, path, "", compute)
+
+    for path in calls:
+        ask(path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "insert into game_events (session_id, event_time, event_type, text) "
+            "values ('session-1', '2026-06-05T00:00:00', 'draw', 'You draw a card')"
+        )
+    for path in calls:
+        ask(path)
+
+    assert calls == {"/api/snapshot": 1, "/api/games": 1, "/api/deck": 1, "/api/game": 2}
+    dash.clear_response_cache()
+
+
+def test_response_cache_keeps_a_slow_page_longer(tmp_path, monkeypatch):
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    dash.clear_response_cache()
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(dash.time, "monotonic", lambda: clock["now"])
+    built = []
+
+    def page(seconds):
+        def compute():
+            built.append(seconds)
+            clock["now"] += seconds
+            return b"{}"
+
+        return compute
+
+    dash.cached_response(db_path, "/api/snapshot", "fast", page(0.2))
+    dash.cached_response(db_path, "/api/snapshot", "slow", page(5.0))
+    clock["now"] += 90.0
+    # The quick page's minute has passed; the five-second page is kept longer.
+    dash.cached_response(db_path, "/api/snapshot", "fast", page(0.2))
+    dash.cached_response(db_path, "/api/snapshot", "slow", page(5.0))
+    assert built == [0.2, 5.0, 0.2]
+    clock["now"] += 90.0
+    dash.cached_response(db_path, "/api/snapshot", "slow", page(5.0))
+    assert built == [0.2, 5.0, 0.2, 5.0]
+    # Never longer than the cap, however slow the page.
+    dash.cached_response(db_path, "/api/snapshot", "glacial", page(120.0))
+    clock["now"] += dash._RESPONSE_CACHE_TTL_MAX_SECONDS + 1.0
+    dash.cached_response(db_path, "/api/snapshot", "glacial", page(120.0))
+    assert built[-2:] == [120.0, 120.0]
+    dash.clear_response_cache()
+
+
 def test_combat_profile_covers_every_deck_not_just_the_first_forty(tmp_path):
     """A player with many small decks lost the Profile and combat columns on
     every deck past the 40th. The Decks table must also include history beyond
