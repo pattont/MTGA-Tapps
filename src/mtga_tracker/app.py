@@ -10,6 +10,7 @@ import webbrowser
 from pathlib import Path
 from typing import Callable, Optional, TextIO
 
+from . import app_nap
 from .analytics import AnalyticsStore
 from .collection_export import COLLECTION_SCAN_FLAG
 from .dashboard import DEFAULT_DB_PATH, create_dashboard_server
@@ -419,6 +420,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     try:
+        # A menu-bar app with no window is what macOS naps: the dashboard and
+        # the log reader then run several times slower (see app_nap.py).
+        app_nap.stay_awake()
         if args.no_gui:
             return _run_without_gui(args)
 

@@ -68,6 +68,13 @@ Primary code paths:
   the tracker thread and the dashboard server, with or without the GUI (`--no-gui`). It holds
   the process-wide `single_instance.py` guard before starting any of them: a named mutex on
   Windows and a per-user advisory lock on macOS/Linux. Deck Finder mode bypasses this guard.
+  Once it holds the guard it calls `app_nap.stay_awake()`: macOS naps a menu-bar app with
+  no window (every thread drops to the background band and the efficiency cores, which made
+  each dashboard page about five times slower inside the app than the same code in a
+  terminal). The call is `NSProcessInfo.beginActivityWithOptions:reason:` through ctypes,
+  with idle system sleep allowed, held for the life of the process; any failure leaves the
+  app as it was. Time dashboard work in the running app, not only in a script: check the
+  process with `ps -o pri= -p <pid>` (4 is napped, 31 or more is normal).
 - `src/mtga_tracker/menu_app.py`: PyQt6 menu-bar/tray controller. Its "Live Scoreboard"
   item opens the dashboard's `#/live`; the old Qt log window is a debug fallback. GUI-only;
   guarded by the `gui` extra and skipped in headless test runs.
@@ -830,6 +837,7 @@ venv/bin/python -m mtga_tracker.payload_dump "<game_id>"
 venv/bin/python scripts/build_scaled_db.py --factor 10 --out <copy.sqlite3>   # reads the source read-only
 venv/bin/python scripts/dashboard_payloads.py dump --db <copy.sqlite3> --out <dir> [--src <other checkout>/src]
 venv/bin/python scripts/dashboard_payloads.py diff <dir-before> <dir-after>    # must print "0 differ"
+# (a dump's "last N days" count back from the newest game in the copy, so both sides agree whenever they run)
 
 # Frontend
 (cd ui && npm ci)
@@ -853,7 +861,6 @@ UI changes require vitest, tsc, lint, and a fresh `npm run build` (the dashboard
   tag-derived package version in the artifact name. Never change the installer's `AppId`
   GUID — it is what makes newer setups upgrade in place.
 - The release workflow's `manifest` job (tags only, after both builds) writes `latest.json`,
-# (a dump's "last N days" count back from the newest game in the copy, so both sides agree whenever they run)
   signs it with the `UPDATE_SIGNING_KEY` secret (Ed25519; the matching public key is
   embedded in `updater.py`, add a second key before rotating), writes `SHA256SUMS`, and
   attaches them to the same draft; the macOS leg also publishes `MTGA-Tracker-<ver>-macos.zip`

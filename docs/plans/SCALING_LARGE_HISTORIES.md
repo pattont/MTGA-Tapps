@@ -1,8 +1,8 @@
 # Scaling to tens of thousands of games
 
-Status: Steps 0 to 4 are built on the `scaling-large-histories` branch
-(2026-11-09). Steps 0 to 3 passed a live check on the dev Mac; Step 4 (the
-Overview's last second) and Windows have not been run in the real app yet.
+Status: Steps 0 to 5 are built on the `scaling-large-histories` branch
+(2026-11-10). Steps 0 to 4 passed a live check on the dev Mac; Step 5 (the
+macOS App Nap opt-out) and Windows have not been run in the real app yet.
 What is left is listed under "Still to do".
 The question this answers: what happens to a player who logs 2,000–3,000
 ranked games a month, a year from now?
@@ -230,6 +230,9 @@ What changed:
   (`COALESCE(stored column, live subquery)`), so the numbers cannot differ.
   `RULES_VERSION` is 2: the pass re-stores every row after the update, 9 s in
   the background at 38,000 games, and pages compute live until it is done.
+  Pages opened during the pass are not held up by it: on a 38,520-game copy a
+  7-day Overview took 146 ms alone and 145 to 184 ms while the pass ran in
+  the same process.
 - **Games first, everywhere.** Step 1 fixed the join order for the card
   tables. Nine more Overview statements still started from every player row
   and looked its game up, so "last 7 days" joined the whole history for each.
@@ -251,6 +254,29 @@ the same moment (two tabs, a poll during a navigation), and holds at most
 64 MB of bodies, oldest dropped first (All Games is 22 MB at 38,000 games;
 the old limit was 64 bodies of any size).
 
+### Step 5 — the app itself was running throttled on macOS
+
+Every number above was measured by calling the dashboard's functions from a
+terminal. In the running app on the dev Mac (M4 Max, 2026-11-10) the same
+Overview took 500 ms against 95 ms from a terminal, on the same database with
+the same code, and all of it was CPU time inside SQLite. Every thread of the
+app was at scheduling priority 4, the background band: macOS had napped it,
+as it does a menu-bar app with no window, and its threads ran on the
+efficiency cores. A terminal process forced into the same band
+(`taskpolicy -b`) slowed the same way (96 ms to 350 ms). At 38,000 games that
+factor would turn a 2.4 s Overview into more than 10 s.
+
+`app_nap.stay_awake()` now runs at launch: it begins an
+`NSProcessInfo` activity (user initiated, idle system sleep allowed), the
+documented way out of App Nap, and holds it for the life of the process. It
+is not yet confirmed in the running app: after the next restart
+`ps -o pri= -p <pid>` should read 31 or more and an uncached Overview should
+take about what the terminal measures. A windowless Qt probe was not napped
+within two minutes, so the fix could not be shown on anything but the app.
+
+Windows has no App Nap; the live check there should still compare a page's
+time in the app with the numbers above.
+
 ## Still to do
 
 In the order they are worth doing.
@@ -266,9 +292,9 @@ In the order they are worth doing.
    `0 differ` with the table full against emptied. After the next restart
    (1,277 games): the four indexes were there and the running dashboard
    answered card pages and searches in milliseconds.
-2. **Live check of Step 4** on the Mac: after the restart every
-   `game_derived` row is at `rules_version` 2 with its summary columns
-   filled, and the pages show the same numbers.
+2. **Live check of Step 5** on the Mac (see above). Step 4 passed its own on
+   2026-11-10: after the restart all 1,284 `game_derived` rows were at
+   `rules_version` 2 with their summary columns filled, none missing.
 3. **The Overview below 2 s at 38,000 games**, if it matters. No single
    statement is left to fix; the cost is forty statements that each read the
    games in view. Two ways on: build one pre-joined temporary table of the
