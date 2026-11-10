@@ -74,7 +74,7 @@ Primary code paths:
   terminal). The call is `NSProcessInfo.beginActivityWithOptions:reason:` through ctypes,
   with idle system sleep allowed, held for the life of the process; any failure leaves the
   app as it was. Time dashboard work in the running app, not only in a script: check the
-  process with `ps -o pri= -p <pid>` (4 is napped, 31 or more is normal).
+  process with `ps -o pri= -p <pid>` (4 is napped; the app holds 20 with the opt-out, a terminal script 31).
 - `src/mtga_tracker/menu_app.py`: PyQt6 menu-bar/tray controller. Its "Live Scoreboard"
   item opens the dashboard's `#/live`; the old Qt log window is a debug fallback. GUI-only;
   guarded by the `gui` extra and skipped in headless test runs.

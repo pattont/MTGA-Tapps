@@ -1,9 +1,8 @@
 # Scaling to tens of thousands of games
 
 Status: Steps 0 to 6 are built on the `scaling-large-histories` branch
-(2026-11-10). Steps 0 to 4 passed a live check on the dev Mac; Step 5 (the
-macOS App Nap opt-out), Step 6 and Windows have not been run in the real app
-yet.
+(2026-11-10). Steps 0 to 6 passed a live check on the dev Mac; Windows has
+not been run in the real app yet.
 What is left is listed under "Still to do".
 The question this answers: what happens to a player who logs 2,000–3,000
 ranked games a month, a year from now?
@@ -269,11 +268,16 @@ factor would turn a 2.4 s Overview into more than 10 s.
 
 `app_nap.stay_awake()` now runs at launch: it begins an
 `NSProcessInfo` activity (user initiated, idle system sleep allowed), the
-documented way out of App Nap, and holds it for the life of the process. It
-is not yet confirmed in the running app: after the next restart
-`ps -o pri= -p <pid>` should read 31 or more and an uncached Overview should
-take about what the terminal measures. A windowless Qt probe was not napped
-within two minutes, so the fix could not be shown on anything but the app.
+documented way out of App Nap, and holds it for the life of the process.
+
+Checked in the running app after a restart (2026-11-10, read-only, 5 to 15
+minutes after launch): every thread at priority 20 instead of 4, and an
+uncached Overview over HTTP in 128 ms against 123 ms for a direct call from a
+terminal (before: 500 ms against 95 ms). Priority 20 is the utility band, not
+a terminal process's 31: the app keeps full speed on an idle machine and
+still gives way to Arena. A windowless Qt probe was never napped within two
+minutes, so only the app itself could show this. Not yet seen: the same check
+after the app has sat for hours.
 
 Windows has no App Nap; the live check there should still compare a page's
 time in the app with the numbers above.
@@ -317,9 +321,11 @@ In the order they are worth doing.
    `0 differ` with the table full against emptied. After the next restart
    (1,277 games): the four indexes were there and the running dashboard
    answered card pages and searches in milliseconds.
-2. **Live check of Step 5** on the Mac (see above). Step 4 passed its own on
-   2026-11-10: after the restart all 1,284 `game_derived` rows were at
-   `rules_version` 2 with their summary columns filled, none missing.
+2. **Step 5 once more after the Mac app has run for hours** (it passed minutes
+   after launch, see above). Step 4 passed its own on 2026-11-10: after the
+   restart all 1,284 `game_derived` rows were at `rules_version` 2 with their
+   summary columns filled, none missing. Step 6 in the running app: searches
+   answered in 4 ms.
 3. **The Overview below 2 s at 38,000 games**, if it matters. No single
    statement is left to fix; the cost is forty statements that each read the
    games in view. Two ways on: build one pre-joined temporary table of the
@@ -330,10 +336,26 @@ In the order they are worth doing.
 4. **All Games is 22 MB at 37,800 games**, about 600 bytes a game, nearly all
    of it rendered. It now builds in a second, so the size is the cost: page it
    on the server (sorting and search then move there too) or accept it.
+   Measured 2026-11-10 on a 38,520-game body (23.5 MB): the browser's side is
+   small (Node 22: parsed in 61 ms into 27 MB of objects, a sort by deck name
+   20 ms, a text filter 6 ms), and the page shows 30 rows whatever the total.
+   The size only costs on a network; gzip takes the body to 1.7 MB, which is
+   the answer if the dashboard is ever served to a second PC.
 5. **If the Overview must open instantly at any size**: serve the last built
    body at once and rebuild behind the page. That changes what a user sees
    (numbers up to one refresh old after a game), so it is a product decision,
-   not an optimisation.
-6. `game_events` (`visible = 1`) is the one table that still grows with the
-   history, roughly 1.7 GB at 37k games; the [raw log archive](RAW_LOG_ARCHIVE.md)
-   plan decides whether the originals replace any of it.
+   not an optimisation. It only helps a view the running app has built
+   before: an open page already keeps its numbers on screen while a refresh
+   runs, and a filter never opened has nothing to show. Rebuilding the views
+   last asked for when a game ends (as search is warmed) gives the same
+   instant open with no stale numbers.
+6. `game_events` is the one table that still grows with the history. In the
+   1,284-game database (2026-11-10) the table and its two indexes are 62 MB of
+   109 MB, about 395 bytes a row. A game recorded with replay capture holds
+   about 200 rows (half of them silent replay rows) against 110 for an older
+   game, so a history recorded from now on grows by roughly 70 to 80 KB a
+   game for events: near 3 GB at 38,000 games, not the 1.7 GB the scaled
+   copies of this mixed history showed. No list page reads it; it costs disk
+   and backup time (33 s for a 3 GB file). The
+   [raw log archive](RAW_LOG_ARCHIVE.md) plan decides whether the originals
+   replace any of it.

@@ -12,6 +12,7 @@
 - **No slowdown while you play.** An Overview left open no longer recalculates every 20 seconds during a game.
 - **Merging a big backup takes seconds, not minutes.** Adding 37,000 games from another computer's backup took over 8 minutes in our tests; it now takes about half a minute, with the same result.
 - **Less memory with a long history.** The dashboard keeps recently opened pages ready to show again. That store is now limited to 64 MB however large your pages grow, and a page opened in two tabs at once is built once.
+- **macOS: the dashboard runs at full speed.** macOS treated the tracker as an idle background app and slowed it down, so every dashboard page took about four times as long as it should. The tracker now tells macOS it is working. Your Mac still sleeps as usual.
 - **Nothing to do after updating.** The first launch prepares your existing games in the background (a few seconds for a very long history) while tracking starts right away. Every page shows the same numbers as before.
 
 ### Fixes
