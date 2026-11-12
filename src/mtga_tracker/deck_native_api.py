@@ -165,7 +165,7 @@ def _card_name(resolve, arena_id):
 
 
 def _public_roster(report):
-    dt.roster_ids(report)
+    dt.roster_ids(report, fresh=False)  # display only
     pile_names = {str(k): v for k, v in (report.get("pile_names") or _DEFAULT_PILES).items()}
     art_index, resolve = _art_lookup()
     tiles = {d["arena_id"]: _roster_art_id(d, art_index) for d in report["decks"]}
@@ -304,7 +304,7 @@ def execute(db_path, action, selections, request_id, progress, cancelled=lambda:
             # A plain load reads Arena's own copy; jobs that change or back up
             # decks start from a server-refreshed list.
             report = bridge.roster(refresh=action != "connect")
-            dt.roster_ids(report)
+            dt.roster_ids(report, fresh=action != "connect")
             mark(f"roster of {len(report['decks'])}")
             arena = report.get("timing_ms") or {}
             if arena:
