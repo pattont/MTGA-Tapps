@@ -25,7 +25,10 @@ dependencies = [
     "packaging>=23",
     "rich>=13.7,<14.0",
     "emoji>=2.14,<3.0",  # Unicode-aware creator deck-title cleanup (offline)
-    "frida==17.9.0; platform_system == 'Darwin' or platform_system == 'Windows'", # Native Arena deck adapter
+    # Native Arena deck adapter. macOS 27.2 broke attaching with Frida 17.9.0 (TransportError:
+    # timeout); 17.26.2 attaches. Windows (Mono) stays on the version validated there.
+    "frida==17.26.2; platform_system == 'Darwin'",
+    "frida==17.9.0; platform_system == 'Windows'",
 ]
 
 [project.optional-dependencies]
