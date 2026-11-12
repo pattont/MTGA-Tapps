@@ -459,7 +459,7 @@ Primary code paths:
   uses hardware faults for null checks, so `mono_runtime_invoke` must keep Frida's
   `exceptions: 'propagate'`; `mono_field_set_value` takes a reference value
   itself but a value type by pointer; and Mono's invoke takes a `Nullable<T>`
-  argument as a boxed `T` or null, where IL2CPP takes the raw struct. The bridge attaches to `MTGA` or `MTGA.exe`. Frida is pinned for Mac and Windows and lazily imported; the asset and
+  argument as a boxed `T` or null, where IL2CPP takes the raw struct. The bridge attaches to `MTGA` or `MTGA.exe`. Frida is pinned per OS (macOS 17.26.2, Windows 17.9.0) and lazily imported. A macOS update can break attaching: every job then fails with the generic "lost its connection" message and stderr shows `frida.TransportError: timeout was reached` at `device.attach` (macOS 27.2 did this to 17.9.0). Test a newer Frida in a scratch venv with a read-only `nb.attach()` + `roster(refresh=False)` before suspecting the adapter; the asset and
   extension are included in both platforms' packaging configuration.
   Check the active-game row before attachment and between transfers, and check the
   live Decks controller, same native service and authenticated account for writes.
