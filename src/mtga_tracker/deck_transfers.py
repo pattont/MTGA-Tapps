@@ -168,10 +168,12 @@ def pending(conn, account=None):
     ]
 
 
-def roster_ids(report):
+def roster_ids(report, fresh=True):
+    """The roster's deck ids. Anything that changes Arena needs a server-refreshed
+    roster; a plain Load/Rescan (``fresh=False``) only shows Arena's own copy."""
     decks = report.get("decks")
     if (
-        report.get("roster_refreshed") is not True
+        (fresh and report.get("roster_refreshed") is not True)
         or not isinstance(decks, list)
         or len(decks) > 2000
     ):
