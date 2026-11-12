@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.8
+## 0.7.7.1
 
 **Deck Manager can reach Arena again on macOS 27.2.**
 
