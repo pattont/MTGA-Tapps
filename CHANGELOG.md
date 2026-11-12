@@ -4,7 +4,7 @@
 
 **Deck Manager works with Arena again.**
 
-- **Fixed:** on macOS 27.2, Load Arena decks, Rescan, Add to Arena, backups and moves all failed with "Tapps Tracker lost its connection to Arena." macOS 27.2 changed how one app may attach to another; the deck connection library is updated for it. Windows is unchanged.
+- **Fixed:** on macOS 27.2, Load Arena decks, Rescan, Add to Arena, backups and moves all failed with "Tapps Tracker lost its connection to Arena." macOS 27.2 changed how one app may attach to another; Tapps Tracker now uses an updated connection library that works with it. (This one affected Mac only.)
 - **Fixed:** Load Arena decks and Rescan Arena failed with "A fresh Arena roster is required" once Arena had your decks loaded (since 0.7.6, on Mac and Windows). Changes to your decks in Arena still start from a list fetched from Arena's server.
 
 ## 0.7.7
