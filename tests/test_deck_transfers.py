@@ -64,7 +64,8 @@ class Arena:
     def roster(self, refresh=True):
         self.roster_refreshes.append(refresh)
         return {
-            "roster_refreshed": True,
+            # As arena_decks.js reports it: a plain read of Arena's own copy is not refreshed.
+            "roster_refreshed": bool(refresh),
             "decks": copy.deepcopy(list(self.decks.values())),
             "limit": 100,
             "limit_reached": self.full,
@@ -1272,3 +1273,11 @@ def test_a_job_that_stops_early_still_refreshes_the_saved_arena_status(tmp_path,
         api.execute(path, "backup", [], str(uuid.uuid4()), lambda _: None)
     assert api._STATUS[key]["limit_reached"] is False
     assert api._STATUS[key]["deck_screen_open"] is False
+
+
+def test_only_a_plain_load_accepts_arenas_own_unrefreshed_roster():
+    arena = Arena()
+    report = arena.roster(refresh=False)
+    assert dt.roster_ids(report, fresh=False) == [arena.source["arena_id"]]
+    with pytest.raises(dm.DeckManagerError, match="fresh Arena roster"):
+        dt.roster_ids(report)
