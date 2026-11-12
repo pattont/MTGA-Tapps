@@ -638,6 +638,30 @@ copied onward only by whatever sync client owns that folder — see
 [Backup & restore](#backup--restore). It carries your Deck AI key unless you
 untick *Include API keys*.
 
+## Code signing policy
+
+Windows releases are moving to free code signing provided by
+[SignPath.io](https://about.signpath.io/), certificate by
+[SignPath Foundation](https://signpath.org/). The project has applied; until
+signing is in place, Windows builds are unsigned and Windows may warn about
+them (see [QUICKSTART.md](QUICKSTART.md)). macOS builds carry the project's
+own self-signed signature and are not notarized by Apple.
+
+- **What gets signed:** only the Windows release files built from this
+  repository by its [GitHub Actions release workflow](.github/workflows/release.yml):
+  `MTGA Tracker.exe`, the overlay's `tapps-overlay.exe` and
+  `MTGA-Tracker-<version>-setup.exe`. Third-party libraries they include
+  (the Python runtime, Qt, Frida) are shipped as their projects publish them.
+- **Committers and reviewers:** [Travis Patton](https://github.com/pattont).
+  Changes from anyone else arrive as pull requests and are reviewed before
+  merging.
+- **Approvers:** [Travis Patton](https://github.com/pattont) approves each
+  release's signing request by hand, after checking the draft release built
+  for that tag.
+- **Privacy:** see [Data & privacy](#data--privacy). The app has no telemetry
+  and no account; its network requests are the ones listed there, each made
+  for the feature that needs it.
+
 ## The dashboard
 
 `mtga-tracker-app` serves it and opens it in your browser automatically unless
