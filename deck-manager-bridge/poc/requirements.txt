@@ -1,1 +1,2 @@
-frida==17.9.0
+frida==17.26.2; platform_system == 'Darwin'
+frida==17.9.0; platform_system == 'Windows'

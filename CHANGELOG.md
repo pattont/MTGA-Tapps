@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.8
+
+**Deck Manager can reach Arena again on macOS 27.2.**
+
+- **Fixed:** on macOS 27.2, Load Arena decks, Rescan, Add to Arena, backups and moves all failed with "Tapps Tracker lost its connection to Arena." macOS 27.2 changed how one app may attach to another; the deck connection library is updated for it. Windows is unchanged.
+
 ## 0.7.7
 
 **Six new Stream Kit widgets, a faster and lighter tracker, and fixes for dates, collection export and Leyline replays.**
