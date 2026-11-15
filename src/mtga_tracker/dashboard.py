@@ -33,7 +33,7 @@ from typing import (
     Set,
     Tuple,
 )
-from urllib.parse import parse_qs, quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 from .draw_quality import (
     deck_land_stats,
@@ -97,6 +97,209 @@ def _in_chunks(values: Iterable[Any]) -> Iterator[Tuple[str, List[Any]]]:
     for start in range(0, len(items), _SQL_IN_CHUNK):
         chunk = items[start : start + _SQL_IN_CHUNK]
         yield ",".join("?" * len(chunk)), chunk
+
+
+#: With at least this many games recorded, a page runs its independent
+#: statements side by side (``_PageReads``). The whole history counts, not
+#: the games in view: a filtered Overview still reads every deck's cards.
+#: Below it the page is built exactly as it always was.
+_SIDE_BY_SIDE_MIN_GAMES = 2000
+#: Statements of one page running at once, the request's own thread included.
+#: Four took the Overview at 38,000 games from 2.7 s to about 0.85 s; five
+#: and six were no faster (the thread that takes rows into Python sets the
+#: pace by then).
+_SIDE_BY_SIDE_READS = 4
+#: Page cache of each connection of a side-by-side page, in KiB. Every
+#: statement reads the games in view again, and with SQLite's default 2 MB a
+#: long history's statements push those pages out for each other.
+_SIDE_BY_SIDE_CACHE_KIB = 32 * 1024
+
+
+#: ``on`` is set on a thread whose page build nobody is waiting for (a rebuild
+#: after a game, a page made ready at launch).
+_unhurried = threading.local()
+
+
+def _side_by_side_reads(games: int) -> int:
+    """How many of a page's statements run at once in a history of ``games``
+    games: one (in line, as written) for a normal history, for a machine
+    with one or two cores, and for a build nobody is waiting for, which
+    should not take four cores from a game that is being played."""
+    if games < _SIDE_BY_SIDE_MIN_GAMES or getattr(_unhurried, "on", False):
+        return 1
+    return max(1, min(_SIDE_BY_SIDE_READS, (os.cpu_count() or 1) - 1))
+
+
+class _Read:
+    """One read handed to ``_PageReads``: ``result()`` is what it returned,
+    or raises what it raised."""
+
+    __slots__ = ("_reads", "_fn", "_args", "_done", "_value", "_error")
+
+    def __init__(self, reads: "_PageReads", fn: Callable[..., Any], args: Tuple[Any, ...]) -> None:
+        self._reads = reads
+        self._fn = fn
+        self._args = args
+        self._done = threading.Event()
+        self._value: Any = None
+        self._error: Optional[BaseException] = None
+
+    def _run(self, conn: sqlite3.Connection) -> None:
+        try:
+            self._value = self._fn(conn, *self._args)
+        except BaseException as error:  # handed to whoever asks for the result
+            self._error = error
+        self._done.set()
+
+    def _fail(self, error: BaseException) -> None:
+        self._error = error
+        self._done.set()
+
+    def result(self) -> Any:
+        # The asking thread works through the queue instead of only waiting.
+        while not self._done.is_set():
+            waiting = self._reads._take()
+            if waiting is None:
+                self._done.wait()
+                break
+            waiting._run(self._reads._conn)
+        if self._error is not None:
+            raise self._error
+        return self._value
+
+
+class _PageReads:
+    """Runs the independent reads of one page, side by side on a long history.
+
+    A page is dozens of statements that each read the games in view and do
+    not depend on one another. SQLite runs a statement without holding the
+    interpreter, so on several read-only connections they overlap: the same
+    statements and the same rows, in a fraction of the time.
+
+    ``call(fn, *args)`` runs ``fn(conn, *args)`` and ``rows`` / ``row`` run
+    one statement; each returns a ``_Read`` at once. Until ``expect`` is told
+    of a long history the work is done right there on the caller's
+    connection, in the order it is written, and raises there. After it, a
+    read is queued for the other threads, each with a connection of its own,
+    and for the calling thread whenever it waits in ``result()``;
+    ``first=True`` puts a read known to be long at the head of the queue.
+
+    A function handed over runs on another thread and another connection:
+    it must read only the database and the values passed to it, never state
+    of the calling thread (``_games_filter`` reports "last N days" windows
+    per thread, so build the filter before, not inside).
+    """
+
+    def __init__(self, db_uri: str, conn: sqlite3.Connection) -> None:
+        self._uri = db_uri
+        self._conn = conn
+        self._queue: "collections.deque[_Read]" = collections.deque()
+        self._wake = threading.Condition()
+        self._closed = False
+        self._worker_conns: List[sqlite3.Connection] = []
+        self._threads: List[threading.Thread] = []
+
+    def __enter__(self) -> "_PageReads":
+        return self
+
+    def expect(self, games: int) -> None:
+        """Tell it how many games the history holds, before the first read:
+        enough of them and the reads from here on run side by side."""
+        if self._threads:
+            return
+        reads = _side_by_side_reads(games)
+        if reads < 2:
+            return
+        self._conn.execute(f"PRAGMA cache_size = -{_SIDE_BY_SIDE_CACHE_KIB}")
+        self._threads = [
+            threading.Thread(target=self._work, name=f"dashboard-read-{number}", daemon=True)
+            for number in range(reads - 1)
+        ]
+        for thread in self._threads:
+            thread.start()
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        with self._wake:
+            self._closed = True
+            abandoned = list(self._queue)
+            self._queue.clear()
+            if exc_type is not None:
+                # The page failed: stop what the other threads are reading.
+                for conn in self._worker_conns:
+                    conn.interrupt()
+            self._wake.notify_all()
+        for read in abandoned:
+            read._fail(RuntimeError("the page was finished before this read ran"))
+        for thread in self._threads:
+            thread.join()
+
+    def call(self, fn: Callable[..., Any], *args: Any, first: bool = False) -> _Read:
+        read = _Read(self, fn, args)
+        if not self._threads:
+            read._run(self._conn)
+            if read._error is not None:
+                raise read._error
+            return read
+        with self._wake:
+            if first:
+                self._queue.appendleft(read)
+            else:
+                self._queue.append(read)
+            self._wake.notify()
+        return read
+
+    def rows(self, sql: str, params: Iterable[Any] = (), *, first: bool = False) -> _Read:
+        """The statement's rows as dicts (``_dict_rows``)."""
+        return self.call(_read_dict_rows, sql, tuple(params), first=first)
+
+    def row(self, sql: str, params: Iterable[Any] = (), *, first: bool = False) -> _Read:
+        """The statement's first row."""
+        return self.call(_read_first_row, sql, tuple(params), first=first)
+
+    def _take(self) -> Optional[_Read]:
+        with self._wake:
+            return self._queue.popleft() if self._queue else None
+
+    def _work(self) -> None:
+        conn: Optional[sqlite3.Connection] = None
+        try:
+            while True:
+                with self._wake:
+                    while not self._queue and not self._closed:
+                        self._wake.wait()
+                    if self._closed:
+                        return
+                    read = self._queue.popleft()
+                if conn is None:
+                    try:
+                        conn = sqlite3.connect(self._uri, uri=True)
+                        conn.execute("PRAGMA query_only = ON")
+                        conn.execute(f"PRAGMA cache_size = -{_SIDE_BY_SIDE_CACHE_KIB}")
+                    except BaseException as error:
+                        if conn is not None:
+                            conn.close()
+                            conn = None
+                        read._fail(error)
+                        continue
+                    with self._wake:
+                        self._worker_conns.append(conn)
+                read._run(conn)
+        finally:
+            if conn is not None:
+                with self._wake:
+                    if conn in self._worker_conns:
+                        self._worker_conns.remove(conn)
+                conn.close()
+
+
+def _read_dict_rows(
+    conn: sqlite3.Connection, sql: str, params: Tuple[Any, ...]
+) -> List[Dict[str, Any]]:
+    return _dict_rows(conn.execute(sql, params))
+
+
+def _read_first_row(conn: sqlite3.Connection, sql: str, params: Tuple[Any, ...]) -> Any:
+    return conn.execute(sql, params).fetchone()
 
 
 def _deck_name_filters(
@@ -2847,6 +3050,68 @@ _NEWEST_GAMES_CTE = """WITH newest AS (
                 )"""
 
 
+def _trend_range(
+    deck: Optional[str],
+    fmt: Optional[str],
+    trend_days: Optional[int],
+    trend_games: Optional[int],
+    db_path: Path,
+) -> Tuple[str, List[Any], str]:
+    """``(where, params, limit)`` of the Win Rate Trend's own range: the last
+    N days (0: all time) or the last N games, plus the 29 before them that
+    fill the first point's rolling window. Deck and format still apply; the
+    page's period does not."""
+    where, params = _games_filter(
+        deck,
+        fmt,
+        None if trend_games is not None else (trend_days or None),
+        db_path=db_path,
+    )
+    return where, params, (f"LIMIT {trend_games + 29}" if trend_games is not None else "")
+
+
+def _trend_rows(
+    conn: sqlite3.Connection, where: str, params: List[Any], limit: str
+) -> List[Dict[str, Any]]:
+    """The decided games the trend is drawn from, oldest first."""
+    rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              g.id AS game_id,
+              COALESCE(g.started_at, g.ended_at) AS started_at,
+              g.outcome
+            FROM games g
+            WHERE {where} AND g.outcome IN ('win', 'loss')
+            ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
+            {limit}
+            """,
+            params,
+        )
+    )
+    rows.reverse()
+    return rows
+
+
+def snapshot_trend(
+    db_path: Path = DEFAULT_DB_PATH,
+    deck: Optional[str] = None,
+    fmt: Optional[str] = None,
+    trend_days: Optional[int] = None,
+    trend_games: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """``dashboard_snapshot(...)["trend"]`` for a trend range, without the
+    rest of the Overview (which a trend range does not change)."""
+    db_path = Path(db_path).expanduser()
+    if not db_path.is_file():
+        raise FileNotFoundError(f"Dashboard database not found: {db_path}")
+    where, params, limit = _trend_range(deck, fmt, trend_days, trend_games, db_path)
+    db_uri = db_path.resolve().as_uri() + "?mode=ro"
+    with sqlite3.connect(db_uri, uri=True) as conn:
+        conn.execute("PRAGMA query_only = ON")
+        return _trend_rows(conn, where, params, limit)
+
+
 def dashboard_snapshot(
     db_path: Path = DEFAULT_DB_PATH,
     deck: Optional[str] = None,
@@ -2871,23 +3136,14 @@ def dashboard_snapshot(
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
     where, params = _games_filter(deck, fmt, days, since, until, db_path=db_path)
-    trend_where, trend_params = (
-        _games_filter(
-            deck,
-            fmt,
-            None if trend_games is not None else (trend_days or None),
-            db_path=db_path,
+    if trend_days is not None or trend_games is not None:
+        trend_where, trend_params, trend_limit = _trend_range(
+            deck, fmt, trend_days, trend_games, db_path
         )
-        if trend_days is not None or trend_games is not None
-        else (where, params)
-    )
-    trend_limit = (
-        f"LIMIT {trend_games + 29}"
-        if trend_games is not None
-        else ("" if trend_days is not None else "LIMIT 200")
-    )
+    else:
+        trend_where, trend_params, trend_limit = where, params, "LIMIT 200"
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
-    with sqlite3.connect(db_uri, uri=True) as conn:
+    with sqlite3.connect(db_uri, uri=True) as conn, _PageReads(db_uri, conn) as reads:
         conn.execute("PRAGMA query_only = ON")
         summary = conn.execute(
             f"""
@@ -2902,6 +3158,11 @@ def dashboard_snapshot(
             """,
             params,
         ).fetchone()
+        # From here the statements are independent of one another; on a long
+        # history they run side by side (``_PageReads``). ``*_read`` is a
+        # statement on its way, collected at the end.
+        reads.expect(int(conn.execute("SELECT COUNT(*) FROM games").fetchone()[0] or 0))
+        player_name_read = reads.call(_dominant_player_name)
         deck_rows = _dict_rows(
             conn.execute(
                 f"""
@@ -2921,10 +3182,9 @@ def dashboard_snapshot(
                 params,
             )
         )
-        format_rows, midweek_rows = _grouped_format_rows(conn, where, params)
-        play_draw_rows = _dict_rows(
-            conn.execute(
-                f"""
+        format_rows_read = reads.call(_grouped_format_rows, where, params)
+        play_draw_rows_read = reads.rows(
+            f"""
                 SELECT
                   CASE p.went_first WHEN 1 THEN 'On the play' WHEN 0 THEN 'On the draw' ELSE 'Unknown' END AS play_draw,
                   COUNT(*) AS games,
@@ -2938,12 +3198,10 @@ def dashboard_snapshot(
                 GROUP BY p.went_first
                 ORDER BY play_draw
                 """,
-                params,
-            )
+            params,
         )
-        deck_play_draw_rows = _dict_rows(
-            conn.execute(
-                f"""
+        deck_play_draw_rows_read = reads.rows(
+            f"""
                 SELECT
                   COALESCE(p.deck_name, '(unknown)') AS deck_name,
                   CASE p.went_first WHEN 1 THEN 'On the play' WHEN 0 THEN 'On the draw' ELSE 'Unknown' END AS play_draw,
@@ -2957,14 +3215,12 @@ def dashboard_snapshot(
                 GROUP BY p.deck_name, p.went_first
                 ORDER BY deck_name, play_draw
                 """,
-                params,
-            )
+            params,
         )
         # The 100 newest games are picked first: joining every game's opener
         # and draws and then keeping 100 read the whole history's cards.
-        draw_quality_rows = _dict_rows(
-            conn.execute(
-                f"""
+        draw_quality_rows_read = reads.rows(
+            f"""
                 WITH newest AS (
                   SELECT g.id
                   FROM games g
@@ -3009,27 +3265,22 @@ def dashboard_snapshot(
                 ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
                 LIMIT 100
                 """,
-                params,
-            )
+            params,
         )
-        opponents_total = int(
-            conn.execute(
-                f"""
+        opponents_total_read = reads.row(
+            f"""
                 SELECT COUNT(DISTINCT o.display_name)
                 FROM games g
                 CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
                 CROSS JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
                 WHERE {where} AND o.display_name IS NOT NULL AND o.display_name NOT IN ('', 'Opponent')
                 """,
-                params,
-            ).fetchone()[0]
-            or 0
+            params,
         )
         # Match-level record: a Bo3 counts once (you faced them once), with
         # the match decided by its games — not three separate rows of record.
-        top_opponent_rows = _dict_rows(
-            conn.execute(
-                f"""
+        top_opponent_rows_read = reads.rows(
+            f"""
                 SELECT
                   opponent_name,
                   COUNT(*) AS games,
@@ -3054,12 +3305,10 @@ def dashboard_snapshot(
                 ORDER BY games DESC, opponent_name
                 LIMIT 5
                 """,
-                params,
-            )
+            params,
         )
-        drawn_card_rows = _dict_rows(
-            conn.execute(
-                f"""
+        drawn_card_rows_read = reads.rows(
+            f"""
                 SELECT
                   d.display_name,
                   COALESCE(d.type_category, 'Other') AS type_category,
@@ -3073,12 +3322,11 @@ def dashboard_snapshot(
                 ORDER BY times_drawn DESC, d.display_name
                 LIMIT 25
                 """,
-                params,
-            )
+            params,
+            first=True,
         )
-        momentum_rows = _dict_rows(
-            conn.execute(
-                f"""
+        momentum_rows_read = reads.rows(
+            f"""
                 WITH ordered_games AS (
                   SELECT
                     g.id,
@@ -3105,8 +3353,7 @@ def dashboard_snapshot(
                 GROUP BY previous_outcome
                 ORDER BY split
                 """,
-                params,
-            )
+            params,
         )
         recent_rows = _dict_rows(
             conn.execute(
@@ -3179,22 +3426,19 @@ def dashboard_snapshot(
                 params,
             )
         )
-        trend_rows = _dict_rows(
-            conn.execute(
-                f"""
-                SELECT
-                  g.id AS game_id,
-                  COALESCE(g.started_at, g.ended_at) AS started_at,
-                  g.outcome
-                FROM games g
-                WHERE {trend_where} AND g.outcome IN ('win', 'loss')
-                ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
-                {trend_limit}
-                """,
-                trend_params,
-            )
+        # Only the decks this view lists (plus the recent games' decks, for
+        # their colour fallback): a narrow period must not pay for every
+        # deck ever played. The decks' cards and the opponents' cards are
+        # the longest reads, so they go to the front.
+        shown_decks = {row["deck_name"] for row in deck_rows} | {
+            str(row.get("deck_name") or "") for row in recent_rows
+        }
+        opponent_threat_rows_read = reads.call(_opponent_threat_rows, where, params, first=True)
+        deck_color_map_read = reads.call(_deck_color_map, shown_decks, first=True)
+        deck_visuals_read = reads.call(
+            _deck_visuals, {row["deck_name"] for row in deck_rows}, first=True
         )
-        trend_rows.reverse()
+        trend_rows = _trend_rows(conn, trend_where, trend_params, trend_limit)
         rank_progress_rows = _dict_rows(
             conn.execute(
                 """
@@ -3324,17 +3568,29 @@ def dashboard_snapshot(
             if normalized.is_midweek:
                 continue
             format_options.append({"raw_format": row[0], "format_label": normalized.label})
-        combat_deck_rows = _combat_deck_rows(conn, where, params)
-        combat_split_rows = _combat_split_rows(conn, where, params)
+        combat_deck_rows_read = reads.call(_combat_deck_rows, where, params)
+        combat_split_rows_read = reads.call(_combat_split_rows, where, params)
+        schedule_read = reads.call(_schedule_rows, where, params)
+        inventory = _latest_inventory(conn)
+        fatigue_rows_read = reads.call(_fatigue_rows, where, params)
+        outcome_reason_rows_read = reads.call(_outcome_reason_rows, where, params)
+        opener_land_rows_read = reads.call(_opener_land_rows, where, params)
+        matchup_rows_read = reads.call(_matchup_rows, where, params)
+        your_commander_rows_read = reads.call(_commander_rows, where, params, "player")
+        faced_commander_rows_read = reads.call(_commander_rows, where, params, "opponent")
+        # The reads above are sums: SQLite does the work and hands back a few
+        # rows. The ones below hand Python a row per game. Two threads doing
+        # that at once wait on each other for the interpreter at every row
+        # (as two chains the page took 1.5 s where this takes 0.85), so they
+        # stay on this thread, one after another, while the sums run.
         mana_readiness_rows = _mana_readiness_rows(conn, where, params)
         # Overall flood/screw/normal profile for the homepage's Land
         # Statistics section — same computation the deck page uses, across
         # every game the current filters cover.
         land_profile = _deck_land_profile(conn, where, params)
-        schedule = _schedule_rows(conn, where, params)
-        inventory = _latest_inventory(conn)
-        fatigue_rows = _fatigue_rows(conn, where, params)
         streaks = _streak_summary(conn, where, params)
+        opponent_color_rows = _opponent_color_rows(conn, where, params)
+        brawl_summary = _brawl_summary(conn, where, params)
         match_results = _match_level_results(conn, where, params)
         match_summary = _summarize_match_results(match_results)
         ranked_results = [
@@ -3355,22 +3611,27 @@ def dashboard_snapshot(
             ]
             ranked_season_summary = _summarize_match_results(seasonal_results)
             ranked_season_summary["season_ordinal"] = season_ordinal
-        outcome_reason_rows = _outcome_reason_rows(conn, where, params)
-        opener_land_rows = _opener_land_rows(conn, where, params)
-        opponent_threat_rows = _opponent_threat_rows(conn, where, params)
-        matchup_rows = _matchup_rows(conn, where, params)
-        opponent_color_rows = _opponent_color_rows(conn, where, params)
-        your_commander_rows = _commander_rows(conn, where, params, "player")
-        brawl_summary = _brawl_summary(conn, where, params)
-        faced_commander_rows = _commander_rows(conn, where, params, "opponent")
-        # Only the decks this view lists (plus the recent games' decks, for
-        # their colour fallback): a narrow period must not pay for every
-        # deck ever played.
-        shown_decks = {row["deck_name"] for row in deck_rows} | {
-            str(row.get("deck_name") or "") for row in recent_rows
-        }
-        deck_visuals = _deck_visuals(conn, {row["deck_name"] for row in deck_rows})
-        deck_color_map = _deck_color_map(conn, shown_decks)
+        format_rows, midweek_rows = format_rows_read.result()
+        play_draw_rows = play_draw_rows_read.result()
+        deck_play_draw_rows = deck_play_draw_rows_read.result()
+        draw_quality_rows = draw_quality_rows_read.result()
+        opponents_total = int(opponents_total_read.result()[0] or 0)
+        top_opponent_rows = top_opponent_rows_read.result()
+        drawn_card_rows = drawn_card_rows_read.result()
+        momentum_rows = momentum_rows_read.result()
+        combat_deck_rows = combat_deck_rows_read.result()
+        combat_split_rows = combat_split_rows_read.result()
+        schedule = schedule_read.result()
+        fatigue_rows = fatigue_rows_read.result()
+        outcome_reason_rows = outcome_reason_rows_read.result()
+        opener_land_rows = opener_land_rows_read.result()
+        opponent_threat_rows = opponent_threat_rows_read.result()
+        matchup_rows = matchup_rows_read.result()
+        your_commander_rows = your_commander_rows_read.result()
+        faced_commander_rows = faced_commander_rows_read.result()
+        player_name = player_name_read.result()
+        deck_visuals = deck_visuals_read.result()
+        deck_color_map = deck_color_map_read.result()
         for row in deck_rows:
             deck_name = row["deck_name"]
             row["deck_visual"] = deck_visuals.get(deck_name, _empty_deck_visual(deck_name))
@@ -3402,7 +3663,7 @@ def dashboard_snapshot(
         "losses": int(summary[2] or 0),
         "draws": int(summary[3] or 0),
         "win_rate": summary[4],
-        "player_name": _dominant_player_name(conn),
+        "player_name": player_name,
     }
     total_games = summary_dict["games"]
     for row in drawn_card_rows:
@@ -6605,7 +6866,11 @@ def _build_behind(db_path: Path, path: str, query: str, compute: "Callable[[], b
         give_up = time.monotonic() + _BEHIND_WAIT_SECONDS
         while _requests_building[0] and time.monotonic() < give_up:
             time.sleep(0.05)
-        _page_body(db_path, path, query, compute, asked=False)
+        _unhurried.on = True
+        try:
+            _page_body(db_path, path, query, compute, asked=False)
+        finally:
+            _unhurried.on = False
 
 
 def _refresh_behind(
@@ -6710,9 +6975,142 @@ def forget_warm_views() -> None:
         _warm_views.clear()
 
 
+#: The cache's name for a trend range's games (not an endpoint).
+_TREND_CACHE_PATH = "/api/snapshot/trend"
+#: Overview bodies put together from a cached Overview and a cached trend:
+#: key -> (that Overview body, that trend body, the result). Good for as long
+#: as the cache hands back those same two objects.
+_trend_bodies: "collections.OrderedDict[Tuple[str, str, str], Tuple[bytes, bytes, bytes]]" = (
+    collections.OrderedDict()
+)
+_TREND_BODIES_MAX = 8
+
+
+def snapshot_body(
+    db_path: Path,
+    *,
+    deck: Optional[str] = None,
+    fmt: Optional[str] = None,
+    days: Optional[int] = None,
+    season: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    trend_days: Optional[int] = None,
+    trend_games: Optional[int] = None,
+) -> bytes:
+    """The ``/api/snapshot`` body, through the response cache.
+
+    A trend range changes the trend's games and nothing else, so the Overview
+    is cached once per set of filters and the range's games separately, and
+    the two are put together here: choosing another range reads a few hundred
+    games, not the whole Overview again. The bytes are what
+    ``render_snapshot_json(dashboard_snapshot(...))`` gives for the same
+    arguments."""
+    filters = (
+        ("deck", deck),
+        ("format", fmt),
+        ("days", days),
+        ("season", season),
+        ("since", since),
+        ("until", until),
+    )
+    query = urlencode([(name, value) for name, value in filters if value is not None])
+    overview = cached_response(
+        db_path,
+        "/api/snapshot",
+        query,
+        lambda: render_snapshot_json(
+            dashboard_snapshot(
+                db_path, deck=deck, fmt=fmt, days=days, season=season, since=since, until=until
+            )
+        ),
+    )
+    if trend_days is None and trend_games is None:
+        return overview
+    trend_query = urlencode(
+        [
+            (name, value)
+            for name, value in (
+                ("deck", deck),
+                ("format", fmt),
+                ("trend_days", trend_days),
+                ("trend_games", trend_games),
+            )
+            if value is not None
+        ]
+    )
+    trend = cached_response(
+        db_path,
+        _TREND_CACHE_PATH,
+        trend_query,
+        lambda: render_snapshot_json(snapshot_trend(db_path, deck, fmt, trend_days, trend_games)),
+    )
+    key = (str(db_path), query, trend_query)
+    with _response_cache_lock:
+        made = _trend_bodies.get(key)
+        if made is not None and made[0] is overview and made[1] is trend:
+            _trend_bodies.move_to_end(key)
+            return made[2]
+    payload = json.loads(overview)
+    payload["trend"] = json.loads(trend)
+    body = render_snapshot_json(payload)
+    with _response_cache_lock:
+        _trend_bodies[key] = (overview, trend, body)
+        _trend_bodies.move_to_end(key)
+        while len(_trend_bodies) > _TREND_BODIES_MAX:
+            _trend_bodies.popitem(last=False)
+    return body
+
+
+#: Databases a dashboard server of this process serves: resolved path -> the
+#: path its handler names it by, which is the one the cache keys on.
+_served_databases: Dict[Path, Path] = {}
+
+
+def warm_overview(db_path: Path) -> Optional[threading.Thread]:
+    """Get the Overview ready before anyone opens it, when the history is
+    long enough for it to be a wait (``_SIDE_BY_SIDE_MIN_GAMES``); nothing
+    happens for a normal one, or when this process serves no dashboard for
+    the database. The tracker calls this at launch once the stored per-game
+    values are in place. It builds the page the dashboard opens on (no
+    filters, the trend's default 30 days) on a daemon thread, on one core,
+    and from then on a finished game keeps it ready
+    (``note_game_finished``). Returns the thread it started, if any."""
+    with _response_cache_lock:
+        served = _served_databases.get(Path(db_path).expanduser().resolve())
+    if served is None:
+        return None
+    db_path = served
+
+    def work() -> None:
+        _unhurried.on = True
+        try:
+            db_uri = db_path.expanduser().resolve().as_uri() + "?mode=ro"
+            conn = sqlite3.connect(db_uri, uri=True)
+            try:
+                games = conn.execute("SELECT COUNT(*) FROM games").fetchone()[0]
+            finally:
+                conn.close()
+            if int(games or 0) >= _SIDE_BY_SIDE_MIN_GAMES:
+                snapshot_body(db_path, trend_days=30)
+        except Exception:
+            # Whoever opens the page builds it and sees what went wrong.
+            pass
+        finally:
+            _unhurried.on = False
+
+    thread = threading.Thread(target=work, name="overview-warm", daemon=True)
+    try:
+        thread.start()
+    except RuntimeError:
+        return None
+    return thread
+
+
 def clear_response_cache() -> None:
     with _response_cache_lock:
         _response_cache.clear()
+        _trend_bodies.clear()
     with _card_search_lock:
         _card_search_memo.clear()
     # A write (a reset that replaces the file, above all) must not leave the
@@ -7432,23 +7830,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except ValueError:
                 season = None
             try:
-                body = cached_response(
+                body = snapshot_body(
                     self.db_path,
-                    request_path,
-                    parsed.query,
-                    lambda: render_snapshot_json(
-                        dashboard_snapshot(
-                            self.db_path,
-                            deck=common["deck"],
-                            fmt=common["fmt"],
-                            days=common["days"],
-                            season=season,
-                            since=common["since"],
-                            until=common["until"],
-                            trend_days=trend_days,
-                            trend_games=trend_games,
-                        )
-                    ),
+                    deck=common["deck"],
+                    fmt=common["fmt"],
+                    days=common["days"],
+                    season=season,
+                    since=common["since"],
+                    until=common["until"],
+                    trend_days=trend_days,
+                    trend_games=trend_games,
                 )
             except FileNotFoundError as exc:
                 _send_bytes(
@@ -7883,11 +8274,14 @@ def create_dashboard_server(
     tracker instead.
     """
     resolved_static_dir = static_dir if static_dir is not None else DEFAULT_STATIC_DIR
+    served = Path(db_path).expanduser()
+    with _response_cache_lock:
+        _served_databases[served.resolve()] = served
     handler_class = type(
         "ConfiguredDashboardHandler",
         (DashboardHandler,),
         {
-            "db_path": Path(db_path).expanduser(),
+            "db_path": served,
             "static_dir": resolved_static_dir if resolved_static_dir.exists() else None,
             "tracker_control": tracker_control,
         },

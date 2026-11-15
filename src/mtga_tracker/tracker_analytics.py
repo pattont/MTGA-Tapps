@@ -2145,11 +2145,24 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
         except Exception:
             return
 
-    def _start_game_derived_backfill(self) -> None:
+    def _start_game_derived_backfill(self, *, at_launch: bool = False) -> None:
         """Compute stored per-game values for games that have none, on a
-        background thread. Never blocks tracking."""
+        background thread. Never blocks tracking. ``at_launch`` then lets
+        the dashboard get its Overview ready (a very long history only)."""
         try:
-            game_derived.start_backfill(self._analytics_store().path)
+            path = self._analytics_store().path
+            game_derived.start_backfill(
+                path, (lambda: self._tell_dashboard_values_ready(path)) if at_launch else None
+            )
+        except Exception:
+            return
+
+    @staticmethod
+    def _tell_dashboard_values_ready(path: Any) -> None:
+        try:
+            from . import dashboard  # lazy: dashboard is heavy
+
+            dashboard.warm_overview(path)
         except Exception:
             return
 

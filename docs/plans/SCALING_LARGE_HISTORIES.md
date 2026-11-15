@@ -1,7 +1,7 @@
 # Scaling to tens of thousands of games
 
-Status: Steps 0 to 7 are built on the `scaling-large-histories` branch
-(2026-11-10). Steps 0 to 6 passed a live check on the dev Mac; Step 7 and
+Status: Steps 0 to 8 are built on the `scaling-large-histories` branch
+(2026-11-15). Steps 0 to 7 passed a live check on the dev Mac; Step 8 and
 Windows have not been run in the real app yet.
 What is left is listed under "Still to do".
 The question this answers: what happens to a player who logs 2,000–3,000
@@ -370,10 +370,109 @@ that rule a request that overlapped a rebuild took 9.4 s instead of 5.4 s.
 Payload diff against the previous commit on the 1,284-game copy:
 `136 identical, 0 differ`.
 
-Not covered: the first open after the app starts (nothing is on record yet),
-a filter not asked for in the last four hours, the second or two between
-a game's end and its rebuild, and the first open of a "last N days" page
-after midnight when no game has ended since.
+Not covered: the first open after the app starts (nothing is on record yet;
+Step 8 covers the Overview), a filter not asked for in the last four hours,
+the second or two between a game's end and its rebuild, and the first open
+of a "last N days" page after midnight when no game has ended since.
+
+In the real app (dev Mac, 2026-11-12): the four games played after the
+restart onto this step were saved normally and each got its stored row, so
+the game-end call cost no game.
+
+### Step 8 — the Overview's cold build, the trend's range, the first open
+
+Travis, 2026-11-15, on the changelog's "about 2.5 seconds": an improvement,
+but not a great page load. Three things were still a wait at 38,000 games,
+and each got its own fix. The numbers do not change: the 136-page payload
+diff prints `0 differ` on the 1,307-game history (built in line, and again
+with side by side forced on) and on a 38,772-game modern copy.
+
+**The cold build runs its statements side by side.** No single statement
+was left to fix: the page is about forty statements that each read the
+games in view and do not depend on one another. SQLite runs a statement
+without holding the interpreter, so on several read-only connections they
+overlap (`_PageReads`). What it took to make that pay:
+
+- Only the sums go to the other threads. A statement that hands Python a
+  row per game gives the interpreter up at every row, and two threads doing
+  that wait on each other each time: with everything spread over four
+  threads the page took 1.5 s, and with the per-game parts as a second chain
+  on one of them still 1.5 s. Kept on the request's thread, one after
+  another, 0.85 s.
+- A hundred small statements at once are slower than in line (0.18 s became
+  0.55 s on four threads), so a helper runs as one read, never split.
+- Each connection gets a 32 MB page cache. With SQLite's default 2 MB the
+  statements push the games' pages out for each other.
+- The longest reads (each deck's cards, the opponents' cards) go to the
+  front of the queue.
+
+The switch is the length of the history (2,000 games recorded), not the
+games in view: a 90-day Overview of a long history still reads every shown
+deck's cards. Below it, on one or two cores, and for a build nobody waits
+for (a rebuild after a game, the warm-up below) the page is built in line as
+before, on one core.
+
+**The trend's range no longer rebuilds the page.** The dashboard asks for
+the whole Overview again with `trend_days` or `trend_games` whenever the
+Win Rate Trend's range changes, and the default page carries
+`trend_days=30`. Only the `trend` rows depend on it. `/api/snapshot` now
+caches the Overview once per set of filters and each range's games
+separately, and joins the two (`snapshot_body`, byte-identical to the
+function's own output).
+
+**The first open after launch.** When the background pass has finished, the
+tracker tells the dashboard (`warm_overview`), which builds the page the
+dashboard opens on if the history is long. From then on a finished game
+keeps it ready (Step 7).
+
+Measured on a 38,772-game modern copy (dev Mac, terminal, 2026-11-15; the
+Mac was in use, load 3 to 15, so these are best-of-several):
+
+| | Before | After |
+| --- | --- | --- |
+| Overview, cold | 2.7 s | 0.84 s |
+| Overview, cold, through the HTTP handler | 2.7 s | 1.1 s (a page dump was running beside it) |
+| Overview, last 90 days, cold | 0.56 s | 0.26 s |
+| Overview, the most-played deck (4,698 games), cold | 0.62 s | 0.21 s |
+| Another trend range, through the handler | 2.7 s | 64 to 156 ms |
+| First open after launch | 2.7 s | 24 ms, after a 2.8 s build on one core in the background |
+| Overview, cold, 39,210-game mixed copy | 4.7 s | 2.8 s |
+| Overview, cold, the real 1,307 games | 0.12 s | unchanged (0.07 s if forced on) |
+
+By statements at once: two 1.34 s, three 0.94 s, four 0.83 s, five 0.83 s,
+six 0.84 s. Four is the setting.
+
+What sets the pace now is the request's own thread: the per-game parts
+(mana readiness, the land profile, opponent colours, match results) take
+about 0.65 s of the 0.84 s. The mixed copy gains least because half its
+games have no stored draw quality and are computed in Python.
+
+Not measured: Windows, and the running Mac app (its threads sit in the
+utility band, see Step 5). Not built: the deck page still runs in line
+(about 1 s for the most-played deck at this size).
+
+Tried and set aside, with what each measured on the same copy:
+
+- **Every statement on four threads, per-game parts included:** 1.5 s. The
+  per-game parts fight for the interpreter (above).
+- **The per-game parts as two chains** (one on the request's thread, one on
+  another): 1.5 s against 1.2 s with one chain at the time.
+- **More than four at once:** five 0.83 s, six 0.84 s. Replaying only the
+  statements, without the page's Python, eight threads took 5 s where one
+  took 2.5 s: the 224 small statements queue for the interpreter.
+- **A shorter interpreter switch interval** (0.5 ms for 5 ms): 2.2 s. Worse.
+- **Memory-mapped reads** (`PRAGMA mmap_size`): the fastest of all for the
+  bare statements (0.55 s on four threads against 1.10 s, and 2.0 s against
+  2.4 s on one). Not used: a failed read of a mapped file is a crash, not an
+  error, and it could not be tried on Windows. A larger page cache gets
+  most of it (0.63 s); 32 MB a connection is the setting, 64 MB was no
+  better in the page and 512 MB was worse.
+- **A pre-joined table of the games in view:** built in 57 ms; a sum over it
+  took 10 ms against 35 to 55. About 0.6 s over the page for rewriting every
+  statement, and nothing for the three longest (each deck's cards, the cards
+  drawn, the opponents' cards: 0.3 s each, which read card tables).
+- **The switch on the games in view** (first version): left a 90-day
+  Overview of a long history in line at 0.56 s. It is the history's length.
 
 ## Still to do
 
@@ -390,18 +489,24 @@ In the order they are worth doing.
    `0 differ` with the table full against emptied. After the next restart
    (1,277 games): the four indexes were there and the running dashboard
    answered card pages and searches in milliseconds.
-2. **Step 5 once more after the Mac app has run for hours** (it passed minutes
-   after launch, see above). Step 4 passed its own on 2026-11-10: after the
-   restart all 1,284 `game_derived` rows were at `rules_version` 2 with their
-   summary columns filled, none missing. Step 6 in the running app: searches
-   answered in 4 ms.
-3. **The Overview below 2 s at 38,000 games**, if it matters. No single
-   statement is left to fix; the cost is forty statements that each read the
-   games in view. Two ways on: build one pre-joined temporary table of the
-   games in view per request and point the small aggregates at it (about
-   0.5 s, and every statement changes), or run the statements on several
-   read connections at once (SQLite releases the GIL; the same work on more
-   cores, which a streamer's machine may not have spare).
+2. **Step 8 in the running app, on both systems.** After a restart onto it:
+   the Overview opens as before on a normal history; on a scaled copy the
+   launch warm-up runs after the background pass, and a trend range answers
+   without a rebuild. Step 5 passed its second check on 2026-11-12: after 22
+   hours all 17 threads of the Mac app were still at priority 20. Step 4
+   passed its own on 2026-11-10: after the restart all 1,284 `game_derived`
+   rows were at `rules_version` 2 with their summary columns filled, none
+   missing. Step 6 in the running app: searches answered in 4 ms.
+3. **The Overview's cold build below half a second at 38,000 games**, if it
+   matters (Step 8 took it from 2.7 s to 0.84 s). The per-game parts on the
+   request's thread set the pace: counting opponent colours in SQL from the
+   stored letters, reading the land profile's summaries in its own
+   statement instead of 43 slices, and grouping the Brawl record in SQL
+   would take about 0.3 s off, and then more than four statements at once
+   start to pay. A pre-joined temporary table of the games in view was
+   measured and is not worth it: a sum over it took 10 ms against 35 to 55,
+   about 0.6 s in all, with every statement rewritten. The same side-by-side
+   treatment for the deck page is not built.
 4. **All Games is 22 MB at 37,800 games** (decided 2026-11-10: leave it), about 600 bytes a game, nearly all
    of it rendered. It now builds in a second, so the size is the cost: page it
    on the server (sorting and search then move there too) or accept it.
@@ -410,10 +515,10 @@ In the order they are worth doing.
    20 ms, a text filter 6 ms), and the page shows 30 rows whatever the total.
    The size only costs on a network; gzip takes the body to 1.7 MB, which is
    the answer if the dashboard is ever served to a second PC.
-5. **The first open after the app starts** still builds each slow page once
-   (Step 7 keeps pages ready only once they have been asked for). Remembering
+5. **The first open after the app starts** still builds each slow page
+   once, except the Overview the dashboard opens on (Step 8). Remembering
    the last few pages across a restart and rebuilding them after the
-   background pass would cover it. Not built.
+   background pass would cover the rest. Not built.
 6. `game_events` is the one table that still grows with the history
    (decided 2026-11-10: leave it for now). In the
    1,284-game database (2026-11-10) the table and its two indexes are 62 MB of

@@ -46,7 +46,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, NamedTuple, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Iterator, List, NamedTuple, Optional, Tuple
 
 #: Bump when a stored value's computation changes (see the module docstring;
 #: tests/test_game_derived.py fails when the draw-quality output changes
@@ -514,8 +514,10 @@ def _store_pending(conn: sqlite3.Connection, stop: Optional[threading.Event], pa
     return written
 
 
-def start_backfill(db_path: Optional[Path]) -> bool:
-    """Run the pass on a daemon thread unless one is already running."""
+def start_backfill(db_path: Optional[Path], then: Optional[Callable[[], None]] = None) -> bool:
+    """Run the pass on a daemon thread unless one is already running.
+    ``then`` is called on that thread once the pass this call started has
+    finished (not when it was stopped, failed, or was already running)."""
     global _worker, _refill_requested
     if db_path is None:
         return False
@@ -529,6 +531,8 @@ def start_backfill(db_path: Optional[Path]) -> bool:
         def work() -> None:
             try:
                 run_backfill(Path(db_path), _worker_stop)
+                if then is not None and not _worker_stop.is_set():
+                    then()
             except Exception:
                 # Stored values are an optimisation: the dashboard computes
                 # live without them. Never take the tracker down for one.

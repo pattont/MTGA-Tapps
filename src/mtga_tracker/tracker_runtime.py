@@ -118,7 +118,7 @@ class TrackerRuntimeMixin:
         # Games recorded before the stored per-game values existed (or under
         # older rules) get theirs now, on a background thread: seconds of
         # work on a long history, and tracking must not wait for it.
-        self._start_game_derived_backfill()
+        self._start_game_derived_backfill(at_launch=True)
 
         # Start from current end of file
         self.parser.reset_position()

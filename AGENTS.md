@@ -166,6 +166,24 @@ Primary code paths:
   90 s). Rebuilds nobody waits for run one at a time and hold back while a request is
   building a page (`_build_behind`). A `compute` passed to `cached_response` may be called
   again later from another thread, so it must read only the database and its own values.
+  In a long history (`_SIDE_BY_SIDE_MIN_GAMES`, 2,000 games recorded) the Overview runs its
+  statements side by side (`_PageReads`): the sums (`reads.rows` / `reads.call`) go to three
+  more threads, each with a read-only connection of its own, while the request's thread
+  does the parts that take a row per game into Python. Same statements, same rows. Two
+  threads taking rows at once wait on each other for the interpreter at every row, so a
+  per-game read stays an ordinary call on the request's thread, never `reads.call`. A
+  function handed to `reads` runs on another thread and connection: build `_games_filter`
+  before it, not inside it (clock windows are recorded per thread). A normal history, a
+  machine with one or two cores, and a build nobody waits for (`_unhurried`: game-end
+  rebuilds, the launch warm-up) build the page in line, as written.
+  `tests/test_dashboard_side_by_side.py` holds the page to the in-line answer.
+  The trend's range (`trend_days` / `trend_games`) changes the `trend` rows and nothing
+  else, so `snapshot_body` (what `/api/snapshot` serves) caches the Overview once per set of
+  filters and each range's games (`snapshot_trend`) separately, and joins them: choosing
+  another range never rebuilds the Overview. At launch, once the stored per-game values
+  are in place (`game_derived.start_backfill(path, then)`), the tracker calls
+  `dashboard.warm_overview`: in a long history, when this process serves a dashboard for
+  the database, it builds the page the dashboard opens on, so the first open does not wait.
   The card page finds a card's rows by name first (`CROSS JOIN` from the card table) through
   `_card_name_clause`: the exact name, or the name before a " (Type)" suffix in any case.
   Both halves are written for the `display_name COLLATE NOCASE` indexes
