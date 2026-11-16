@@ -425,31 +425,48 @@ tracker tells the dashboard (`warm_overview`), which builds the page the
 dashboard opens on if the history is long. From then on a finished game
 keeps it ready (Step 7).
 
-Measured on a 38,772-game modern copy (dev Mac, terminal, 2026-11-15; the
-Mac was in use, load 3 to 15, so these are best-of-several):
+**Sections that only count games are counted by SQLite.** Opponent colours
+took a row per game into Python and then asked for the stored letters in 43
+slices; the stored letters are now grouped in one statement
+(`_opponent_color_tallies`), and only games without a current row come back
+one by one. The Brawl record is grouped by format and outcome. The land
+profile reads each game's stored summary with the game instead of in
+slices. Together about 0.1 s of the in-line build and 0.05 s side by side:
+small, because the two largest per-game parts (mana readiness, the land
+profile's loop) still need every game.
+
+Measured on a 38,772-game modern copy (dev Mac, terminal, 2026-11-15). The
+Mac was in use all day, so every figure is a best-of-several, and the first
+runs, under a load of 10 to 50, read a third higher (2.7 s before, 0.84 s
+after). These are from the evening, at a load of about 6:
 
 | | Before | After |
 | --- | --- | --- |
-| Overview, cold | 2.7 s | 0.84 s |
-| Overview, cold, through the HTTP handler | 2.7 s | 1.1 s (a page dump was running beside it) |
-| Overview, last 90 days, cold | 0.56 s | 0.26 s |
-| Overview, the most-played deck (4,698 games), cold | 0.62 s | 0.21 s |
-| Another trend range, through the handler | 2.7 s | 64 to 156 ms |
-| First open after launch | 2.7 s | 24 ms, after a 2.8 s build on one core in the background |
-| Overview, cold, 39,210-game mixed copy | 4.7 s | 2.8 s |
-| Overview, cold, the real 1,307 games | 0.12 s | unchanged (0.07 s if forced on) |
+| Overview, cold | 2.0 s | 0.62 s |
+| Overview, cold, built in line (one core, as a rebuild after a game is) | 2.0 s | 1.9 s |
+| Overview, last 90 days, cold | 0.44 s | 0.20 s |
+| Another trend range, through the HTTP handler | a cold Overview | 64 to 156 ms |
+| First open after launch | a cold Overview | 24 ms, after the build on one core in the background |
+| Overview, cold, 39,210-game mixed copy | 3.6 s | 2.1 s |
+| Overview, cold, the real 1,307 games | 0.09 s | unchanged (0.07 s if forced on) |
 
-By statements at once: two 1.34 s, three 0.94 s, four 0.83 s, five 0.83 s,
-six 0.84 s. Four is the setting.
+By statements at once: three 0.74 s, four 0.62 s, six 0.58 s. Four is the
+setting: two more cores for 0.04 s is a poor trade on a machine that is
+running Arena.
 
 What sets the pace now is the request's own thread: the per-game parts
-(mana readiness, the land profile, opponent colours, match results) take
-about 0.65 s of the 0.84 s. The mixed copy gains least because half its
-games have no stored draw quality and are computed in Python.
+(mana readiness 0.13 s, the land profile 0.14 s, opponent colours 0.11 s,
+match results 0.07 s) after 0.12 s of statements the rest depend on. The
+mixed copy gains least because half its games have no stored draw quality
+and are computed in Python.
+
+The deck page was profiled and left alone: 0.87 s for a 4,698-game deck is
+78 statements of at most 37 ms, five of which take 30,000 to 60,000 card
+rows into Python. There is no long statement to move to another thread, and
+a typical deck's page is 0.4 s.
 
 Not measured: Windows, and the running Mac app (its threads sit in the
-utility band, see Step 5). Not built: the deck page still runs in line
-(about 1 s for the most-played deck at this size).
+utility band, see Step 5).
 
 Tried and set aside, with what each measured on the same copy:
 
@@ -498,15 +515,14 @@ In the order they are worth doing.
    rows were at `rules_version` 2 with their summary columns filled, none
    missing. Step 6 in the running app: searches answered in 4 ms.
 3. **The Overview's cold build below half a second at 38,000 games**, if it
-   matters (Step 8 took it from 2.7 s to 0.84 s). The per-game parts on the
-   request's thread set the pace: counting opponent colours in SQL from the
-   stored letters, reading the land profile's summaries in its own
-   statement instead of 43 slices, and grouping the Brawl record in SQL
-   would take about 0.3 s off, and then more than four statements at once
-   start to pay. A pre-joined temporary table of the games in view was
+   matters (Step 8 took it from 2.0 s to 0.62 s). The per-game parts on the
+   request's thread set the pace. What is left of them needs every game:
+   mana readiness decodes each game's land turns (storing "lands by turn 2
+   to 5" per game would make it a sum, at the price of a rules version), and
+   the land profile needs the newest listed and newest classified game as
+   well as its sums. A pre-joined temporary table of the games in view was
    measured and is not worth it: a sum over it took 10 ms against 35 to 55,
-   about 0.6 s in all, with every statement rewritten. The same side-by-side
-   treatment for the deck page is not built.
+   about 0.6 s in all, with every statement rewritten.
 4. **All Games is 22 MB at 37,800 games** (decided 2026-11-10: leave it), about 600 bytes a game, nearly all
    of it rendered. It now builds in a second, so the size is the cost: page it
    on the server (sorting and search then move there too) or accept it.

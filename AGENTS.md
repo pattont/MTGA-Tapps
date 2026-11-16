@@ -177,6 +177,10 @@ Primary code paths:
   machine with one or two cores, and a build nobody waits for (`_unhurried`: game-end
   rebuilds, the launch warm-up) build the page in line, as written.
   `tests/test_dashboard_side_by_side.py` holds the page to the in-line answer.
+  Where a section only counts games, SQLite counts them: `_opponent_color_tallies` groups
+  the stored colour letters (and takes a row per game only for games with no current
+  `game_derived` row), `_brawl_summary` groups by format and outcome, and
+  `_deck_land_profile` reads each game's stored summary in the same statement as the game.
   The trend's range (`trend_days` / `trend_games`) changes the `trend` rows and nothing
   else, so `snapshot_body` (what `/api/snapshot` serves) caches the Overview once per set of
   filters and each range's games (`snapshot_trend`) separately, and joins them: choosing

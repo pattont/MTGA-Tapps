@@ -1534,32 +1534,75 @@ def _matchup_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> Li
     )
 
 
-def _opponent_color_rows(
+def _opponent_color_tallies(
     conn: sqlite3.Connection, where: str, params: List[Any]
-) -> List[Dict[str, Any]]:
-    """Win/loss record grouped by the opponent's known color combination."""
-    try:
-        games = conn.execute(
-            f"""
-            SELECT g.id, g.outcome, m.format
-            FROM games g
-            CROSS JOIN matches m ON m.id = g.match_id
-            CROSS JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
-            WHERE {where}
-            """,
-            params,
-        ).fetchall()
-    except sqlite3.OperationalError:
-        return []
-    opp_letters = _opponent_letters(conn, (row[0] for row in games))
-    # Count the games of each distinct (format, letters, outcome) first: a
-    # history has a few hundred of those, and the colours and their label
-    # depend on nothing else. Kept in first-seen order.
+) -> Optional[Dict[Tuple[Any, str, str, Any], int]]:
+    """Games per (raw format, opponent's revealed letters, their commander
+    letters, outcome); None when the games cannot be read.
+
+    The games with a current ``game_derived`` row are counted by SQLite from
+    the stored letters, in one statement that returns a few hundred rows.
+    Only the games without one come back a row each, to have their letters
+    computed (``_opponent_letters``), as every game once did: 38,000 rows
+    into Python for a page that shows a dozen."""
+    games_sql = """
+        SELECT g.id, g.outcome, m.format
+        FROM games g
+        CROSS JOIN matches m ON m.id = g.match_id
+        CROSS JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
+        WHERE {where}{unstored}
+        """
+    stored_row = f"gd.game_id = g.id AND gd.rules_version = {int(game_derived.RULES_VERSION)}"
+    unstored = f" AND NOT EXISTS (SELECT 1 FROM {game_derived.TABLE} gd WHERE {stored_row})"
     tallies: Dict[Tuple[Any, str, str, Any], int] = {}
+    games: Optional[List[Any]] = None
+    try:
+        if game_derived.table_exists(conn):
+            counted = conn.execute(
+                f"""
+                SELECT m.format, COALESCE(gd.opp_revealed, ''), COALESCE(gd.opp_commander, ''),
+                       g.outcome, COUNT(*)
+                FROM games g
+                CROSS JOIN matches m ON m.id = g.match_id
+                CROSS JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
+                CROSS JOIN {game_derived.TABLE} gd ON {stored_row}
+                WHERE {where}
+                GROUP BY 1, 2, 3, 4
+                """,
+                params,
+            ).fetchall()
+            games = conn.execute(
+                games_sql.format(where=where, unstored=unstored), params
+            ).fetchall()
+            for raw_format, letters, commander_letters, outcome, count in counted:
+                tallies[(raw_format, str(letters), str(commander_letters), outcome)] = int(count)
+    except sqlite3.Error:
+        # Stored rows that cannot be read are no rows: every game is computed.
+        tallies, games = {}, None
+    if games is None:
+        try:
+            games = conn.execute(games_sql.format(where=where, unstored=""), params).fetchall()
+        except sqlite3.OperationalError:
+            return None
+    opp_letters = _opponent_letters(conn, (row[0] for row in games))
     for game_id, outcome, raw_format in games:
         letters, commander_letters = opp_letters.get(str(game_id), ("", ""))
         key = (raw_format, letters, commander_letters, outcome)
         tallies[key] = tallies.get(key, 0) + 1
+    return tallies
+
+
+def _opponent_color_rows(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> List[Dict[str, Any]]:
+    """Win/loss record grouped by the opponent's known color combination."""
+    # Count the games of each distinct (format, letters, outcome) first: a
+    # history has a few hundred of those, and the colours and their label
+    # depend on nothing else. Their order does not reach the result: a label
+    # names one set of colours, and the rows are sorted at the end.
+    tallies = _opponent_color_tallies(conn, where, params)
+    if tallies is None:
+        return []
     buckets: Dict[str, Dict[str, Any]] = {}
     for (raw_format, letters, commander_letters, outcome), count in tallies.items():
         colors = _display_opponent_colors(raw_format, letters, commander_letters)
@@ -1596,13 +1639,16 @@ def _brawl_summary(conn: sqlite3.Connection, where: str, params: List[Any]) -> D
     identifier Arena used.
     """
     try:
+        # Counted per (format, outcome) by SQLite: a handful of rows, where a
+        # row per game was 38,000 for a page that shows one record.
         rows = conn.execute(
             f"""
-            SELECT m.format, g.outcome
+            SELECT m.format, g.outcome, COUNT(*)
             FROM games g
             CROSS JOIN matches m ON m.id = g.match_id
             CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
             WHERE {where}
+            GROUP BY m.format, g.outcome
             """,
             params,
         ).fetchall()
@@ -1610,21 +1656,21 @@ def _brawl_summary(conn: sqlite3.Connection, where: str, params: List[Any]) -> D
         return {"games": 0, "wins": 0, "losses": 0, "win_rate": None, "queues": []}
     total = {"games": 0, "wins": 0, "losses": 0}
     queues: Dict[str, Dict[str, Any]] = {}
-    for raw_format, outcome in rows:
+    for raw_format, outcome, count in rows:
         normalized = normalize_match_format(str(raw_format or ""))
         if not normalized.is_brawl:
             continue
-        total["games"] += 1
+        total["games"] += count
         entry = queues.setdefault(
             normalized.label, {"format_label": normalized.label, "games": 0, "wins": 0, "losses": 0}
         )
-        entry["games"] += 1
+        entry["games"] += count
         if outcome == "win":
-            total["wins"] += 1
-            entry["wins"] += 1
+            total["wins"] += count
+            entry["wins"] += count
         elif outcome == "loss":
-            total["losses"] += 1
-            entry["losses"] += 1
+            total["losses"] += count
+            entry["losses"] += count
     queue_rows = list(queues.values())
     for entry in queue_rows:
         entry["win_rate"] = _win_rate(entry["wins"], entry["losses"])
@@ -3578,6 +3624,7 @@ def dashboard_snapshot(
         matchup_rows_read = reads.call(_matchup_rows, where, params)
         your_commander_rows_read = reads.call(_commander_rows, where, params, "player")
         faced_commander_rows_read = reads.call(_commander_rows, where, params, "opponent")
+        brawl_summary_read = reads.call(_brawl_summary, where, params)
         # The reads above are sums: SQLite does the work and hands back a few
         # rows. The ones below hand Python a row per game. Two threads doing
         # that at once wait on each other for the interpreter at every row
@@ -3589,8 +3636,9 @@ def dashboard_snapshot(
         # every game the current filters cover.
         land_profile = _deck_land_profile(conn, where, params)
         streaks = _streak_summary(conn, where, params)
+        # (Opponent colours are a sum too once every game has its stored
+        # row, but take a row per game for the games that have none.)
         opponent_color_rows = _opponent_color_rows(conn, where, params)
-        brawl_summary = _brawl_summary(conn, where, params)
         match_results = _match_level_results(conn, where, params)
         match_summary = _summarize_match_results(match_results)
         ranked_results = [
@@ -3629,6 +3677,7 @@ def dashboard_snapshot(
         matchup_rows = matchup_rows_read.result()
         your_commander_rows = your_commander_rows_read.result()
         faced_commander_rows = faced_commander_rows_read.result()
+        brawl_summary = brawl_summary_read.result()
         player_name = player_name_read.result()
         deck_visuals = deck_visuals_read.result()
         deck_color_map = deck_color_map_read.result()
@@ -4407,12 +4456,23 @@ def _deck_land_profile(conn: sqlite3.Connection, where: str, params: List[Any]) 
     classification reuses the shared draw-quality rules. Games with no visible
     cards (nothing to classify) are excluded from the split.
     """
+    # A game's stored summary comes with its row (what ``load_draw_summaries``
+    # reads, without asking again in slices of 900 games); ``has_summary`` is
+    # false for a game that has none and is computed below.
+    stored = _derived_join(conn)
+    summary_columns = (
+        "gd.cards_seen, gd.lands_seen, gd.total_draws, gd.land_draws, gd.land_flags, "
+        "gd.draw_quality_json IS NOT NULL AND gd.cards_seen IS NOT NULL"
+        if stored
+        else "NULL, NULL, NULL, NULL, NULL, 0"
+    )
     game_rows = conn.execute(
         f"""
-        SELECT g.id, p.id AS participant_id, p.deck_size
+        SELECT g.id, p.id AS participant_id, p.deck_size, {summary_columns}
         FROM games g
         JOIN matches m ON m.id = g.match_id
         JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+        {stored}
         WHERE {where}
         ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
         """,
@@ -4424,33 +4484,52 @@ def _deck_land_profile(conn: sqlite3.Connection, where: str, params: List[Any]) 
     sum_cards_seen = sum_lands_seen = sum_draws = sum_land_draws = 0
     expected_land_pct: Optional[float] = None
     summaries, computed = _draw_summary_batch(
-        conn, [(participant_id, row_deck_size) for _, participant_id, row_deck_size in game_rows]
+        conn, [(row[1], row[2]) for row in game_rows if not row[8]]
     )
     # The two games whose whole draw quality is read: the newest (rows are
     # newest-first) with its own submitted list, and the newest classified.
     newest_listed: Optional[Tuple[str, Optional[int]]] = None
     newest_classified: Optional[Tuple[str, Optional[int]]] = None
-    for game_id, participant_id, row_deck_size in game_rows:
-        summary = summaries.get(participant_id)
-        if summary is None:
-            continue
-        if newest_listed is None and (
+    for (
+        _game_id,
+        participant_id,
+        row_deck_size,
+        cards_seen,
+        lands_seen,
+        total_draws,
+        land_draws,
+        land_flags,
+        has_summary,
+    ) in game_rows:
+        if has_summary:
             # A stored summary is always of a game with its own list.
-            participant_id not in computed
-            or computed[participant_id].get("land_rate_source") == "decklist"
-        ):
+            own_list = True
+            is_flood = bool(int(land_flags or 0) & game_derived._FLOOD)
+            is_screw = bool(int(land_flags or 0) & game_derived._SCREW)
+        else:
+            summary = summaries.get(participant_id)
+            if summary is None:
+                continue
+            own_list = (
+                participant_id not in computed
+                or computed[participant_id].get("land_rate_source") == "decklist"
+            )
+            cards_seen, lands_seen = summary.cards_seen, summary.lands_seen
+            total_draws, land_draws = summary.total_draws, summary.land_draws
+            is_flood, is_screw = summary.is_flood, summary.is_screw
+        if newest_listed is None and own_list:
             newest_listed = (participant_id, row_deck_size)
-        if not summary.cards_seen:
+        if not cards_seen:
             continue
-        sum_cards_seen += int(summary.cards_seen or 0)
-        sum_lands_seen += int(summary.lands_seen or 0)
-        sum_draws += int(summary.total_draws or 0)
-        sum_land_draws += int(summary.land_draws or 0)
+        sum_cards_seen += int(cards_seen or 0)
+        sum_lands_seen += int(lands_seen or 0)
+        sum_draws += int(total_draws or 0)
+        sum_land_draws += int(land_draws or 0)
         if newest_classified is None:
             newest_classified = (participant_id, row_deck_size)
-        if summary.is_flood:
+        if is_flood:
             flood += 1
-        elif summary.is_screw:
+        elif is_screw:
             screw += 1
         else:
             normal += 1

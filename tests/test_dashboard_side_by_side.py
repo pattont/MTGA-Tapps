@@ -333,3 +333,110 @@ def test_start_backfill_calls_then_once_the_pass_has_finished(tmp_path):
         assert stored == [0]
     finally:
         game_derived.stop_backfill()
+
+
+def _per_game_sections(db_path):
+    """The sections that count stored per-game values in SQL, under a few filters."""
+    uri = db_path.resolve().as_uri() + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        found = []
+        for filters in ({}, {"deck": "Boros Mouse"}, {"fmt": "Play"}, {"days": 3650}):
+            where, params = dashboard._games_filter(
+                filters.get("deck"), filters.get("fmt"), filters.get("days"), db_path=db_path
+            )
+            found.append(
+                {
+                    "colors": dashboard._opponent_color_rows(conn, where, params),
+                    "brawl": dashboard._brawl_summary(conn, where, params),
+                    "lands": dashboard._deck_land_profile(conn, where, params),
+                }
+            )
+        return json.loads(json.dumps(found, sort_keys=True))
+    finally:
+        conn.close()
+
+
+def test_sections_counted_from_stored_values_match_the_games_computed_one_by_one(tmp_path):
+    db_path = _scaled_db(tmp_path, factor=6)
+    with sqlite3.connect(db_path) as conn:
+        # Opponents who showed cards of a few colour pairs, so there are
+        # colours to count.
+        conn.executemany(
+            "INSERT INTO cards (id, name, color_identity, first_seen_at) VALUES (?, ?, ?, '2026-06-04')",
+            [
+                (9001, "Test Plains Walker", "W"),
+                (9002, "Test Counterspell", "U"),
+                (9003, "Test Bolt", "R"),
+            ],
+        )
+        opponents = conn.execute(
+            "SELECT id, game_id FROM participants WHERE role = 'opponent' ORDER BY id"
+        ).fetchall()
+        assert len(opponents) > 10
+        for number, (participant_id, game_id) in enumerate(opponents):
+            for card_id in ((9001, 9002), (9002, 9003), (9003,))[number % 3]:
+                conn.execute(
+                    "INSERT INTO game_card_summary (game_id, participant_id, card_id, display_name,"
+                    " type_category, played_count) VALUES (?, ?, ?, ?, 'Instant', 1)",
+                    (game_id, participant_id, card_id, f"Test Card {card_id}"),
+                )
+        game_derived.invalidate_all(conn)
+        outstanding = game_derived.pending(conn, 1_000_000)
+    assert len(outstanding) > 10
+    # No stored row at all: every game is read and computed, as it once was.
+    computed = _per_game_sections(db_path)
+    assert len(computed[0]["colors"]) == 3 and computed[0]["lands"]["classified_games"]
+
+    # Some games stored, then all of them: the same sections, whoever counted.
+    with sqlite3.connect(db_path) as conn:
+        game_derived.store(conn, outstanding[::2])
+    assert _per_game_sections(db_path) == computed
+    with sqlite3.connect(db_path) as conn:
+        game_derived.store(conn, outstanding)
+        assert game_derived.pending(conn, 1_000_000) == []
+    assert _per_game_sections(db_path) == computed
+
+    # Rows of another rules version are not counted from; the games are computed.
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(f"UPDATE {game_derived.TABLE} SET rules_version = rules_version + 1")
+    assert _per_game_sections(db_path) == computed
+
+
+def test_brawl_record_counts_every_game_of_each_queue(tmp_path):
+    db_path = _scaled_db(tmp_path, factor=3)
+    with sqlite3.connect(db_path) as conn:
+        match_ids = [row[0] for row in conn.execute("SELECT id FROM matches ORDER BY id")]
+        for number, match_id in enumerate(match_ids):
+            queue = ("Play_Brawl_Historic", "Brawl_Ladder", "Play")[number % 3]
+            conn.execute("UPDATE matches SET format = ? WHERE id = ?", (queue, match_id))
+        rows = conn.execute(
+            """
+            SELECT m.format, g.outcome FROM games g
+            JOIN matches m ON m.id = g.match_id
+            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            """
+        ).fetchall()
+    expected = {}
+    for raw_format, outcome in rows:
+        label = dashboard.normalize_match_format(raw_format)
+        if not label.is_brawl:
+            continue
+        entry = expected.setdefault(label.label, {"games": 0, "wins": 0, "losses": 0})
+        entry["games"] += 1
+        if outcome in ("win", "loss"):
+            entry["wins" if outcome == "win" else "losses"] += 1
+    assert len(expected) == 2
+
+    uri = db_path.resolve().as_uri() + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        summary = dashboard._brawl_summary(conn, "1 = 1", [])
+    finally:
+        conn.close()
+    assert summary["games"] == sum(entry["games"] for entry in expected.values())
+    assert summary["wins"] == sum(entry["wins"] for entry in expected.values())
+    assert {
+        row["format_label"]: {key: row[key] for key in ("games", "wins", "losses")}
+        for row in summary["queues"]
+    } == expected
