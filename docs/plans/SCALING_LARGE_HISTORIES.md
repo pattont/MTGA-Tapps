@@ -1,8 +1,9 @@
 # Scaling to tens of thousands of games
 
 Status: Steps 0 to 8 are built on the `scaling-large-histories` branch
-(2026-11-15). Steps 0 to 7 passed a live check on the dev Mac; Step 8 and
-Windows have not been run in the real app yet.
+(2026-11-15). Steps 0 to 8 passed a live check on the dev Mac (Step 8 on
+2026-11-16, on a normal history: the long-history half of it has only run in
+scripts). Windows has not been run in the real app yet.
 What is left is listed under "Still to do".
 The question this answers: what happens to a player who logs 2,000–3,000
 ranked games a month, a year from now?
@@ -506,10 +507,18 @@ In the order they are worth doing.
    `0 differ` with the table full against emptied. After the next restart
    (1,277 games): the four indexes were there and the running dashboard
    answered card pages and searches in milliseconds.
-2. **Step 8 in the running app, on both systems.** After a restart onto it:
-   the Overview opens as before on a normal history; on a scaled copy the
-   launch warm-up runs after the background pass, and a trend range answers
-   without a rebuild. Step 5 passed its second check on 2026-11-12: after 22
+2. **Step 8 in the running app with a long history, and on Windows.** On a
+   scaled copy: the launch warm-up runs after the background pass, the
+   Overview builds side by side, and a trend range answers without a
+   rebuild. The Mac half on a normal history passed on 2026-11-16 (app
+   restarted onto `f219bd9`, 1,307 games, so the page builds in line and
+   there is no warm-up): every thread at priority 20; an Overview nobody had
+   asked for took 105 to 108 ms over HTTP against 94 to 97 ms for the same
+   call in a script, byte for byte the same body; the same page again 2.5 ms;
+   another trend range 8 ms. The side-by-side build was then timed at the
+   app's priority on a 38,772-game copy (`taskpolicy -c utility`, which ps
+   shows as 20): 0.63 s, the same as from a terminal (in line 2.0 s; in the
+   background band a napped app ran in, 3.7 s). Step 5 passed its second check on 2026-11-12: after 22
    hours all 17 threads of the Mac app were still at priority 20. Step 4
    passed its own on 2026-11-10: after the restart all 1,284 `game_derived`
    rows were at `rules_version` 2 with their summary columns filled, none
