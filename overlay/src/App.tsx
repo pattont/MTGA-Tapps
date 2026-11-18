@@ -98,6 +98,15 @@ export function App() {
 
   const rootRef = useRef<HTMLDivElement>(null);
   const pollerRef = useRef<OverlayPoller | null>(null);
+  /** The opponent window has no poller of its own: this page hands it each
+      body through the shell (only while the opponent panel is on). */
+  const shareRef = useRef<{ on: boolean; last: OverlayPayload | null; link: Link }>({ on: false, last: null, link: 'connecting' });
+  shareRef.current.on = Boolean(settings?.opponentPanel);
+  const share = useCallback(() => {
+    const { on, last, link: current } = shareRef.current;
+    if (!on) return;
+    void tauri.invoke('share_payload', { payload: current === 'online' ? last : null });
+  }, []);
   /** Last height reported to the shell, so re-opening the panel lands at the right size at once. */
   const lastHeight = useRef<number | null>(null);
   const layoutRef = useRef(layout);
@@ -125,6 +134,8 @@ export function App() {
         }),
         // Settings open beside whatever is showing — the rail stays a rail.
         await tauri.listen<void>('overlay-open-settings', () => setFlyout(true)),
+        // The tracker's Settings changed which panels are on.
+        await tauri.listen<Settings>('overlay-settings', (next) => setSettings(next)),
         // Hovering is the shell's to report: WebKit gives this never-focused
         // window no mouse-move events until it is clicked.
         await tauri.listen<{ x: number; y: number } | null>('overlay-cursor', (point) => setCursor(point)),
@@ -141,10 +152,18 @@ export function App() {
     if (!settings) return;
     if (!pollerRef.current) {
       pollerRef.current = new OverlayPoller(settings.apiUrl, {
-        onPayload: setPayload,
+        onPayload: (next) => {
+          setPayload(next);
+          shareRef.current.last = next;
+          share();
+        },
         onLink: (next) => {
           log(`tracker link: ${next}`);
           setLink(next);
+          // Lost: the opponent window hides. Back: it gets the last body
+          // again (an unchanged tracker answers 304, which shares nothing).
+          shareRef.current.link = next;
+          share();
         },
       });
     } else {
@@ -165,6 +184,11 @@ export function App() {
   }, [layout.visible, settings]);
 
   useEffect(() => () => pollerRef.current?.stop(), []);
+
+  // The opponent panel just turned on: its new window needs the game so far.
+  useEffect(() => {
+    if (settings?.opponentPanel) share();
+  }, [settings?.opponentPanel, share]);
 
   // --- layout commands -------------------------------------------------------
   const contentHeight = useCallback(() => {
@@ -259,8 +283,10 @@ export function App() {
   // off stays a rail.
   const wasActive = useRef<boolean | null>(null);
   // "Active" for the fold-away rule includes the results screen: the
-  // final library stays up until Arena leaves it (game_over clears).
-  const gameActive = Boolean(payload?.state && (payload.state.game_active || payload.state.game_over) && !payload.state.mid_game_attach);
+  // final library stays up until Arena leaves it (game_over clears). A deck
+  // panel turned off (Settings → Panels) is never active; turned back on
+  // mid-game it comes back as it would have at the game's start.
+  const gameActive = Boolean(settings?.deckPanel !== false && payload?.state && (payload.state.game_active || payload.state.game_over) && !payload.state.mid_game_attach);
   useEffect(() => {
     const before = wasActive.current;
     wasActive.current = gameActive;
@@ -311,16 +337,27 @@ export function App() {
 
   if (!settings) return <div ref={rootRef} class="root" />;
 
-  const dockClass = `dock-${settings.dock}`;
-  const side = hoverSide(settings.dock);
+  // Opponent only: nothing of the deck panel is drawn. The window is still
+  // there for the settings, on the edge the shell gave it (across from the
+  // opponent panel), so the page follows the shell's dock, not the setting.
+  const deckOff = !settings.deckPanel;
+  const dock = deckOff ? layout.dock : settings.dock;
+  const dockClass = `dock-${dock}`;
+  const side = hoverSide(dock);
 
   return (
     <div
       ref={rootRef}
-      class={`root ${dockClass} ${layout.layout === 'panel' ? 'is-panel' : 'is-rail'} ${(layout.layout === 'panel' ? settings.opacity : settings.railOpacity) > 0 ? 'has-bg' : 'no-bg'} names-${settings.nameColor}`}
+      class={`root ${dockClass} ${layout.layout === 'panel' && !deckOff ? 'is-panel' : 'is-rail'}${deckOff ? ' deck-off' : ''} ${(layout.layout === 'panel' ? settings.opacity : settings.railOpacity) > 0 ? 'has-bg' : 'no-bg'} names-${settings.nameColor}`}
       style={{ '--tint-alpha': tintAlpha(settings.opacity), '--rail-alpha': tintAlpha(settings.railOpacity), '--scale': (settings.scale / 100) * (layout.layout === 'rail' ? RAIL_BOOST : 1), '--rail-boost': RAIL_BOOST } as never}
     >
-      {layout.layout === 'panel' ? (
+      {deckOff ? (
+        flyout ? (
+          <div class={`gutter side-${side}`}>
+            <Flyout settings={settings} platform={platform} onChange={updateSettings} onClose={() => setFlyout(false)} onQuit={quit} />
+          </div>
+        ) : null
+      ) : layout.layout === 'panel' ? (
         <>
           <Panel
             payload={payload}

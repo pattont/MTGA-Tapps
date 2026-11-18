@@ -55,6 +55,29 @@ def test_opponent_seen_lists_each_card_once_with_type_cost_and_count():
     assert tracker._live_opponent_seen() is None
 
 
+def test_opponent_seen_names_cards_without_the_console_type_label():
+    """Played cards are recorded under their console label; the list must carry
+    the card's own name, or it gets no cost, no card page and no hover image."""
+    tracker = make_tracker()
+    tracker.card_db = CostCardDB({"Ajani's Pridemate": ("{1}{W}", 2.0)})
+    tracker.opponent_cards = [
+        CardEvent("Plains (Land)", "opponent", card_type_category="Land"),
+        CardEvent("Ajani's Pridemate (Creature 2/2)", "opponent", card_type_category="Creature"),
+        CardEvent("Ajani's Pridemate (Creature 3/3)", "opponent", card_type_category="Creature"),
+        CardEvent("Card #777 (Creature 1/1)", "opponent", card_type_category="Creature"),
+    ]
+    assert json.loads(tracker._live_opponent_seen()) == [
+        {"name": "Plains", "type": "Land", "mana_cost": None, "mana_value": None, "count": 1},
+        {
+            "name": "Ajani's Pridemate",
+            "type": "Creature",
+            "mana_cost": "{1}{W}",
+            "mana_value": 2.0,
+            "count": 2,
+        },
+    ]
+
+
 def _land(name="Mountain"):
     return CardEvent(name, "player", card_type_category="Land")
 
@@ -92,6 +115,18 @@ def test_live_draw_quality_reads_flood_like_game_detail():
         45,
         14,
     )
+
+
+def test_live_draw_quality_leaves_the_land_count_out_when_cards_left_unseen():
+    """With cards gone from the library unnamed, "14 of 21 left" would state
+    a ceiling as a count; the chance of a land stands alone."""
+    tracker = _setup_draws([_land(), _land(), _spell()], [_spell()])
+    overlay = json.dumps(
+        {"cards": [{}], "land_odds": {"1": 35.6}, "library_size": 21, "lands_left": 16, "unseen": 24}
+    )
+    quality = json.loads(tracker._live_draw_quality(overlay))
+    assert quality["next_land_pct"] == 35.6
+    assert quality["library_size"] is None and quality["lands_left"] is None
 
 
 def test_live_draw_quality_reads_screw_and_normal():

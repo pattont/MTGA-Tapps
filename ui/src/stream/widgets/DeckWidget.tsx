@@ -1,15 +1,20 @@
 import { deckSections, type DeckRow } from '../deckRows';
 import { shows, type StreamOptions } from '../options';
+import { unseenCount } from '../overlayView';
 import type { OverlayState } from '../types';
 import { useOverlay } from '../useOverlay';
 import { AutoScroll } from './AutoScroll';
 import { Brand } from './Brand';
 import { ManaCost } from './ManaCost';
 
-function Row({ row }: { row: DeckRow }) {
+/** `ceiling`: cards left the library unseen, so a count is the most that can be left. */
+function Row({ row, ceiling }: { row: DeckRow; ceiling: boolean }) {
   return (
     <li className={`sk-row sk-type-${row.typeClass}${row.left === 0 ? ' sk-row-out' : ''}`}>
-      <span className="sk-row-count">{row.left}</span>
+      <span className="sk-row-count">
+        {ceiling && row.left > 0 ? '≤' : ''}
+        {row.left}
+      </span>
       <span className="sk-row-name">{row.name}</span>
       <span className="sk-row-cost">
         <ManaCost cost={row.mana_cost} />
@@ -22,6 +27,7 @@ function Row({ row }: { row: DeckRow }) {
 export function DeckView({ state, options }: { state: OverlayState; options: StreamOptions }) {
   const { spells, lands } = deckSections(state, options.sort, options.lands);
   const live = state.game_active && !state.game_over;
+  const ceiling = unseenCount(state) > 0;
   return (
     <div className="sk-panel sk-deck">
       <header className="sk-head">
@@ -42,11 +48,11 @@ export function DeckView({ state, options }: { state: OverlayState; options: Str
       </header>
       <AutoScroll as="ul" frameClassName="sk-rows-frame" className="sk-rows" label="Library">
         {spells.map((row) => (
-          <Row key={row.key} row={row} />
+          <Row key={row.key} row={row} ceiling={ceiling} />
         ))}
         {lands.length > 0 && spells.length > 0 ? <li className="sk-rows-gap" aria-hidden="true" /> : null}
         {lands.map((row) => (
-          <Row key={row.key} row={row} />
+          <Row key={row.key} row={row} ceiling={ceiling} />
         ))}
       </AutoScroll>
       <div className="sk-foot">

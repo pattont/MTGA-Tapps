@@ -3,6 +3,8 @@ export interface AppNavItem {
   label: string;
   /** When set, the item navigates to this hash route instead of scrolling to a section. */
   route?: string;
+  /** A route styled like a section link, without the gold `nav-route` emphasis. */
+  plain?: boolean;
 }
 
 // Live Log is not in this list: it renders as its own highlighted entry
@@ -18,8 +20,14 @@ export const dashboardNavItems: AppNavItem[] = [
   { id: 'brawl', label: 'Brawl' },
   { id: 'opponents', label: 'Opponents' },
   { id: 'formats', label: 'Formats' },
-  { id: 'sessions', label: 'Sessions' },
+  { id: 'challenges', label: 'Challenges', route: '#/challenges', plain: true },
+  { id: 'days', label: 'Days' },
   { id: 'all-games', label: 'All Games', route: '#/games' },
+];
+
+export const challengesNavItems: AppNavItem[] = [
+  { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
+  { id: 'challenges-page', label: 'Challenges' },
 ];
 
 export const gamesNavItems: AppNavItem[] = [

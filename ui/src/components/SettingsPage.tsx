@@ -11,15 +11,15 @@ import {
   fetchTrackerSettings,
   saveDeckAiSettings,
   saveDeckFinderCreators,
-  saveSessionSettings,
   saveStartupSettings,
   startCollectionExport,
   setOverlayEnabled,
+  setOverlayPanels,
   type CollectionExportFormat,
   type CollectionExportJob,
+  type OverlayPanels,
   type OverlaySettings,
   type BuyOnPaperSettings,
-  type SessionSettings,
   type DeckAiModel,
   type DeckAiProviderSettings,
   type DeckAiSettings,
@@ -28,12 +28,18 @@ import {
   type PlatformSettings,
   type StartupSettings,
   type TrackerInfoSettings,
+  type TrackingSettings,
 } from '../api';
 import { formatDateTime } from '../format';
 import { StreamKitSettings } from './StreamKitSettings';
+import { FeatureSwitch } from './FeatureSwitch';
+import { RestoreDefaults } from './RestoreDefaults';
+import { SavedGameModes } from './SavedGameModes';
+import { savedModeCount } from '../savedGameModes';
 import { Section } from './Section';
 import { useSharedUpdateStatus } from './useUpdateStatus';
 import {
+  BLOCKED_BY_WINDOWS,
   displayVersion,
   isNewerVersion,
   saveUpdateSettings,
@@ -169,7 +175,7 @@ function TrackerOverview({ info, deckAi }: { info: TrackerInfoSettings; deckAi: 
                 </a>
                 <span aria-hidden="true">|</span>
                 <a className="settings-quiet-link" href={RESET_ROUTE}>
-                  Reset Settings
+                  Reset tracker data
                 </a>
               </span>
             ) : null}
@@ -195,13 +201,10 @@ function startupBadge(startup: StartupSettings | null) {
   );
 }
 
-function sessionsBadge(sessions: SessionSettings | null) {
-  if (!sessions) return undefined;
-  return (
-    <StatusBadge tone="off">
-      {sessions.break_hours ? `${sessions.break_hours} h break` : 'One per launch'}
-    </StatusBadge>
-  );
+function savedModesBadge(tracking: TrackingSettings | null) {
+  if (!tracking) return undefined;
+  const count = savedModeCount(tracking);
+  return <StatusBadge tone="off">{count === 0 ? 'None saved' : `${count} saved`}</StatusBadge>;
 }
 
 /** The update state when there is one; otherwise why this copy can't update itself. */
@@ -231,36 +234,6 @@ function UpdatesBadge({ settings }: { settings: UpdateSettings }) {
   if (reason === 'source' || kind === 'source') return <StatusBadge tone="off">Update with git</StatusBadge>;
   if (reason === 'portable' || kind === 'windows-portable') return <StatusBadge tone="off">Portable copy</StatusBadge>;
   return <StatusBadge tone="off">Manual install</StatusBadge>;
-}
-
-/** On/off switch beside a feature card's title; it saves as soon as it flips. */
-function FeatureSwitch({
-  label,
-  checked,
-  busy,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  busy: boolean;
-  onChange: (next: boolean) => void;
-}) {
-  return (
-    <button
-      aria-checked={checked}
-      aria-label={label}
-      className="settings-switch"
-      disabled={busy}
-      role="switch"
-      type="button"
-      onClick={() => onChange(!checked)}
-    >
-      <span aria-hidden="true" className="settings-switch-track">
-        <span className="settings-switch-thumb" />
-      </span>
-      {checked ? 'On' : 'Off'}
-    </button>
-  );
 }
 
 /** The Deck AI switch, and a warning beside it when it is on without a key. */
@@ -535,7 +508,7 @@ export function SettingsPage() {
   // undefined while loading; null when the tracker predates the updater.
   const [updates, setUpdates] = useState<UpdateSettings | null | undefined>(undefined);
   const [buyOnPaper, setBuyOnPaper] = useState<BuyOnPaperSettings | null>(null);
-  const [sessions, setSessions] = useState<SessionSettings | null>(null);
+  const [tracking, setTracking] = useState<TrackingSettings | null>(null);
   // The overlay, Buy on Paper and Deck AI switches sit in their card titles,
   // so the page owns saving them.
   const [overlayBusy, setOverlayBusy] = useState(false);
@@ -544,6 +517,18 @@ export function SettingsPage() {
   const [buyOnPaperError, setBuyOnPaperError] = useState<string | null>(null);
   const [deckAiBusy, setDeckAiBusy] = useState(false);
   const [deckAiError, setDeckAiError] = useState<string | null>(null);
+
+  async function changeOverlayPanels(panels: OverlayPanels) {
+    setOverlayBusy(true);
+    setOverlayError(null);
+    try {
+      setOverlay(await setOverlayPanels(panels));
+    } catch (exc: unknown) {
+      setOverlayError(exc instanceof Error ? exc.message : 'The overlay could not be changed');
+    } finally {
+      setOverlayBusy(false);
+    }
+  }
 
   async function changeOverlay(enabled: boolean) {
     setOverlayBusy(true);
@@ -591,6 +576,12 @@ export function SettingsPage() {
     }
   }
 
+  // Bumped by Restore defaults: settings are read again. Once they arrive the
+  // cards above Defaults are built anew from them (each carries cardsKey in
+  // its key), since every form keeps its own copy of what it first loaded.
+  const [generation, setGeneration] = useState(0);
+  const [cardsKey, setCardsKey] = useState(0);
+
   useEffect(() => {
     let cancelled = false;
     fetchTrackerSettings()
@@ -604,7 +595,8 @@ export function SettingsPage() {
           setOverlay(settings.overlay ?? null);
           setUpdates(settings.updates ?? null);
           setBuyOnPaper(settings.buy_on_paper ?? { enabled: true, cache_bytes: 0 });
-          setSessions(settings.sessions ?? null);
+          setTracking(settings.tracking ?? null);
+          setCardsKey(generation);
         }
       })
       .catch((exc: unknown) => {
@@ -615,7 +607,7 @@ export function SettingsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [generation]);
 
   // Every card shows the load error, or a spinner until its settings arrive.
   function settingsBody<T>(value: T | null, render: (loaded: T) => ReactNode): ReactNode {
@@ -633,6 +625,7 @@ export function SettingsPage() {
   return (
     <>
       <Section
+        key={`tracker-${cardsKey}`}
         id="settings-tracker"
         title="Tracker"
         description="What this tracker watches and records. Refreshed every time it starts."
@@ -642,30 +635,17 @@ export function SettingsPage() {
         ))}
       </Section>
 
-      <SettingsGroup title="General" columns={2}>
-        <div className="settings-stack">
-          <Section
-            id="settings-startup"
-            title="Startup"
-            badge={startupBadge(startup)}
-            description="When Tapps Tracker starts, and whether it opens the dashboard."
-          >
-            {settingsBody(startup, (loaded) => (
-              <StartupForm initial={loaded} platform={platform} onChange={setStartup} />
-            ))}
-          </Section>
-
-          {sessions ? (
-            <Section
-              id="settings-sessions"
-              title="Sessions"
-              badge={sessionsBadge(sessions)}
-              description="One sitting of play, shown on the Live Scoreboard and in the Overview."
-            >
-              <SessionsForm initial={sessions} onChange={setSessions} />
-            </Section>
-          ) : null}
-        </div>
+      <SettingsGroup key={`general-${cardsKey}`} title="General" columns={2}>
+        <Section
+          id="settings-startup"
+          title="Startup"
+          badge={startupBadge(startup)}
+          description="When Tapps Tracker starts, and whether it opens the dashboard."
+        >
+          {settingsBody(startup, (loaded) => (
+            <StartupForm initial={loaded} platform={platform} onChange={setStartup} />
+          ))}
+        </Section>
 
         <Section
           id="settings-updates"
@@ -687,7 +667,20 @@ export function SettingsPage() {
         </Section>
       </SettingsGroup>
 
-      <SettingsGroup title="Features" columns={2}>
+      {tracking ? (
+        <SettingsGroup key={`tracking-${cardsKey}`} title="Tracking" columns={1}>
+          <Section
+            id="settings-saved-modes"
+            title="Saved game modes"
+            badge={savedModesBadge(tracking)}
+            description="Choose which Arena modes are saved to your history and stats."
+          >
+            <SavedGameModes initial={tracking} onChange={setTracking} />
+          </Section>
+        </SettingsGroup>
+      ) : null}
+
+      <SettingsGroup key={`features-${cardsKey}`} title="Features" columns={2}>
         <Section
           id="settings-overlay"
           title="In-game overlay"
@@ -698,7 +691,7 @@ export function SettingsPage() {
               <StatusBadge tone="off">Not in this build</StatusBadge>
             )
           }
-          description="Your library, draw odds and land drops in a small window beside Arena. It reads only this tracker, never the game."
+          description="Your library and draw odds, and what your opponent has played, in small panels beside Arena. It reads only this tracker, never the game."
         >
           {settingsBody(overlay, (loaded) => (
             <OverlayDetails
@@ -707,6 +700,7 @@ export function SettingsPage() {
               overlay={loaded}
               platform={platform}
               onStart={() => void changeOverlay(true)}
+              onPanels={(panels) => void changeOverlayPanels(panels)}
             />
           ))}
         </Section>
@@ -756,7 +750,7 @@ export function SettingsPage() {
         </Section>
       </SettingsGroup>
 
-      <SettingsGroup title="Streaming" columns={1}>
+      <SettingsGroup key={`streaming-${cardsKey}`} title="Streaming" columns={1}>
         <Section
           id="settings-streaming"
           title="Stream Kit"
@@ -766,7 +760,7 @@ export function SettingsPage() {
         </Section>
       </SettingsGroup>
 
-      <SettingsGroup title="Your data" columns={platform?.collection_export ? 'split' : 1}>
+      <SettingsGroup key={`your-data-${cardsKey}`} title="Your data" columns={platform?.collection_export ? 'split' : 1}>
         <Section
           id="settings-backup"
           title="Backup & restore"
@@ -784,6 +778,13 @@ export function SettingsPage() {
             <CollectionExport platform={platform} games={trackerInfo?.games ?? null} />
           </Section>
         ) : null}
+      </SettingsGroup>
+
+      {/* Outside the reloaded cards, so its result stays on screen. */}
+      <SettingsGroup title="Defaults" columns={1}>
+        <Section id="settings-restore-defaults" title="Restore defaults">
+          <RestoreDefaults onRestored={() => setGeneration((value) => value + 1)} />
+        </Section>
       </SettingsGroup>
     </>
   );
@@ -913,6 +914,9 @@ function updateStateText(status: UpdateStatus | null): string {
     case 'installing':
       return 'Restarting…';
     case 'error':
+      if (status.error?.code === BLOCKED_BY_WINDOWS && status.error.message) {
+        return status.error.message;
+      }
       return status.error?.message ? `Update failed: ${status.error.message}` : 'Update failed.';
     case 'disabled':
       return 'Automatic checks are off. Check now looks once.';
@@ -1145,20 +1149,30 @@ function UpdatesForm({
   );
 }
 
+/** Settings → In-game overlay → Panels: there is no "neither", that is the switch in the title. */
+const OVERLAY_PANEL_CHOICES: Array<{ value: OverlayPanels; label: string; note: string }> = [
+  { value: 'both', label: 'Both', note: 'Your deck on one edge, your opponent on the other' },
+  { value: 'deck', label: 'My deck', note: 'Your library, draw odds and land drops' },
+  { value: 'opponent', label: 'Opponent', note: 'Their cards and likely deck, nothing of yours' },
+];
+
 function OverlayDetails({
   overlay,
   platform,
   busy,
   error,
   onStart,
+  onPanels,
 }: {
   overlay: OverlaySettings;
   platform: PlatformSettings | null;
   busy: boolean;
   error: string | null;
   onStart: () => void;
+  onPanels: (panels: OverlayPanels) => void;
 }) {
   const macos = platform?.system === 'macos';
+  const panels = overlay.panels ?? 'both';
   // One sentence of state under the title's switch. "Off" is the whole story
   // for people who never want the overlay: no process runs and none will start.
   const state = !overlay.available
@@ -1181,10 +1195,33 @@ function OverlayDetails({
         ) : null}
       </p>
       {overlay.available ? (
+        <fieldset className="collection-export-formats overlay-panels" disabled={busy}>
+          <legend className="collection-export-legend">Panels</legend>
+          <div className="collection-export-choices overlay-panel-choices">
+            {OVERLAY_PANEL_CHOICES.map((choice) => (
+              <label key={choice.value} className="collection-export-choice">
+                <input type="radio" name="overlay-panels" value={choice.value} checked={panels === choice.value} onChange={() => onPanels(choice.value)} />
+                <span className="collection-export-choice-text">
+                  <span className="collection-export-choice-label">{choice.label}</span>
+                  <span className="collection-export-choice-note">{choice.note}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      ) : null}
+      {overlay.available ? (
         <div className="feature-keys">
-          <span className="overlay-key">
-            Deck panel <kbd>{macos ? '⌥⇧T' : 'Alt+Shift+T'}</kbd>
-          </span>
+          {panels !== 'opponent' ? (
+            <span className="overlay-key">
+              Deck panel <kbd>{macos ? '⌥⇧T' : 'Alt+Shift+T'}</kbd>
+            </span>
+          ) : null}
+          {panels !== 'deck' ? (
+            <span className="overlay-key">
+              Opponent panel <kbd>{macos ? '⌥⇧O' : 'Alt+Shift+O'}</kbd>
+            </span>
+          ) : null}
           <span className="overlay-key">
             Hide / show <kbd>{macos ? '⌥⇧H' : 'Alt+Shift+H'}</kbd>
           </span>
@@ -1204,70 +1241,6 @@ function OverlayDetails({
 
 function formatMegabytes(bytes: number): string {
   return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function sessionBreakLabel(hours: number): string {
-  if (hours === 0) return 'Only when the app opens';
-  return `After ${hours} hour${hours === 1 ? '' : 's'} without a game`;
-}
-
-function SessionsForm({
-  initial,
-  onChange,
-}: {
-  initial: SessionSettings;
-  onChange?: (next: SessionSettings) => void;
-}) {
-  const [settings, setSettings] = useState(initial);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  async function update(hours: number) {
-    setBusy(true);
-    setMessage(null);
-    setError(null);
-    try {
-      const saved = await saveSessionSettings(hours);
-      setSettings(saved);
-      onChange?.(saved);
-      setMessage('Saved. It applies from the next match.');
-    } catch (exc: unknown) {
-      setError(exc instanceof Error ? exc.message : 'The session setting could not be saved');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="settings-form">
-      <label className="settings-field">
-        <span>Start a new session</span>
-        <select disabled={busy} value={settings.break_hours} onChange={(event) => void update(Number(event.target.value))}>
-          {settings.choices.map((hours) => (
-            <option key={hours} value={hours}>
-              {sessionBreakLabel(hours)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <p className="settings-hint">
-        Opening the app always starts a new session. With a break set, a match that starts that long
-        after your last game starts one too, so leaving the app running for days doesn't pile every
-        night into one record. A Best-of-3 match always stays in one session.
-      </p>
-      {message ? (
-        <p className="backup-note backup-note-done startup-save-status" role="status">
-          {message}
-        </p>
-      ) : null}
-      {error ? (
-        <p className="collection-export-status collection-export-fail" role="alert">
-          {error}
-        </p>
-      ) : null}
-    </div>
-  );
 }
 
 function BuyOnPaperDetails({ settings, error }: { settings: BuyOnPaperSettings; error: string | null }) {

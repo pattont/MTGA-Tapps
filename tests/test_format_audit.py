@@ -742,3 +742,12 @@ def test_audit_repairs_card_labels_that_are_not_cards(tmp_path, monkeypatch):
         assert check.execute("select display_name from game_card_summary").fetchall() == [("Card #120001",)]
         assert check.execute("select display_name from game_drawn_cards").fetchall() == [("Card #120001",)]
         assert check.execute("select name from cards order by name").fetchall() == [("Card #120001",)]
+
+
+def test_is_direct_challenge_format_matches_every_variant():
+    from mtga_tracker.format_normalizer import is_direct_challenge_format
+
+    for value in ("DirectGame", "Traditional_DirectGame", "DirectGameBrawl", "Direct Challenge"):
+        assert is_direct_challenge_format(value)
+    for value in (None, "", "Play", "Ladder", "Play_Brawl_Historic", "Jump_In_MSH"):
+        assert not is_direct_challenge_format(value)

@@ -93,9 +93,10 @@ def test_load_app_settings_bounds_dashboard_port(tmp_path):
 def test_settings_path_is_project_top_level_for_source_checkouts():
     """settings.json must sit next to config.py, not buried in data/."""
     from mtga_tracker.paths import PROJECT_ROOT
-    from mtga_tracker.settings import SETTINGS_PATH
+    from mtga_tracker.settings import _settings_file_path
 
-    assert SETTINGS_PATH == PROJECT_ROOT / "settings.json"
+    # conftest points SETTINGS_PATH at a scratch file; the rule is in the function.
+    assert _settings_file_path() == PROJECT_ROOT / "settings.json"
 
 
 def test_load_app_settings_reads_startup_preferences(tmp_path):
@@ -220,42 +221,14 @@ def test_skipped_version_uses_the_updater_version_parser(tmp_path):
         )
 
 
-def test_session_break_defaults_to_four_hours_and_keeps_other_settings(tmp_path):
-    from mtga_tracker.settings import save_session_break_hours, session_break_hours
-
-    settings_path = tmp_path / "settings.json"
-    assert session_break_hours(settings_path) == 4
-    save_startup_settings(start_at_login=True, open_dashboard_on_launch=False, path=settings_path)
-    assert save_session_break_hours(8, settings_path) == 8
-    assert save_session_break_hours(0, settings_path) == 0
-    document = json.loads(settings_path.read_text(encoding="utf-8"))
-    assert document["sessions"] == {"break_hours": 0}
-    assert document["startup"]["start_at_login"] is True
-
-    settings_path.write_text(json.dumps({"sessions": {"break_hours": "6"}}), encoding="utf-8")
-    assert session_break_hours(settings_path) == 4
-
-
-def test_session_break_rejects_unsupported_values(tmp_path):
-    import pytest
-
-    from mtga_tracker.settings import save_session_break_hours
-
-    for value in (5, -1, True, "4", None):
-        with pytest.raises(ValueError):
-            save_session_break_hours(value, tmp_path / "settings.json")
-
-
-def test_settings_api_reads_and_saves_the_session_break(tmp_path, monkeypatch):
+def test_the_session_break_setting_is_gone(tmp_path, monkeypatch):
+    """Records count calendar days, so Settings has no session break: the
+    endpoint is gone and the settings payload no longer carries it."""
     from mtga_tracker import settings, settings_api
 
     monkeypatch.setattr(settings, "SETTINGS_PATH", tmp_path / "settings.json")
-    code, body = settings_api.handle_post("/api/settings/sessions", {"break_hours": 6})
-    assert code == 200
-    assert body["sessions"] == {"break_hours": 6, "choices": [0, 1, 2, 3, 4, 6, 8, 12]}
-    code, body = settings_api.handle_post("/api/settings/sessions", {"break_hours": 7})
-    assert code == 400
-    assert settings.session_break_hours() == 6
+    assert settings_api.handle_post("/api/settings/sessions", {"break_hours": 6}) is None
+    assert not hasattr(settings, "session_break_hours")
 
 
 def test_tracker_info_reports_recorded_games(tmp_path, monkeypatch):
@@ -286,3 +259,155 @@ def test_tracker_info_reports_recorded_games(tmp_path, monkeypatch):
 
     missing = settings_api._tracker_info(tmp_path / "missing.sqlite3")
     assert missing["games"] is None
+
+
+def test_tracked_modes_default_and_save(tmp_path, monkeypatch):
+    import pytest
+
+    from mtga_tracker import dashboard, settings, settings_api
+
+    settings_path = tmp_path / "settings.json"
+    defaults = {
+        "direct_challenge": True,
+        "jump_in": False,
+        "midweek_magic": False,
+        "momir": False,
+        "welcome_deck": False,
+        "practice": False,
+    }
+    assert settings.tracked_modes(settings_path) == defaults
+    assert settings.track_direct_challenge(settings_path) is True
+    save_startup_settings(start_at_login=True, open_dashboard_on_launch=False, path=settings_path)
+    assert settings.save_track_direct_challenge(False, settings_path) is False
+    saved = settings.save_tracked_modes({"jump_in": True}, settings_path)
+    assert saved == {**defaults, "direct_challenge": False, "jump_in": True}
+    document = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert document["tracking"] == {"direct_challenge": False, "jump_in": True}
+    assert document["startup"]["start_at_login"] is True
+    for value in (None, "false", 0):
+        with pytest.raises(ValueError):
+            settings.save_tracked_modes({"momir": value}, settings_path)
+    for changes in ({}, None, {"arena_open": True}):
+        with pytest.raises(ValueError):
+            settings.save_tracked_modes(changes, settings_path)
+
+    settings_path.write_text(
+        json.dumps({"tracking": {"direct_challenge": "no", "momir": 1}}), encoding="utf-8"
+    )
+    assert settings.tracked_modes(settings_path) == defaults
+
+    monkeypatch.setattr(settings, "SETTINGS_PATH", settings_path)
+    noted = []
+    monkeypatch.setattr(dashboard, "note_tracking_changed", lambda: noted.append(1))
+    code, body = settings_api.handle_post(
+        "/api/settings/tracking", {"direct_challenge": False, "midweek_magic": True}
+    )
+    assert code == 200
+    assert body["tracking"] == {**defaults, "direct_challenge": False, "midweek_magic": True}
+    assert noted == [1]
+    code, body = settings_api.handle_post("/api/settings/tracking", {})
+    assert code == 400
+    assert settings.track_direct_challenge() is False
+    assert settings_api.handle_get("/api/settings/tracking") == (
+        200,
+        {"tracking": {**defaults, "direct_challenge": False, "midweek_magic": True}},
+    )
+
+
+def test_restore_defaults_resets_preferences_and_keeps_the_users_own(monkeypatch, tmp_path):
+    """Settings → Restore defaults: every preference on the page goes back as
+    shipped; Deck AI keys and models, Deck Finder creators and the backup
+    folder stay; one failing step does not stop the others."""
+    from types import SimpleNamespace
+
+    from mtga_tracker import (
+        overlay_launcher,
+        paper_prices,
+        settings,
+        settings_api,
+        startup,
+        updater,
+    )
+
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "startup": {"start_at_login": True, "open_dashboard_on_launch": False},
+                "updates": {"check": False, "auto_download": False, "auto_install": True},
+                "sessions": {"break_hours": 8},
+                "tracking": {"direct_challenge": False, "jump_in": True},
+                "deck_ai": {
+                    "DECK_LLM_ENABLED": True,
+                    "DECK_LLM_PROVIDER": "anthropic",
+                    "ANTHROPIC_API_KEY": "sk-keep",
+                },
+                "backup": {"folder": "/keep/me"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings, "SETTINGS_PATH", path)
+    registrations = []
+    monkeypatch.setattr(
+        startup,
+        "set_start_at_login",
+        lambda enabled: registrations.append(enabled)
+        or startup.StartupRegistrationStatus(True, enabled),
+    )
+    monkeypatch.setattr(
+        startup, "registration_status", lambda: startup.StartupRegistrationStatus(True, False)
+    )
+    monkeypatch.setattr(
+        updater,
+        "_manager",
+        SimpleNamespace(
+            settings_changed=lambda: None,
+            support=lambda: {"supported": True, "install_kind": "macos-app"},
+        ),
+    )
+    paper = {"enabled": False}
+    panels_set = []
+    monkeypatch.setattr(paper_prices, "status", lambda path=None: dict(paper))
+    monkeypatch.setattr(
+        paper_prices, "set_enabled", lambda enabled, path=None: paper.update(enabled=enabled)
+    )
+    monkeypatch.setattr(
+        overlay_launcher,
+        "get_manager",
+        lambda: SimpleNamespace(
+            available=True, enabled=False, panels="opponent", set_panels=panels_set.append
+        ),
+    )
+
+    def overlay_fails(payload):
+        raise ValueError("The overlay could not be started.")
+
+    monkeypatch.setattr(settings_api, "_set_overlay_enabled", overlay_fails)
+
+    assert settings_api.handle_post("/api/settings/restore-defaults", {})[0] == 400
+    status, body = settings_api.handle_post("/api/settings/restore-defaults", {"confirm": True})
+
+    assert status == 200
+    assert body == {
+        "restored": True,
+        "errors": ["In-game overlay: The overlay could not be started."],
+    }
+    assert registrations == [False]
+    assert paper == {"enabled": True}
+    # Opponent only goes back to both panels, even when the overlay cannot start.
+    assert panels_set == ["both"]
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert document["startup"] == {"start_at_login": False, "open_dashboard_on_launch": True}
+    assert document["updates"]["check"] is True
+    assert document["updates"]["auto_download"] is True
+    assert document["updates"]["auto_install"] is False
+    # An old session break is left as it was: nothing reads it any more.
+    assert document["sessions"] == {"break_hours": 8}
+    assert settings.tracked_modes(path) == settings.TRACKED_MODE_DEFAULTS
+    assert document["deck_ai"] == {
+        "DECK_LLM_ENABLED": False,
+        "DECK_LLM_PROVIDER": "anthropic",
+        "ANTHROPIC_API_KEY": "sk-keep",
+    }
+    assert document["backup"] == {"folder": "/keep/me"}

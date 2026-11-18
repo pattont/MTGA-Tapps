@@ -11,9 +11,14 @@ import { Badge } from './Badge';
 import { CardLink } from './CardLink';
 import { ColorPips } from './ColorPips';
 import { DeckLink } from './DeckLink';
+import { LiveLandMeter } from './LiveLandMeter';
+import { LiveOpponentCards } from './LiveOpponentCards';
+import { LiveTodayPanel } from './LiveTodayPanel';
+import { matchScoreText } from '../liveScoreboard';
+import { NO_GAMES_TEXT, todayGames } from '../liveToday';
 import { ReplayLink } from './ReplayLink';
 import { TimelineList } from './TimelineList';
-import { gameRouteHash } from '../routes';
+import { gameRouteHash, gamesRouteHash } from '../routes';
 
 /* Half a second keeps the feed feeling immediate without meaningful cost:
    each poll is a tiny indexed delta read of local SQLite, and polling
@@ -159,12 +164,21 @@ function Scoreboard({
         ? `Turn ${now.turn_number}${turnTimer ? ` · ${turnTimer}` : ''}`
         : 'Starting up…';
   const expected = expectedLands(now);
+  const matchScore = matchScoreText(now);
 
   return (
     <div className="live-scoreboard">
       <div className="live-scoreboard-meta">
         {now.match_type === 'best_of_3' ? (
-          <span className="live-chip">Game {now.game_number ?? 1} of 3</span>
+          <span className="live-chip">
+            Game {now.game_number ?? 1} of 3
+            {matchScore ? (
+              <>
+                {' · '}
+                <strong>{matchScore}</strong>
+              </>
+            ) : null}
+          </span>
         ) : null}
         {waiting ? (
           <>
@@ -226,7 +240,10 @@ function Scoreboard({
               {now.player_lands} {now.player_lands === 1 ? 'land' : 'lands'} played
             </p>
           ) : null}
-          {now.lands_seen != null && now.cards_seen ? (
+          {now.draw_quality && now.draw_quality.total_cards_seen > 0 ? (
+            <LiveLandMeter quality={now.draw_quality} />
+          ) : now.lands_seen != null && now.cards_seen ? (
+            // A tracker from before the land meter: the plain count.
             <p
               className={`live-side-stat${
                 expected != null && Math.abs(now.lands_seen - expected) >= 2.5
@@ -264,6 +281,12 @@ function Scoreboard({
           {now.head_to_head ? (
             <p className="live-side-stat">
               {recordText(now.head_to_head.wins, now.head_to_head.losses)} vs this player
+            </p>
+          ) : null}
+          {now.color_record ? (
+            <p className="live-side-stat">
+              {recordText(now.color_record.wins, now.color_record.losses)} vs{' '}
+              <strong>{now.color_record.label}</strong> decks
             </p>
           ) : null}
           {(now.commander_record ?? []).map((record) => (
@@ -335,9 +358,9 @@ function TurnOrderTag({ wentFirst }: { wentFirst: number | null }) {
   );
 }
 
-function GamesList({ games }: { games: LiveGameRow[] }) {
+function GamesList({ games, emptyText }: { games: LiveGameRow[]; emptyText: string }) {
   if (games.length === 0) {
-    return <p className="empty-state">No finished games yet today — go queue up!</p>;
+    return <p className="empty-state">{emptyText}</p>;
   }
   return (
     <ol className="live-games">
@@ -505,8 +528,9 @@ export function LiveLogPage() {
 
   const state = payload?.tracker.state ?? 'offline';
   const now = payload?.now ?? null;
-  const session = payload?.session ?? null;
   const lastGame = payload?.games[0] ?? null;
+  // The game on the scoreboard: the live one, or between games the last one.
+  const shownNow = state === 'live' && now?.in_game ? now : state !== 'offline' ? lastGameNow : null;
   // The finished game the feed is still showing (it persists the moment the
   // match ends) — drives the /game-style end-of-game banner under the feed.
   const endedGame =
@@ -593,7 +617,7 @@ export function LiveLogPage() {
             <div className="live-feed-wrap">
               {/* The exact same Timeline the /game page renders, live. */}
               <div className="live-feed" ref={feedRef} onScroll={onFeedScroll}>
-                <TimelineList cardReturnHash="#/live" rows={events} showFilters={false} />
+                <TimelineList cardReturnHash="#/live" rows={events} />
                 {/* Same closing banner the /game timeline shows, once the
                     finished game has persisted. */}
                 {endedGame ? (
@@ -642,54 +666,22 @@ export function LiveLogPage() {
         </section>
       </div>
 
-      <div className="live-rail" id="live-session">
-        <section className="dashboard-section">
-          <div className="section-heading">
-            <h3>Session</h3>
-          </div>
-          {session ? (
-            <div className="live-stats">
-              <div className="live-stat">
-                <span className="live-stat-value">{session.games_played}</span>
-                <span className="live-stat-label">Games</span>
-              </div>
-              <div className="live-stat">
-                <span className="live-stat-value">
-                  {session.wins}–{session.losses}
-                </span>
-                <span className="live-stat-label">
-                  Record{session.win_rate !== null ? ` · ${session.win_rate}%` : ''}
-                </span>
-              </div>
-              <div className="live-stat">
-                <span className="live-stat-value">
-                  {session.runtime_seconds ? formatDuration(session.runtime_seconds) : '—'}
-                </span>
-                <span className="live-stat-label">Runtime</span>
-              </div>
-              <div className="live-stat">
-                <span
-                  className={
-                    state === 'offline'
-                      ? 'live-stat-value live-stat-bad'
-                      : 'live-stat-value live-stat-good'
-                  }
-                >
-                  {state === 'live' ? 'Live' : state === 'idle' ? 'Ready' : 'Off'}
-                </span>
-                <span className="live-stat-label">Tracker</span>
-              </div>
-            </div>
-          ) : (
-            <p className="empty-state">No session recorded yet.</p>
-          )}
-        </section>
+      <div className="live-rail" id="live-today">
+        <LiveTodayPanel payload={payload} nowMs={clockMs} />
 
-        <section className="dashboard-section">
+        {shownNow && (shownNow.opponent_seen?.length ?? 0) > 0 ? (
+          <LiveOpponentCards cards={shownNow.opponent_seen ?? []} />
+        ) : null}
+
+        {/* The games the Today box counts. */}
+        <section className="dashboard-section live-games-section">
           <div className="section-heading">
             <h3>Today's Games</h3>
+            <a className="live-games-all" href={gamesRouteHash()}>
+              All games →
+            </a>
           </div>
-          <GamesList games={payload?.games ?? []} />
+          <GamesList games={todayGames(payload, clockMs)} emptyText={NO_GAMES_TEXT} />
         </section>
       </div>
     </div>

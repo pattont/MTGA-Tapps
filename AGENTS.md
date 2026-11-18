@@ -19,12 +19,23 @@ Repo layout:
   second launch with `--open-settings`/`--show`/`--hide`) and a Preact page in `overlay/src/`.
   It talks to the tracker only through `GET /api/overlay`; the Python side that launches
   it is `src/mtga_tracker/overlay_launcher.py`. See `overlay/README.md`.
-  The payload's `session` (`live_api._overlay_session`: the Stream Kit record's
-  `tracker_sessions` totals plus a play/draw split from `participants.went_first`,
-  memoised per session totals) feeds the panel footer (`SessionRecord.tsx`), styled
-  by the overlay setting `sessionRecord` (`off`/`scoreboard`/`split`, default
-  `scoreboard`, mirrored in `settings.rs`). Its digits are sized to the rows on
-  purpose, not the Stream Kit's large ones.
+  The payload's `today` (`live_api._overlay_today`: the Stream Kit record's totals
+  for the games started since local midnight plus a play/draw split from
+  `participants.went_first`, memoised per day and totals) feeds the panel footer
+  (`TodayRecord.tsx`, ⚙ "Today's record"), styled by the overlay setting
+  `sessionRecord` (the name it had as the session record, kept so `overlay.json` needs
+  no migration; `off`/`scoreboard`/`split`, default `scoreboard`, mirrored in
+  `settings.rs`). `scoreboard` ("One line") keeps digits
+  sized to the rows. `split` ("Full") is the Stream Kit Record widget at the panel's
+  width: the record over a rank chip and a Deck chip, Play and Draw columns on the
+  right (each side's win rate over its record from the first game, a side with no games
+  left out). `build_overlay_payload` adds the chips' data to `today`: `rank`
+  (`_rank_context`, None outside ranked queues) and `deck` (`_today_deck_record`,
+  today's results with the deck on screen), read from the live row during a
+  game and the frozen last game between games (`_frozen_game`). The overlay memo
+  key carries their inputs, including the local date and that day's totals
+  (`_day_totals`, so the footer zeroes at midnight) and the newest `rank_snapshots`
+  id, because Arena reports a rank change after the game's result.
   Max panel height (`panelMaxHeight`) defaults to 850 px. To change a default for
   files already saved, bump `SETTINGS_VERSION` and swap the old default in
   `Settings::migrated` (`overlay.json` has no other migration).
@@ -33,6 +44,49 @@ Repo layout:
   mouse (`dock::click_through`, applied by the 100 ms cursor watch) unless the
   cursor is on the panel, the sideboard or settings are open, or it is being
   dragged. Never leave the gutter taking clicks; the rail window has none.
+  The opponent panel (overlay setting `opponentPanel`, default on) is a second
+  window, `opponent`, built by `lib.rs` `sync_opponent_window` while the setting is
+  on and destroyed when it is off (never built on the caller's thread:
+  WebView2 deadlocks, so `set_panels` hands it to a thread).
+  Which panels are on belongs to the tracker, not the ⚙ flyout: Settings →
+  In-game overlay → Panels (`settings.json` `overlay.panels`: `both` / `deck` /
+  `opponent`, never neither; `OverlayManager.set_panels`, `POST
+  /api/settings/overlay {panels}`). The tracker passes `--panels` on every launch
+  and handoff and sends it through a second launch on a change; `lib.rs`
+  `set_panels` applies it and `overlay.json`'s `deckPanel` / `opponentPanel` only
+  mirror it (`update_settings` keeps them, so a flyout save cannot change them).
+  With `deckPanel` off (opponent only) the deck window is NOT hidden or destroyed:
+  it holds the only poller and the flyout, and a hidden webview's timers are
+  throttled. Its page draws nothing, the shell keeps it a rail that lets every
+  click through (`dock::hidden_click_through`) except while the flyout is open in
+  it, its toggle hotkey is not registered, and the opponent panel shows a ⚙
+  (`open_settings`). The Dock setting then places the opponent panel and the deck
+  window takes the other edge (`dock::pane_docks`), so the page reads its edge from
+  `layout.dock`, not `settings.dock`. Shared state
+  (visibility, monitor, Arena) lives in `Runtime`; each window's layout, size,
+  drag and click-through in its `PaneRuntime`, and its open/pinned/edge/offset in
+  `pane_prefs` (`opponentOpen`, `opponentPinned`, `positions.opponentLeftY/RightY`,
+  edge `dock::opponent_dock`: opposite the deck panel, right beside a floating one).
+  Commands take the calling `WebviewWindow` to know which window they act on, and
+  events go to one window with `emit_to`, so the page listens with
+  `getCurrentWebviewWindow().listen` (a global `listen` never hears `emit_to`).
+  The opponent page has no poller: the deck page sends each body to
+  `share_payload` (only while the setting is on), which forwards it and shows the
+  window only while the body has an `opponent` block. That block
+  (`live_api._overlay_opponent`) is null unless a game is on screen and names the
+  deck from the commander, then `_archetype_guess` over the Deck AI-labelled
+  history (with `cache_scope`, an in-memory index kept two minutes or until a new
+  participant row), then the colour name. Its list (`overlay/src/opponentModel.ts`
+  `groupSeen`) mirrors the Stream Kit opponent widget's (`stream/liveView.ts`):
+  change both. The flood meter (overlay setting `floodMeter`: `off`/`above`/`below`, default
+  `above`, in the ⚙ flyout's framed "Bottom of the panel" group with Today's record) is the
+  Stream Kit Lands widget at the panel's width (`components/FloodMeter.tsx`; its math in
+  `overlay/src/floodMeter.ts` copies `stream/liveView.ts` `landZones`/`drawStatus`: change
+  both). It reads the payload's `draw_quality`, the live row's `draw_quality` column the
+  tracker already writes (the frozen game's between games; in the memo key), so it costs
+  no extra tracker work, and shows only with a game's library on screen.
+  The opponent rail's window height is `dock::OPPONENT_RAIL_HEIGHT`
+  (its 163 px content × `RAIL_BOOST`; `scripts/screenshots.mjs` logs it).
 - `tests/`: pytest suite, including `tests/deck_downloader/`. `tests/deprecated/` holds
   non-test debug scripts and is not part of the suite.
 - `packaging/` + `scripts/`: PyInstaller specs, entry points, and OS build scripts.
@@ -141,7 +195,8 @@ Primary code paths:
   (`_NEWEST_GAMES_CTE`) and only then read the per-game subqueries; the deck filter is an id list
   from the `(role, deck_name)` index; `_deck_color_map` and `_deck_visuals` take the deck
   names a page shows; `_games_filter(..., db_path=...)` leaves the Jump In / Midweek test
-  out when the database holds no such match. Check any query change with
+  out when the database holds no such match (and when both modes are on in Saved game
+  modes: `_untracked_match_sql`). Check any query change with
   `scripts/dashboard_payloads.py` (dump before and after on a database copy, then diff:
   it must print `0 differ`) and time it on a `scripts/build_scaled_db.py` copy.
   The response cache keys on the event log only for `_EVENT_LOG_PATHS` (the game page), so
@@ -254,7 +309,7 @@ Primary code paths:
   rebuild as a safety net; the feed's linkable card names are memoised on
   `game_card_summary`'s row count, max rowid and filled types. `/api/overlay`'s memo key
   deliberately leaves out `live_status.updated_at` (the heartbeat) and includes the
-  session totals; neither payload carries a timestamp the clients read.
+  day and its totals and the opponent panel's live fields; neither payload carries a timestamp the clients read.
 - `src/mtga_tracker/draw_quality.py`: CLI/report helpers for land flood/screw and repeated-card draw audits.
 - `src/mtga_tracker/tracker_summary.py`: end-game and session summary rendering.
 - `src/mtga_tracker/tracker_rendering.py`: console formatting, actor labels, mana/text cleanup, runtime strings.
@@ -305,7 +360,8 @@ Primary code paths:
   stream. `ui/src/replay/effects.ts` keeps the current action's effect window
   (damage, life, removal, counters, P/T, discards, mills, each with its source)
   until the next action, or any event in a new step or phase (`applyEvent`);
-  removed permanents stay dimmed in their slot meanwhile,
+  removed permanents stay dimmed in their slot meanwhile (not a card
+  sacrificed for its own ability, such as a fetch land: it leaves at once),
   and moves carry `by` (Arena's affector root) for recorded games.
   Flying creatures (card `keywords` `flying`, Arena ability id 8, matched by
   Abilities.Id since it has BaseId 0; tokens by grpId) hover `FLYING_LIFT`
@@ -383,6 +439,31 @@ Primary code paths:
   (full word on hover and for screen readers) to preserve space for deck names.
   A tiny teal Play / purple Draw `Badge` (`participants.went_first`) follows the deck
   name; the name truncates first and unknown turn order shows nothing.
+  The Today box (`LiveTodayPanel.tsx`, pure view in `ui/src/liveToday.ts`) shows
+  the record with a win/loss bar, On the play / On the draw tiles, streak, Flood and
+  Mana screw game counts and a Decks list for today (see Tracker Invariants: records
+  count calendar days). `/api/live`'s `today` (`live_api._today_record`) carries
+  `decks` (`_deck_breakdown`, wins/losses per deck, most played first) and
+  `flood_games` / `screw_games` (`_draw_luck`: the dashboard's `_draw_summary_batch`
+  over the day's games, Flood before Screw like Draw Status, memoised for a minute
+  per set of games); the streak comes from the payload's `games`. The games list under
+  the box, "Today's Games" (`todayGames`), holds exactly the games the record counts:
+  the payload's `games` also holds the most recent game of any day (the scoreboard's
+  "Last game" line reads `games[0]`), which is not listed under Today.
+  During a game the scoreboard also shows a land meter on the player's side
+  (`LiveLandMeter.tsx`; numbers in `ui/src/liveScoreboard.ts`, zones and status from
+  the Stream Kit's `landZones`/`drawStatus`, so both read a game alike; a tracker
+  without `draw_quality` keeps the plain count), the Bo3 match score in the game chip
+  (`matchScoreText`, Bo3 only), and "N–M vs <colours> decks" from `now.color_record`
+  (`live_api._color_record`: the Overview's `_opponent_color_rows` over the whole
+  history, built once per set of games, never in Brawl). The rail holds the Today
+  box, Opponent's Cards (`LiveOpponentCards.tsx`, `groupSeen` over `opponent_seen`,
+  shown while a game or the frozen last game has any) and the games list with an
+  All games link; the rail scrolls on a short window. The feed shows `TimelineList`'s
+  filter bar (search by card or text, event type, actor) as a sticky compact row;
+  the search box is part of the shared component, so Game Detail has it too. The page's main area is one window tall and the
+  panels fill what the header leaves (the Replay page's pattern); `.live-games` is
+  `position: relative` so its rows' visually-hidden labels cannot stretch the page.
 - `ui/stream.html` + `ui/src/stream/`: the Stream Kit, OBS/Streamlabs browser-source
   widgets (`overlay`, `deck`, `scorebug`, `record`, `games`, `deckstats`, `matchup`,
   `opponent`, `lands`, `result`, `spotlight`, `break`) built as a second Vite entry and
@@ -405,15 +486,16 @@ Primary code paths:
   lists its `games`, Live Scoreboard's Today's Games, capped by `count`), `spotlight`
   polls `/api/live?since=`. Their pure logic sits in `stream/liveView.ts`. For them
   `/api/live`'s `now` carries `match_score`, `deck_record` with Deck Manager's
-  ranked/unranked/play/draw splits and `recent` results, `rank.start` (the rank before
-  the session), `opponent_seen` and `draw_quality`; the payload's `session` adds the
-  overlay footer's `play`/`draw` split and `today` (`_today_record`, every game today
-  across sessions) feeds `record`'s `period=today`; the last two are live_status
+  ranked/unranked/play/draw splits, `today_wins`/`today_losses` and `recent` results,
+  `rank.start` (the rank at local midnight), `opponent_seen` and `draw_quality`; the
+  payload's `today` carries the `play`/`draw` split the record widget shows; the
+  last two of `now` are live_status
   columns the tracker writes (`_live_opponent_seen`, `_live_draw_quality`, which runs
   `draw_quality_metrics` on the opening hand and draws, cached on the draw sequence).
   Between games records count the frozen game; during one they exclude it. `record`,
-  `result` and `break` share `period` (session or today: `liveView.periodRecord` /
-  `periodGames`; game ids start with their session's id). Every widget's optional parts
+  `games`, `result` and `break` show today (`liveView.todayRecord` / `todayGames`);
+  a link's `period=session|today` from before is ignored, and `break`'s Record part
+  keeps its link name `session`. Every widget's optional parts
   are listed in `options.WIDGET_PARTS`; the link's `hide` names the ones turned off
   (`shows(options, part)`), so new parts show on old links, and Settings draws them as
   one Show list with the `opponent` name toggle. Recent games' 0.7.5 `record=0` still
@@ -438,18 +520,27 @@ Primary code paths:
   `--login-start` marks OS launches so an already-running app exits quietly; it does not override
   the saved browser preference.
 - `src/mtga_tracker/settings_api.py`: dashboard settings for Deck AI, Deck Finder creators,
-  startup behavior, the session break, overlay control, platform capabilities, and resolved tracker paths. The menu
+  startup behavior, the saved game modes, overlay control, platform capabilities, and resolved tracker paths. The menu
   "Tracker Settings" action opens this dashboard page. `settings_dialog.py` retains
   the PyQt Deck AI settings implementation.
   `ui/src/components/SettingsPage.tsx` layout: a full-width Tracker card (MetricCard
   tiles for games captured, last game, version and Deck AI from `_tracker_info`, then
-  the paths, with small Database health | Reset Settings links on the Log DB row (`#/audit` and
+  the paths, with small Database health | Reset tracker data links on the Log DB row (`#/audit` and
   `#/reset`, two separate pages whose sidebar is only the way back; the links never reset
   anything themselves, and `ResetPage.tsx` lists what a reset deletes and keeps); there is no
-  Database Health section), then `SettingsGroup`s General (Startup stacked over
-  Sessions, beside Updates), Features (overlay, Buy on Paper, Deck AI, creators),
+  Database Health section), then `SettingsGroup`s General (Startup beside Updates), Tracking (the full-width Saved game modes card,
+  `SavedGameModes.tsx`: one tile per mode with the feature cards' `FeatureSwitch`, three by
+  two, saving each switch as it flips; labels in `ui/src/savedGameModes.ts`), Features (overlay, Buy on Paper, Deck AI, creators),
   Streaming (the full-width Stream Kit card) and
-  Your data (Backup beside Export at 60/40, `columns="split"`, stacking under 1240px).
+  Your data (Backup beside Export at 60/40, `columns="split"`, stacking under 1240px), then
+  Defaults: Restore defaults (`RestoreDefaults.tsx`, a confirmation listing what goes back and
+  what stays) posts `POST /api/settings/restore-defaults` `{"confirm": true}`
+  (`settings_api._restore_defaults`, local origin and JSON only). It puts startup,
+  update preferences, saved game modes, the overlay, Buy on Paper and the Deck AI switch
+  back to their defaults, step by step (a failing step is listed in `errors`, the rest still
+  run), and keeps Deck AI keys/provider/models, Deck Finder creators, the backup folder and
+  Stream Kit choices. Change a default and keep the dialog's lists in step. The page then reads
+  the settings again and rebuilds every card above Defaults from them (`cardsKey`).
   Two-column groups drop to one under 940px of group width (container queries).
   Each card's state tag is `Section`'s `badge`; forms report saves upward
   (`onChange`/`onSaved`) so the tags stay current. The overlay, Buy on Paper and Deck AI
@@ -811,12 +902,20 @@ Primary code paths:
   `pre-update` `.tappsbackup` (online backup API, keep 2) → stop tracker → release
   dashboard read handles and checkpoint the WAL → stop the overlay without touching
   `overlay.enabled` → `install_and_restart` (Windows: the downloaded Inno `setup.exe`
-  run silently with `/WAITPID`/`/RELAUNCH`; macOS: `ditto`-extracted staged bundle swapped
+  run silently with `/WAITPID`/`/RELAUNCH`, started by a `cmd.exe` watcher
+  (`windows_watch_command`, paths passed in environment variables) that relaunches the
+  old exe with `--update-failed` when Setup exits non-zero: Setup relaunches only after
+  it got as far as installing, and Smart App Control blocks the unsigned setup before
+  that, which used to leave no tracker; macOS: `ditto`-extracted staged bundle swapped
   by a detached helper after the PID exits) → exit. `POST /api/update/install` answers
   202 before any of that starts. The relaunch passes `--after-update --updated-from X`;
   the new process retries both instance locks for up to 60 s, reconciles `pending.json`,
   shows "Updated to X" once, and writes `updates/healthy-<version>`. `--update-failed`
-  records a failed hand-off. The gate (`busy_reasons`): a game in progress or seen/ended
+  records a failed hand-off and waits for the locks the same way (a second relaunch exits
+  quietly). A journaled Windows install whose Setup log is missing or empty, on a PC with
+  Smart App Control on (`update_install.smart_app_control_state`, read only to explain,
+  never to refuse an install), reports `blocked-by-windows` instead of
+  `install-not-applied`. The gate (`busy_reasons`): a game in progress or seen/ended
   within 120 s, a native deck transfer, a collection export, or a backup restore block
   every install; Arena running blocks auto-install only (a manual restart confirms first).
   See `docs/RELEASING.md` for the release side (`scripts/make_update_manifest.py`,
@@ -1032,7 +1131,9 @@ Preserve these behaviors unless the user explicitly changes requirements:
   low, high, latest, and hovered points marked to avoid clutter. The center
   axis label counts only the selected range's games, wins, and losses.
 - The Formats table defaults to case-insensitive Format A–Z order. Midweek Magic and Momir are
-  excluded in both backend responses and the UI as a safeguard against stale dashboard processes.
+  excluded in both backend responses and the UI as a safeguard against stale dashboard processes,
+  unless their games are saved (Saved game modes): the backend then marks the format row or
+  filter option `saved_mode`, which `showInFormatAnalytics` lets through.
 - Best Deck = most total wins among decks with a winning record (>=50% WR, min 8 decided
   games); win rate breaks ties. A small hot sample only surfaces when nothing has more wins.
   Rendered as a full-width bar below the overview metric cards, not a metric card.
@@ -1046,15 +1147,42 @@ Preserve these behaviors unless the user explicitly changes requirements:
   row's `last_played` (newest game within the filters), which has no column, and
   shows it under the deck name. The deck page's "Last played" under the color pips
   is the deck's newest game ignoring the page filters (`deck_detail` `last_played`).
-  Decks, All Games and Sessions opt into `SortableTable`'s full pagination controls:
+  Decks, All Games and Days opt into `SortableTable`'s full pagination controls:
   numbered pages with ellipses, first/last navigation and a validated page jump.
   All Games retains 30 rows per page; sorting and filter changes reset the page.
-  Sessions returns every runtime session with games matching the current filters,
-  with no total row cap, newest first and 15 rows per page. Its Play / Draw column
+  Days (`days_played` in the snapshot) returns every local calendar day with games
+  matching the current filters, a game in the day it started, with no total row cap,
+  newest first and 15 rows per page: games, record, Time Played (summed game lengths)
+  with its `sittings` (a game starting `SITTING_GAP_MINUTES`, 60, or more after the
+  previous one ended starts a new one; counted in SQL with `LAG`). Its Play / Draw column
   (teal/purple counts of `went_first`) sits before Win Rate and sorts by the draw share.
+  Habits' "Games Into the Day" (`_fatigue_rows`) numbers each game within its day.
+- Records count calendar days, never the tracker session: the Live Scoreboard, the
+  overlay footer, the Stream Kit and the Overview's Days all mean every game that
+  started since local midnight (`live_api._day_bounds` / `DAY_WHERE`, a range on
+  `games.started_at` so the index serves it), like "Last N days". Tracker sessions stay
+  internal (game ids, the frozen last game and the live feed are scoped to one, the
+  console's end-of-run summary); nothing the user sees is a session, and there is no
+  session setting.
 - Games where the tracker attached mid-game (turn > 1 at first sight) are shown live but never
-  persisted (`mid_game_attach` gates `_is_untracked_match`). Midweek Magic and bot matches are
-  likewise never persisted.
+  persisted (`mid_game_attach` gates `_is_untracked_match`), whatever is ticked. The optional
+  modes are Settings → Saved game modes (`settings.TRACKED_MODE_DEFAULTS`, `settings.json`
+  `tracking.<key>`, `GET`/`POST /api/settings/tracking` with any subset of the keys): Direct
+  Challenge (`direct_challenge`, default on), Jump In (`jump_in`), Midweek Magic
+  (`midweek_magic`), Momir (`momir`), Welcome Deck Duels (`welcome_deck`) and practice vs
+  Sparky (`practice`), all default off, which is how they were before the setting.
+  `_untracked_mode_reason` lists the modes a match belongs to (`_game_modes`) and saves it only
+  when every one is on (Momir in Midweek Magic needs both). The switches are read once per game
+  (`GameState.saved_game_modes`) so a mid-game flip never saves half a game. The dashboard hides
+  Jump In and Midweek Magic games only while they are off; the hidden set is part of
+  `_analytics_fingerprint`, and a save calls `dashboard.note_tracking_changed`. Tests get an
+  empty settings file (`tests/conftest.py`). The Challenges page (`#/challenges`, nav entry
+  between Formats and Days, always shown, with a "go challenge your friends" empty state) reads
+  `/api/challenges` (`dashboard.challenges`: `all_games(challenges=True)`, matched in SQL by
+  `_DIRECT_CHALLENGE_MATCH_SQL`, plus a per-friend record counting a Bo3 once). The page's
+  breakdown (record strip, Bragging rights cards, the friends' colours and streaks, Your decks) is
+  worked out in the browser from those games by `ui/src/challengeStats.ts`. Saved
+  challenge games still count everywhere else.
 - Opponent colors come from `cards.color_identity` (backfilled from Arena's local card DB
   at startup and after each game). In Brawl, use the recorded opponent commander identity
   from `participant_commanders` when known, including partner commanders; otherwise use
@@ -1093,6 +1221,20 @@ Preserve these behaviors unless the user explicitly changes requirements:
   scrying seat from the ability controller or observed card owners. Opponent card names
   stay hidden. Migration 29 backfills historical event counts only. Surveil columns remain
   NULL until a handler exists. The overlay does not condition odds on scry top/bottom order.
+- The overlay's copies left are the decklist minus the kept hand minus the moves the
+  tracker saw leave the library (`_observe_library_zone_transfer`). A move Arena only
+  summarized is never seen, so two things keep the counts honest. A message showing the
+  player the whole library (`_observe_library_reveal`, run after the message's own
+  moves) becomes `GameState.library_snapshot` and the moves count from it; a partial
+  look (scry, top N) is ignored. And when Arena's library size is smaller than the cards
+  still placed in it, `build_overlay_state` reports the difference as `unseen`: each
+  `left` is then a ceiling (the panel prints "≤4" under a note) and the odds are taken
+  over `draw_pool`, every card not seen to leave, of which the library is a random part.
+  `log_gap` covers the time between a summarized message and Arena's next listing of
+  the library (the size is stale until then). Never count `unseen` before the hand is
+  kept, and keep "N of M left" lines off any count that is a ceiling
+  (`_live_draw_quality` drops `lands_left`). The Stream Kit `overlay` and `deck` widgets
+  mirror the note and the "≤".
 - Replay: readers of printed history (`game_detail` timeline, `live_api` events, backfills,
   audit) filter `game_events.visible = 1`; silent rows never reach the console or the
   timeline. Every game with events gets a replay (recorded or reconstructed); mid-game
@@ -1108,7 +1250,7 @@ Preserve these behaviors unless the user explicitly changes requirements:
 - Brawl: commanders for both seats persist to `participant_commanders`; starting life is 25.
   Queue labels: Play_Brawl_Historic → "Brawl" (Arena's name since late 2026; the family id
   stays `historic_brawl`), Brawl_Ladder → "Brawl (Ranked)" (Arena's "Competitive Brawl"; the
-  "(Ranked)" suffix drives ranked splits), Play_Brawl → "Standard Brawl"; MWM_Brawl resolves to Midweek Magic FIRST (untracked). A
+  "(Ranked)" suffix drives ranked splits), Play_Brawl → "Standard Brawl"; MWM_Brawl resolves to Midweek Magic FIRST (untracked unless Midweek Magic is on). A
   queue identifier always outranks deck metadata: a deck's Format ATTRIBUTE
   ("HistoricBrawl"/"HistoricBrawlRanked") describes the deck, not the queue, and must never
   relabel a match whose format already normalizes to a Brawl queue.
@@ -1183,6 +1325,12 @@ Arena logs are not a simple chronological event stream. Be careful with inferred
   submitted 60 must never win (a tracker launched mid-queue after a deck switch once
   stamped games with the previous deck's name). Leaving the deck unresolved beats
   guessing wrong.
+- A renamed deck keeps its Arena id, so one candidate sees both names (the save that
+  created it, then the rename). The name from the summary with the newest `LastUpdated`
+  wins (`_takes_deck_name`, dates read by `deck_manager.arena_time`: Arena writes them as
+  UTC `...Z` or JSON-quoted local time, with any fraction length). Never keep the first
+  name seen, and never take a name from a summary that is not newer: an event's course
+  shows the deck as it was last submitted there. `tests/test_deck_rename.py`.
 - A land that chooses a basic land type as it enters (Multiversal Passage) logs
   `AnnotationType_ChoiceResult` from the land (`Choice_Domain` 9, `Choice_Value` an
   Arena SubType enum) one message before its PlayLand; the land object then carries
@@ -1199,6 +1347,10 @@ Arena logs are not a simple chronological event stream. Be careful with inferred
   snapshot (`_record_object_id_change` replaces or drops it), or an opponent's
   hidden draw reads as yours. A message with more than 50 objects or annotations
   is logged only as "Message summarized because ...", with no details at all.
+  Half a library milled at once is one (26 moves, 52 annotations), and so is a search of
+  a library over 50 cards. A search of a smaller library is logged in full: every card
+  comes to its owner as a `Visibility_Private` object in the library zone, in a diff with
+  no `zones` (the tracker keeps the zone's ids from the last listing to recognize it).
 - An activated ability whose cost is chosen after activation (Station's creature to
   tap, a sacrifice choice) arrives as `AbilityInstanceCreated` in a
   `QueuedGameStateMessage` with no `UserActionTaken`; that annotation comes one
@@ -1236,10 +1388,11 @@ Keep schema changes backward-compatible. Use nullable columns and migration help
 Important tables:
 
 - `tracker_sessions`: one tracker runtime session, from launch to quit; a new match
-  starting the session break (Settings → Sessions, `settings.json` `sessions.break_hours`,
-  default 4, 0 = off; measured in log time) after the last game, or after launch when
-  nothing has been played, starts a new one (`tracker_lifecycle._start_new_session_after_break`).
-  Game 2+ of a Bo3 never starts one.
+  starting `tracker_lifecycle.SESSION_BREAK_HOURS` (4, measured in log time) after the
+  last game, or after launch when nothing has been played, starts a new one
+  (`_start_new_session_after_break`). Game 2+ of a Bo3 never starts one. Internal only:
+  what the dashboard shows counts calendar days. An old `settings.json`
+  `sessions.break_hours` is left in place and read by nothing.
 - `matches`: match grouping within a session.
 - `games`: one game result, duration, total turns, player/opponent turn counts, winner/outcome.
 - `participants`: player/opponent seat, deck metadata, life, opening hand size, mulligans.
@@ -1309,7 +1462,7 @@ Important tables:
   needs no restart: once its committed session row is gone, `_upsert_session_row`
   starts a new session (zeroed totals, no frozen game) instead of writing the old
   in-memory totals back.
-  Other existing POSTs are `/api/settings/*` (settings and overlay actions),
+  Other existing POSTs are `/api/settings/*` (settings, overlay actions and Restore defaults),
   `/api/deckfinder/*` (fetch/variants/hydrate/surprise jobs),
   `/api/deck-downloader/launch` (terminal launcher), `/api/collection/export`
   (explicit memory scan/export job), and `/api/update/*` (update check, download, install,

@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Exactly what the overlay page calls: its own commands, window drag, events, and the two global hotkeys.",
-  "windows": ["main"],
+  "description": "Exactly what the overlay pages call (the deck window and the opponent window): their own commands, window drag, events, and the global hotkeys.",
+  "windows": ["main", "opponent"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

@@ -2,11 +2,11 @@ import { useState } from 'react';
 import { resetDatabase } from '../api';
 import { Section } from './Section';
 
-/** Where Settings' "Reset Settings" link goes. */
+/** Where Settings' "Reset tracker data" link goes. */
 export const RESET_ROUTE = '#/reset';
 
 const DELETED = [
-  'Every game, match and session the tracker recorded, with their wins, losses and stats',
+  'Every game and match the tracker recorded, with their wins, losses and stats',
   'The decklists you played, opening hands, mulligans, draws and the cards each side showed',
   'Turn timings and game replays',
   'Your notes and tags on games',
@@ -154,7 +154,7 @@ function ResetPanel() {
           >
             <h3 id="reset-modal-title">Reset tracker data?</h3>
             <p>
-              This deletes <strong>every tracked game, match and session</strong>, with their
+              This deletes <strong>every tracked game and match</strong>, with their
               stats, replays, notes and rank history. Deck Manager's saved decks and your settings
               stay. A copy of the database is saved first.
             </p>

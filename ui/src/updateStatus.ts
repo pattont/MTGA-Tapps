@@ -298,6 +298,9 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`;
 }
 
+/** Error code for an installer Windows Smart App Control blocked (unsigned). */
+export const BLOCKED_BY_WINDOWS = 'blocked-by-windows';
+
 export type UpdatePillKind = 'link' | 'download' | 'install' | 'progress' | 'retry' | 'none';
 
 export interface UpdatePillModel {
@@ -394,6 +397,15 @@ export function updatePillModel(input: unknown): UpdatePillModel {
     case 'installing':
       return { ...base, label: 'Restarting…', kind: 'none', title: `Installing${named}` };
     case 'error':
+      if (status.error?.code === BLOCKED_BY_WINDOWS) {
+        // Retrying is safe: a blocked installer brings this version back.
+        return {
+          ...base,
+          label: 'Blocked by Windows — retry',
+          kind: 'retry',
+          title: status.error.message || 'Windows Smart App Control blocked the installer',
+        };
+      }
       return {
         ...base,
         label: 'Update failed — retry',

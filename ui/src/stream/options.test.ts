@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_OPTIONS, parseStreamOptions, streamUrl, widgetInfo, widgetSize } from './options';
+import { DEFAULT_OPTIONS, parseStreamOptions, streamUrl, widgetInfo, widgetSize, type StreamOptions } from './options';
 
 describe('parseStreamOptions', () => {
   it('reads every option and falls back to defaults', () => {
@@ -24,7 +24,6 @@ describe('parseStreamOptions', () => {
       sideboard: 'right',
       names: 'type',
       count: 10,
-      period: 'session',
       hide: [],
       title: 'Be right back',
     });
@@ -93,9 +92,10 @@ describe('streamUrl', () => {
 
   it('writes list and text options only when they differ', () => {
     expect(streamUrl('http://x', 'deckstats', { hide: [] })).toBe('http://x/stream.html?widget=deckstats');
-    expect(parseStreamOptions('?widget=record&period=today').period).toBe('today');
-    expect(parseStreamOptions('?widget=record&period=week').period).toBe('session');
-    expect(streamUrl('http://x', 'record', { period: 'today' })).toBe('http://x/stream.html?widget=record&period=today');
+    // Links made before records counted calendar days carry period=session|today: read as today, never written.
+    expect(parseStreamOptions('?widget=record&period=session')).not.toHaveProperty('period');
+    expect(parseStreamOptions('?widget=record&period=session&hide=rank').hide).toEqual(['rank']);
+    expect(streamUrl('http://x', 'record', { period: 'today' } as Partial<StreamOptions>)).toBe('http://x/stream.html?widget=record');
     expect(streamUrl('http://x', 'deckstats', { hide: ['turn'] })).toBe('http://x/stream.html?widget=deckstats&hide=turn');
     const url = streamUrl('http://x', 'break', { title: 'Back in 5!', hide: ['results', 'deck'] });
     expect(url).toBe('http://x/stream.html?widget=break&title=Back+in+5%21&hide=results%2Cdeck');

@@ -1,12 +1,12 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { FormatsTable } from './FormatsTable';
+import type { FormatRow } from '../api';
+import { FormatsTable, formatGroup } from './FormatsTable';
 
 describe('FormatsTable', () => {
   it('sorts formats alphabetically by default and omits Midweek Magic', () => {
     render(
       <FormatsTable
-        caption="Format performance"
         rows={[
           {
             format_label: 'Standard Best-of-1',
@@ -44,7 +44,9 @@ describe('FormatsTable', () => {
       />,
     );
 
-    const table = screen.getByRole('table', { name: 'Format performance' });
+    // Only constructed games: one table under its heading.
+    expect(screen.getAllByRole('heading', { level: 3 }).map((node) => node.textContent)).toEqual(['Constructed']);
+    const table = screen.getByRole('table', { name: 'Constructed formats' });
     expect(
       within(table)
         .getAllByRole('row')
@@ -88,5 +90,60 @@ describe('groupLimitedFormats', () => {
       { format_label: 'Sealed - MSH', raw_formats: 'Sealed_MSH', games: 6, wins: 3, losses: 3, win_rate: 50.0 },
     ]);
     expect(grouped.map((row) => row.format_label).sort()).toEqual(['Sealed', 'Traditional Sealed']);
+  });
+
+  it('splits Constructed from Limited into two tables, each with its own header and sort', () => {
+    const row = (format_label: string, games: number): FormatRow => ({
+      format_label,
+      raw_formats: format_label,
+      games,
+      wins: games,
+      losses: 0,
+      win_rate: 100,
+    });
+    render(
+      <FormatsTable
+        rows={[
+          row('Sealed - MSH', 10),
+          row('Standard BO1 (Ranked)', 423),
+          row('Premier Draft - MSH', 8),
+          row('Brawl', 1),
+          row('Qualifier Play In Bo1 Timeless', 3),
+          row('Powered Cube', 5),
+        ]}
+      />,
+    );
+    expect(screen.getAllByRole('heading', { level: 3 }).map((node) => node.textContent)).toEqual(['Constructed', 'Limited']);
+    const names = (caption: string) =>
+      within(screen.getByRole('table', { name: caption }))
+        .getAllByRole('row')
+        .slice(1)
+        .map((tr) => within(tr).getAllByRole('cell')[0].textContent);
+    expect(names('Constructed formats')).toEqual(['Brawl', 'Qualifier Play In Bo1 Timeless', 'Standard BO1 (Ranked)']);
+    expect(names('Limited formats')).toEqual(['Powered Cube', 'Premier Draft', 'Sealed']);
+    // Each table has Format / Games / Win Rate; sorting one leaves the other alone.
+    const limited = screen.getByRole('table', { name: 'Limited formats' });
+    expect(within(limited).getAllByRole('columnheader').map((th) => th.textContent?.replace(/[↑↓↕]/g, '').trim())).toEqual([
+      'Format',
+      'Games',
+      'Win Rate',
+    ]);
+    fireEvent.click(within(limited).getByRole('button', { name: /^games/i }));
+    expect(new Set(names('Limited formats'))).toEqual(new Set(['Powered Cube', 'Premier Draft', 'Sealed']));
+    expect(names('Constructed formats')).toEqual(['Brawl', 'Qualifier Play In Bo1 Timeless', 'Standard BO1 (Ranked)']);
+  });
+
+  it('keeps one empty Constructed section when there are no games', () => {
+    render(<FormatsTable rows={[]} />);
+    expect(screen.getAllByRole('heading', { level: 3 }).map((node) => node.textContent)).toEqual(['Constructed']);
+    expect(screen.getByText('No rows yet.')).toBeInTheDocument();
+  });
+
+  it('names the group of a format', () => {
+    expect(formatGroup('Quick Draft - EOE')).toBe('Limited');
+    expect(formatGroup('Arena Cube')).toBe('Limited');
+    expect(formatGroup('Traditional Sealed')).toBe('Limited');
+    expect(formatGroup('Historic BO3')).toBe('Constructed');
+    expect(formatGroup('Brawl (Ranked)')).toBe('Constructed');
   });
 });

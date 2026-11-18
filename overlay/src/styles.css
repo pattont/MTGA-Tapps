@@ -602,7 +602,10 @@ img {
   text-align: left;
 }
 
-.grp-toggle:hover {
+/* Highlights in the list come only from the shell-reported cursor (.hot),
+   never :hover. Off the panel the window hands the mouse to Arena, so the
+   page never hears the cursor leave and :hover would stay on the last row. */
+.grp-toggle.hot {
   color: var(--muted);
 }
 
@@ -626,7 +629,6 @@ img {
   border-top: 0;
 }
 
-.row:hover,
 .row.hot {
   background: rgba(215, 170, 73, 0.14);
 }
@@ -816,10 +818,18 @@ img {
   color: var(--subtle);
   padding: 6px calc(6px + var(--edge-r)) 2px calc(6px + var(--edge-l));
 }
+/* Above the list: the counts cannot be read as they stand (cards left the
+   library unseen, or Arena's log skipped a move). */
+.note.warn {
+  color: var(--accent-strong);
+  line-height: 1.35;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
 
-/* ------------------------------------------------------ session record */
+/* ------------------------------------------------------- today's record */
 
-/* The session's record at the foot of the panel (Settings → Session record),
+/* Today's record at the foot of the panel (Settings → Today's record),
    in the Stream Kit record widget's colours but sized to sit with the rows:
    the record is only a step above a card count, not the stream's big digits. */
 .ss {
@@ -917,36 +927,72 @@ img {
   font-size: 13px;
 }
 
-/* Split: a win/loss bar, then the Play and Draw records at either end. */
-.ss-bar {
-  height: 3px;
-  border-radius: 2px;
-  background: rgba(242, 139, 130, 0.55);
-  margin: 6px 0;
-  overflow: hidden;
+/* Split: the Stream Kit record widget at the panel's width. The record sits
+   over the rank and deck chips, with Play and Draw columns on the right. */
+.ss-split {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.ss-bar i {
+.ss-left {
+  flex: 1;
+  min-width: 0;
+}
+
+.ss-split .ss-lab {
   display: block;
-  height: 100%;
-  background: var(--success);
+  margin-bottom: 4px;
 }
 
-.ss-split .ss-main + .ss-sides {
+.ss-split .ss-rec {
+  font-size: 22px;
+}
+
+.ss-split .ss-rate {
+  font-size: 14px;
+}
+
+.ss-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
   margin-top: 6px;
 }
 
-.ss-sides {
-  display: flex;
-  justify-content: space-between;
-  font-size: 11.5px;
-  color: var(--muted);
+.ss-chip {
+  border-radius: 999px;
+  padding: 3px 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 600;
 }
 
-.ss-sides > span {
-  display: inline-flex;
-  align-items: baseline;
+.ss-chip-rank {
+  background: rgba(230, 184, 74, 0.2);
+  color: #f2cf7a;
+}
+
+/* A grid row, so both columns share one height and their labels line up. */
+.ss-cols {
+  display: grid;
+  flex: none;
+  grid-auto-columns: minmax(44px, auto);
+  grid-auto-flow: column;
+}
+
+.ss-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: 4px;
+  padding: 1px 6px;
+  border-left: 1px solid var(--hairline);
+}
+
+.ss-col:last-child {
+  padding-right: 0;
 }
 
 .ss-tag {
@@ -956,8 +1002,170 @@ img {
   text-transform: uppercase;
 }
 
-.ss-score {
+.ss-col-big {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.ss-col-rec {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.ss-col-play :is(.ss-tag, .ss-col-big) {
+  color: #5fd4c4;
+}
+
+.ss-col-draw :is(.ss-tag, .ss-col-big) {
+  color: #b79df7;
+}
+
+/* ---------------------------------------------------------- flood meter */
+
+/* The Stream Kit Lands widget at the panel's width (Settings → Flood meter):
+   gold screw zone on the left, blue flood zone on the right, a tick at the
+   expected count and a dot at the lands seen. Same ground as today's record. */
+.fm {
+  --fm-c: #8fe3b5;
+  --fm-bg: rgba(99, 210, 151, 0.16);
+  flex: none;
+  border-top: 1px solid var(--hairline);
+  background: rgba(0, 0, 0, 0.16);
+  padding: 7px calc(9px + var(--edge-r)) 6px calc(9px + var(--edge-l));
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.fm-flood,
+.fm-streak {
+  --fm-c: #7fb0e8;
+  --fm-bg: rgba(127, 176, 232, 0.2);
+}
+
+.fm-screw {
+  --fm-c: #f0c66c;
+  --fm-bg: rgba(240, 198, 108, 0.18);
+}
+
+.fm-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fm-status {
+  border: 1px solid color-mix(in srgb, var(--fm-c) 45%, transparent);
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: var(--fm-bg);
+  color: var(--fm-c);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.fm-streak .fm-status {
+  border-style: dashed;
+}
+
+.fm-numbers {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.fm-numbers b {
   color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.fm-over {
+  color: #7fb0e8;
+  font-weight: 700;
+}
+
+.fm-under {
+  color: #f0c66c;
+  font-weight: 700;
+}
+
+.fm-gauge {
+  position: relative;
+  margin-top: 8px;
+}
+
+.fm-track {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.fm-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.fm-zone-screw {
+  left: 0;
+  width: var(--fm-screw);
+  background: linear-gradient(90deg, rgba(240, 198, 108, 0.65), rgba(240, 198, 108, 0.3));
+}
+
+.fm-zone-flood {
+  right: 0;
+  left: var(--fm-flood);
+  background: linear-gradient(90deg, rgba(127, 176, 232, 0.3), rgba(127, 176, 232, 0.7));
+}
+
+.fm-expected-mark {
+  position: absolute;
+  top: -3px;
+  left: var(--fm-expected);
+  width: 2px;
+  height: 12px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.6);
+  transform: translateX(-50%);
+}
+
+/* No transition: a moving dot repaints for most of a second on every draw. */
+.fm-marker {
+  position: absolute;
+  top: 3px;
+  left: var(--fm-now);
+  width: 11px;
+  height: 11px;
+  border: 2px solid #0f1117;
+  border-radius: 50%;
+  background: var(--fm-c);
+  transform: translate(-50%, -50%);
+}
+
+.fm-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  color: var(--subtle);
+  font-size: 7.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* With today's record right under it, one hairline between them is enough. */
+.fm + .ss,
+.ss + .fm {
+  border-top-color: rgba(255, 255, 255, 0.05);
 }
 
 .empty {
@@ -1069,13 +1277,15 @@ img {
   background: none;
 }
 
-/* The win/loss bar keeps its colours over the board, a touch stronger. */
-.no-bg .ss-bar {
-  background: rgba(242, 139, 130, 0.8);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 70%);
+/* Over the board the chips need a ground of their own to stay readable. */
+.no-bg .ss-chip {
+  background: rgba(16, 20, 24, 0.7);
 }
 
-.no-bg .row:hover,
+.no-bg .ss-chip-rank {
+  background: rgba(58, 44, 12, 0.8);
+}
+
 .no-bg .row.hot {
   background: rgba(16, 20, 24, 0.75);
 }
@@ -1305,6 +1515,25 @@ img {
   border-top: 1px solid rgb(48 58 69 / 60%);
 }
 
+/* A framed group of rows (Bottom of the panel). */
+.fly .box {
+  margin: 4px 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 7px 2px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.fly .box-h {
+  display: block;
+  padding-bottom: 2px;
+  color: var(--subtle);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .fly .r > span:first-child {
   flex: 1;
   min-width: 0;
@@ -1425,4 +1654,150 @@ img {
 
 .fly .quit:hover {
   background: rgba(242, 139, 130, 0.12);
+}
+
+/* -------------------------------------------------------- settings note */
+
+.fly .r .sub {
+  display: block;
+  white-space: normal;
+  font-size: 9.5px;
+  color: var(--subtle);
+  margin-top: 1px;
+  line-height: 1.3;
+}
+
+.fly .hot:disabled {
+  cursor: default;
+}
+
+/* ------------------------------------------------------- opponent panel */
+
+/* The opponent window (OpponentApp): its rail and panel reuse the deck
+   window's pieces; only what differs is here. */
+
+/* The rail: the deck rail without its logo and gear, so the colours cell
+   leads and is the drag handle. The window is OPPONENT_RAIL_HEIGHT (dock.rs)
+   tall. Its blocks never squeeze, so a short window shows (and the
+   screenshot script measures) their real height. */
+.opp-rail > * {
+  flex: none;
+}
+.opp-rail .opp-colors {
+  cursor: grab;
+}
+
+.opp-rail .opp-colors:active {
+  cursor: grabbing;
+}
+
+/* Up to five pips in two rows of three, inside the rail's hairlines. */
+.opp-pips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: center;
+  gap: 2px;
+  width: 40px;
+  height: 26px;
+}
+
+.opp-pips img {
+  width: 12px;
+  height: 12px;
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 55%));
+}
+
+/* Nothing shown yet: an empty ring where the colours will go. */
+.opp-ring {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid var(--subtle);
+  align-self: center;
+}
+
+.opp-rail .opp-vs.wide {
+  font-size: 12px;
+  letter-spacing: -0.02em;
+}
+
+.opp-vs .w {
+  color: var(--success);
+}
+
+.opp-vs .l {
+  color: var(--danger);
+}
+
+.opp-vs .of {
+  margin: 0 1px;
+}
+
+/* A card new this game: the Seen cell pulses for a moment, so the folded
+   rail still says there is something to look at. */
+.opp-rail .cell.pulse .v {
+  animation: opp-pulse 1s ease-in-out 4;
+}
+
+@keyframes opp-pulse {
+  50% {
+    color: var(--accent-strong);
+    transform: scale(1.18);
+  }
+}
+
+/* The panel is the deck panel's pieces; only the band's colour and a new
+   play's flash are its own. The band is the land-drop band in gold. */
+.opp-band {
+  background: linear-gradient(90deg, rgba(215, 170, 73, 0.1), transparent);
+}
+
+.opp-band .t {
+  color: var(--accent-strong);
+  min-width: 0;
+}
+
+/* One line, like "11 of 41 left", so the band is the deck band's height. */
+.opp-band .t small {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.opp-band .odd.you b {
+  color: var(--text);
+}
+
+.opp-band .odd .w {
+  color: var(--success);
+}
+
+.opp-band .odd .l {
+  color: var(--danger);
+}
+
+.opp-band .odd .dash {
+  color: var(--muted);
+  margin: 0 1px;
+}
+
+/* Nothing played yet: no count column beside the note. */
+.list-body.bare::before {
+  display: none;
+}
+
+/* A new play: a short gold wash on its row. */
+.opp .row.fresh {
+  animation: opp-fresh 4s ease-out;
+}
+
+@keyframes opp-fresh {
+  0%,
+  30% {
+    background: rgba(240, 198, 108, 0.28);
+  }
+  100% {
+    background: transparent;
+  }
 }

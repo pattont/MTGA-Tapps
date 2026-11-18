@@ -115,6 +115,35 @@ class TrackerEventsMixin(
         ability_obj = (game_objects_by_id or {}).get(instance_id) or {}
         return self._is_activated_ability_grp(ability_obj.get("grpId"))
 
+    def _unprocessed_annotations(self, data: Dict[str, Any]) -> List[Any]:
+        """The message's annotations, minus any a full state repeats.
+
+        Annotation ids are unique within a game. A GameStateType_Full message
+        can carry annotations an earlier diff already delivered, and handling
+        them again prints and stores the event twice (a Mountain and The
+        Naked Time each "sacrificed" a second time a few seconds later).
+        Diffs are never filtered: only a full state repeats annotations.
+        """
+        annotations = list(data.get("annotations") or [])
+        g = self.game_state
+        info = data.get("gameInfo")
+        if isinstance(info, dict) and info.get("gameNumber") is not None:
+            game_key = (info.get("matchID"), info.get("gameNumber"))
+            if game_key != g.processed_annotation_game:
+                g.processed_annotation_game = game_key
+                g.processed_annotation_ids = set()
+        seen = g.processed_annotation_ids
+        full_state = data.get("type") == "GameStateType_Full"
+        kept = []
+        for annotation in annotations:
+            annotation_id = annotation.get("id") if isinstance(annotation, dict) else None
+            if annotation_id is not None:
+                if full_state and annotation_id in seen:
+                    continue
+                seen.add(annotation_id)
+            kept.append(annotation)
+        return kept
+
     def _process_game_events(self, data: Dict[str, Any]):
         """Process and display important game events."""
         replay_state = self._replay_state()
@@ -146,7 +175,7 @@ class TrackerEventsMixin(
 
         # Process annotations for high-level events
         if "annotations" in data:
-            annotations = list(data["annotations"])
+            annotations = self._unprocessed_annotations(data)
             pending_seat = None
             if self.game_state.pending_player_turn_header:
                 pending_seat = self.game_state.player_seat_id
@@ -206,6 +235,7 @@ class TrackerEventsMixin(
                     deferred_spell_instance_ids=target_selecting_instance_ids,
                 )
 
+        self._observe_library_reveal(game_objects)
         self._flush_deferred_life_updates()
         self._flush_revealed_cards(zones_by_id)
         self._reconcile_deleted_stack_items(data.get("diffDeletedInstanceIds"))

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { LiveGameRow, LiveNow } from '../../api';
 import { DEMO_LIVE, DEMO_RESULT } from '../demo';
-import { clock, matchLine, percent, PERIOD_LABEL, periodRecord, resultFacts, resultTone, type PeriodRecord } from '../liveView';
+import { clock, matchLine, percent, resultFacts, resultTone, todayRecord, type DayRecord } from '../liveView';
 import { shows, type StreamOptions } from '../options';
 import { useLiveSnapshot } from '../useLive';
 import { Brand } from './Brand';
@@ -19,8 +19,8 @@ export function ResultView({
 }: {
   game: LiveGameRow;
   now: LiveNow | null;
-  /** The session's or today's record (options.period), the finished game included. */
-  record: PeriodRecord | null;
+  /** Today's record, the finished game included. */
+  record: DayRecord | null;
   options: StreamOptions;
   leaving?: boolean;
 }) {
@@ -61,7 +61,7 @@ export function ResultView({
       ) : null}
       {shows(options, 'record') && record && record.wins + record.losses > 0 ? (
         <div className="rs-session">
-          <span className="sk-label">{PERIOD_LABEL[options.period]}</span>
+          <span className="sk-label">Today</span>
           <strong>
             <span className="sk-win">{record.wins}</span>
             <span className="sk-dash">–</span>
@@ -119,10 +119,10 @@ export function ResultWidget({ options }: { options: StreamOptions }) {
           player_life: 20,
           match_score: { wins: 2, losses: 0, draws: 0 },
         } : null;
-    return <ResultView game={DEMO_RESULT} now={now} record={periodRecord(DEMO_LIVE, options.period)} options={options} />;
+    return <ResultView game={DEMO_RESULT} now={now} record={todayRecord(DEMO_LIVE)} options={options} />;
   }
   if (!shown || !payload) return null;
   // The frozen scoreboard belongs to this game only if the ids match.
   const now = payload.now && payload.now.game_id === shown.id ? payload.now : null;
-  return <ResultView game={shown} now={now} record={periodRecord(payload, options.period)} options={options} leaving={leaving} />;
+  return <ResultView game={shown} now={now} record={todayRecord(payload)} options={options} leaving={leaving} />;
 }

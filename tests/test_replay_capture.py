@@ -1591,12 +1591,13 @@ def test_a_hand_reveal_records_the_hand_it_shows(tmp_path):
     assert (reveal["object_id"], reveal["zone_from"]) == (504, "hand")
 
 
-def build_pregame_leyline_game() -> List[Tuple[str, datetime]]:
+def build_pregame_leyline_game(on_the_draw: bool = False) -> List[Tuple[str, datetime]]:
     """Issue #55: two Leyline Axes begin on the battlefield before turn 1.
 
     As in a real log: Arena moves the first Leyline in a message whose
     turnInfo has no turn number yet, and the second in the message that
-    begins turn 1, before anything prints a turn header.
+    begins turn 1, before anything prints a turn header. On the draw, turn 1
+    is the opponent's: they play a land, then you draw and play one in turn 2.
     """
     g = GameSim(datetime(2026, 11, 6, 20, 0, 0))
     for i in range(53):
@@ -1609,10 +1610,29 @@ def build_pregame_leyline_game() -> List[Tuple[str, datetime]]:
         g.card(111 + i, None, O, HAND[O])
     g.emit(tuple(range(211, 218)), players=g.players())
     # Hands kept; the game is set up but turn 1 has not begun.
-    g.active = P
+    first, second = (O, P) if on_the_draw else (P, O)
+    g.active = first
     g.emit(tuple(range(211, 218)), players=g.players())
     g.move(211, 251, BF)
     g.emit((251,), (oic(211, 251), zt(251, HAND[P], BF, "Put")))
+    if on_the_draw:
+        g.turn_to(1, O)
+        g.move(212, 252, BF)
+        g.emit((252,), (oic(212, 252), zt(252, HAND[P], BF, "Put")), players=g.players())
+        g.phase_to("Phase_Main1")
+        g.move(111, 271, BF, grp=2001)
+        g.emit((271,), (oic(111, 271), zt(271, HAND[O], BF, "PlayLand")))
+        g.turn_to(2, P)
+        g.emit()
+        g.phase_to("Phase_Beginning", "Step_Draw")
+        g.move(300, 270, HAND[P], grp=1001)
+        g.emit((270,), (oic(300, 270), zt(270, LIB[P], HAND[P], "Draw")))
+        g.phase_to("Phase_Main1")
+        g.move(213, 261, BF)
+        g.emit((261,), (oic(213, 261), zt(261, HAND[P], BF, "PlayLand")))
+        g.turn_to(3, O)
+        g.emit()
+        return _leyline_game_over(g)
     # Turn 1 (you, on the play) begins with the second Leyline, then a land.
     g.turn_to(1, P)
     g.move(212, 252, BF)
@@ -1629,6 +1649,10 @@ def build_pregame_leyline_game() -> List[Tuple[str, datetime]]:
     g.phase_to("Phase_Main1")
     g.move(111, 271, BF, grp=2001)
     g.emit((271,), (oic(111, 271), zt(271, HAND[O], BF, "PlayLand")))
+    return _leyline_game_over(g)
+
+
+def _leyline_game_over(g: GameSim) -> List[Tuple[str, datetime]]:
     g.emit(
         game_info={
             "stage": "GameStage_GameOver",
@@ -1729,3 +1753,58 @@ def test_replay_repairs_a_turn_one_header_printed_before_the_opening(tmp_path, c
     ]
     # Only the opponent's turn 2 draw; no opening card replays as a draw.
     assert [e["owner"] for e in after] == [O]
+
+
+def test_replay_repairs_an_early_turn_one_header_on_the_draw(tmp_path, capsys):
+    """Games recorded before 0.7.7, on the draw (issue #55, reported again on
+    0.7.7): "Turn 1 - YOUR TURN" printed early with no turn number, the real
+    turn 1 header (the opponent's) never printed, and the kept hands were
+    saved when your first turn began. Moving the header after the hands left
+    the opponent's whole first turn under Pre-game and an empty "Turn 1 - Your
+    turn" just above Turn 2."""
+    from mtga_tracker.replay_builder import replay_for_game
+
+    tracker = synthetic_tracker(tmp_path)
+    tracker.card_db.names[LEYLINE] = "Leyline Axe"
+    run_synthetic_game(tracker, build_pregame_leyline_game(on_the_draw=True))
+    capsys.readouterr()
+    db = tmp_path / "analytics.sqlite3"
+    with sqlite3.connect(db) as conn:
+        headers = conn.execute(
+            "SELECT id, event_time FROM game_events WHERE event_subtype = 'turn' ORDER BY id"
+        ).fetchall()
+        first_time = conn.execute(
+            "SELECT MIN(event_time) FROM game_events WHERE event_time IS NOT NULL"
+        ).fetchone()[0]
+        # The old early header: your turn, no number, ahead of everything.
+        conn.execute(
+            "UPDATE game_events SET id = -1, turn_number = NULL, event_time = ?, seat_id = ?, "
+            "text = 'Turn 1 - YOUR TURN', payload_json = ? WHERE id = ?",
+            (first_time, P, json.dumps({"active_seat": P}), headers[0][0]),
+        )
+        # The kept hands, saved as your first turn (turn 2) began.
+        conn.execute(
+            "UPDATE game_events SET event_time = ?, turn_number = 2 "
+            "WHERE payload_json LIKE '%\"opening\"%'",
+            (headers[1][1],),
+        )
+        # The old tracker timed turn 1 as yours too.
+        conn.execute("UPDATE game_turns SET seat_id = ? WHERE turn_number = 1", (P,))
+    game_id = event_rows(db)[0]["game_id"]
+
+    stream = replay_for_game(db, game_id)
+
+    assert [(turn["turn"], turn["seat"]) for turn in stream["turns"]] == [(1, O), (2, P)]
+    start = next(e for e in stream["events"] if e["kind"] == "game_start")
+    assert start["seats_hand_sizes"] == {str(O): 7, str(P): 7}
+    turn_seq = {e["turn"]: e["seq"] for e in stream["events"] if e["kind"] == "turn"}
+    by_obj = {e["obj"]: e["seq"] for e in stream["events"] if e["kind"] == "move"}
+    # The first Leyline stays before turn 1; the opponent's land is in turn 1.
+    assert by_obj["211"] < turn_seq[1] < by_obj["111"] < turn_seq[2]
+    draws_after = [
+        e["owner"]
+        for e in stream["events"]
+        if e["seq"] > turn_seq[1] and e["kind"] == "move" and e.get("reason") == "draw"
+    ]
+    # Only your turn 2 draw; no opening card replays as a draw.
+    assert draws_after == [P]

@@ -103,7 +103,7 @@ function game(
   };
 }
 
-/** The session's eight games (6–2), newest first. */
+/** Today's eight games (6–2), newest first. */
 const DEMO_GAMES: LiveGameRow[] = [
   game(8, 'loss', 1, 'Opponent', 9, 14),
   game(7, 'win', 0, 'MoxMaven', 7, 11, 2),
@@ -168,8 +168,6 @@ export const DEMO_LIVE: LivePayload = {
       win_rate: 61.8,
       today_wins: 4,
       today_losses: 1,
-      session_wins: 3,
-      session_losses: 1,
       ranked: { wins: 22, losses: 12 },
       unranked: { wins: 12, losses: 9 },
       play: { wins: 19, losses: 9 },
@@ -215,26 +213,15 @@ export const DEMO_LIVE: LivePayload = {
     },
     archetype_guess: { archetype: 'Dimir Midrange', matched_cards: 4, wins: 7, losses: 5 },
   },
-  session: {
-    id: 'demo',
-    started_at: ago(2 * 3600 + 14 * 60),
-    games_played: 8,
+  today: {
+    games: 8,
     wins: 6,
     losses: 2,
     draws: 0,
-    runtime_seconds: null,
     win_rate: 75,
+    started_at: ago(2 * 3600 + 14 * 60),
     play: { wins: 4, losses: 1 },
     draw: { wins: 2, losses: 1 },
-  },
-  today: {
-    games: 11,
-    wins: 8,
-    losses: 3,
-    draws: 0,
-    win_rate: 72.7,
-    play: { wins: 5, losses: 1 },
-    draw: { wins: 3, losses: 2 },
   },
   games: DEMO_GAMES,
   events: [],

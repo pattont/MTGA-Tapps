@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
+from .deck_manager import arena_time
 from .format_normalizer import (
     format_label,
     friendly_midweek_label,
@@ -640,6 +641,23 @@ class TrackerOpeningDeckMixin:
             "CourseDeck": deck if isinstance(deck, dict) else {},
         }
 
+    def _takes_deck_name(self, candidate: Dict[str, Any], name: str, edited: Optional[str]) -> bool:
+        """Whether a deck summary's name replaces the one the candidate holds.
+
+        A deck keeps its Arena id when it is renamed, so one candidate sees
+        both names: the save that created the deck, then the rename. The name
+        from the deck's newest edit (its LastUpdated) is its name. A summary
+        that is not newer keeps the name held: an event's course still shows
+        the deck as it was last submitted there."""
+        held = candidate.get("deck_name")
+        if not held:
+            return True
+        if name == held or self._is_localized_placeholder_name(name):
+            return False
+        if self._is_localized_placeholder_name(held):
+            return True
+        return bool(edited) and edited > (candidate.get("name_edited") or "")
+
     def _ingest_course_deck_metadata(self, courses: List[Dict[str, Any]]) -> bool:
         """Capture deck metadata from inventory 'Courses' payloads."""
         if not isinstance(courses, list):
@@ -674,13 +692,11 @@ class TrackerOpeningDeckMixin:
                 continue
             candidate = self._deck_candidates.get(key, {})
 
-            existing_name = candidate.get("deck_name")
             if isinstance(deck_name, str) and deck_name.strip():
-                if not existing_name or (
-                    self._is_localized_placeholder_name(existing_name)
-                    and not self._is_localized_placeholder_name(deck_name)
-                ):
+                name_edited = arena_time(attr_map.get("LastUpdated"))
+                if self._takes_deck_name(candidate, deck_name.strip(), name_edited):
                     candidate["deck_name"] = deck_name.strip()
+                    candidate["name_edited"] = name_edited
                     updated = True
 
             if isinstance(deck_id, str) and deck_id:

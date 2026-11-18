@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { updateStatus } from '../test/updateFixtures';
@@ -22,13 +22,24 @@ function stubSettings({
 } = {}) {
   const state = {
     buyOnPaper: { enabled: true, cache_bytes: 0 },
-    sessions: { break_hours: 4, choices: [0, 2, 4, 8] },
+    tracking: {
+      direct_challenge: true,
+      jump_in: false,
+      midweek_magic: false,
+      momir: false,
+      welcome_deck: false,
+      practice: false,
+    } as Record<string, boolean>,
+    trackingSaves: [] as unknown[],
+    restores: [] as unknown[],
+    restoreErrors: [] as string[],
     deckAi: {
       enabled: true,
       provider: 'anthropic',
       providers: [{ key: 'anthropic', label: 'Anthropic (Claude)', api_key: 'sk-test', model: '', default_model: 'claude-haiku' }],
     },
     deckAiSaves: [] as unknown[],
+    overlay: { enabled: false, available: true, running: false, binary: '/tmp/overlay', log: '/tmp/overlay.log', error: null } as Record<string, unknown>,
   };
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     const path = String(url);
@@ -46,9 +57,20 @@ function stubSettings({
       };
       return json({ deck_ai: state.deckAi });
     }
-    if (init?.method === 'POST' && path === '/api/settings/sessions') {
-      state.sessions = { ...state.sessions, ...JSON.parse(String(init.body)) };
-      return json({ sessions: state.sessions });
+    if (init?.method === 'POST' && path === '/api/settings/tracking') {
+      const body = JSON.parse(String(init.body));
+      state.trackingSaves.push(body);
+      state.tracking = { ...state.tracking, ...body };
+      return json({ tracking: state.tracking });
+    }
+    if (init?.method === 'POST' && path === '/api/settings/restore-defaults') {
+      state.restores.push(JSON.parse(String(init.body)));
+      state.tracking = { ...state.tracking, direct_challenge: true, midweek_magic: false };
+      return json({ restored: true, errors: state.restoreErrors });
+    }
+    if (init?.method === 'POST' && path === '/api/settings/overlay') {
+      state.overlay = { ...state.overlay, ...JSON.parse(String(init.body)) };
+      return json({ overlay: state.overlay });
     }
     if (path === '/api/settings') {
       return json({
@@ -72,9 +94,9 @@ function stubSettings({
         },
         platform: { system: 'macos', collection_export: collectionExport },
         startup: { start_at_login: true, open_dashboard_on_launch: true, available: true, registered: true, error: null },
-        overlay: { enabled: false, available: true, running: false, binary: '/tmp/overlay', log: '/tmp/overlay.log', error: null },
+        overlay: state.overlay,
         buy_on_paper: state.buyOnPaper,
-        sessions: state.sessions,
+        tracking: state.tracking,
         updates: {
           check: true,
           auto_download: true,
@@ -122,19 +144,19 @@ function sectionOf(heading: HTMLElement): HTMLElement {
 }
 
 describe('Settings page layout', () => {
-  it('groups the cards under General, Features, Streaming and Your data after the Tracker card', async () => {
+  it('groups the cards under General, Tracking, Features, Streaming, Your data and Defaults after the Tracker card', async () => {
     stubSettings();
     render(<SettingsPage />);
     await screen.findByText('Games captured');
 
     const groups = screen.getAllByRole('heading', { level: 2 }).map((node) => node.textContent);
-    expect(groups).toEqual(['General', 'Features', 'Streaming', 'Your data']);
+    expect(groups).toEqual(['General', 'Tracking', 'Features', 'Streaming', 'Your data', 'Defaults']);
     const cards = screen.getAllByRole('heading', { level: 3 }).map((node) => node.textContent);
     expect(cards).toEqual([
       'Tracker',
       'Startup',
-      'Sessions',
       'Updates',
+      'Saved game modes',
       'In-game overlay',
       'Buy on Paper',
       'Deck AI',
@@ -142,6 +164,7 @@ describe('Settings page layout', () => {
       'Stream Kit',
       'Backup & restore',
       'Export MTGA Collection',
+      'Restore defaults',
     ]);
   });
 
@@ -160,7 +183,7 @@ describe('Settings page layout', () => {
     expect(within(tracker).getByText('Anthropic (Claude) · claude-haiku')).toBeInTheDocument();
 
     expect(within(tracker).getByRole('link', { name: 'Database health' })).toHaveAttribute('href', '#/audit');
-    expect(within(tracker).getByRole('link', { name: 'Reset Settings' })).toHaveAttribute(
+    expect(within(tracker).getByRole('link', { name: 'Reset tracker data' })).toHaveAttribute(
       'href',
       '#/reset',
     );
@@ -174,7 +197,8 @@ describe('Settings page layout', () => {
 
     const tag = (title: string) => sectionOf(screen.getByRole('heading', { name: title })).querySelector('.settings-badge')?.textContent;
     expect(tag('Startup')).toBe('Starts at sign-in');
-    expect(tag('Sessions')).toBe('4 h break');
+    // Records count calendar days: there is no Sessions card.
+    expect(screen.queryByRole('heading', { name: 'Sessions' })).toBeNull();
     // Feature cards carry an on/off switch instead of a tag.
     expect(screen.getByRole('switch', { name: 'In-game overlay' })).toHaveAttribute('aria-checked', 'false');
     expect(screen.getByRole('switch', { name: 'Buy on Paper' })).toHaveAttribute('aria-checked', 'true');
@@ -182,6 +206,28 @@ describe('Settings page layout', () => {
     expect(screen.queryByLabelText(/Enable AI deck identification/)).toBeNull();
     expect(tag('Deck Finder Creators')).toBe('2 creators');
     expect(await screen.findByText('Up to date', { selector: '.settings-badge' })).toBeInTheDocument();
+  });
+
+  it('chooses which overlay panels show: both, my deck, or the opponent alone', async () => {
+    const api = stubSettings();
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+    const card = sectionOf(await screen.findByRole('heading', { name: 'In-game overlay' }));
+    const panels = within(card).getByRole('group', { name: 'Panels' });
+    // A tracker from before the choice reports none: both panels.
+    expect(within(panels).getByRole('radio', { name: /^Both/ })).toBeChecked();
+    expect(within(card).getByText('Deck panel')).toBeInTheDocument();
+    expect(within(card).getByText('Opponent panel')).toBeInTheDocument();
+
+    await user.click(within(panels).getByRole('radio', { name: /^Opponent/ }));
+
+    await waitFor(() => expect(api.state.overlay.panels).toBe('opponent'));
+    expect(within(panels).getByRole('radio', { name: /^Opponent/ })).toBeChecked();
+    // Only the hotkeys that still do something are listed.
+    expect(within(card).queryByText('Deck panel')).toBeNull();
+    expect(within(card).getByText('Opponent panel')).toBeInTheDocument();
+    // The overlay itself stays as it was: this is not the on/off switch.
+    expect(api.state.overlay.enabled).toBe(false);
   });
 
   it('turns a feature off from the switch beside its title', async () => {
@@ -232,16 +278,67 @@ describe('Settings page layout', () => {
     expect(within(deckAi).getByText('No API key', { selector: '.settings-badge' })).toBeInTheDocument();
   });
 
-  it('updates a tag when its setting changes', async () => {
-    stubSettings();
+  it('lists every saved game mode with Direct Challenge on, and saves one switch at a time', async () => {
+    const { state } = stubSettings();
     const user = userEvent.setup();
     render(<SettingsPage />);
-    const sessions = sectionOf(await screen.findByRole('heading', { name: 'Sessions' }));
+    const modes = sectionOf(await screen.findByRole('heading', { name: 'Saved game modes' }));
+    const switches = within(modes).getAllByRole('switch');
+    expect(switches.map((node) => node.getAttribute('aria-label'))).toEqual([
+      'Save Direct Challenge games',
+      'Save Jump In! games',
+      'Save Midweek Magic games',
+      'Save Momir games',
+      'Save Welcome Deck Duels games',
+      'Save Practice vs Sparky games',
+    ]);
+    expect(switches.map((node) => node.getAttribute('aria-checked'))).toEqual(['true', 'false', 'false', 'false', 'false', 'false']);
+    expect(modes.querySelector('.settings-badge')?.textContent).toBe('1 saved');
 
-    await user.selectOptions(within(sessions).getByLabelText('Start a new session'), '8');
+    await user.click(within(modes).getByRole('switch', { name: 'Save Midweek Magic games' }));
 
-    expect(await within(sessions).findByText('Saved. It applies from the next match.')).toBeInTheDocument();
-    expect(sessions.querySelector('.settings-badge')?.textContent).toBe('8 h break');
+    expect(await within(modes).findByText('Saved. It applies from the next game.')).toBeInTheDocument();
+    expect(state.trackingSaves).toEqual([{ midweek_magic: true }]);
+    expect(within(modes).getByRole('switch', { name: 'Save Midweek Magic games' })).toHaveAttribute('aria-checked', 'true');
+    expect(modes.querySelector('.settings-badge')?.textContent).toBe('2 saved');
+  });
+
+  it('restores defaults after confirming, and every card shows the restored settings', async () => {
+    const { state } = stubSettings();
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+    const modes = sectionOf(await screen.findByRole('heading', { name: 'Saved game modes' }));
+    await user.click(within(modes).getByRole('switch', { name: 'Save Midweek Magic games' }));
+    await within(modes).findByText('Saved. It applies from the next game.');
+
+    await user.click(screen.getByRole('button', { name: 'Restore defaults…' }));
+    const dialog = screen.getByRole('dialog', { name: 'Restore default settings?' });
+    expect(within(dialog).getByText('Deck AI provider, API keys and models')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(state.restores).toEqual([]);
+
+    await user.click(screen.getByRole('button', { name: 'Restore defaults…' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Restore defaults' }));
+
+    expect(await screen.findByText('Defaults restored.')).toBeInTheDocument();
+    expect(state.restores).toEqual([{ confirm: true }]);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    // The cards are built again from the restored settings.
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: 'Save Midweek Magic games' })).toHaveAttribute('aria-checked', 'false'),
+    );
+  });
+
+  it('names the settings a restore could not change', async () => {
+    const { state } = stubSettings();
+    state.restoreErrors = ['In-game overlay: The overlay could not be started.'];
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+    await user.click(await screen.findByRole('button', { name: 'Restore defaults…' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Restore defaults' }));
+    expect(await screen.findByText('In-game overlay: The overlay could not be started.')).toBeInTheDocument();
+    expect(screen.getByText('Defaults restored, except:')).toBeInTheDocument();
   });
 
   it('names why this copy cannot update itself instead of saying Manual', async () => {

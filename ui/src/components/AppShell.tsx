@@ -14,6 +14,7 @@ import {
   FileText,
   GitBranch,
   Hand,
+  Handshake,
   Heart,
   History,
   Info,
@@ -79,7 +80,9 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   opponents: Swords,
   'opponents-all': Swords,
   formats: Shapes,
-  sessions: Clock,
+  days: Clock,
+  challenges: Handshake,
+  'challenges-page': Handshake,
   'all-games': List,
   'all-games-list': List,
   'audit-summary': FileText,
@@ -290,7 +293,7 @@ export function AppShell({
       const marker = 120;
       if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 8) {
         // Scrolled to the very bottom: highlight the last section. A short
-        // final section (Sessions) can never win a "closest to the marker"
+        // final section (Days) can never win a "closest to the marker"
         // contest, so distance-based picking left it permanently unlit.
         setActiveSection(sections[sections.length - 1].id);
         return;
@@ -396,7 +399,12 @@ export function AppShell({
             // Icons carry the arrow for back links; drop the text version.
             const label = item.label.replace(/^←\s*/u, '');
             return item.route ? (
-              <a key={item.id} className="nav-route" href={item.route} title={label}>
+              <a
+                key={item.id}
+                className={item.plain ? undefined : 'nav-route'}
+                href={item.route}
+                title={label}
+              >
                 <NavIcon id={item.id} />
                 <span className="sidebar-nav-label">{label}</span>
               </a>

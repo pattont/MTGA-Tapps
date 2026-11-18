@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { LivePayload } from '../../api';
 import { ColorPips } from '../../components/ColorPips';
 import { outcomeLabel, outcomeShortLabel, outcomeTone } from '../../format';
-import { PERIOD_LABEL, percent, periodGames, periodRecord, rankName, rankOrder, secondsSince, span } from '../liveView';
+import { percent, rankName, rankOrder, todayGames, todayRecord } from '../liveView';
 import { shows, type StreamOptions } from '../options';
 import { useLiveSnapshot } from '../useLive';
 import { useNow } from '../useNow';
@@ -22,12 +22,10 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 
 export function BreakView({ payload, options, nowMs }: { payload: LivePayload | null; options: StreamOptions; nowMs: number }) {
   const live = payload && payload.tracker.state !== 'offline' ? payload : null;
-  const record = periodRecord(live, options.period);
-  const games = record ? (options.period === 'today' ? live?.today?.games ?? 0 : live?.session?.games_played ?? 0) : 0;
+  const record = todayRecord(live);
+  const games = live?.today?.games ?? 0;
   const now = live?.now ?? null;
-  // The session's length; "today" has none worth showing.
-  const length = options.period === 'session' ? secondsSince(live?.session?.started_at, nowMs) : null;
-  const results = periodGames(live, options.period, nowMs)
+  const results = todayGames(live, nowMs)
     .filter((game) => outcomeTone(game.outcome) !== 'neutral')
     .slice(0, MAX_RESULTS)
     .reverse();
@@ -42,7 +40,7 @@ export function BreakView({ payload, options, nowMs }: { payload: LivePayload | 
         <Brand show={options.brand} />
       </div>
       {shows(options, 'session') && record && games > 0 ? (
-        <Row label={PERIOD_LABEL[options.period]}>
+        <Row label="Today">
           <span className="br-record">
             <span className="sk-win">{record.wins}</span>
             <span className="sk-dash">–</span>
@@ -57,13 +55,12 @@ export function BreakView({ payload, options, nowMs }: { payload: LivePayload | 
           {record.win_rate != null ? <span className="br-rate">{percent(record.win_rate)}</span> : null}
           <span className="br-note">
             {games} {games === 1 ? 'game' : 'games'}
-            {length !== null && length >= 60 ? ` · ${span(length)}` : ''}
           </span>
         </Row>
       ) : null}
       {shows(options, 'results') && results.length > 0 ? (
         <Row label="Games">
-          <span className="br-results" aria-label={`${PERIOD_LABEL[options.period]}’s results, oldest first`}>
+          <span className="br-results" aria-label="Today’s results, oldest first">
             {results.map((game) => (
               <span key={game.id} className={`sk-result sk-result-${outcomeTone(game.outcome)}`} title={outcomeLabel(game.outcome)}>
                 {outcomeShortLabel(game.outcome)}

@@ -436,10 +436,11 @@ def test_dashboard_snapshot_and_html_render_latest_game(tmp_path):
     assert snapshot["rank_progress"][0]["rank_score"] == 82
     # Bo1 matches duplicate Recent Games rows, so the matches section is Bo3-only.
     assert snapshot["matches"] == []
-    assert snapshot["sessions"][0]["session_id"] == "session-1"
-    assert snapshot["sessions"][0]["games"] == 2
-    # One game on the play, one on the draw: the Sessions table's Play / Draw.
-    assert (snapshot["sessions"][0]["on_play"], snapshot["sessions"][0]["on_draw"]) == (1, 1)
+    assert "sessions" not in snapshot
+    assert snapshot["days_played"][0]["day"] == "2026-06-04"
+    assert snapshot["days_played"][0]["games"] == 2
+    # One game on the play, one on the draw: the Days table's Play / Draw.
+    assert (snapshot["days_played"][0]["on_play"], snapshot["days_played"][0]["on_draw"]) == (1, 1)
     assert "Boros Mouse" in html
     assert "Draw Quality" in html
     assert "Visible Drawn Cards" in html
@@ -448,42 +449,100 @@ def test_dashboard_snapshot_and_html_render_latest_game(tmp_path):
     assert "Standard Best-of-1" in html
 
 
-def test_dashboard_snapshot_returns_all_sessions_and_preserves_filters(tmp_path):
+def test_dashboard_snapshot_returns_every_day_played_and_preserves_filters(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
     with sqlite3.connect(db_path) as conn:
         for index in range(45):
-            session_id = f"history-session-{index}"
-            started_at = f"2026-09-01T00:{index:02d}:00"
+            game_id = f"history-game-{index}"
+            # Two games a day from 2026-09-01; the last of each day crosses midnight
+            # and still belongs to the day it started.
+            day = 1 + index // 2
+            clock = "10:00:00" if index % 2 == 0 else "23:58:00"
+            started_at = f"2026-09-{day:02d}T{clock}"
             conn.execute(
                 "INSERT INTO tracker_sessions (id, started_at, runtime_seconds) VALUES (?, ?, 300)",
-                (session_id, started_at),
+                (game_id, started_at),
             )
             conn.execute(
                 "INSERT INTO matches (id, session_id, format, best_of) VALUES (?, ?, 'Play', 1)",
-                (session_id, session_id),
+                (game_id, game_id),
             )
             conn.execute(
-                "INSERT INTO games (id, session_id, match_id, game_number, started_at, outcome) "
-                "VALUES (?, ?, ?, 1, ?, 'win')",
-                (session_id, session_id, session_id, started_at),
+                "INSERT INTO games (id, session_id, match_id, game_number, started_at, ended_at, "
+                "duration_seconds, outcome) VALUES (?, ?, ?, 1, ?, ?, 600, ?)",
+                (
+                    game_id,
+                    game_id,
+                    game_id,
+                    started_at,
+                    (
+                        f"2026-09-{day + 1:02d}T00:08:00"
+                        if index % 2
+                        else f"2026-09-{day:02d}T10:10:00"
+                    ),
+                    "win" if index % 3 else "loss",
+                ),
             )
             conn.execute(
                 "INSERT INTO participants (id, game_id, seat_id, role, deck_name) "
                 "VALUES (?, ?, 1, 'player', ?)",
-                (session_id, session_id, "Archived Brew" if index == 0 else "Current Brew"),
+                (game_id, game_id, "Archived Brew" if index == 0 else "Current Brew"),
             )
 
-    sessions = dashboard_snapshot(db_path)["sessions"]
-    assert {row["session_id"] for row in sessions} == {
-        "session-1", *(f"history-session-{index}" for index in range(45))
-    }
-    assert sessions[0]["session_id"] == "history-session-44"
-    assert sessions[-1]["session_id"] == "session-1"
-    assert sum(row["games"] for row in sessions) == 47
-    filtered = dashboard_snapshot(db_path, deck="Archived Brew", fmt="Play")["sessions"]
-    assert [row["session_id"] for row in filtered] == ["history-session-0"]
-    assert filtered[0]["wins"] == 1
-    assert dashboard_snapshot(db_path, since="2026-10-01")["sessions"] == []
+    days = dashboard_snapshot(db_path)["days_played"]
+    # 23 days in September plus the sample's day, newest first, no cap.
+    assert len(days) == 24
+    assert days[0]["day"] == "2026-09-23" and days[0]["games"] == 1
+    assert days[-1]["day"] == "2026-06-04"
+    assert sum(row["games"] for row in days) == 47
+    first = next(row for row in days if row["day"] == "2026-09-01")
+    assert first["games"] == 2
+    assert (first["first_game_at"], first["last_game_at"]) == (
+        "2026-09-01T10:00:00",
+        "2026-09-02T00:08:00",
+    )
+    assert first["duration_seconds"] == 1200
+    # 10:00–10:10, then 23:58: two separate stretches of play.
+    assert first["sittings"] == 2
+    # The sample day's two games, minutes apart, are one sitting.
+    assert days[-1]["sittings"] == 1
+    assert (first["wins"], first["losses"]) == (1, 1)
+    filtered = dashboard_snapshot(db_path, deck="Archived Brew", fmt="Play")["days_played"]
+    assert [row["day"] for row in filtered] == ["2026-09-01"]
+    assert (filtered[0]["wins"], filtered[0]["losses"]) == (0, 1)
+    assert dashboard_snapshot(db_path, since="2026-10-01")["days_played"] == []
+
+
+def test_fatigue_counts_games_into_the_day_not_the_tracker_session(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        # One tracker session across two days: six games on 09-01, then
+        # one on 09-02 that is the first game of its day.
+        for index in range(7):
+            game_id = f"day-game-{index}"
+            started_at = f"2026-09-01T1{index}:00:00" if index < 6 else "2026-09-02T09:00:00"
+            if index == 0:
+                conn.execute(
+                    "INSERT INTO tracker_sessions (id, started_at) VALUES ('long', ?)",
+                    (started_at,),
+                )
+                conn.execute(
+                    "INSERT INTO matches (id, session_id, format, best_of) "
+                    "VALUES ('long-m', 'long', 'Play', 1)"
+                )
+            conn.execute(
+                "INSERT INTO games (id, session_id, match_id, game_number, started_at, outcome) "
+                "VALUES (?, 'long', 'long-m', 1, ?, 'win')",
+                (game_id, started_at),
+            )
+            conn.execute(
+                "INSERT INTO participants (id, game_id, seat_id, role, deck_name) "
+                "VALUES (?, ?, 1, 'player', 'Day Brew')",
+                (game_id, game_id),
+            )
+    snapshot = dashboard_snapshot(db_path, deck="Day Brew")
+    fatigue = {row["label"]: row["games"] for row in snapshot["fatigue"]}
+    assert fatigue == {"Games 1–4": 5, "Games 5–9": 2}
 
 
 def test_dashboard_snapshot_missing_db_does_not_create_file(tmp_path):
@@ -892,6 +951,25 @@ def test_dashboard_snapshot_groups_formats_and_excludes_jump_in(tmp_path):
     assert [row["match_id"] for row in snapshot["matches"]] == ["match-bo3"]
     assert snapshot["matches"][0]["record"] == "2-0"
     assert snapshot["matches"][0]["format_label"] == "Standard Best-of-3 (Ranked)"
+
+    # Ticked in Settings → Saved game modes, those games are history like any
+    # other, and the page's cache fingerprint changes with the choice.
+    from mtga_tracker import dashboard, settings
+
+    before = dashboard._analytics_fingerprint(db_path)
+    settings.save_tracked_modes({"jump_in": True, "midweek_magic": True})
+    dashboard.note_tracking_changed()
+    assert dashboard._analytics_fingerprint(db_path) != before
+    shown = dashboard_snapshot(db_path)
+    assert shown["summary"]["games"] == 9
+    assert excluded <= {row["game_id"] for row in shown["recent"]}
+    options = {opt["raw_format"]: opt for opt in shown["filter_options"]["formats"]}
+    assert {"Jump_In_MSH", "MWM_SlowStart_20260602"} <= set(options)
+    # The UI keeps Midweek Magic out of format lists unless a row says it is saved.
+    assert options["MWM_SlowStart_20260602"]["saved_mode"] is True
+    assert "saved_mode" not in options["Ladder"]
+    midweek_rows = [row for row in shown["formats"] if "Midweek Magic" in row["format_label"]]
+    assert midweek_rows and all(row["saved_mode"] for row in midweek_rows)
 
 
 def test_dashboard_snapshot_days_filter_keeps_recent_games(tmp_path):
@@ -4447,3 +4525,35 @@ def test_dashboard_static_files_are_cached_and_connections_reused(tmp_path):
     assert index.getheader("Last-Modified")
     assert revalidated.status == 304
     assert stale.status == 200
+
+
+def test_challenges_lists_only_direct_challenge_games_with_a_record_per_friend(tmp_path):
+    from mtga_tracker.dashboard import challenges
+
+    db_path = _sample_dashboard_db(tmp_path)
+    assert challenges(db_path) == {"games": [], "friends": [], "total": 0}
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "update matches set format = 'Historic', event_name = 'Traditional_DirectGame' "
+            "where id = 'match-1'"
+        )
+        conn.execute("update participants set display_name = 'Pal#123' where role = 'opponent'")
+        conn.execute("update games set outcome = 'win' where id = 'game-2'")
+
+    result = challenges(db_path)
+    assert result["total"] == 2
+    assert [row["game_id"] for row in result["games"]] == ["game-2", "game-1"]
+    assert result["friends"] == [
+        {
+            "friend": "Pal#123",
+            "matches": 1,
+            "games": 2,
+            "wins": 1,
+            "losses": 0,
+            "last_played": "2026-06-04T00:10:00",
+            "win_rate": 100.0,
+        }
+    ]
+    # All Games still lists them.
+    assert all_games(db_path)["total"] == 2

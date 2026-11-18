@@ -292,6 +292,44 @@ def test_after_update_with_a_held_lock_exits_quietly(monkeypatch, capsys):
     assert logged and "still running" in logged[0]
 
 
+def test_update_failed_relaunch_waits_for_the_old_instance_and_exits_quietly(
+    monkeypatch, capsys
+):
+    """The Windows watcher can relaunch the old version while it is still
+    exiting, or after Setup already relaunched it: wait, then go quietly."""
+    from functools import partial
+
+    from mtga_tracker import single_instance, updater_support
+
+    attempts = []
+
+    class HeldGuard:
+        def acquire(self):
+            attempts.append(True)
+            return False
+
+        def release(self):
+            raise AssertionError("an unacquired guard must not be released")
+
+    logged = []
+    monkeypatch.setattr(app, "SingleInstanceGuard", HeldGuard)
+    monkeypatch.setattr(
+        app,
+        "acquire_with_retry",
+        partial(single_instance.acquire_with_retry, sleep=lambda _s: None),
+    )
+    monkeypatch.setattr(app, "AFTER_UPDATE_LOCK_WAIT_S", 0.0)
+    monkeypatch.setattr(
+        updater_support, "append_log", lambda message, path=None: logged.append(message)
+    )
+    monkeypatch.setattr(app, "_run_without_gui", lambda _args: pytest.fail("must not start"))
+
+    assert app.main(["--no-gui", "--update-failed", "0.6.6", "--port", "9001"]) == 0
+    captured = capsys.readouterr()
+    assert captured.err == "" and captured.out == ""
+    assert attempts and logged and "still running" in logged[0]
+
+
 def test_update_failed_flag_accepts_an_optional_version(monkeypatch, available_instance_guard):
     captured = []
     monkeypatch.setattr(app, "_run_without_gui", lambda args: captured.append(args) or 0)

@@ -222,6 +222,12 @@ venv/bin/python -m pytest tests -q --ignore=tests/test_menu_app.py \
   a pre-update backup in `<data>/backups`.
 - Update `CHANGELOG.md` for the release being prepared. Review draft notes,
   platform requirements, and download filenames before publishing.
+- End the release notes with the code signing line SignPath requires on
+  release pages: `Windows releases are moving to free code signing provided
+  by [SignPath.io](https://about.signpath.io/), certificate by
+  [SignPath Foundation](https://signpath.org/). [Code signing policy](https://github.com/pattont/MTGA-Tapps#code-signing-policy)`
+  (once signing is active, "are signed with" instead of "are moving to";
+  see [the plan](plans/CODE_SIGNING.md)).
 
 ## Updates and user data
 

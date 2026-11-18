@@ -27,6 +27,7 @@ const CARDS: Record<string, ReplayCard> = {
   ice: card('Frost Breath', 'Instant'),
   bat: card('Deep-Cavern Bat', 'Creature', { power: '1', toughness: '1' }),
   rip: card('Seam Rip', 'Enchantment'),
+  passage: card('Fabled Passage', 'Land'),
 };
 
 /** Two bears on each side, then whatever `script` does; returns the timeline and the stream's events. */
@@ -162,6 +163,32 @@ describe('effect window: removal', () => {
     const c = view(cost.timeline.final);
     expect(byObj(c.layout.cards, 'm1')[0].removed).toBe('sacrificed');
     expect(c.arrows).toEqual([]);
+  });
+
+  it('removes a land sacrificed for its own ability at once, but holds one sacrificed to another card', () => {
+    const fetch = game((b) => {
+      b.move('f1', 'passage', 'limbo', 'battlefield', ME, 'put');
+      b.add(
+        'stack_push',
+        { stack_id: 's1', obj: 'f1', card: 'passage', stack_kind: 'activated', controller: ME, text: null, targets: [] },
+        { text: 'Fabled Passage ability' },
+      );
+      b.move('f1', 'passage', 'battlefield', 'graveyard', ME, 'sacrifice');
+    });
+    const f = view(fetch.timeline.final);
+    expect(byObj(f.layout.cards, 'f1').map((c) => c.zone)).toEqual(['graveyard']);
+    expect(byObj(f.layout.cards, 'f1')[0].removed ?? null).toBeNull();
+
+    const outlet = game((b) => {
+      b.add(
+        'stack_push',
+        { stack_id: 's1', obj: 'm2', card: 'bear', stack_kind: 'activated', controller: ME, text: null, targets: [] },
+        { text: 'sacrifice outlet' },
+      );
+      b.move('m1', 'bear', 'battlefield', 'graveyard', ME, 'sacrifice');
+    });
+    const o = view(outlet.timeline.final);
+    expect(byObj(o.layout.cards, 'm1').map((c) => [c.zone, c.removed])).toEqual([['battlefield', 'sacrificed']]);
   });
 
   it('shows a bounced creature as Returned to hand in its slot, not yet in the hand', () => {

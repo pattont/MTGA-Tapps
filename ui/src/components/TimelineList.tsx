@@ -298,11 +298,13 @@ export function TimelineList({
   cardReturnHash?: string;
   /** Deep link into the replay at this row, or null when the row has none. */
   replayHref?: (row: GameTimelineRow) => string | null;
-  /** The Live Log renders the same timeline without the filter bar. */
+  /** False hides the filter bar (search, event type, actor). */
   showFilters?: boolean;
 }) {
   const [eventType, setEventType] = useState('');
   const [actor, setActor] = useState('');
+  const [search, setSearch] = useState('');
+  const needle = search.trim().toLocaleLowerCase();
 
   const visibleRows = useMemo(
     () => rows.filter((row) => row.event_type !== 'turn'),
@@ -321,13 +323,15 @@ export function TimelineList({
       visibleRows.filter(
         (row) =>
           (!eventType || row.event_type === eventType) &&
-          (!actor || (row.actor_role ?? 'system') === actor),
+          (!actor || (row.actor_role ?? 'system') === actor) &&
+          // A card name or any other words of the line, in any case.
+          (!needle || cleanEventText(row.text).toLocaleLowerCase().includes(needle)),
       ),
-    [visibleRows, eventType, actor],
+    [visibleRows, eventType, actor, needle],
   );
   const groups = useMemo(
-    () => groupByTurn(filtered, eventType || actor ? [] : timings),
-    [actor, eventType, filtered, timings],
+    () => groupByTurn(filtered, eventType || actor || needle ? [] : timings),
+    [actor, eventType, filtered, needle, timings],
   );
 
   if (visibleRows.length === 0 && timings.length === 0) {
@@ -338,6 +342,15 @@ export function TimelineList({
     <div className="timeline-wrap">
       {showFilters ? (
       <div className="timeline-filter" role="group" aria-label="Timeline filters">
+        <label>
+          <span>Search</span>
+          <input
+            type="search"
+            value={search}
+            placeholder="Card or text"
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </label>
         <label>
           <span>Event Type</span>
           <select value={eventType} onChange={(event) => setEventType(event.target.value)}>

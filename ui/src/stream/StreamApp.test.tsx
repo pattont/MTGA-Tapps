@@ -103,6 +103,22 @@ describe('full overlay widget', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('marks counts as ceilings when cards left the library unseen', async () => {
+    const unseen = { ...DEMO_OVERLAY, state: { ...DEMO_OVERLAY.state!, library_size: 21, unseen: 24 } };
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(json(unseen))));
+    const overlay = renderWidget('?widget=overlay');
+    await flush();
+    const note = overlay.container.querySelector('.note.warn');
+    expect(note).toHaveTextContent("24 cards left your library and Arena's log didn't name them.");
+    expect(screen.getByRole('group', { name: 'Deck panel' })).toHaveTextContent('Land dropsup to 15 of 21 left');
+    expect(overlay.container.querySelector('.row:not(.dim) .cnt')?.textContent).toMatch(/^≤\d+\/\d+$/);
+    overlay.unmount();
+
+    const deck = renderWidget('?widget=deck');
+    await flush();
+    expect(deck.container.querySelector('.sk-row:not(.sk-row-out) .sk-row-count')?.textContent).toMatch(/^≤\d+$/);
+  });
+
   it('follows the sideboard, lands, background and name options', () => {
     const { container } = renderWidget('?widget=overlay&demo=1&sideboard=off&lands=all&opacity=0&opponent=0&names=white&brand=0');
     expect(screen.queryByRole('region', { name: 'Sideboard' })).toBeNull();
@@ -137,10 +153,10 @@ describe('recent games widget', () => {
     expect(rows[1]).toHaveTextContent('WWinMono-Green Stompyvs MoxMaven · 7 turns · 11 minDraw');
     expect(screen.getByText('Recent games')).toBeInTheDocument();
     expect(screen.getByText('Tapps Tracker')).toBeInTheDocument();
-    // The session record leads, on by default.
-    expect(container.querySelector('.sk-games-record')).toHaveTextContent('Session6–275%');
+    // Today's record leads, on by default.
+    expect(container.querySelector('.sk-games-record')).toHaveTextContent('Today6–275%');
     expect(screen.getByLabelText('6 wins, 2 losses')).toBeInTheDocument();
-    // The session's play / draw split heads the list: a rate from five games, else the record.
+    // Today's play / draw split heads the list: a rate from five games, else the record.
     expect(container.querySelector('.sk-games-sides')).toHaveTextContent('Play80%Draw2–1');
     // No replay links on stream.
     expect(container.querySelector('a')).toBeNull();
@@ -162,12 +178,12 @@ describe('recent games widget', () => {
     expect(container.querySelector('.sk-games-sides')).toBeNull();
     expect(container.querySelector('.sk-turn-order')).toBeNull();
     expect(container.querySelector('.sk-game-meta')).toHaveTextContent(/^vs Opponent$/);
-    expect(container.querySelector('.sk-games-record')).toHaveTextContent('Session6–275%');
+    expect(container.querySelector('.sk-games-record')).toHaveTextContent('Today6–275%');
   });
 
-  it('shows today’s record when asked', () => {
-    const { container } = renderWidget('?widget=games&demo=1&period=today');
-    expect(container.querySelector('.sk-games-record')).toHaveTextContent('Today8–373%');
+  it('reads an old period=session link as today', () => {
+    const { container } = renderWidget('?widget=games&demo=1&period=session');
+    expect(container.querySelector('.sk-games-record')).toHaveTextContent('Today6–275%');
   });
 
   it('says when there are no games yet and hides while the tracker is off', async () => {
@@ -196,25 +212,24 @@ describe('record and matchup widgets', () => {
     expect(screen.getByLabelText('6 wins, 2 losses')).toBeInTheDocument();
     expect(screen.getByText('75%')).toBeInTheDocument();
     expect(screen.getByText('Diamond 2 · 3/6')).toBeInTheDocument();
-    // The deck chip follows the headline: this session's record with the deck.
-    expect(screen.getByText('Deck 3–1')).toBeInTheDocument();
+    expect(screen.getByText('Today')).toBeInTheDocument();
+    // The deck chip follows the headline: today's record with the deck.
+    expect(screen.getByText('Deck 4–1')).toBeInTheDocument();
     const sides = document.querySelector('.sk-record-sides') as HTMLElement;
     expect(sides).toHaveTextContent('Play80%4–1');
     // Under five games on the draw: the record alone.
     expect(sides).toHaveTextContent('Draw2–1');
   });
 
-  it('shows today’s record instead of the session’s, leaving out an empty side', async () => {
+  it('leaves out a side with no games, also on an old period=session link', async () => {
     const today = { ...DEMO_LIVE.today!, draw: { wins: 0, losses: 0 } };
     vi.stubGlobal('fetch', liveSequence({ ...DEMO_LIVE, today }));
-    renderWidget('?widget=record&period=today');
+    renderWidget('?widget=record&period=session');
     await flush();
     expect(screen.getByText('Today')).toBeInTheDocument();
-    expect(screen.getByLabelText('8 wins, 3 losses')).toBeInTheDocument();
-    expect(screen.getByText('Deck 4–1')).toBeInTheDocument();
-    expect(screen.getByText('73%')).toBeInTheDocument();
+    expect(screen.getByLabelText('6 wins, 2 losses')).toBeInTheDocument();
     const sides = document.querySelector('.sk-record-sides') as HTMLElement;
-    expect(sides).toHaveTextContent('Play83.3%5–1');
+    expect(sides).toHaveTextContent('Play80%4–1');
     expect(sides).not.toHaveTextContent('Draw');
   });
 
@@ -379,12 +394,8 @@ describe('game result widget', () => {
     expect(screen.getByText('Victory')).toBeInTheDocument();
     expect(screen.getByText('Match won 2–0')).toBeInTheDocument();
     expect(screen.queryByText(/MoxMaven/)).toBeNull();
-    expect(document.querySelector('.rs-session')).toHaveTextContent('Session6–275%');
-  });
-
-  it('can show today’s record under the result', () => {
-    renderWidget('?widget=result&demo=1&period=today');
-    expect(document.querySelector('.rs-session')).toHaveTextContent('Today8–372.7%');
+    // Today's record under the result.
+    expect(document.querySelector('.rs-session')).toHaveTextContent('Today6–275%');
   });
 });
 
@@ -452,24 +463,18 @@ describe('land meter widget', () => {
 });
 
 describe('intermission widget', () => {
-  it('shows the title, session, today, deck and rank climb', () => {
+  it('shows the title, today, deck and rank climb', () => {
     const { container } = renderWidget('?widget=break&demo=1&title=Back%20in%205');
     const card = container.querySelector('.br') as HTMLElement;
     expect(card).toHaveTextContent('Back in 5');
-    expect(card).toHaveTextContent('Session6–275%8 games · 2h 14m');
+    expect(card).toHaveTextContent('Today6–275%8 games');
+    // A day has no length worth showing.
+    expect(card).not.toHaveTextContent('2h 14m');
     expect(card).toHaveTextContent('Games');
     expect(container.querySelectorAll('.br-results .sk-result')).toHaveLength(8);
     expect(card).toHaveTextContent('Mono-Green Stompy');
     expect(card).toHaveTextContent('Diamond 4▲Diamond 2');
     expect(container.querySelectorAll('.br-steps .on')).toHaveLength(3);
-  });
-
-  it('can show today instead of the session', () => {
-    const { container } = renderWidget('?widget=break&demo=1&period=today');
-    const card = container.querySelector('.br') as HTMLElement;
-    // No session length for a day.
-    expect(card).toHaveTextContent('Today8–372.7%11 games');
-    expect(card).not.toHaveTextContent('2h 14m');
   });
 
   it('keeps only the chosen rows, and the title while the tracker is off', async () => {

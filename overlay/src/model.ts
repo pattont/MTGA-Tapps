@@ -48,10 +48,32 @@ function pct(value: number): number {
   return Math.round(value * 1000) / 10;
 }
 
-function aggregate(key: 'basic' | 'nonbasic', label: string, cards: OverlayCard[], library: number): Row | null {
+/** Cards that left the library without Arena's log naming them (overlay_state.py `unseen`). */
+export function unseenCount(state: OverlayState): number {
+  return Math.max(0, state.unseen ?? 0);
+}
+
+/**
+ * The line above the list when the counts cannot be read as they stand:
+ * cards left unseen (each count is then a ceiling), or Arena summarized a
+ * message and the library has not been listed since.
+ */
+export function libraryNotice(state: OverlayState): string | null {
+  const unseen = unseenCount(state);
+  if (unseen > 0) {
+    return `${unseen} card${unseen === 1 ? '' : 's'} left your library and Arena's log didn't name ${unseen === 1 ? 'it' : 'them'}. Counts show the most that can be left.`;
+  }
+  if (state.log_gap) return "Arena's log skipped a large move. Counts may be out of date until your next draw.";
+  return null;
+}
+
+function aggregate(key: 'basic' | 'nonbasic', label: string, cards: OverlayCard[], state: OverlayState): Row | null {
   if (cards.length === 0) return null;
   const left = cards.reduce((sum, c) => sum + c.left, 0);
   const total = cards.reduce((sum, c) => sum + c.total, 0);
+  // The same pool and draw cap as overlay_state.py's odds.
+  const pool = state.draw_pool ?? state.library_size;
+  const odds = (draws: number) => pct(oddsWithin(left, pool, Math.min(draws, state.library_size)));
   return {
     key: `group:${key}`,
     name: label,
@@ -60,7 +82,7 @@ function aggregate(key: 'basic' | 'nonbasic', label: string, cards: OverlayCard[
     mana_value: 0,
     total,
     left,
-    odds: { '1': pct(oddsWithin(left, library, 1)), '2': pct(oddsWithin(left, library, 2)), '3': pct(oddsWithin(left, library, 3)) },
+    odds: { '1': odds(1), '2': odds(2), '3': odds(3) },
     group: key,
   };
 }
@@ -122,8 +144,8 @@ export function buildSections(state: OverlayState, sort: SortKey, lands: 'groupe
   let landRows: Row[];
   if (lands === 'grouped') {
     landRows = [
-      aggregate('basic', 'Basic lands', landCards.filter((c) => c.basic), state.library_size),
-      aggregate('nonbasic', 'Nonbasic lands', landCards.filter((c) => !c.basic), state.library_size),
+      aggregate('basic', 'Basic lands', landCards.filter((c) => c.basic), state),
+      aggregate('nonbasic', 'Nonbasic lands', landCards.filter((c) => !c.basic), state),
     ].filter((row): row is Row => row !== null);
   } else {
     landRows = sortRows(landCards.map(toRow), sort);

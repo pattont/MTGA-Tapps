@@ -12,6 +12,17 @@ cards the tracker can account for. If those two disagree (a card returned
 to the library face down, a duplicate the log named differently) the
 difference is exposed as ``unaccounted`` rather than hidden inside a wrong
 percentage.
+
+The other way round, the library is smaller than the cards the tracker
+still places in it: cards left that the log never named. Arena writes a
+message with more than 50 objects or annotations as a one-line summary, so
+half a library milled at once reaches the log as nothing at all. ``unseen``
+counts those cards. Which ones went is unknown, so each card's ``left`` is
+then the most that can remain, and the odds are taken over every card not
+seen to leave (``draw_pool``): the library is a random part of that pool,
+which makes them the true chances given what the log shows. The tracker
+replaces all of this with the exact library the next time Arena shows it
+(a search), see ``_observe_library_reveal``.
 """
 
 from __future__ import annotations
@@ -78,6 +89,8 @@ def build_overlay_state(
     opponent_commanders: Optional[Iterable[str]] = None,
     updated_at: Optional[str] = None,
     sideboard: Optional[Sequence[str]] = None,
+    log_gap: bool = False,
+    count_unseen: bool = True,
 ) -> Dict[str, Any]:
     """Assemble the overlay payload. ``deck`` lists one entry per copy; the
     commander is not in it (it lives in the command zone). ``sideboard``
@@ -92,6 +105,15 @@ def build_overlay_state(
     if library_size is None:
         library_size = accounted
     library_size = max(0, int(library_size))
+    unseen = max(0, accounted - library_size) if count_unseen else 0
+    # What the next draws come from, as far as the log shows.
+    draw_pool = accounted if unseen else library_size
+
+    def odds(copies: int) -> Dict[str, float]:
+        return {
+            str(n): _pct(odds_within(copies, draw_pool, min(n, library_size)))
+            for n in ODDS_HORIZONS
+        }
 
     cards: List[Dict[str, Any]] = []
     lands_left = 0
@@ -113,9 +135,7 @@ def build_overlay_state(
                 "left": copies_left,
                 "land": land,
                 "basic": land and is_basic_land(name),
-                "odds": {
-                    str(n): _pct(odds_within(copies_left, library_size, n)) for n in ODDS_HORIZONS
-                },
+                "odds": odds(copies_left),
             }
         )
 
@@ -153,11 +173,16 @@ def build_overlay_state(
         "deck_size": deck_size,
         "library_size": library_size,
         "unaccounted": library_size - accounted,
+        # Cards that left the library without the log naming them; with any,
+        # every "left" is a ceiling and the odds are over draw_pool.
+        "unseen": unseen,
+        "draw_pool": draw_pool,
+        # Arena summarized a message and has not listed the library since:
+        # the counts may be out of date until it does (the next draw).
+        "log_gap": bool(log_gap),
         "lands_left": lands_left,
         "lands_total": lands_total,
-        "land_odds": {
-            str(n): _pct(odds_within(lands_left, library_size, n)) for n in ODDS_HORIZONS
-        },
+        "land_odds": odds(lands_left),
         "cards": cards,
         "sideboard": side_cards,
         "updated_at": updated_at,

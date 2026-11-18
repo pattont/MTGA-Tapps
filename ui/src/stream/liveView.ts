@@ -54,11 +54,7 @@ export function gamesIn(score: { wins: number; losses: number } | null | undefin
   return score ? score.wins + score.losses : 0;
 }
 
-export type Period = 'session' | 'today';
-
-export const PERIOD_LABEL: Record<Period, string> = { session: 'Session', today: 'Today' };
-
-export interface PeriodRecord {
+export interface DayRecord {
   wins: number;
   losses: number;
   draws: number;
@@ -67,10 +63,9 @@ export interface PeriodRecord {
   draw?: LiveScore;
 }
 
-/** The record for a span: this tracker session's, or every game today. */
-export function periodRecord(payload: LivePayload | null, period: Period): PeriodRecord | null {
-  if (!payload) return null;
-  return period === 'today' ? payload.today ?? null : payload.session;
+/** Every game that started today (local calendar day, from midnight). */
+export function todayRecord(payload: LivePayload | null): DayRecord | null {
+  return payload?.today ?? null;
 }
 
 function localDate(ms: number): string {
@@ -79,17 +74,14 @@ function localDate(ms: number): string {
 }
 
 /**
- * The feed's games within a span. Game ids start with their session's id;
- * "today" is the local date of started_at, as the tracker stores it.
+ * Today's games from the feed, newest first: the games `todayRecord` counts.
+ * The feed also carries the most recent game of any day (the scoreboard's
+ * "Last game" line), which is left out when it started on an earlier day.
+ * "Today" is the local date of started_at, as the tracker stores it.
  */
-export function periodGames(payload: LivePayload | null, period: Period, nowMs: number): LiveGameRow[] {
-  const games = payload?.games ?? [];
-  if (period === 'today') {
-    const today = localDate(nowMs);
-    return games.filter((game) => !game.started_at || game.started_at.slice(0, 10) === today);
-  }
-  const session = payload?.session?.id;
-  return session ? games.filter((game) => game.id.startsWith(`${session}:`)) : games;
+export function todayGames(payload: LivePayload | null, nowMs: number): LiveGameRow[] {
+  const today = localDate(nowMs);
+  return (payload?.games ?? []).filter((game) => !game.started_at || game.started_at.slice(0, 10) === today);
 }
 
 /** "61.9%"; whole numbers lose the decimal. */

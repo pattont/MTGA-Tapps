@@ -16,12 +16,12 @@ import {
   type DrawQualityRow,
   type MatchLevelSummary,
   type MomentumRow,
-  type PlayDrawRow,
   type TopOpponentRow,
   type RecentGameRow,
-  type SessionRow,
+  type DayRow,
   type SnapshotFilters,
 } from './api';
+import { ON_THE_DRAW, ON_THE_PLAY, withPlayDrawShare, type PlayDrawShareRow } from './playDrawShare';
 import { lazy, Suspense } from 'react';
 import { Badge } from './components/Badge';
 import { DrawStatusBadge } from './components/DrawStatusBadge';
@@ -39,6 +39,7 @@ import { DeckVisual } from './components/DeckVisual';
 import { FilterBar } from './components/FilterBar';
 import { FormatsTable } from './components/FormatsTable';
 import { GameDetailPage } from './components/GameDetailPage';
+import { ChallengesPage } from './components/ChallengesPage';
 import { GamesPage } from './components/GamesPage';
 import { DeckFinderPage } from './components/DeckFinderPage';
 import { DeckManagerPage } from './components/DeckManagerPage';
@@ -60,9 +61,9 @@ import { Section } from './components/Section';
 import { ManaReadinessTable } from './components/ManaReadinessTable';
 import { bestDeckMetric, formatPercent, metricCards } from './dashboardData';
 import type { MetricDefinition } from './dashboardData';
-import { formatCardName, formatDateTime, formatDuration, formatNumber, formatTimeAgo, outcomeLabel, outcomeTone, shortFormatLabel } from './format';
+import { formatCardName, formatDateTime, formatDay, formatDuration, formatHoursMinutes, formatNumber, formatTimeAgo, outcomeLabel, outcomeTone, shortFormatLabel } from './format';
 import { auditNavItems, resetNavItems,
-  deckFinderNavItems, deckManagerNavItems, cardNavItems, deckNavItems, gameNavItems, gamesNavItems, opponentNavItems,
+  challengesNavItems, deckFinderNavItems, deckManagerNavItems, cardNavItems, deckNavItems, gameNavItems, gamesNavItems, opponentNavItems,
   opponentsNavItems, liveNavItems, replayNavItems, settingsNavItems } from './nav';
 import { quickFilterPredicate } from './quickFilters';
 import { FormatQuickFilters } from './components/FormatQuickFilters';
@@ -81,6 +82,7 @@ import {
   parseLiveRoute,
   parseSettingsRoute,
   parseCardRoute,
+  parseChallengesRoute,
   parseGamesRoute,
   parseDashboardRouteFilters,
   parseDeckRoute,
@@ -468,16 +470,16 @@ const deckColumns: Column<DeckWithCombatRow>[] = [
   },
 ];
 
-const playDrawColumns: Column<PlayDrawRow>[] = [
+const playDrawColumns: Column<PlayDrawShareRow>[] = [
   {
     key: 'play_draw',
     // The panel heading already says "Play / Draw" — no need to repeat it.
     header: '',
     sortable: false,
     render: (row) =>
-      row.play_draw === 'On the play' ? (
+      row.play_draw === ON_THE_PLAY ? (
         <span className="text-play">Play</span>
-      ) : row.play_draw === 'On the draw' ? (
+      ) : row.play_draw === ON_THE_DRAW ? (
         <span className="text-drawside">Draw</span>
       ) : (
         (row.play_draw ?? 'Unknown')
@@ -491,6 +493,20 @@ const playDrawColumns: Column<PlayDrawRow>[] = [
     header: 'Avg Mulligans',
     render: (row) => formatNumber(row.avg_mulligans),
     sortValue: (row) => row.avg_mulligans,
+    numeric: true,
+  },
+  {
+    key: 'share',
+    header: '% of Games',
+    render: (row) =>
+      row.share == null ? (
+        '—'
+      ) : (
+        <span className={row.play_draw === ON_THE_PLAY ? 'text-play' : 'text-drawside'}>
+          {row.share.toFixed(1)}%
+        </span>
+      ),
+    sortValue: (row) => row.share,
     numeric: true,
   },
   {
@@ -614,7 +630,7 @@ const scheduleColumns: Column<ScheduleRow>[] = [
 ];
 
 const fatigueColumns: Column<FatigueRow>[] = [
-  { key: 'label', header: 'Session Position' },
+  { key: 'label', header: 'Game of the Day' },
   { key: 'games', header: 'Games', numeric: true },
   { key: 'wins', header: 'Wins', numeric: true },
   { key: 'losses', header: 'Losses', numeric: true },
@@ -854,7 +870,7 @@ const topOpponentColumns: Column<TopOpponentRow>[] = [
 ];
 
 /** "4 / 22": games on the play (teal) and on the draw (purple). */
-function SessionPlayDraw({ onPlay, onDraw }: { onPlay: number; onDraw: number }) {
+function DayPlayDraw({ onPlay, onDraw }: { onPlay: number; onDraw: number }) {
   if (onPlay + onDraw === 0) return '—';
   return (
     <span title={`${onPlay} on the play, ${onDraw} on the draw`}>
@@ -865,12 +881,27 @@ function SessionPlayDraw({ onPlay, onDraw }: { onPlay: number; onDraw: number })
   );
 }
 
-const sessionColumns: Column<SessionRow>[] = [
+const dayColumns: Column<DayRow>[] = [
   {
-    key: 'started_at',
-    header: 'Started',
-    render: (row) => formatDateTime(row.started_at),
-    sortValue: (row) => row.started_at,
+    key: 'day',
+    header: 'Day',
+    render: (row) => formatDay(row.day),
+    sortValue: (row) => row.day,
+  },
+  {
+    key: 'duration_seconds',
+    header: 'Time Played',
+    // Summed game lengths, and how many separate stretches of play they came in.
+    render: (row) => {
+      const time = formatHoursMinutes(row.duration_seconds);
+      if (!row.sittings) return time;
+      return (
+        <span title="A game an hour or more after the last one ended starts a new sitting">
+          {time} · {row.sittings} {row.sittings === 1 ? 'sitting' : 'sittings'}
+        </span>
+      );
+    },
+    sortValue: (row) => row.duration_seconds,
   },
   { key: 'games', header: 'Games', numeric: true },
   { key: 'wins', header: 'Wins', numeric: true },
@@ -879,8 +910,8 @@ const sessionColumns: Column<SessionRow>[] = [
   {
     key: 'on_draw',
     header: 'Play / Draw',
-    render: (row) => <SessionPlayDraw onPlay={row.on_play ?? 0} onDraw={row.on_draw ?? 0} />,
-    // Sorts by the share of games on the draw, so the rough sessions rise to the top.
+    render: (row) => <DayPlayDraw onPlay={row.on_play ?? 0} onDraw={row.on_draw ?? 0} />,
+    // Sorts by the share of games on the draw, so the rough days rise to the top.
     sortValue: (row) => {
       const known = (row.on_play ?? 0) + (row.on_draw ?? 0);
       return known ? (row.on_draw ?? 0) / known : null;
@@ -892,13 +923,6 @@ const sessionColumns: Column<SessionRow>[] = [
     header: 'Win Rate',
     render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
     sortValue: (row) => row.win_rate,
-    numeric: true,
-  },
-  {
-    key: 'duration_seconds',
-    header: 'Duration',
-    render: (row) => formatDuration(row.duration_seconds),
-    sortValue: (row) => row.duration_seconds,
     numeric: true,
   },
 ];
@@ -931,6 +955,7 @@ export default function App() {
   }, [onReplayList]);
   const gamesRoute = useMemo(() => parseGamesRoute(routeHash), [routeHash]);
   const opponentsRoute = useMemo(() => parseOpponentsRoute(routeHash), [routeHash]);
+  const challengesRoute = useMemo(() => parseChallengesRoute(routeHash), [routeHash]);
   const deckName = deckRoute?.name ?? null;
   const gameId = gameRoute?.id ?? null;
   const cardName = cardRoute?.name ?? null;
@@ -1028,6 +1053,7 @@ export default function App() {
       || replayRoute
       || gamesRoute
       || opponentsRoute
+      || challengesRoute
       || loadState.status !== 'loaded'
       || !routeHash.startsWith('#')
     ) {
@@ -1039,7 +1065,7 @@ export default function App() {
     } else if (sectionId && !sectionId.startsWith('/')) {
       document.getElementById(sectionId)?.scrollIntoView?.({ block: 'start' });
     }
-  }, [auditRoute, cardRoute, deckFinderRoute, deckManagerRoute, deckRoute, gameRoute, gamesRoute, liveRoute, loadState.status, opponentRoute, opponentsRoute, replayRoute, resetRoute, routeHash, settingsRoute]);
+  }, [auditRoute, cardRoute, challengesRoute, deckFinderRoute, deckManagerRoute, deckRoute, gameRoute, gamesRoute, liveRoute, loadState.status, opponentRoute, opponentsRoute, replayRoute, resetRoute, routeHash, settingsRoute]);
 
   useEffect(() => {
     if (replayRoute?.gameId) {
@@ -1066,15 +1092,17 @@ export default function App() {
                 ? pageTitle('All Games')
                 : opponentsRoute
                   ? pageTitle('Opponents')
+                  : challengesRoute
+                  ? pageTitle('Challenges')
                   : deckFinderRoute
                     ? pageTitle('Deck Finder')
                     : pageTitle('Overview');
-  }, [auditRoute, resetRoute, deckRoute, gameRoute, gamesRoute, cardRoute, opponentRoute, opponentsRoute, deckFinderRoute, deckManagerRoute, replayRoute]);
+  }, [auditRoute, resetRoute, deckRoute, gameRoute, gamesRoute, cardRoute, opponentRoute, opponentsRoute, challengesRoute, deckFinderRoute, deckManagerRoute, replayRoute]);
 
   useEffect(() => {
     // Live Scoreboard and Settings show nothing from the snapshot; without
     // them here the Overview kept refetching its 400 KB every 20 s there.
-    if (deckManagerRoute || deckName || gameId || cardName || opponentRoute || auditRoute || resetRoute || gamesRoute || opponentsRoute || deckFinderRoute || replayRoute || liveRoute || settingsRoute) {
+    if (deckManagerRoute || deckName || gameId || cardName || opponentRoute || auditRoute || resetRoute || gamesRoute || opponentsRoute || challengesRoute || deckFinderRoute || replayRoute || liveRoute || settingsRoute) {
       return;
     }
     let ignore = false;
@@ -1114,7 +1142,7 @@ export default function App() {
       activeController?.abort();
       window.clearInterval(refreshId);
     };
-  }, [filters, trendRange, deckName, gameId, cardName, opponentRoute, auditRoute, resetRoute, gamesRoute, opponentsRoute, deckFinderRoute, deckManagerRoute, replayRoute, liveRoute, settingsRoute]);
+  }, [filters, trendRange, deckName, gameId, cardName, opponentRoute, auditRoute, resetRoute, gamesRoute, opponentsRoute, challengesRoute, deckFinderRoute, deckManagerRoute, replayRoute, liveRoute, settingsRoute]);
 
   const playerName =
     loadState.status === 'loaded' ? loadState.snapshot.summary.player_name : undefined;
@@ -1151,6 +1179,8 @@ export default function App() {
             ? (replayRoute.gameId ? undefined : replayNavItems)
           : opponentsRoute
             ? opponentsNavItems
+          : challengesRoute
+            ? challengesNavItems
           : gamesRoute
             ? gamesNavItems
           : auditRoute
@@ -1175,7 +1205,7 @@ export default function App() {
                   ? opponentNavItems
                   : undefined
         }
-        heading={replayRoute ? 'Replay' : opponentsRoute ? 'Opponents' : gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : resetRoute ? 'Reset Tracker Data' : deckManagerRoute ? 'Deck Manager' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Live Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute ? 'Opponent Information' : dashboardTitle)}
+        heading={replayRoute ? 'Replay' : opponentsRoute ? 'Opponents' : challengesRoute ? 'Challenges' : gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : resetRoute ? 'Reset Tracker Data' : deckManagerRoute ? 'Deck Manager' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Live Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute ? 'Opponent Information' : dashboardTitle)}
         headingBadge={deckManagerRoute ? <span className="deck-manager-beta deck-manager-heading-beta">Beta</span>
           : replayRoute ? <span className="deck-manager-beta deck-manager-heading-beta replay-heading-beta">Beta</span> : undefined}
         mainClassName={liveRoute ? 'live-page-main' : replayRoute?.gameId ? 'replay-page-main' : undefined}
@@ -1196,6 +1226,8 @@ export default function App() {
           )
         ) : opponentsRoute ? (
           <OpponentsPage />
+        ) : challengesRoute ? (
+          <ChallengesPage />
         ) : gamesRoute ? (
           <GamesPage
             filters={gamesRoute.filters}
@@ -1404,7 +1436,7 @@ function Dashboard({
             />
           </section>
         </div>
-        <div className="overview-analytics">
+        <div className="overview-analytics overview-analytics-wide">
           <section className="overview-panel" aria-labelledby="overview-play-draw-title">
             <div className="section-heading">
               <div>
@@ -1418,7 +1450,7 @@ function Dashboard({
               caption="Play and draw performance"
               columns={playDrawColumns}
               getRowKey={(row) => row.play_draw ?? 'unknown'}
-              rows={snapshot.play_draw}
+              rows={withPlayDrawShare(snapshot.play_draw)}
             />
           </section>
           <section className="overview-panel" aria-labelledby="overview-momentum-title">
@@ -1778,7 +1810,7 @@ function Dashboard({
       <Section
         id="habits"
         title="Habits & Schedule"
-        description="When you play and how deep into a session you are, versus how often you win."
+        description="When you play and how many games into the day you are, versus how often you win."
       >
         <div className="overview-analytics">
           <section className="overview-panel" aria-labelledby="habits-weekday-title">
@@ -1812,15 +1844,15 @@ function Dashboard({
         </div>
         <div className="section-heading">
           <div>
-            <h3>Session Fatigue</h3>
+            <h3>Games Into the Day</h3>
             <p className="section-description">
-              Win rate by how many games deep into a tracker session you were. Games 1–4 are the
+              Win rate by how many games into the day you were (from midnight). Games 1–4 are the
               fresh baseline; fatigue only plausibly shows from game 5 on.
             </p>
           </div>
         </div>
         <SortableTable
-          caption="Win rate by session position"
+          caption="Win rate by game of the day"
           columns={fatigueColumns}
           getRowKey={(row) => row.label}
           rows={snapshot.fatigue ?? []}
@@ -1959,20 +1991,24 @@ function Dashboard({
         />
       </Section>
 
-      <Section id="formats" title="Formats">
-        <FormatsTable caption="Format performance" rows={snapshot.formats} />
+      <Section
+        id="formats"
+        title="Formats"
+        description="Games and win rate in each queue, Constructed and Limited apart. Draft and sealed queues group by format; open one to see each set."
+      >
+        <FormatsTable rows={snapshot.formats} />
       </Section>
 
-      <Section id="sessions" title="Sessions" description="Play sessions with game volume and record. A session starts when the app opens, or after the break set in Settings → Sessions.">
+      <Section id="days" title="Days" description="Every day you played, with its games and record. A game belongs to the day it started, by your computer's clock.">
         <SortableTable
-          caption="Tracker sessions"
-          columns={sessionColumns}
+          caption="Days played"
+          columns={dayColumns}
           pageSize={15}
           paginationControls="full"
           paginationKey={dashboardRouteHash(filters)}
-          getRowKey={(row) => row.session_id}
-          initialSort={{ key: 'started_at', direction: 'desc' }}
-          rows={snapshot.sessions}
+          getRowKey={(row) => row.day}
+          initialSort={{ key: 'day', direction: 'desc' }}
+          rows={snapshot.days_played ?? []}
         />
       </Section>
         </>

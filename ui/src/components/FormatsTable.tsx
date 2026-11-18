@@ -43,6 +43,14 @@ const LIMITED_BASES = [
   'Sealed',
 ];
 
+/** Constructed or Limited, for the table's two groups: the per-set formats, and any draft, sealed or cube queue. */
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper, exported for tests
+export function formatGroup(label: string): 'Constructed' | 'Limited' {
+  return limitedBase(label) || /\b(draft|sealed|cube)\b/i.test(label) ? 'Limited' : 'Constructed';
+}
+
+const FORMAT_GROUPS = ['Constructed', 'Limited'] as const;
+
 function limitedBase(label: string): string | null {
   for (const base of LIMITED_BASES) {
     if (label === base || label.startsWith(`${base} - `)) {
@@ -93,20 +101,40 @@ export function groupLimitedFormats(rows: FormatRow[]): GroupedFormatRow[] {
 }
 
 interface FormatsTableProps {
-  caption: string;
   rows: FormatRow[];
 }
 
-export function FormatsTable({ caption, rows }: FormatsTableProps) {
+/**
+ * Constructed and Limited as two tables, each under its own heading (like
+ * Habits' "By Day of Week") with its own Format / Games / Win Rate header and
+ * sort. A group with no games is left out; with no games at all the
+ * Constructed table stands alone, empty.
+ */
+export function FormatsTable({ rows }: FormatsTableProps) {
   const visibleRows = groupLimitedFormats(rows.filter(showInFormatAnalytics));
+  const groups = FORMAT_GROUPS.map((group) => ({
+    group,
+    rows: visibleRows.filter((row) => formatGroup(row.format_label) === group),
+  })).filter((entry, index) => entry.rows.length > 0 || (index === 0 && visibleRows.length === 0));
   return (
-    <SortableTable
-      caption={caption}
-      columns={formatColumns}
-      getRowKey={(row) => row.format_label}
-      getSubRows={(row: GroupedFormatRow) => row.sub_rows}
-      initialSort={{ key: 'format_label', direction: 'asc' }}
-      rows={visibleRows}
-    />
+    <>
+      {groups.map(({ group, rows: groupRows }) => (
+        <section key={group} className="formats-group" aria-labelledby={`formats-${group.toLowerCase()}-title`}>
+          <div className="section-heading">
+            <div>
+              <h3 id={`formats-${group.toLowerCase()}-title`}>{group}</h3>
+            </div>
+          </div>
+          <SortableTable
+            caption={`${group} formats`}
+            columns={formatColumns}
+            getRowKey={(row) => row.format_label}
+            getSubRows={(row: GroupedFormatRow) => row.sub_rows}
+            initialSort={{ key: 'format_label', direction: 'asc' }}
+            rows={groupRows}
+          />
+        </section>
+      ))}
+    </>
   );
 }

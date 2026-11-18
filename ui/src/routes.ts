@@ -247,6 +247,13 @@ export function gamesRouteHash(filters: SnapshotFilters = {}): string {
 
 export const OPPONENTS_ROUTE_HASH = '#/opponents';
 
+/** Direct Challenge games against friends (#/challenges). */
+export const CHALLENGES_ROUTE_HASH = '#/challenges';
+
+export function parseChallengesRoute(hash: string): boolean {
+  return hash === CHALLENGES_ROUTE_HASH;
+}
+
 export function parseOpponentsRoute(hash: string): boolean {
   return hash === OPPONENTS_ROUTE_HASH;
 }

@@ -44,6 +44,10 @@ export interface OverlayState {
   cards: OverlayCard[];
   /** Cards in the library the tracker can't name. */
   unaccounted?: number;
+  /** Cards that left the library without the log naming them: every `left` is then a ceiling. */
+  unseen?: number;
+  /** Arena summarized a message and has not listed the library since. */
+  log_gap?: boolean;
   /** The submitted sideboard, one row per distinct card. */
   sideboard?: OverlaySideCard[];
 }

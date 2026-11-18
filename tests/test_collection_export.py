@@ -394,6 +394,27 @@ def test_deck_sized_block_is_never_the_collection():
     assert ce.score_and_validate([(deck, 0)], anchors, known) is None
 
 
+def test_block_with_counts_above_four_is_not_the_collection():
+    """A user's export read 39-47 and 73-81 for every card: another card-keyed
+    table in Arena's memory, with the player's cards among its keys. Arena
+    keeps at most four copies, so values mostly above four are rejected and
+    the real collection, smaller here, wins."""
+    anchors = [ce.Anchor(2000 + i, 4) for i in range(4)]
+    values = (39, 41, 43, 45, 47, 77, 79, 81)
+    table = {i: values[i % len(values)] for i in range(2000, 2700)}
+    collection = {i: (i % 4) + 1 for i in range(2000, 2400)}
+    known = set(range(2000, 2010))
+    assert ce.score_and_validate([(table, 0)], anchors, known) is None
+    assert ce.score_and_validate([(table, 0), (collection, 0)], anchors, known) == collection
+
+
+def test_a_few_counts_above_four_still_pass():
+    anchors = [ce.Anchor(2000 + i, 4) for i in range(4)]
+    block = {i: (i % 4) + 1 for i in range(2000, 2400)}
+    block.update({3000 + i: 20 for i in range(20)})  # 5% above four
+    assert ce.score_and_validate([(block, 0)], anchors, set()) == block
+
+
 def test_collection_beats_deck_block_when_both_present():
     """When a deck object AND the real collection are both in memory, the
     collection must win regardless of the deck's (deceptively perfect) score."""

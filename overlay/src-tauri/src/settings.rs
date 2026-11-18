@@ -37,7 +37,8 @@ pub enum Density {
     Compact,
 }
 
-/// The session record at the foot of the panel.
+/// Today's record at the foot of the panel (`sessionRecord` in overlay.json,
+/// named for the session record it replaced).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionRecord {
@@ -48,13 +49,26 @@ pub enum SessionRecord {
     Split,
 }
 
+/// The flood meter (the Stream Kit Lands widget) at the foot of the panel:
+/// above today's record (the default) or below it, at the very bottom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FloodMeter {
+    Off,
+    Above,
+    Below,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Hotkeys {
     /// Toggle rail ↔ panel.
     pub toggle: String,
     /// Hide / show the overlay.
     pub visibility: String,
+    /// Toggle the opponent panel's rail ↔ panel. Absent from files written
+    /// before the opponent panel; the struct default fills it in.
+    pub opponent: String,
 }
 
 impl Default for Hotkeys {
@@ -65,6 +79,7 @@ impl Default for Hotkeys {
         Self {
             toggle: "Alt+Shift+T".into(),
             visibility: "Alt+Shift+H".into(),
+            opponent: "Alt+Shift+O".into(),
         }
     }
 }
@@ -78,6 +93,10 @@ pub struct Positions {
     /// Free position when floating.
     pub float_x: Option<i32>,
     pub float_y: Option<i32>,
+    /// The opponent panel's top edge, per side it docks on (it always docks
+    /// on the side opposite the deck panel; see `dock::opponent_dock`).
+    pub opponent_left_y: Option<i32>,
+    pub opponent_right_y: Option<i32>,
 }
 
 /// Revision of the defaults a settings file was written under. Bump it when a
@@ -126,6 +145,22 @@ pub struct Settings {
     pub density: Density,
     pub name_color: NameColor,
     pub session_record: SessionRecord,
+    pub flood_meter: FloodMeter,
+    /// The deck panel (rail and panel) is drawn. Off, its window stays up
+    /// but empty and lets every click through: it still holds the poller
+    /// and the ⚙ flyout. Chosen in the tracker's Settings ("Panels"), which
+    /// hands it over as `--panels`; the flyout never changes it.
+    pub deck_panel: bool,
+    /// The opponent panel: a second window on the side opposite the deck
+    /// panel with the opponent's played cards and likely deck. On by
+    /// default; while off its window does not exist. Owned by the tracker's
+    /// Settings like `deck_panel`.
+    pub opponent_panel: bool,
+    /// The opponent panel is "on" (open rather than folded to its rail),
+    /// like `panel_open`; owned by its arrow, chevron and hotkey.
+    pub opponent_open: bool,
+    /// Like `panel_pinned`, for the opponent panel.
+    pub opponent_pinned: bool,
     pub follow_arena: bool,
     pub hide_when_arena_not_in_front: bool,
     pub api_url: String,
@@ -158,6 +193,11 @@ impl Default for Settings {
             density: Density::Comfortable,
             name_color: NameColor::Type,
             session_record: SessionRecord::Scoreboard,
+            flood_meter: FloodMeter::Above,
+            deck_panel: true,
+            opponent_panel: true,
+            opponent_open: false,
+            opponent_pinned: true,
             follow_arena: true,
             hide_when_arena_not_in_front: true,
             api_url: "http://127.0.0.1:8765".into(),
@@ -166,6 +206,18 @@ impl Default for Settings {
             positions: Positions::default(),
             monitor: None,
         }
+    }
+}
+
+/// The tracker's "Panels" choice as it arrives on the command line
+/// (`--panels both|deck|opponent`): which of (deck panel, opponent panel)
+/// are on. There is no "neither": that is the overlay turned off.
+pub fn panels_from_arg(value: &str) -> Option<(bool, bool)> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "both" => Some((true, true)),
+        "deck" => Some((true, false)),
+        "opponent" => Some((false, true)),
+        _ => None,
     }
 }
 
@@ -255,6 +307,9 @@ mod tests {
         assert_eq!(fixed.session_record, SessionRecord::Scoreboard);
         let off: Settings = serde_json::from_str(r#"{"sessionRecord": "off"}"#).unwrap();
         assert_eq!(off.session_record, SessionRecord::Off);
+        assert_eq!(fixed.flood_meter, FloodMeter::Above);
+        let below: Settings = serde_json::from_str(r#"{"floodMeter": "below"}"#).unwrap();
+        assert_eq!(below.flood_meter, FloodMeter::Below);
     }
 
     #[test]
@@ -288,6 +343,18 @@ mod tests {
     }
 
     #[test]
+    fn the_panels_choice_reads_from_the_command_line() {
+        assert_eq!(panels_from_arg("both"), Some((true, true)));
+        assert_eq!(panels_from_arg("deck"), Some((true, false)));
+        assert_eq!(panels_from_arg("Opponent "), Some((false, true)));
+        // Nothing else turns a panel off: an unknown word changes nothing.
+        assert_eq!(panels_from_arg("none"), None);
+        assert_eq!(panels_from_arg(""), None);
+        let saved: Settings = serde_json::from_str(r#"{"deckPanel": false}"#).unwrap();
+        assert!(!saved.deck_panel && saved.opponent_panel);
+    }
+
+    #[test]
     fn hotkeys_are_stored_per_platform() {
         let mut s = Settings::default();
         s.hotkeys_windows.toggle = "Ctrl+Alt+T".into();
@@ -297,5 +364,27 @@ mod tests {
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.hotkeys_windows.toggle, "Ctrl+Alt+T");
         assert_eq!(back.hotkeys_macos.toggle, "Alt+Shift+T");
+    }
+
+    #[test]
+    fn files_from_before_the_opponent_panel_keep_their_settings() {
+        // Hotkeys without the opponent chord, positions without its offsets:
+        // everything the file has is kept and the new fields take defaults
+        // (a parse failure would reset the whole file).
+        let old: Settings = serde_json::from_str(
+            r#"{"dock": "right", "scale": 130, "hotkeysMacos": {"toggle": "Alt+Shift+K", "visibility": "Alt+Shift+H"}, "positions": {"leftY": 40, "rightY": null, "floatX": null, "floatY": null}}"#,
+        )
+        .unwrap();
+        assert_eq!(old.dock, Dock::Right);
+        assert_eq!(old.scale, 130);
+        assert_eq!(old.hotkeys_macos.toggle, "Alt+Shift+K");
+        assert_eq!(old.hotkeys_macos.opponent, "Alt+Shift+O");
+        assert_eq!(old.positions.left_y, Some(40));
+        assert_eq!(old.positions.opponent_right_y, None);
+        // New in 0.7.8, so no released file holds it: everyone starts with it on.
+        assert!(old.opponent_panel);
+        assert!(old.deck_panel);
+        assert!(!old.opponent_open);
+        assert!(old.opponent_pinned);
     }
 }

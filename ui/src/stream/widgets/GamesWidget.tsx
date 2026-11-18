@@ -1,6 +1,6 @@
 import type { LiveGameRow, LivePayload, LiveScore } from '../../api';
 import { formatDuration, outcomeLabel, outcomeShortLabel, outcomeTone } from '../../format';
-import { gamesIn, percent, PERIOD_LABEL, periodRecord, rate, RATE_MIN_GAMES } from '../liveView';
+import { gamesIn, percent, rate, RATE_MIN_GAMES, todayRecord } from '../liveView';
 import { shows, type StreamOptions } from '../options';
 import { useLiveSnapshot } from '../useLive';
 import { Brand } from './Brand';
@@ -50,15 +50,15 @@ function Side({ side, score }: { side: 'play' | 'draw'; score: LiveScore | undef
   );
 }
 
-/** "Session 6–2 · 75%" (or today's), the same numbers as the Record widget. */
-function PeriodLine({ payload, options }: { payload: LivePayload; options: StreamOptions }) {
-  const session = periodRecord(payload, options.period);
+/** "Today 6–2 · 75%", the same numbers as the Record widget. */
+function TodayLine({ payload }: { payload: LivePayload }) {
+  const session = todayRecord(payload);
   const wins = session?.wins ?? 0;
   const losses = session?.losses ?? 0;
   const draws = session?.draws ?? 0;
   return (
     <span className="sk-games-record">
-      <span className="sk-label">{PERIOD_LABEL[options.period]}</span>
+      <span className="sk-label">Today</span>
       <strong aria-label={`${wins} wins, ${losses} losses${draws ? `, ${draws} draws` : ''}`}>
         <span className="sk-win">{wins}</span>
         <span className="sk-dash">–</span>
@@ -78,12 +78,12 @@ function PeriodLine({ payload, options }: { payload: LivePayload; options: Strea
 export function GamesView({ payload, options }: { payload: LivePayload; options: StreamOptions }) {
   const games = payload.games.slice(0, options.count);
   const record = shows(options, 'record');
-  const totals = periodRecord(payload, options.period);
+  const totals = todayRecord(payload);
   return (
     <div className="sk-panel sk-games">
       {record ? (
         <div className="sk-games-head">
-          <PeriodLine payload={payload} options={options} />
+          <TodayLine payload={payload} />
           <Brand show={options.brand} />
         </div>
       ) : null}

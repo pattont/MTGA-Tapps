@@ -271,8 +271,8 @@ def test_replay_availability_on_every_game_row_endpoint(tmp_path):
     } == expected
 
     with sqlite3.connect(db_path) as conn:
-        live_rows = live_api._games_payload(conn, "s1")
-    # The live rail lists today's/this session's games plus the latest one.
+        live_rows = live_api._games_payload(conn, "2026-06-04")
+    # The live rail lists the day's games plus the latest one.
     assert live_rows
     assert all(row["replay"] == expected[row["id"]] for row in live_rows)
 

@@ -45,6 +45,8 @@ export interface FormatRow {
   wins: number;
   losses: number;
   win_rate: number | null;
+  /** A Midweek Magic / Momir / Welcome Deck Duels format whose games you chose to save. */
+  saved_mode?: boolean;
 }
 
 export interface PlayDrawRow {
@@ -322,11 +324,16 @@ export interface MatchRow {
   outcome: string | null;
 }
 
-export interface SessionRow {
-  session_id: string;
-  started_at: string;
-  ended_at: string | null;
+/** One local calendar day with games, by each game's start time. */
+export interface DayRow {
+  /** YYYY-MM-DD */
+  day: string;
+  first_game_at: string;
+  last_game_at: string | null;
+  /** Time in games that day (summed game lengths). */
   duration_seconds: number | null;
+  /** Separate stretches of play: a game an hour or more after the last one ended starts a new one. Missing from older trackers. */
+  sittings?: number;
   games: number;
   wins: number;
   losses: number;
@@ -367,6 +374,8 @@ export interface RankProgressRow {
 export interface FormatOption {
   raw_format: string;
   format_label: string;
+  /** A Midweek Magic / Momir / Welcome Deck Duels format whose games you chose to save. */
+  saved_mode?: boolean;
 }
 
 export interface FilterOptions {
@@ -436,7 +445,8 @@ export interface DashboardSnapshot {
   matchups: MatchupRow[];
   recent: RecentGameRow[];
   matches: MatchRow[];
-  sessions: SessionRow[];
+  /** Every day with games matching the filters, newest first; missing from older trackers. */
+  days_played?: DayRow[];
   trend: TrendRow[];
   rank_progress?: RankProgressRow[];
   filter_options: FilterOptions;
@@ -1647,10 +1657,12 @@ export interface LiveNow {
   head_to_head?: { wins: number; losses: number } | null;
   /** Brawl: lifetime record vs each of the opponent's commanders (unseen ones omitted). */
   commander_record?: { commander: string; wins: number; losses: number }[] | null;
+  /** Lifetime record against decks of the opponent's colours so far ("Azorius"); never in Brawl. */
+  color_record?: { label: string; wins: number; losses: number } | null;
   deck_record?: LiveDeckRecord | null;
   rank?: (LiveRank & {
     rank_format: string;
-    /** The rank before this session began (the climb this session); null when unknown. */
+    /** The rank at midnight (the climb today); null when unknown. */
     start?: LiveRank | null;
   }) | null;
   /** Games won and lost so far in this match (a Bo3's score), the current game excluded. */
@@ -1686,9 +1698,6 @@ export interface LiveDeckRecord extends LiveScore {
   win_rate: number;
   today_wins: number;
   today_losses: number;
-  /** This tracker session's record with the deck; missing from older trackers. */
-  session_wins?: number;
-  session_losses?: number;
   ranked?: LiveScore;
   unranked?: LiveScore;
   play?: LiveScore;
@@ -1728,29 +1737,29 @@ export interface LiveDrawQuality {
   lands_left: number | null;
 }
 
-export interface LiveSessionInfo {
-  id: string;
-  started_at: string;
-  games_played: number;
-  wins: number;
-  losses: number;
-  draws: number;
-  runtime_seconds: number | null;
-  win_rate: number | null;
-  /** Wins/losses on the play and on the draw; missing from older trackers. */
-  play?: LiveScore;
-  draw?: LiveScore;
+/** One deck's wins and losses today. */
+export interface LiveDeckScore extends LiveScore {
+  deck_name: string;
 }
 
-/** Every game finished today (local date), across sessions. */
+/** Every game that started today (local calendar day, from midnight). */
 export interface LiveTodayRecord {
+  /** YYYY-MM-DD; missing from older trackers. */
+  date?: string;
   games: number;
   wins: number;
   losses: number;
   draws: number;
   win_rate: number | null;
+  /** When today's first game started; null before one. Missing from older trackers. */
+  started_at?: string | null;
   play: LiveScore;
   draw: LiveScore;
+  /** Per deck, most played first; missing from older trackers. */
+  decks?: LiveDeckScore[];
+  /** Games that were Flood / Mana Screw by Game Detail's rule; missing from older trackers. */
+  flood_games?: number;
+  screw_games?: number;
 }
 
 export interface LiveGameRow {
@@ -1780,9 +1789,7 @@ export interface LiveEventRow extends GameTimelineRow {
 export interface LivePayload {
   tracker: LiveTrackerInfo;
   now: LiveNow | null;
-  session: LiveSessionInfo | null;
-  /** Missing from older trackers. */
-  today?: LiveTodayRecord | null;
+  today: LiveTodayRecord | null;
   games: LiveGameRow[];
   events: LiveEventRow[];
   seq: number;
@@ -1849,9 +1856,14 @@ export interface PlatformSettings {
   collection_export: boolean;
 }
 
+/** Which panels the in-game overlay draws: both, your deck alone, or the opponent alone. */
+export type OverlayPanels = 'both' | 'deck' | 'opponent';
+
 export interface OverlaySettings {
   /** Saved preference: start the overlay with the tracker. */
   enabled: boolean;
+  /** Saved preference: the panels it draws. Absent from a tracker older than the choice (both). */
+  panels?: OverlayPanels;
   /** The overlay executable shipped with this build. */
   available: boolean;
   /** The overlay process is up right now. */
@@ -1881,15 +1893,23 @@ export interface TrackerSettings {
   updates?: UpdateSettings;
   /** Missing from trackers older than Buy on Paper. */
   buy_on_paper?: BuyOnPaperSettings;
-  /** Missing from trackers older than the session break setting. */
-  sessions?: SessionSettings;
+  /** Missing from trackers older than the Direct Challenge switch. */
+  tracking?: TrackingSettings;
 }
 
-export interface SessionSettings {
-  /** Hours without a game before a new match starts a new session; 0 = only when the app opens. */
-  break_hours: number;
-  choices: number[];
+/** Settings → Saved game modes: which optional modes are saved to your history. */
+export interface TrackingSettings {
+  /** Direct Challenge (friend) games; on by default. */
+  direct_challenge: boolean;
+  /** The rest are off by default. Missing from trackers older than the Saved game modes card. */
+  jump_in?: boolean;
+  midweek_magic?: boolean;
+  momir?: boolean;
+  welcome_deck?: boolean;
+  practice?: boolean;
 }
+
+export type TrackedMode = keyof TrackingSettings;
 
 export interface BuyOnPaperSettings {
   enabled: boolean;
@@ -2079,6 +2099,43 @@ export async function fetchCollectionExportJob(
   return deckFinderJson<CollectionExportJob>(response);
 }
 
+export interface ChallengeGameRow extends AllGamesRow {
+  opponent_name?: string | null;
+}
+
+export interface ChallengeFriendRow {
+  friend: string;
+  /** A Bo3 counts once, decided by its games. */
+  matches: number;
+  games: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  last_played: string | null;
+}
+
+export interface ChallengesResponse {
+  games: ChallengeGameRow[];
+  friends: ChallengeFriendRow[];
+  total: number;
+}
+
+export async function fetchChallenges(signal?: AbortSignal): Promise<ChallengesResponse> {
+  const response = await fetch('/api/challenges', { signal });
+  if (!response.ok) {
+    throw new Error(`Challenges API returned ${response.status}`);
+  }
+  return (await response.json()) as ChallengesResponse;
+}
+
+export async function fetchTrackingSettings(signal?: AbortSignal): Promise<TrackingSettings> {
+  const response = await fetch('/api/settings/tracking', { signal });
+  if (!response.ok) {
+    throw new Error(`Settings API returned ${response.status}`);
+  }
+  return ((await response.json()) as { tracking: TrackingSettings }).tracking;
+}
+
 export async function fetchOpponents(): Promise<{ opponents: OpponentListRow[]; total: number }> {
   const response = await fetch('/api/opponents');
   if (!response.ok) {
@@ -2117,6 +2174,16 @@ export async function fetchDeckAiModels(provider: string, apiKey: string): Promi
   return body.models ?? [];
 }
 
+export async function setOverlayPanels(panels: OverlayPanels): Promise<OverlaySettings> {
+  const response = await fetch('/api/settings/overlay', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ panels }),
+  });
+  const body = await deckFinderJson<{ overlay: OverlaySettings }>(response);
+  return body.overlay;
+}
+
 export async function setOverlayEnabled(enabled: boolean): Promise<OverlaySettings> {
   const response = await fetch('/api/settings/overlay', {
     method: 'POST',
@@ -2143,14 +2210,24 @@ export async function saveStartupSettings(
   return body.startup;
 }
 
-export async function saveSessionSettings(breakHours: number): Promise<SessionSettings> {
-  const response = await fetch('/api/settings/sessions', {
+export async function saveTrackingSettings(changes: Partial<TrackingSettings>): Promise<TrackingSettings> {
+  const response = await fetch('/api/settings/tracking', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ break_hours: breakHours }),
+    body: JSON.stringify(changes),
   });
-  const body = await deckFinderJson<{ sessions: SessionSettings }>(response);
-  return body.sessions;
+  const body = await deckFinderJson<{ tracking: TrackingSettings }>(response);
+  return body.tracking;
+}
+
+/** Settings → Restore defaults. `errors` names any setting that could not be restored. */
+export async function restoreDefaultSettings(): Promise<{ restored: boolean; errors: string[] }> {
+  const response = await fetch('/api/settings/restore-defaults', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm: true }),
+  });
+  return deckFinderJson<{ restored: boolean; errors: string[] }>(response);
 }
 
 export async function saveDeckFinderCreators(payload: {

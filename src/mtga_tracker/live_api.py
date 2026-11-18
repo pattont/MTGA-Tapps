@@ -10,9 +10,8 @@ GET /api/live?since=<game_events.id> returns:
     {
       "tracker": {"state": "live"|"idle"|"offline", "updated_at": ...},
       "now": {...live_status fields...} | null,
-      "session": {games, wins, losses, draws, win_rate, runtime_seconds,
-                  started_at, play, draw} | null,
-      "today": {games, wins, losses, draws, win_rate, play, draw} | null,
+      "today": {date, games, wins, losses, draws, win_rate, started_at, play,
+                draw, decks, flood_games, screw_games} | null,
       "games": [{id, started_at, deck_name, opponent_name, outcome,
                  total_turns, duration_seconds, game_number, format, replay}],
       "events": [{id, at, turn, style, text, player_life, opponent_life}],
@@ -34,7 +33,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .colors import BASIC_LAND_COLORS, colors_from_label
+from .colors import BASIC_LAND_COLORS, color_combo_label, colors_from_label
 
 #: live_status.updated_at older than this means the tracker is not running
 #: (its idle heartbeat writes every ~5 seconds).
@@ -173,30 +172,17 @@ def _json_value(value: Any, kind: type) -> Any:
     return parsed if isinstance(parsed, kind) else None
 
 
-def _session_payload(
-    conn: sqlite3.Connection, session_id: Optional[str]
-) -> Optional[Dict[str, Any]]:
-    if session_id:
-        cursor = conn.execute(
-            """
-            SELECT id, started_at, games_played, wins, losses, draws, runtime_seconds
-            FROM tracker_sessions WHERE id = ?
-            """,
-            (session_id,),
-        )
-    else:
-        cursor = conn.execute(
-            """
-            SELECT id, started_at, games_played, wins, losses, draws, runtime_seconds
-            FROM tracker_sessions ORDER BY started_at DESC LIMIT 1
-            """
-        )
-    row = _dict_row(cursor)
-    if row is None:
-        return None
-    decided = (row["wins"] or 0) + (row["losses"] or 0)
-    row["win_rate"] = round(100.0 * (row["wins"] or 0) / decided, 1) if decided else None
-    return row
+def _day_bounds(day: str) -> Tuple[str, str]:
+    """The ISO bounds of one local calendar day ("2026-11-17"): its midnight
+    and the next. Games store local ISO times, so `started_at >= start AND
+    started_at < end` selects the day's games through the started_at index
+    (`date(started_at) = ?` cannot use it)."""
+    first = datetime.strptime(day, "%Y-%m-%d")
+    return first.strftime("%Y-%m-%d"), (first + timedelta(days=1)).strftime("%Y-%m-%d")
+
+
+#: The games of one calendar day, by start time; params from `_day_bounds`.
+DAY_WHERE = "g.started_at >= ? AND g.started_at < ?"
 
 
 def _seat_colors(conn: sqlite3.Connection, game_id: Optional[str]) -> Dict[str, str]:
@@ -290,9 +276,9 @@ def _head_to_head_query(
     return {"wins": wins, "losses": losses}
 
 
-#: The overlay's session record changes only when a game ends, so the
-#: play/draw split is looked up once per (database, session, totals).
-_overlay_session_cache: Dict[Tuple[str, str, Tuple[int, ...]], Dict[str, Any]] = {}
+#: The overlay's record for today changes only when a game ends, so it is
+#: looked up once per (database, day, totals).
+_overlay_today_cache: Dict[Tuple[str, str, Tuple[int, ...]], Dict[str, Any]] = {}
 
 
 def _play_draw_split(
@@ -321,57 +307,134 @@ def _play_draw_split(
     return split
 
 
-def _today_record(conn: sqlite3.Connection, today: str) -> Optional[Dict[str, Any]]:
-    """Every game finished today (local date, like Today's Games), across
-    sessions: the Record widget's "Today" view, with the play/draw split."""
+def _deck_breakdown(
+    conn: sqlite3.Connection, where: str, params: Tuple[Any, ...]
+) -> List[Dict[str, Any]]:
+    """Wins and losses per deck for the games `where` selects, most played
+    first: the Live Scoreboard's Today box lists them."""
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT p.deck_name, SUM(g.outcome = 'win'), SUM(g.outcome = 'loss')
+            FROM games g
+            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            WHERE {where} AND g.outcome IN ('win', 'loss')
+              AND COALESCE(p.deck_name, '') != ''
+            GROUP BY p.deck_name
+            ORDER BY COUNT(*) DESC, p.deck_name COLLATE NOCASE
+            """,
+            params,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [
+        {"deck_name": str(name), "wins": int(wins or 0), "losses": int(losses or 0)}
+        for name, wins, losses in rows
+    ]
+
+
+#: Flood / screw counts change when a game finishes, so they are kept per
+#: (database, the games counted): `/api/live` is rebuilt on every commit. The
+#: short life covers a game reclassified later (a card's type learned).
+_draw_luck_cache: Dict[Tuple[str, Tuple[str, ...]], Tuple[Dict[str, int], float]] = {}
+DRAW_LUCK_MEMO_SECONDS = 60.0
+
+
+def _draw_luck(
+    conn: sqlite3.Connection, where: str, params: Tuple[Any, ...], cache_scope: str
+) -> Dict[str, int]:
+    """How many of the finished games `where` selects were Flood and how many
+    Mana Screw, by Game Detail's rule (the dashboard's draw summaries; a game
+    that is both counts as Flood, like every list's Draw Status)."""
+    from .dashboard import _draw_summary_batch
+
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT p.id, p.deck_size
+            FROM games g
+            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            WHERE {where} AND g.outcome IN ('win', 'loss', 'draw')
+            ORDER BY p.id
+            """,
+            params,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {"flood_games": 0, "screw_games": 0}
+    key = (cache_scope, tuple(str(row[0]) for row in rows))
+    cached = _draw_luck_cache.get(key)
+    if cached is not None and time.monotonic() < cached[1]:
+        return cached[0]
+    summaries, _computed = _draw_summary_batch(conn, [(str(pid), size) for pid, size in rows])
+    flood = sum(1 for summary in summaries.values() if summary.is_flood)
+    screw = sum(1 for summary in summaries.values() if summary.is_screw and not summary.is_flood)
+    result = {"flood_games": flood, "screw_games": screw}
+    if len(_draw_luck_cache) > 32:
+        _draw_luck_cache.clear()
+    _draw_luck_cache[key] = (result, time.monotonic() + DRAW_LUCK_MEMO_SECONDS)
+    return result
+
+
+def _today_record(
+    conn: sqlite3.Connection, today: str, cache_scope: str = ""
+) -> Optional[Dict[str, Any]]:
+    """Every game that started today (local calendar day, from midnight):
+    the record the Live Scoreboard, the Stream Kit and the overlay show, with
+    the play/draw split, the decks played, the Flood / Mana screw counts and
+    when the day's first game started."""
+    bounds = _day_bounds(today)
     try:
         row = conn.execute(
-            """
+            f"""
             SELECT COUNT(*),
-                   SUM(outcome = 'win'), SUM(outcome = 'loss'), SUM(outcome = 'draw')
-            FROM games
-            WHERE date(started_at) = ? AND outcome IN ('win', 'loss', 'draw')
+                   SUM(g.outcome = 'win'), SUM(g.outcome = 'loss'), SUM(g.outcome = 'draw'),
+                   MIN(g.started_at)
+            FROM games g
+            WHERE {DAY_WHERE} AND g.outcome IN ('win', 'loss', 'draw')
             """,
-            (today,),
+            bounds,
         ).fetchone()
     except sqlite3.OperationalError:
         return None
-    games, wins, losses, draws = (int(value or 0) for value in row)
+    games, wins, losses, draws = (int(value or 0) for value in row[:4])
     decided = wins + losses
     return {
+        "date": today,
         "games": games,
         "wins": wins,
         "losses": losses,
         "draws": draws,
         "win_rate": round(100.0 * wins / decided, 1) if decided else None,
-        **_play_draw_split(conn, "date(g.started_at) = ?", (today,)),
+        "started_at": row[4],
+        **_play_draw_split(conn, DAY_WHERE, bounds),
+        "decks": _deck_breakdown(conn, DAY_WHERE, bounds),
+        **_draw_luck(conn, DAY_WHERE, bounds, cache_scope),
     }
 
 
-def _overlay_session(
-    conn: sqlite3.Connection, session_id: Optional[str], cache_scope: str
-) -> Optional[Dict[str, Any]]:
-    """This tracker session's record for the overlay footer: the same totals
-    as the Stream Kit record widget, plus wins/losses on the play and on the
-    draw (`participants.went_first`; unknown turn order counts in neither)."""
-    if not session_id:
-        return None
+def _overlay_today(conn: sqlite3.Connection, today: str, cache_scope: str) -> Dict[str, Any]:
+    """Today's record for the overlay footer: the totals the Stream Kit
+    record widget shows, plus wins/losses on the play and on the draw
+    (`participants.went_first`; unknown turn order counts in neither)."""
+    bounds = _day_bounds(today)
     try:
         row = conn.execute(
-            "SELECT games_played, wins, losses, draws FROM tracker_sessions WHERE id = ?",
-            (session_id,),
+            f"""
+            SELECT COUNT(*), SUM(g.outcome = 'win'), SUM(g.outcome = 'loss'),
+                   SUM(g.outcome = 'draw')
+            FROM games g
+            WHERE {DAY_WHERE} AND g.outcome IN ('win', 'loss', 'draw')
+            """,
+            bounds,
         ).fetchone()
     except sqlite3.OperationalError:
-        return None
-    if row is None:
-        return None
+        row = (0, 0, 0, 0)
     totals = tuple(int(value or 0) for value in row)
-    key = (cache_scope, session_id, totals)
-    cached = _overlay_session_cache.get(key)
+    key = (cache_scope, today, totals)
+    cached = _overlay_today_cache.get(key)
     if cached is not None:
         return cached
     games, wins, losses, draws = totals
-    split = _play_draw_split(conn, "g.session_id = ?", (session_id,))
     decided = wins + losses
     result = {
         "games": games,
@@ -379,12 +442,55 @@ def _overlay_session(
         "losses": losses,
         "draws": draws,
         "win_rate": round(100.0 * wins / decided, 1) if decided else None,
-        **split,
+        **_play_draw_split(conn, DAY_WHERE, bounds),
     }
-    if len(_overlay_session_cache) > 32:
-        _overlay_session_cache.clear()
-    _overlay_session_cache[key] = result
+    if len(_overlay_today_cache) > 32:
+        _overlay_today_cache.clear()
+    _overlay_today_cache[key] = result
     return result
+
+
+def _frozen_game(
+    status: Optional[Dict[str, Any]], session_id: Optional[str]
+) -> Optional[Dict[str, Any]]:
+    """Between games, the final in-game snapshot the tracker froze into
+    `last_game_json`; None during a game, or when the snapshot belongs to
+    another tracker session (a restart must not resurrect its game)."""
+    if status is None or status.get("in_game"):
+        return None
+    try:
+        parsed = json.loads(status.get("last_game_json") or "")
+    except (TypeError, ValueError):
+        return None
+    if isinstance(parsed, dict) and parsed.get("session_id") == session_id:
+        return parsed
+    return None
+
+
+def _today_deck_record(
+    conn: sqlite3.Connection, today: str, deck_name: Any
+) -> Optional[Dict[str, int]]:
+    """Today's wins and losses with one deck (the Record widget's Deck chip
+    in the overlay); None before its first result today."""
+    name = str(deck_name or "").strip()
+    if not name:
+        return None
+    try:
+        row = conn.execute(
+            f"""
+            SELECT SUM(g.outcome = 'win'), SUM(g.outcome = 'loss')
+            FROM games g
+            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            WHERE {DAY_WHERE} AND p.deck_name = ? AND g.outcome IN ('win', 'loss')
+            """,
+            (*_day_bounds(today), name),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    wins, losses = int(row[0] or 0), int(row[1] or 0)
+    if wins + losses == 0:
+        return None
+    return {"wins": wins, "losses": losses}
 
 
 def _commander_record(
@@ -422,6 +528,44 @@ def _commander_record(
     return records
 
 
+#: Record against each opponent colour combination over the whole history,
+#: per database: built once for each set of games (it changes when a game
+#: starts or ends), because `/api/live` is rebuilt on every commit in a game.
+_color_records_cache: Dict[str, Tuple[Tuple[Any, ...], Dict[str, Dict[str, int]]]] = {}
+
+
+def _color_record(
+    conn: sqlite3.Connection, opponent_colors: Any, is_brawl: bool, cache_scope: str
+) -> Optional[Dict[str, Any]]:
+    """Lifetime record against decks of the opponent's colours as revealed so
+    far ("Azorius"), from the Overview's opponent-colour buckets. None until a
+    colour shows, before the first decided game against it, and in Brawl
+    (where the record against the commander says more)."""
+    if is_brawl:
+        return None
+    label = color_combo_label(str(opponent_colors or ""))
+    if not label:
+        return None
+    try:
+        stamp = tuple(conn.execute("SELECT COUNT(*), MAX(rowid) FROM games").fetchone())
+    except sqlite3.OperationalError:
+        return None
+    cached = _color_records_cache.get(cache_scope)
+    if cached is None or cached[0] != stamp:
+        from .dashboard import _opponent_color_rows
+
+        records = {
+            str(row["color_label"]): {"wins": int(row["wins"]), "losses": int(row["losses"])}
+            for row in _opponent_color_rows(conn, "g.outcome IN ('win', 'loss')", [])
+        }
+        cached = (stamp, records)
+        _color_records_cache[cache_scope] = cached
+    record = cached[1].get(label)
+    if not record or record["wins"] + record["losses"] == 0:
+        return None
+    return {"label": label, **record}
+
+
 #: Results listed in deck_record's recent form, newest first.
 DECK_RECENT_GAMES = 10
 
@@ -430,37 +574,34 @@ def _deck_record(
     conn: sqlite3.Connection,
     deck_name: Optional[str],
     current_game_id: Optional[str],
-    session_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Lifetime, today's and this session's record with this deck (the current
-    game excluded), split like Deck Manager's record into ranked / unranked
-    queues and on the play / on the draw, with the last results."""
+    """Lifetime and today's record with this deck (the current game
+    excluded), split like Deck Manager's record into ranked / unranked queues
+    and on the play / on the draw, with the last results."""
     from .format_normalizer import normalize_match_format
 
     name = str(deck_name or "").strip()
     if not name:
         return None
-    today = datetime.now().strftime("%Y-%m-%d")
+    day_start, day_end = _day_bounds(datetime.now().strftime("%Y-%m-%d"))
     try:
         rows = conn.execute(
-            """
+            f"""
             SELECT
               m.format,
               MAX(COALESCE(m.best_of, 1)),
               p.went_first,
               SUM(g.outcome = 'win') AS wins,
               SUM(g.outcome = 'loss') AS losses,
-              SUM(g.outcome = 'win' AND date(g.started_at) = ?) AS today_wins,
-              SUM(g.outcome = 'loss' AND date(g.started_at) = ?) AS today_losses,
-              SUM(g.outcome = 'win' AND g.session_id IS ?) AS session_wins,
-              SUM(g.outcome = 'loss' AND g.session_id IS ?) AS session_losses
+              SUM(g.outcome = 'win' AND {DAY_WHERE}) AS today_wins,
+              SUM(g.outcome = 'loss' AND {DAY_WHERE}) AS today_losses
             FROM games g
             JOIN participants p ON p.game_id = g.id AND p.role = 'player'
             LEFT JOIN matches m ON m.id = g.match_id
             WHERE p.deck_name = ? AND g.id IS NOT ? AND g.outcome IN ('win', 'loss')
             GROUP BY m.format, p.went_first
             """,
-            (today, today, session_id, session_id, name, current_game_id),
+            (day_start, day_end, day_start, day_end, name, current_game_id),
         ).fetchall()
         recent = conn.execute(
             f"""
@@ -480,8 +621,6 @@ def _deck_record(
         "losses": 0,
         "today_wins": 0,
         "today_losses": 0,
-        "session_wins": 0,
-        "session_losses": 0,
         **{split: {"wins": 0, "losses": 0} for split in ("ranked", "unranked", "play", "draw")},
     }
     ranked_formats: Dict[Any, bool] = {}
@@ -493,7 +632,6 @@ def _deck_record(
         losses,
         today_wins,
         today_losses,
-        *in_session,
     ) in rows:
         if raw_format not in ranked_formats:
             label = normalize_match_format(str(raw_format or ""), default_best_of=best_of).label
@@ -506,9 +644,6 @@ def _deck_record(
             target["losses"] += int(losses or 0)
         record["today_wins"] += int(today_wins or 0)
         record["today_losses"] += int(today_losses or 0)
-        if session_id:
-            record["session_wins"] += int(in_session[0] or 0)
-            record["session_losses"] += int(in_session[1] or 0)
     if record["wins"] + record["losses"] == 0:
         return None
     record["win_rate"] = round(100.0 * record["wins"] / (record["wins"] + record["losses"]), 1)
@@ -539,14 +674,14 @@ def _match_score(
 def _rank_context(
     conn: sqlite3.Connection,
     format_label: Optional[str],
-    session_started_at: Optional[str] = None,
+    since: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Latest rank snapshot for the game's ladder — shown for ranked games.
 
     Limited queues read from the limited ladder; everything else ranked reads
     from constructed. Non-ranked formats return None. `start` is the rank
-    before the session began (the last snapshot older than it), for the
-    climb this session; None when there is none.
+    at `since` (today's midnight: the last snapshot older than it), for the
+    climb today; None when there is none.
     """
     label = str(format_label or "").casefold()
     # "Unranked" contains "rank" — require the ranked marker without it.
@@ -573,7 +708,7 @@ def _rank_context(
         return None
     row["rank_format"] = rank_format
     row["start"] = None
-    if session_started_at:
+    if since:
         try:
             start = _dict_row(
                 conn.execute(
@@ -585,7 +720,7 @@ def _rank_context(
                     ORDER BY captured_at DESC, id DESC
                     LIMIT 1
                     """,
-                    (rank_format, session_started_at),
+                    (rank_format, since),
                 )
             )
         except sqlite3.OperationalError:
@@ -609,11 +744,96 @@ def _archetype_contradicts_colors(archetype: str, table_colors: set) -> bool:
     return not table_colors <= set(letters)
 
 
+def _card_base(name: Any) -> str:
+    """A card's base name for matching: "(Land)" suffixes and split faces
+    dropped, case folded."""
+    return str(name or "").split(" (")[0].split(" // ")[0].strip().casefold()
+
+
+#: The labelled opponents' played cards, per database. `/api/live` builds
+#: it per request; the overlay asks on every new opponent card and keeps it
+#: for this long (Deck AI labels a game after it ends, so a new label is
+#: seen within this time), or until a new game's rows arrive.
+_archetype_index_cache: Dict[str, Tuple[Any, Dict[str, Any], float]] = {}
+ARCHETYPE_INDEX_MEMO_SECONDS = 120.0
+
+
+def _archetype_index(conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
+    """Every Deck AI-labelled opponent's nonland played cards and results,
+    folded per archetype: `cards[archetype][base name]` is how many labelled
+    games showed that card, `games[game_id]` the archetype and outcome of
+    each labelled game, `totals[archetype]` the wins and losses against it.
+    One pass over the history, so a guess is answered from memory."""
+    try:
+        rows = conn.execute(
+            """
+            SELECT o.deck_archetype, o.game_id, s.display_name
+            FROM participants o
+            JOIN game_card_summary s ON s.participant_id = o.id
+            WHERE o.role = 'opponent' AND o.deck_archetype IS NOT NULL
+              AND s.played_count > 0
+              AND COALESCE(s.type_category, '') != 'Land'
+              AND s.display_name NOT LIKE '%(Land)'
+            """
+        ).fetchall()
+        results = conn.execute(
+            """
+            SELECT o.deck_archetype, o.game_id, g.outcome
+            FROM participants o
+            JOIN games g ON g.id = o.game_id
+            WHERE o.role = 'opponent' AND o.deck_archetype IS NOT NULL
+            """
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return None
+    seen: Dict[str, Dict[str, set]] = {}
+    for archetype, game_id, card_name in rows:
+        seen.setdefault(str(archetype), {}).setdefault(_card_base(card_name), set()).add(game_id)
+    cards = {
+        archetype: {name: len(game_ids) for name, game_ids in names.items()}
+        for archetype, names in seen.items()
+    }
+    games: Dict[Any, Tuple[str, Any]] = {}
+    totals: Dict[str, List[int]] = {}
+    for archetype, game_id, outcome in results:
+        games[game_id] = (str(archetype), outcome)
+        if outcome in ("win", "loss"):
+            record = totals.setdefault(str(archetype), [0, 0])
+            record[0 if outcome == "win" else 1] += 1
+    return {"cards": cards, "games": games, "totals": totals}
+
+
+def _cached_archetype_index(
+    conn: sqlite3.Connection, cache_scope: Optional[str]
+) -> Optional[Dict[str, Any]]:
+    if cache_scope is None:
+        return _archetype_index(conn)
+    try:
+        stamp = conn.execute("SELECT MAX(rowid) FROM participants").fetchone()[0]
+    except sqlite3.OperationalError:
+        return None
+    cached = _archetype_index_cache.get(cache_scope)
+    if cached is not None and cached[0] == stamp and time.monotonic() < cached[2]:
+        return cached[1]
+    index = _archetype_index(conn)
+    if index is None:
+        return None
+    if len(_archetype_index_cache) > 8:
+        _archetype_index_cache.clear()
+    _archetype_index_cache[cache_scope] = (
+        stamp,
+        index,
+        time.monotonic() + ARCHETYPE_INDEX_MEMO_SECONDS,
+    )
+    return index
+
+
 def _archetype_guess(
     conn: sqlite3.Connection,
     opponent_cards_json: Any,
     current_game_id: Optional[str],
     opponent_colors: Optional[str] = None,
+    cache_scope: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Guess the opponent's archetype from their revealed cards, using past
     games whose opponents were identified (Deck AI) — no network, no model:
@@ -623,39 +843,48 @@ def _archetype_guess(
     Lands never count as evidence (a Mountain matches every red deck ever
     faced), and a guess whose colour word contradicts the colours already on
     the table is thrown out — "Mono-Red" cannot be right once a Forest has
-    been played.
+    been played. The current game never counts as its own evidence.
+    With a `cache_scope` (the database) the history is read once and kept
+    (`_cached_archetype_index`); the answer is the same either way.
     """
     revealed = set(_json_list(opponent_cards_json))
     if len(revealed) < ARCHETYPE_GUESS_MIN_MATCHES:
         return None
-    try:
-        rows = conn.execute(
-            """
-            SELECT o.deck_archetype, s.display_name
-            FROM participants o
-            JOIN game_card_summary s ON s.participant_id = o.id
-            WHERE o.role = 'opponent' AND o.deck_archetype IS NOT NULL
-              AND o.game_id IS NOT ? AND s.played_count > 0
-              AND COALESCE(s.type_category, '') != 'Land'
-              AND s.display_name NOT LIKE '%(Land)'
-            """,
-            (current_game_id,),
-        ).fetchall()
-    except sqlite3.OperationalError:
+    index = _cached_archetype_index(conn, cache_scope)
+    if index is None:
         return None
-
-    # Base card names, so "(Land)" suffixes and split faces still match.
-    def base(name: str) -> str:
-        return str(name or "").split(" (")[0].split(" // ")[0].strip().casefold()
-
-    revealed_bases = {base(name) for name in revealed} - {
+    revealed_bases = {_card_base(name) for name in revealed} - {
         name.casefold() for name in BASIC_LAND_COLORS
     }
+    # A labelled current game (the results screen, once Deck AI answered)
+    # is taken back out of the counts it added.
+    own: Tuple[Optional[str], set] = (None, set())
+    current = index["games"].get(current_game_id) if current_game_id is not None else None
+    if current is not None:
+        try:
+            own_rows = conn.execute(
+                """
+                SELECT s.display_name
+                FROM participants o
+                JOIN game_card_summary s ON s.participant_id = o.id
+                WHERE o.role = 'opponent' AND o.game_id = ? AND s.played_count > 0
+                  AND COALESCE(s.type_category, '') != 'Land'
+                  AND s.display_name NOT LIKE '%(Land)'
+                """,
+                (current_game_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            own_rows = []
+        own = (current[0], {_card_base(row[0]) for row in own_rows})
     table_colors = set(str(opponent_colors or "")) & set("WUBRG")
     matches: Dict[str, set] = {}
-    for archetype, card_name in rows:
-        if base(card_name) in revealed_bases:
-            matches.setdefault(str(archetype), set()).add(base(card_name))
+    for archetype, names in index["cards"].items():
+        for name in revealed_bases:
+            count = names.get(name, 0)
+            if archetype == own[0] and name in own[1]:
+                count -= 1
+            if count > 0:
+                matches.setdefault(archetype, set()).add(name)
     if table_colors:
         matches = {
             archetype: cards
@@ -667,24 +896,17 @@ def _archetype_guess(
     archetype, matched = max(matches.items(), key=lambda item: (len(item[1]), item[0]))
     if len(matched) < ARCHETYPE_GUESS_MIN_MATCHES:
         return None
-    try:
-        record = conn.execute(
-            """
-            SELECT SUM(g.outcome = 'win'), SUM(g.outcome = 'loss')
-            FROM games g
-            JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
-            WHERE o.deck_archetype = ? AND g.id IS NOT ?
-              AND g.outcome IN ('win', 'loss')
-            """,
-            (archetype, current_game_id),
-        ).fetchone()
-    except sqlite3.OperationalError:
-        record = None
+    wins, losses = index["totals"].get(archetype, [0, 0])
+    if current is not None and current[0] == archetype:
+        if current[1] == "win":
+            wins -= 1
+        elif current[1] == "loss":
+            losses -= 1
     return {
         "archetype": archetype,
         "matched_cards": len(matched),
-        "wins": int(record[0] or 0) if record else 0,
-        "losses": int(record[1] or 0) if record else 0,
+        "wins": wins,
+        "losses": losses,
     }
 
 
@@ -714,19 +936,14 @@ def _latest_event_game_id(conn: sqlite3.Connection, session_id: Optional[str]) -
     return str(row[0]) if row and row[0] else None
 
 
-def _games_payload(
-    conn: sqlite3.Connection, session_id: Optional[str] = None
-) -> List[Dict[str, Any]]:
-    """Today's finished games plus this tracker session's, and always the
-    most recent game, newest first, ready to link to #/game/<id>. The
-    session's games matter past midnight: a game that started at 23:58 must
-    still be the "previous game" — with its outcome — at 00:05, not vanish
-    because the calendar day rolled over; the most recent game keeps the
-    "Last game: …" line honest after a restart."""
+def _games_payload(conn: sqlite3.Connection, today: str) -> List[Dict[str, Any]]:
+    """Today's finished games and always the most recent game, newest first,
+    ready to link to #/game/<id>. The most recent game keeps the "Last game:
+    …" line honest past midnight and after a restart (a game that started at
+    23:58 is still the previous game at 00:05); lists of today's games leave
+    it out by its date."""
     from .dashboard import _attach_replay_availability
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    session_prefix = f"{session_id}:%" if session_id else ""
     rows = _dict_rows(
         conn.execute(
             """
@@ -747,13 +964,12 @@ def _games_payload(
             JOIN matches m ON m.id = g.match_id
             LEFT JOIN participants p ON p.game_id = g.id AND p.role = 'player'
             LEFT JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
-            WHERE date(g.started_at) = ?
-               OR (? != '' AND g.id LIKE ?)
+            WHERE (g.started_at >= ? AND g.started_at < ?)
                OR g.id = (SELECT id FROM games ORDER BY started_at DESC LIMIT 1)
             ORDER BY g.started_at DESC
             LIMIT 40
             """,
-            (today, session_prefix, session_prefix),
+            _day_bounds(today),
         )
     )
     _attach_replay_availability(conn, rows, key="id")
@@ -952,14 +1168,7 @@ def _live_body(
     # scoreboard up (the client alone can only preserve it while the page
     # stays mounted). Restricted to the same tracker session so a restart
     # doesn't resurrect a game from a session whose feed is gone.
-    frozen: Optional[Dict[str, Any]] = None
-    if status is not None and not status.get("in_game"):
-        try:
-            parsed = json.loads(status.get("last_game_json") or "")
-        except (TypeError, ValueError):
-            parsed = None
-        if isinstance(parsed, dict) and parsed.get("session_id") == session_id:
-            frozen = parsed
+    frozen = _frozen_game(status, session_id)
 
     # The game the feed should show: the live one, or — between games —
     # the game the last events belong to, so the feed's tail still lands
@@ -970,13 +1179,7 @@ def _live_body(
         or _latest_event_game_id(conn, session_id)
     )
 
-    session = _session_payload(conn, session_id)
-    if session:
-        # The Record widget's play/draw columns: the overlay footer's split.
-        split = _overlay_session(conn, session.get("id"), db_uri)
-        if split:
-            session["play"] = split["play"]
-            session["draw"] = split["draw"]
+    day = now.strftime("%Y-%m-%d")
     # Records exclude the game being played, but not the finished game
     # on screen between games.
     record_exclude = feed_game_id if (status and status.get("in_game")) else None
@@ -1027,21 +1230,23 @@ def _live_body(
             "deck_size": source.get("deck_size"),
             "deck_lands": source.get("deck_lands"),
             "head_to_head": _head_to_head(conn, source.get("opponent_name"), feed_game_id),
-            "deck_record": _deck_record(
-                conn,
-                source.get("deck_name"),
-                record_exclude,
-                session.get("id") if session else None,
-            ),
+            "deck_record": _deck_record(conn, source.get("deck_name"), record_exclude),
             "match_score": _match_score(conn, source.get("match_id"), record_exclude),
             "opponent_seen": _json_value(source.get("opponent_seen"), list) or [],
             "draw_quality": _json_value(source.get("draw_quality"), dict),
             "commander_record": _commander_record(
                 conn, source.get("opponent_commanders"), feed_game_id
             ),
-            "rank": _rank_context(
-                conn, source.get("format"), session.get("started_at") if session else None
+            "color_record": _color_record(
+                conn,
+                colors["opponent"],
+                bool(
+                    _json_list(source.get("player_commanders"))
+                    or _json_list(source.get("opponent_commanders"))
+                ),
+                db_uri,
             ),
+            "rank": _rank_context(conn, source.get("format"), _day_bounds(day)[0]),
             "archetype_guess": (
                 _archetype_guess(
                     conn,
@@ -1056,9 +1261,8 @@ def _live_body(
 
     body = {
         "now": now_payload,
-        "session": session,
-        "today": _today_record(conn, now.strftime("%Y-%m-%d")),
-        "games": _games_payload(conn, session_id),
+        "today": _today_record(conn, day, db_uri),
+        "games": _games_payload(conn, day),
     }
     return body, feed_game_id
 
@@ -1185,7 +1389,10 @@ def reset_poll_connections() -> None:
                 pass
         _poll_connections.clear()
     _overlay_response_cache.clear()
-    _overlay_session_cache.clear()
+    _overlay_today_cache.clear()
+    _archetype_index_cache.clear()
+    _draw_luck_cache.clear()
+    _color_records_cache.clear()
     with _live_payload_lock:
         _live_payload_cache.clear()
         _linkable_cards_cache.clear()
@@ -1224,17 +1431,33 @@ def overlay_response(db_path: Path) -> Tuple[bytes, str]:
     status = _poll_live_status(db_uri)
     # Every input of the body: the live row's overlay state, opponent, game
     # and session (the head-to-head record is memoised by opponent and game
-    # itself), the session's totals for the footer, and live/idle/offline.
-    # Not updated_at: the tracker's 5 s heartbeat bumps it without changing
+    # itself; the session scopes the frozen game), the day and its totals for
+    # the footer (a new day zeroes it at midnight), what its rank and deck
+    # chips read (the game's format and deck, live or frozen, and the newest
+    # rank snapshot), what the opponent panel shows (their cards, colours,
+    # lands and commanders), the flood meter's numbers, and live/idle/offline.
+    # Not updated_at:the tracker's 5 s heartbeat bumps it without changing
     # anything the overlay shows, and every poller would get a full 200 and
     # a re-render each time instead of a 304.
-    session_id = status.get("session_id") if status else None
+    day = now.strftime("%Y-%m-%d")
     key = (
         status.get("overlay_json") if status else None,
         status.get("opponent_name") if status else None,
         status.get("game_id") if status else None,
-        session_id,
-        _session_totals(db_uri, session_id),
+        status.get("session_id") if status else None,
+        day,
+        _day_totals(db_uri, day),
+        status.get("in_game") if status else None,
+        status.get("format") if status else None,
+        status.get("deck_name") if status else None,
+        status.get("last_game_json") if status else None,
+        _latest_rank_snapshot(db_uri),
+        status.get("opponent_seen") if status else None,
+        status.get("opponent_cards") if status else None,
+        status.get("opponent_colors") if status else None,
+        status.get("opponent_lands") if status else None,
+        status.get("opponent_commanders") if status else None,
+        status.get("draw_quality") if status else None,
         _tracker_state(status, now),
     )
     monotonic = time.monotonic()
@@ -1249,23 +1472,104 @@ def overlay_response(db_path: Path) -> Tuple[bytes, str]:
     return payload, etag
 
 
-def _session_totals(db_uri: str, session_id: Optional[str]) -> Optional[Tuple[Any, ...]]:
-    """The tracker session's counters (one primary-key read on the poll
+def _day_totals(db_uri: str, day: str) -> Optional[Tuple[Any, ...]]:
+    """The day's game count and results (an index range read on the poll
     connection), so a finished game refreshes the overlay's footer."""
-    if not session_id:
-        return None
     with _poll_lock:
         conn = _poll_connections.get(db_uri)
         if conn is None:
             return None
         try:
             row = conn.execute(
-                "SELECT games_played, wins, losses, draws FROM tracker_sessions WHERE id = ?",
-                (session_id,),
+                f"""
+                SELECT COUNT(*), SUM(g.outcome = 'win'), SUM(g.outcome = 'loss'),
+                       SUM(g.outcome = 'draw')
+                FROM games g WHERE {DAY_WHERE}
+                """,
+                _day_bounds(day),
             ).fetchone()
         except sqlite3.Error:
             return None
     return tuple(row) if row else None
+
+
+def _latest_rank_snapshot(db_uri: str) -> Optional[int]:
+    """The newest rank snapshot's id (one primary-key read on the poll
+    connection): Arena reports a rank change after the game's result, so the
+    footer's rank chip follows it without waiting for the next game."""
+    with _poll_lock:
+        conn = _poll_connections.get(db_uri)
+        if conn is None:
+            return None
+        try:
+            row = conn.execute("SELECT MAX(id) FROM rank_snapshots").fetchone()
+        except sqlite3.Error:
+            return None
+    return row[0] if row else None
+
+
+def _overlay_opponent(
+    conn: sqlite3.Connection,
+    status: Optional[Dict[str, Any]],
+    state: Optional[Dict[str, Any]],
+    session_id: Optional[str],
+    cache_scope: str,
+) -> Optional[Dict[str, Any]]:
+    """The opponent panel's block: what the opponent has played this game,
+    the colours and lands shown, and the best name for their deck with your
+    record against it. Read from the live row during a game and from the
+    frozen game on the results screen; None whenever the overlay shows no
+    game (the opponent window hides then).
+
+    `deck.source` says where the name came from, in the order tried: their
+    commander(s) in Brawl, the guess from your own Deck AI-labelled history
+    (`_archetype_guess`), the colour name, or nothing yet."""
+    if not status or not state or not (state.get("game_active") or state.get("game_over")):
+        return None
+    in_game = bool(status.get("in_game"))
+    source = status if in_game else _frozen_game(status, session_id)
+    if not source:
+        return None
+    game_id = source.get("game_id")
+    # Records leave out the game being played, not the one just finished.
+    exclude = game_id if in_game else None
+    colors = str(source.get("opponent_colors") or "")
+    commanders = [str(name) for name in _json_list(source.get("opponent_commanders")) if name]
+    deck: Dict[str, Any] = {"label": None, "source": "none", "matched_cards": None}
+    record: Optional[Dict[str, int]] = None
+    if commanders:
+        deck = {"label": " + ".join(commanders), "source": "commander", "matched_cards": None}
+        records = _commander_record(conn, source.get("opponent_commanders"), exclude)
+        if records:
+            record = {"wins": records[0]["wins"], "losses": records[0]["losses"]}
+    else:
+        guess = _archetype_guess(
+            conn, source.get("opponent_cards"), game_id, colors, cache_scope=cache_scope
+        )
+        if guess:
+            deck = {
+                "label": guess["archetype"],
+                "source": "history",
+                "matched_cards": guess["matched_cards"],
+            }
+            if guess["wins"] + guess["losses"] > 0:
+                record = {"wins": guess["wins"], "losses": guess["losses"]}
+        elif color_combo_label(colors):
+            deck = {"label": color_combo_label(colors), "source": "colors", "matched_cards": None}
+            by_color = _color_record(conn, colors, False, cache_scope)
+            if by_color:
+                record = {"wins": by_color["wins"], "losses": by_color["losses"]}
+    try:
+        lands = int(source.get("opponent_lands") or 0)
+    except (TypeError, ValueError):
+        lands = 0
+    return {
+        "colors": colors,
+        "lands": lands,
+        "deck": deck,
+        "record": record,
+        "seen": _json_value(source.get("opponent_seen"), list) or [],
+    }
 
 
 def build_overlay_payload(
@@ -1276,8 +1580,8 @@ def build_overlay_payload(
 ) -> Dict[str, Any]:
     """The in-game overlay's poll target: tracker state, the library state the
     tracker last wrote (see overlay_state.py), the head-to-head record the
-    overlay header shows next to the opponent's name, and the session record
-    its footer shows."""
+    overlay header shows next to the opponent's name, and today's record its
+    footer shows (with the rank and this deck's record today)."""
     db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
     now = now or datetime.now()
     with _open_readonly(db_uri) as conn:
@@ -1298,12 +1602,32 @@ def build_overlay_payload(
             head_to_head = _head_to_head(
                 conn, status.get("opponent_name"), status.get("game_id"), cache_scope=db_uri
             )
-        session = _overlay_session(conn, status.get("session_id") if status else None, db_uri)
+        session_id = status.get("session_id") if status else None
+        day = now.strftime("%Y-%m-%d")
+        today: Optional[Dict[str, Any]] = _overlay_today(conn, day, db_uri)
+        draw_quality: Optional[Dict[str, Any]] = None
+        if status:
+            # The Record widget's chips: the ladder rank when the game on
+            # screen is ranked (None in any other queue), and today's record
+            # with its deck. Between games both read the frozen game.
+            game = _frozen_game(status, session_id) or status
+            # The flood meter: the Stream Kit Lands widget's numbers, which
+            # the tracker already writes with the live row (nothing computed
+            # here). Between games, the frozen game's.
+            draw_quality = _json_value(game.get("draw_quality"), dict)
+            today = {
+                **today,
+                "rank": _rank_context(conn, game.get("format")),
+                "deck": _today_deck_record(conn, day, game.get("deck_name")),
+            }
+        opponent = _overlay_opponent(conn, status, state, session_id, db_uri)
     tracker_state = _tracker_state(status, now)
     if tracker_state == "offline":
         # A stale row must not keep a finished game's library on screen.
         state = None
-        session = None
+        today = None
+        opponent = None
+        draw_quality = None
     return {
         "tracker": {
             "state": tracker_state,
@@ -1311,7 +1635,9 @@ def build_overlay_payload(
         },
         "state": state,
         "head_to_head": head_to_head,
-        "session": session,
+        "today": today,
+        "opponent": opponent,
+        "draw_quality": draw_quality,
     }
 
 

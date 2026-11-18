@@ -45,7 +45,14 @@ from .draw_quality import (
 from .colors import _MANA_PIP_RE, color_combo_label, normalize_colors
 from .colors import score_deck_colors as _score_deck_colors
 from . import game_derived
-from .format_normalizer import format_label, normalize_match_format
+from .format_normalizer import (
+    format_label,
+    is_midweek_format,
+    is_momir_format,
+    is_welcome_deck_format,
+    normalize_match_format,
+)
+from .settings import TRACKED_MODE_DEFAULTS, tracked_modes
 from .paths import DATA_DIR
 
 
@@ -1803,8 +1810,13 @@ def _schedule_rows(
     return {"by_weekday": weekday_rows, "by_time_of_day": hour_rows}
 
 
+#: Days table: a game starting this long after the previous one ended
+#: begins a new sitting (a separate stretch of play that day).
+SITTING_GAP_MINUTES = 60
+
+
 def _fatigue_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> List[Dict[str, Any]]:
-    """Win rate by Nth game of a tracker session."""
+    """Win rate by Nth game of the day (local calendar day, by start time)."""
     rows = _dict_rows(
         conn.execute(
             f"""
@@ -1812,7 +1824,7 @@ def _fatigue_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> Li
               SELECT
                 g.outcome,
                 ROW_NUMBER() OVER (
-                  PARTITION BY g.session_id
+                  PARTITION BY date(COALESCE(g.started_at, g.ended_at))
                   ORDER BY COALESCE(g.started_at, g.ended_at), g.id
                 ) AS nth
               FROM games g
@@ -1838,7 +1850,7 @@ def _fatigue_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> Li
         )
     )
     # Fresh baseline is games 1–4; fatigue only plausibly sets in from game 5,
-    # and marathon 20+ game sessions are common enough to earn their own tier.
+    # and marathon 20+ game days are common enough to earn their own tier.
     labels = {
         0: "Games 1–4",
         1: "Games 5–9",
@@ -2441,27 +2453,102 @@ def _combat_split_rows(
     )
 
 
-#: Matches of modes the tracker does not track (Jump In, Midweek Magic).
-_UNTRACKED_MATCH_SQL = """(
-            mj.format LIKE 'Jump!_In%' ESCAPE '!'
-            OR mj.format LIKE 'MWM%'
-            OR mj.format LIKE 'Midweek%'
-            OR COALESCE(mj.queue, '') LIKE 'MWM%'
-            OR COALESCE(mj.event_name, '') LIKE 'MWM%'
-          )"""
+#: SQL tests for the matches of an optional game mode the dashboard hides
+#: while Settings → Saved game modes leaves it off (legacy rows, from
+#: before those games were left out, must not count). Ticked, its games are
+#: history like any other.
+_HIDDEN_MODE_SQL: Dict[str, Tuple[str, ...]] = {
+    "jump_in": ("mj.format LIKE 'Jump!_In%' ESCAPE '!'",),
+    "midweek_magic": (
+        "mj.format LIKE 'MWM%'",
+        "mj.format LIKE 'Midweek%'",
+        "COALESCE(mj.queue, '') LIKE 'MWM%'",
+        "COALESCE(mj.event_name, '') LIKE 'MWM%'",
+    ),
+}
+
+#: Bumped by ``note_tracking_changed``; the saved modes are read again then,
+#: and otherwise at most every ``_SAVED_MODES_TTL`` seconds (a hand edit).
+_tracking_generation = 0
+_SAVED_MODES_TTL = 30.0
+_saved_modes_memo: Optional[Tuple[int, float, Dict[str, bool]]] = None
 
 
-def _has_untracked_matches(db_path: Path) -> bool:
-    """Whether any match of an untracked mode lingers in this database. True
+def note_tracking_changed() -> None:
+    """Settings → Saved game modes changed: read it again on the next page."""
+    global _tracking_generation, _saved_modes_memo
+    _tracking_generation += 1
+    _saved_modes_memo = None
+
+
+def _saved_modes() -> Dict[str, bool]:
+    """Which optional game modes are saved (``settings.tracked_modes``)."""
+    global _saved_modes_memo
+    memo = _saved_modes_memo
+    now = time.monotonic()
+    if memo is not None and memo[0] == _tracking_generation and memo[1] > now:
+        return memo[2]
+    try:
+        modes = tracked_modes()
+    except Exception:  # noqa: BLE001 - an unreadable settings file keeps the defaults
+        modes = dict(TRACKED_MODE_DEFAULTS)
+    _saved_modes_memo = (_tracking_generation, now + _SAVED_MODES_TTL, modes)
+    return modes
+
+
+def _hidden_mode_keys() -> Tuple[str, ...]:
+    """The modes whose games pages hide right now, for the cache fingerprint."""
+    saved = _saved_modes()
+    return tuple(mode for mode in _HIDDEN_MODE_SQL if not saved.get(mode, False))
+
+
+def _untracked_match_sql() -> Optional[str]:
+    """A test on ``matches mj`` for the matches pages hide, or None for none."""
+    tests = [test for mode in _hidden_mode_keys() for test in _HIDDEN_MODE_SQL[mode]]
+    return "(" + " OR ".join(tests) + ")" if tests else None
+
+
+def _format_mode_saved(*values: Any) -> bool:
+    """True for a format of an optional mode that is switched on in every mode it belongs to.
+
+    The UI keeps Midweek Magic, Momir and Welcome Deck Duels out of its
+    format lists as a safeguard; a row marked ``saved_mode`` is shown anyway.
+    """
+    modes = [
+        mode
+        for mode, test in (
+            ("midweek_magic", is_midweek_format),
+            ("momir", is_momir_format),
+            ("welcome_deck", is_welcome_deck_format),
+        )
+        if any(test(str(value or "")) for value in values)
+    ]
+    saved = _saved_modes()
+    return bool(modes) and all(saved.get(mode, False) for mode in modes)
+
+
+#: A Direct Challenge (friend) match, any variant, the way
+#: ``format_normalizer.is_direct_challenge_format`` reads it: letters and
+#: digits of the format, queue or event name, without case.
+_DIRECT_CHALLENGE_TEXT_SQL = (
+    "REPLACE(REPLACE(REPLACE(COALESCE(mc.format, '') || '|' || COALESCE(mc.queue, '')"
+    " || '|' || COALESCE(mc.event_name, ''), '_', ''), ' ', ''), '-', '')"
+)
+_DIRECT_CHALLENGE_MATCH_SQL = (
+    f"({_DIRECT_CHALLENGE_TEXT_SQL} LIKE '%directgame%'"
+    f" OR {_DIRECT_CHALLENGE_TEXT_SQL} LIKE '%directchallenge%')"
+)
+
+
+def _has_untracked_matches(db_path: Path, match_sql: str) -> bool:
+    """Whether any match of a hidden mode lingers in this database. True
     when it cannot be told."""
     try:
         db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
         with sqlite3.connect(db_uri, uri=True) as conn:
             conn.execute("PRAGMA query_only = ON")
             return (
-                conn.execute(
-                    f"SELECT 1 FROM matches mj WHERE {_UNTRACKED_MATCH_SQL} LIMIT 1"
-                ).fetchone()
+                conn.execute(f"SELECT 1 FROM matches mj WHERE {match_sql} LIMIT 1").fetchone()
                 is not None
             )
     except (sqlite3.Error, OSError):
@@ -2479,18 +2566,19 @@ def _games_filter(
 ) -> Tuple[str, List[Any]]:
     """WHERE fragment (referencing games alias `g`) plus bound params.
 
-    Jump In and Midweek Magic games are intentionally untracked; they are
-    hidden from every aggregate even if legacy rows linger in the database.
-    That test runs for every game in every statement of a page, so with
-    ``db_path`` it is asked once up front and left out when the database
-    holds no such match (they have not been saved for a long time).
+    Jump In and Midweek Magic games are hidden from every aggregate while
+    Settings → Saved game modes leaves them off, even if legacy rows
+    linger in the database. That test runs for every game in every statement
+    of a page, so with ``db_path`` it is asked once up front and left out
+    when the database holds no such match.
     """
     clauses: List[str] = []
-    if db_path is None or _has_untracked_matches(db_path):
+    untracked_sql = _untracked_match_sql()
+    if untracked_sql and (db_path is None or _has_untracked_matches(db_path, untracked_sql)):
         clauses.append(
             f"""NOT EXISTS (
           SELECT 1 FROM matches mj
-          WHERE mj.id = g.match_id AND {_UNTRACKED_MATCH_SQL}
+          WHERE mj.id = g.match_id AND {untracked_sql}
         )"""
         )
     params: List[Any] = []
@@ -2552,10 +2640,11 @@ def _grouped_format_rows(
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Format performance grouped by display label.
 
-    Midweek Magic events are intentionally omitted because those rotating queues
-    are not part of the tracker's supported format analytics. The second return
-    value remains an empty compatibility field for older dashboard clients.
+    Midweek Magic events are omitted while Settings → Saved game modes leaves
+    them off. The second return value remains an empty compatibility
+    field for older dashboard clients.
     """
+    hide_midweek = "midweek_magic" in _hidden_mode_keys()
     raw_rows = _dict_rows(
         conn.execute(
             f"""
@@ -2590,7 +2679,7 @@ def _grouped_format_rows(
         normalized = normalize_match_format(
             row["raw_format"], default_best_of=int(row["best_of"] or 1)
         )
-        if normalized.is_midweek:
+        if normalized.is_midweek and hide_midweek:
             continue
         _accumulate(top, normalized.label, row)
 
@@ -2598,6 +2687,8 @@ def _grouped_format_rows(
         rows = []
         for entry in bucket.values():
             entry["win_rate"] = _win_rate(entry["wins"], entry["losses"])
+            if _format_mode_saved(entry["format_label"], *entry["raw_formats"]):
+                entry["saved_mode"] = True
             entry["raw_formats"] = ", ".join(sorted(entry["raw_formats"]))
             rows.append(entry)
         rows.sort(key=lambda item: (-item["games"], item["format_label"]))
@@ -3564,27 +3655,52 @@ def dashboard_snapshot(
                 params,
             )
         )
-        session_rows = _dict_rows(
+        # One row per local calendar day played, by each game's start time
+        # (a game past midnight belongs to the day it started). A sitting is a
+        # stretch of play: a game that starts SITTING_GAP_MINUTES or more after
+        # the previous one ended begins a new one.
+        day_rows = _dict_rows(
             conn.execute(
                 f"""
+                WITH day_games AS (
+                  SELECT
+                    g.id,
+                    g.outcome,
+                    g.duration_seconds,
+                    p.went_first,
+                    date(COALESCE(g.started_at, g.ended_at)) AS day,
+                    COALESCE(g.started_at, g.ended_at) AS start_at,
+                    COALESCE(g.ended_at, g.started_at) AS end_at
+                  FROM games g
+                  LEFT JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                  WHERE {where} AND COALESCE(g.started_at, g.ended_at) IS NOT NULL
+                ),
+                marked AS (
+                  SELECT
+                    *,
+                    LAG(end_at) OVER (PARTITION BY day ORDER BY start_at, id) AS previous_end
+                  FROM day_games
+                )
                 SELECT
-                  s.id AS session_id,
-                  s.started_at,
-                  s.ended_at,
-                  s.runtime_seconds AS duration_seconds,
-                  COUNT(g.id) AS games,
-                  SUM(g.outcome = 'win') AS wins,
-                  SUM(g.outcome = 'loss') AS losses,
-                  SUM(g.outcome = 'draw') AS draws,
-                  SUM(p.went_first = 1) AS on_play,
-                  SUM(p.went_first = 0) AS on_draw,
-                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
-                FROM tracker_sessions s
-                JOIN games g ON g.session_id = s.id
-                LEFT JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-                WHERE {where}
-                GROUP BY s.id
-                ORDER BY s.started_at DESC, s.id DESC
+                  day,
+                  MIN(start_at) AS first_game_at,
+                  MAX(end_at) AS last_game_at,
+                  SUM(duration_seconds) AS duration_seconds,
+                  SUM(
+                    previous_end IS NULL
+                    OR (julianday(start_at) - julianday(previous_end)) * 1440
+                       >= {SITTING_GAP_MINUTES}
+                  ) AS sittings,
+                  COUNT(id) AS games,
+                  SUM(outcome = 'win') AS wins,
+                  SUM(outcome = 'loss') AS losses,
+                  SUM(outcome = 'draw') AS draws,
+                  SUM(went_first = 1) AS on_play,
+                  SUM(went_first = 0) AS on_draw,
+                  ROUND(100.0 * SUM(outcome = 'win') / NULLIF(SUM(outcome IN ('win', 'loss')), 0), 1) AS win_rate
+                FROM marked
+                GROUP BY day
+                ORDER BY day DESC
                 """,
                 params,
             )
@@ -3601,19 +3717,28 @@ def dashboard_snapshot(
             )
         ]
         format_options = []
+        hidden_modes = _hidden_mode_keys()
+        jump_in_test = (
+            "WHERE COALESCE(format, '(unknown)') NOT LIKE 'Jump!_In%' ESCAPE '!'"
+            if "jump_in" in hidden_modes
+            else ""
+        )
         for row in conn.execute(
-            """
+            f"""
                 SELECT COALESCE(format, '(unknown)') AS raw_format, MAX(COALESCE(best_of, 1))
                 FROM matches
-                WHERE COALESCE(format, '(unknown)') NOT LIKE 'Jump!_In%' ESCAPE '!'
+                {jump_in_test}
                 GROUP BY raw_format
                 ORDER BY raw_format COLLATE NOCASE
                 """
         ):
             normalized = normalize_match_format(row[0], default_best_of=int(row[1] or 1))
-            if normalized.is_midweek:
+            if normalized.is_midweek and "midweek_magic" in hidden_modes:
                 continue
-            format_options.append({"raw_format": row[0], "format_label": normalized.label})
+            option = {"raw_format": row[0], "format_label": normalized.label}
+            if _format_mode_saved(row[0], normalized.label):
+                option["saved_mode"] = True
+            format_options.append(option)
         combat_deck_rows_read = reads.call(_combat_deck_rows, where, params)
         combat_split_rows_read = reads.call(_combat_split_rows, where, params)
         schedule_read = reads.call(_schedule_rows, where, params)
@@ -3789,7 +3914,7 @@ def dashboard_snapshot(
         "trend": trend_rows,
         "rank_progress": rank_progress_rows,
         "matches": match_rows,
-        "sessions": session_rows,
+        "days_played": day_rows,
         "filters": {
             "deck": deck,
             "format": fmt,
@@ -5929,16 +6054,24 @@ def all_games(
     days: Optional[int] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
+    *,
+    challenges: bool = False,
 ) -> Dict[str, Any]:
     """Every tracked game (newest first) with match records and draw-quality flags.
 
     Unlike the snapshot's 25-row recent list, flags here are computed in one
     set-based pass so the full history stays cheap (<50ms on ~800 games).
+    ``challenges`` keeps only Direct Challenge games (the Challenges page).
     """
     db_path = Path(db_path).expanduser()
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
     where, params = _games_filter(deck, fmt, days, since, until, db_path=db_path)
+    if challenges:
+        where = (
+            f"{where} AND g.match_id IN"
+            f" (SELECT mc.id FROM matches mc WHERE {_DIRECT_CHALLENGE_MATCH_SQL})"
+        )
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
@@ -6027,6 +6160,52 @@ def all_games(
                 str(row.get("opponent_commander_colors") or "")
             )
     return {"games": rows, "total": len(rows)}
+
+
+def challenges(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
+    """Direct Challenge games against friends: every game, newest first, and a
+    record per friend that counts a Bo3 match once (like the Opponents page)."""
+    games = all_games(db_path, challenges=True)["games"]
+    matches: Dict[str, Dict[str, Any]] = {}
+    for row in games:
+        match = matches.setdefault(
+            str(row.get("match_id") or row.get("game_id")),
+            {
+                "friend": str(row.get("opponent_name") or "").strip() or "Opponent",
+                "wins": int(row.get("match_wins") or 0),
+                "losses": int(row.get("match_losses") or 0),
+                "games": 0,
+                "last_played": None,
+            },
+        )
+        match["games"] += 1
+        started = row.get("started_at")
+        if started and (match["last_played"] is None or started > match["last_played"]):
+            match["last_played"] = started
+    friends: Dict[str, Dict[str, Any]] = {}
+    for match in matches.values():
+        friend = friends.setdefault(
+            match["friend"],
+            {
+                "friend": match["friend"],
+                "matches": 0,
+                "games": 0,
+                "wins": 0,
+                "losses": 0,
+                "last_played": None,
+            },
+        )
+        friend["matches"] += 1
+        friend["games"] += match["games"]
+        friend["wins"] += int(match["wins"] > match["losses"])
+        friend["losses"] += int(match["losses"] > match["wins"])
+        last = match["last_played"]
+        if last and (friend["last_played"] is None or last > friend["last_played"]):
+            friend["last_played"] = last
+    rows = sorted(friends.values(), key=lambda row: (-row["matches"], row["friend"].lower()))
+    for row in rows:
+        row["win_rate"] = _win_rate(row["wins"], row["losses"])
+    return {"games": games, "friends": rows, "total": len(games)}
 
 
 def game_annotation(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str, Any]:
@@ -6224,6 +6403,11 @@ _JUMP_IN_MATCH_SQL = """EXISTS (
 )"""
 
 
+def _card_search_filter() -> str:
+    """Card search leaves Jump In games out while they are not saved."""
+    return f"NOT {_JUMP_IN_MATCH_SQL}" if "jump_in" in _hidden_mode_keys() else "1 = 1"
+
+
 class _SearchName(NamedTuple):
     """Everything recorded under one ``game_card_summary.display_name``."""
 
@@ -6282,7 +6466,7 @@ def _build_card_search_index(conn: sqlite3.Connection) -> _CardSearchIndex:
         FROM games g
         CROSS JOIN game_card_summary s ON s.game_id = g.id
         CROSS JOIN participants p ON p.id = s.participant_id
-        WHERE NOT {_JUMP_IN_MATCH_SQL}
+        WHERE {_card_search_filter()}
         GROUP BY s.display_name
         """
     ).fetchall()
@@ -6810,7 +6994,8 @@ def _analytics_fingerprint(db_path: Path, *, event_log: bool = True) -> Optional
         with sqlite3.connect(db_uri, uri=True) as conn:
             conn.execute("PRAGMA query_only = ON")
             row = conn.execute(_FINGERPRINT_SQL.format(event_log=newest_event)).fetchone()
-        return tuple(row) if row is not None else None
+        # The games a page hides follow Settings → Saved game modes.
+        return tuple(row) + (_hidden_mode_keys(),) if row is not None else None
     except (sqlite3.Error, OSError):
         return None
 
@@ -7472,6 +7657,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
             # Web Settings page (Deck AI + Deck Finder creators).
             from . import settings_api
 
+            if parsed.path == "/api/settings/restore-defaults":
+                # Changes many settings at once (the login item, the overlay):
+                # only the local dashboard may ask, like updates.
+                origin = urlparse(self.headers.get("Origin") or "")
+                content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip()
+                if (
+                    origin.hostname and origin.hostname not in {"localhost", "127.0.0.1", "::1"}
+                ) or content_type != "application/json":
+                    _send_bytes(
+                        self,
+                        403,
+                        b'{"error":"Use the local dashboard to restore defaults."}',
+                        "application/json",
+                        {"Cache-Control": "no-store"},
+                    )
+                    return
+
             try:
                 length = int(self.headers.get("Content-Length") or 0)
                 payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
@@ -7830,7 +8032,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
-        if request_path == "/api/settings":
+        if request_path in ("/api/settings", "/api/settings/tracking"):
             from . import settings_api
 
             handled = settings_api.handle_get(request_path, self.db_path)
@@ -8040,6 +8242,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if request_path == "/api/replay":
             self._send_replay(parsed)
+            return
+        if request_path == "/api/challenges":
+            try:
+                body = cached_response(
+                    self.db_path,
+                    request_path,
+                    parsed.query,
+                    lambda: render_snapshot_json(challenges(self.db_path)),
+                )
+            except FileNotFoundError:
+                body = json.dumps({"games": [], "friends": [], "total": 0}).encode("utf-8")
+            except Exception as exc:  # noqa: BLE001
+                _send_bytes(
+                    self,
+                    500,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            _send_bytes(
+                self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"}
+            )
             return
         if request_path == "/api/opponents":
             try:

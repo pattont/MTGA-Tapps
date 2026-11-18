@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import { buildSections, formatPct, formatWhole, oddsTone, shortFormat, showsLibrary, typeClass, type Row } from '../model';
+import { buildSections, formatPct, formatWhole, libraryNotice, oddsTone, shortFormat, showsLibrary, typeClass, unseenCount, type Row } from '../model';
 import type { Link, OverlayPayload, Settings, SortKey } from '../types';
 import { Chevron, Gear, Pin } from './Icons';
 import { ManaCost } from './ManaCost';
-import { SessionRecord, showsSessionRecord } from './SessionRecord';
+import { FloodMeter } from './FloodMeter';
+import { showsTodayRecord, TodayRecord } from './TodayRecord';
 import W from '../icons/W.svg';
 import U from '../icons/U.svg';
 import B from '../icons/B.svg';
@@ -45,8 +46,15 @@ export function deckColors(cards: { mana_cost: string | null }[]): string[] {
   return ['W', 'U', 'B', 'R', 'G'].filter((c) => letters.has(c));
 }
 
-function CardRow({ row, exhausted, hot, sub }: { row: Row; exhausted: boolean; hot: boolean; sub?: boolean }) {
+/** Keys for the list's toggle rows: highlighted under the cursor, no hover card. */
+const TOGGLE_LANDS = '\u0000lands';
+const TOGGLE_DRAWN = '\u0000drawn';
+const TOGGLE_SIDEBOARD = '\u0000sideboard';
+
+/** `ceiling`: cards left the library unseen, so a count is the most that can be left ("≤3"). */
+function CardRow({ row, exhausted, hot, sub, ceiling }: { row: Row; exhausted: boolean; hot: boolean; sub?: boolean; ceiling?: boolean }) {
   const tone = row.left > 0 ? oddsTone(row.odds['1']) : 'cold';
+  const atMost = ceiling && row.left > 0;
   return (
     <div class={`row${exhausted ? ' dim' : ''}${sub ? ' sub' : ''}${hot ? ' hot' : ''}`} data-key={row.key}>
       <span class="body">
@@ -56,8 +64,12 @@ function CardRow({ row, exhausted, hot, sub }: { row: Row; exhausted: boolean; h
         {row.group ? null : <ManaCost cost={row.mana_cost} />}
       </span>
       <span class="right">
-        <span class="cnt">
-          <b>{row.left}</b>/{row.total}
+        <span class="cnt" title={atMost ? `At most ${row.left} left` : undefined}>
+          <b>
+            {atMost ? '≤' : ''}
+            {row.left}
+          </b>
+          /{row.total}
         </span>
         <span class={`pct ${tone}`}>{row.left > 0 ? formatPct(row.odds['1']) : '—'}</span>
       </span>
@@ -70,8 +82,14 @@ export function Panel(props: Props) {
   const state = payload?.state ?? null;
   const offline = link !== 'online' || payload?.tracker.state === 'offline';
   const sections = useMemo(() => (state ? buildSections(state, sort, settings.lands) : null), [state, sort, settings.lands]);
+  // Cards left the library unseen: counts are ceilings, and a line says so.
+  const ceiling = state ? unseenCount(state) > 0 : false;
+  const notice = state ? libraryNotice(state) : null;
   // The row under the shell-reported cursor: highlighted here, and reported
-  // up for the hover card. Gone the moment the cursor is off it.
+  // up for the hover card. Gone the moment the cursor is off it. This is the
+  // list's only highlight (no CSS :hover, which sticks once the window starts
+  // passing the mouse to Arena). The Lands, Sideboard and Drawn toggles carry
+  // keys too, for the highlight only.
   const [hotKey, setHotKey] = useState<string | null>(null);
   useEffect(() => {
     const rowsByKey = new Map<string, Row>();
@@ -79,14 +97,14 @@ export function Panel(props: Props) {
       for (const list of [sections.spells, sections.lands, sections.drawn]) for (const row of list) rowsByKey.set(row.key, row);
     }
     const hit = cursor && typeof document !== 'undefined' ? document.elementFromPoint(cursor.x, cursor.y) : null;
-    const el = hit instanceof Element ? hit.closest<HTMLElement>('.row[data-key]') : null;
-    const row = el ? rowsByKey.get(el.dataset.key ?? '') ?? null : null;
+    const el = hit instanceof Element ? hit.closest<HTMLElement>('.list [data-key]') : null;
+    const key = el?.dataset.key ?? null;
+    const row = key ? rowsByKey.get(key) ?? null : null;
+    setHotKey(key);
     if (row && el) {
       const rect = el.getBoundingClientRect();
-      setHotKey(row.key);
       onHover(row, { top: rect.top, bottom: rect.bottom });
     } else {
-      setHotKey(null);
       onHover(null, null);
     }
   }, [cursor, sections, onHover]);
@@ -97,9 +115,13 @@ export function Panel(props: Props) {
   const sideboardCount = sideboard.reduce((sum, card) => sum + card.count, 0);
   const pips = state ? deckColors(state.cards) : [];
   const h2h = payload?.head_to_head;
-  const session = payload?.session;
-  const sessionStyle = settings.sessionRecord ?? 'scoreboard';
+  const today = payload?.today;
+  const recordStyle = settings.sessionRecord ?? 'scoreboard';
   const active = showsLibrary(state);
+  // The flood meter shows with the game's library (live, or the game just over).
+  const floodPlace = settings.floodMeter ?? 'above';
+  const quality = active ? payload?.draw_quality ?? null : null;
+  const floodMeter = floodPlace !== 'off' && quality ? <FloodMeter quality={quality} /> : null;
 
   return (
     <div class={`panel density-${settings.density}`} role="group" aria-label="Deck panel">
@@ -150,6 +172,7 @@ export function Panel(props: Props) {
             <div class="t">
               Land drops
               <small>
+                {ceiling ? 'up to ' : ''}
                 {state.lands_left} of {state.library_size} left
               </small>
             </div>
@@ -186,13 +209,19 @@ export function Panel(props: Props) {
           </div>
           <div class="list">
             <div class="list-body">
+            {notice ? (
+              <div class="note warn" role="status">
+                {notice}
+              </div>
+            ) : null}
             {sections?.spells.map((row) => (
-              <CardRow key={row.key} row={row} exhausted={row.left === 0} hot={hotKey === row.key} />
+              <CardRow key={row.key} row={row} exhausted={row.left === 0} hot={hotKey === row.key} ceiling={ceiling} />
             ))}
             {sections && sections.lands.length > 0 ? (
               <button
                 type="button"
-                class={`row land-row${landsOpen ? ' open' : ''}`}
+                class={`row land-row${landsOpen ? ' open' : ''}${hotKey === TOGGLE_LANDS ? ' hot' : ''}`}
+                data-key={TOGGLE_LANDS}
                 onClick={() => setLandsOpen((v) => !v)}
                 aria-expanded={landsOpen}
                 aria-label={`Lands, ${state.lands_left} of ${state.lands_total} left`}
@@ -204,7 +233,11 @@ export function Panel(props: Props) {
                 </span>
                 <span class="right">
                   <span class="cnt">
-                    <b>{state.lands_left}</b>/{state.lands_total}
+                    <b>
+                      {ceiling && state.lands_left > 0 ? '≤' : ''}
+                      {state.lands_left}
+                    </b>
+                    /{state.lands_total}
                   </span>
                   <span class={`pct ${state.lands_left > 0 ? oddsTone(state.land_odds['1']) : 'cold'}`}>
                     {state.lands_left > 0 ? formatPct(state.land_odds['1']) : '—'}
@@ -213,11 +246,17 @@ export function Panel(props: Props) {
               </button>
             ) : null}
             {landsOpen
-              ? sections?.lands.map((row) => <CardRow key={row.key} row={row} exhausted={row.left === 0} hot={hotKey === row.key} sub />)
+              ? sections?.lands.map((row) => <CardRow key={row.key} row={row} exhausted={row.left === 0} hot={hotKey === row.key} sub ceiling={ceiling} />)
               : null}
             {sections && sections.drawn.length > 0 ? (
               <>
-                <button type="button" class="grp grp-toggle" onClick={() => setShowDrawn((v) => !v)} aria-expanded={showDrawn}>
+                <button
+                  type="button"
+                  class={`grp grp-toggle${hotKey === TOGGLE_DRAWN ? ' hot' : ''}`}
+                  data-key={TOGGLE_DRAWN}
+                  onClick={() => setShowDrawn((v) => !v)}
+                  aria-expanded={showDrawn}
+                >
                   Drawn ({sections.drawn.length}) <Chevron dir={showDrawn ? 'down' : 'right'} />
                 </button>
                 {showDrawn ? sections.drawn.map((row) => <CardRow key={row.key} row={row} exhausted hot={hotKey === row.key} />) : null}
@@ -226,7 +265,8 @@ export function Panel(props: Props) {
             {sideboardCount > 0 ? (
               <button
                 type="button"
-                class={`row side-row${sideboardOpen ? ' open' : ''}`}
+                class={`row side-row${sideboardOpen ? ' open' : ''}${hotKey === TOGGLE_SIDEBOARD ? ' hot' : ''}`}
+                data-key={TOGGLE_SIDEBOARD}
                 onClick={onToggleSideboard}
                 aria-expanded={sideboardOpen}
                 aria-label={`Sideboard, ${sideboardCount} cards`}
@@ -274,7 +314,9 @@ export function Panel(props: Props) {
           )}
         </div>
       )}
-      {sessionStyle !== 'off' && showsSessionRecord(sessionStyle, session) ? <SessionRecord session={session} style={sessionStyle} /> : null}
+      {floodPlace === 'above' ? floodMeter : null}
+      {recordStyle !== 'off' && showsTodayRecord(recordStyle, today) ? <TodayRecord today={today} style={recordStyle} /> : null}
+      {floodPlace === 'below' ? floodMeter : null}
     </div>
   );
 }

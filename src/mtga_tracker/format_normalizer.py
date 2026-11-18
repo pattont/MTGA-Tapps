@@ -57,6 +57,16 @@ def is_welcome_deck_format(value: Optional[str]) -> bool:
     return "welcomedeck" in normalize_match_text(value)
 
 
+def is_direct_challenge_format(value: Optional[str]) -> bool:
+    """Return True when Arena metadata identifies a Direct Challenge (a friend match).
+
+    Matches any Direct Challenge variant (Bo1, Traditional, Brawl), which
+    ``normalize_match_format`` may label by its deck format instead.
+    """
+    normalized = normalize_match_text(value)
+    return "directgame" in normalized or "directchallenge" in normalized
+
+
 def is_jump_in_format(value: Optional[str]) -> bool:
     """Return True when Arena metadata identifies a Jump In! event.
 

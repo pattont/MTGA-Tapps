@@ -82,3 +82,6 @@ src/mtga_tracker/_version.py
 # Session scratch
 fable_src.tar.gz
 _to_delete/
+
+# Database copies in subfolders of data/ (backups made by hand)
+data/**/*.sqlite3

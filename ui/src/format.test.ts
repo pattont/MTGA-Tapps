@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatTimeAgo } from './format';
+import { formatHoursMinutes, formatTimeAgo } from './format';
 
 describe('formatTimeAgo', () => {
   const now = new Date(2026, 10, 4, 9, 30);
@@ -18,5 +18,14 @@ describe('formatTimeAgo', () => {
 
   it('returns null for unreadable timestamps', () => {
     expect(formatTimeAgo('not a date', now)).toBeNull();
+  });
+});
+
+describe('formatHoursMinutes', () => {
+  it('reads minutes under an hour, hours and minutes above', () => {
+    expect(formatHoursMinutes(45 * 60)).toBe('45m');
+    expect(formatHoursMinutes(3 * 3600 + 20 * 60)).toBe('3h 20m');
+    expect(formatHoursMinutes(2 * 3600 + 4 * 60)).toBe('2h 04m');
+    expect(formatHoursMinutes(null)).toBe('—');
   });
 });

@@ -324,6 +324,7 @@ class UpdateHandoffMixin:
             self._console(message)
             self._reassert_after_update = True
             return
+        journaled = bool(pending)
         if not pending:
             known = failed_flag if parse_version(failed_flag) is not None else None
             pending = {"from": self.current_version, "to": known}
@@ -338,11 +339,47 @@ class UpdateHandoffMixin:
             message = f"The update to v{pending.get('to')} was not installed. Details: {log}"
         else:
             message = f"The last update did not finish. Details: {log}"
+        if journaled and self._blocked_by_smart_app_control(pending):
+            code = "blocked-by-windows"
+            target = f"v{pending['to']} " if pending.get("to") else ""
+            message = (
+                f"Windows Smart App Control blocked the {target}installer because it isn't "
+                f"code-signed, so Tapps Tracker is still on v{self.current_version}. Windows "
+                "may allow it once the release is more widely used; until then the "
+                "installer on the release page is blocked the same way."
+            )
         self._log(message)
         self._console(message)
         with self._lock:
             self._state = "error"
             self._error = {"code": code, "message": message}
+
+    def _blocked_by_smart_app_control(self, pending: Dict[str, Any]) -> bool:
+        """A Windows install that never started (Setup writes its /LOG as soon
+        as it runs, so there is none) on a PC with Smart App Control on: the
+        unsigned setup was blocked. Anything else keeps the generic message."""
+        kind = pending.get("install_kind")
+        if kind is None:
+            try:
+                kind = self.install_info().kind
+            except Exception:
+                return False
+        if kind != "windows-installer":
+            return False
+        log = pending.get("log")
+        if log:
+            try:
+                if Path(log).stat().st_size > 0:
+                    return False
+            except OSError:
+                pass
+        probe = getattr(self._installer, "smart_app_control_state", None)
+        if not callable(probe):
+            return False
+        try:
+            return probe() == "on"
+        except Exception:
+            return False
 
     def _newest_install_log(self) -> str:
         logs = list(self.state_dir.glob("install-*.log")) + list(self.state_dir.glob("swap-*.log"))

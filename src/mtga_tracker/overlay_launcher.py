@@ -135,8 +135,38 @@ def load_overlay_enabled(path: Optional[Path] = None) -> bool:
     return bool(section.get("enabled", OVERLAY_ENABLED_DEFAULT))
 
 
+#: Which panels the overlay draws (Settings → In-game overlay → Panels): the
+#: deck panel and the opponent panel, or one of them alone. There is no
+#: "neither": that is the overlay turned off.
+OVERLAY_PANELS = ("both", "deck", "opponent")
+OVERLAY_PANELS_DEFAULT = "both"
+
+
+def load_overlay_panels(path: Optional[Path] = None) -> str:
+    """The saved "overlay.panels" choice; the default for a missing,
+    unreadable or unknown value."""
+    settings_path = path or _settings_path()
+    try:
+        document = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return OVERLAY_PANELS_DEFAULT
+    section = document.get(SETTINGS_SECTION) if isinstance(document, dict) else None
+    value = section.get("panels") if isinstance(section, dict) else None
+    return value if value in OVERLAY_PANELS else OVERLAY_PANELS_DEFAULT
+
+
+def save_overlay_panels(panels: str, path: Optional[Path] = None) -> None:
+    if panels not in OVERLAY_PANELS:
+        raise ValueError(f"Unknown overlay panels choice: {panels!r}")
+    _save_overlay_setting("panels", panels, path)
+
+
 def save_overlay_enabled(enabled: bool, path: Optional[Path] = None) -> None:
     """Merge the flag into settings.json without touching other sections."""
+    _save_overlay_setting("enabled", bool(enabled), path)
+
+
+def _save_overlay_setting(key: str, value: Any, path: Optional[Path] = None) -> None:
     settings_path = path or _settings_path()
     try:
         document = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -147,7 +177,7 @@ def save_overlay_enabled(enabled: bool, path: Optional[Path] = None) -> None:
     section = document.get(SETTINGS_SECTION)
     if not isinstance(section, dict):
         section = {}
-    section["enabled"] = bool(enabled)
+    section[key] = value
     document[SETTINGS_SECTION] = section
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
@@ -237,6 +267,8 @@ class OverlayManager:
         self._external_scan: Optional[Tuple[float, List[int]]] = None
         # ((mtime_ns, size), enabled) of the settings file as last read.
         self._enabled_cache: Optional[Tuple[Tuple[int, int], bool]] = None
+        # The same for the panels choice.
+        self._panels_cache: Optional[Tuple[Tuple[int, int], str]] = None
 
     #: How long a process-table scan is trusted by `running`/`status()`. The
     #: tray asks every 3 s; each scan spawns pgrep+ps (tasklist on Windows),
@@ -270,6 +302,22 @@ class OverlayManager:
             return cached[1]
         value = load_overlay_enabled(path)
         self._enabled_cache = (stamp, value) if stamp is not None else None
+        return value
+
+    @property
+    def panels(self) -> str:
+        """Which panels the overlay draws: "both", "deck" or "opponent"."""
+        path = self._settings_path or _settings_path()
+        try:
+            stat = path.stat()
+            stamp: Optional[Tuple[int, int]] = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            stamp = None
+        cached = self._panels_cache
+        if stamp is not None and cached is not None and cached[0] == stamp:
+            return cached[1]
+        value = load_overlay_panels(path)
+        self._panels_cache = (stamp, value) if stamp is not None else None
         return value
 
     @property
@@ -311,6 +359,7 @@ class OverlayManager:
         binary = self.binary
         return {
             "enabled": self.enabled,
+            "panels": self.panels,
             "available": binary is not None,
             "running": self.running,
             "binary": str(binary) if binary else None,
@@ -350,6 +399,30 @@ class OverlayManager:
                 self.start()
             else:
                 self.stop()
+        self._notify()
+        return self.status()
+
+    def set_panels(self, panels: str) -> Dict[str, Any]:
+        """Save which panels the overlay draws and tell a running overlay
+        (a second launch with `--panels`, like `send`). An overlay that is
+        not running reads the choice from its launch arguments next time."""
+        if panels not in OVERLAY_PANELS:
+            raise ValueError(f"Unknown overlay panels choice: {panels!r}")
+        with self._lock:
+            save_overlay_panels(panels, self._settings_path)
+            binary = self.binary
+            if binary is not None and self.running:
+                try:
+                    self._popen(
+                        [str(binary), "--panels", panels],
+                        cwd=str(binary.parent),
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        **_detached_kwargs(),
+                    )
+                except OSError as exc:
+                    self._last_error = f"Could not reach the overlay: {exc}"
         self._notify()
         return self.status()
 
@@ -405,6 +478,9 @@ class OverlayManager:
         # --parent-pid: the overlay quits on its own once this process is
         # gone (crash, Task Manager, uninstall), so it never outlives us.
         args = [str(binary), "--log", str(self.log_path), "--parent-pid", str(os.getpid())]
+        # Every launch and handoff carries the Panels choice: settings.json
+        # owns it and the overlay's own file only mirrors it.
+        args += ["--panels", self.panels]
         if self._api_url:
             args += ["--api", self._api_url]
         return args

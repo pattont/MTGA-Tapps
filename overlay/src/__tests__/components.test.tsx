@@ -1,11 +1,12 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Panel, deckColors } from '../components/Panel';
 import { Rail, deckTone } from '../components/Rail';
 import { Flyout } from '../components/Flyout';
-import { hoverCardTop, hoverSide, measureContentHeight, tintAlpha } from '../App';
+import { rankText } from '../components/TodayRecord';
+import { App, hoverCardTop, hoverSide, measureContentHeight, tintAlpha } from '../App';
 import { defaultSettings } from '../tauri';
-import { brawlState, inGamePayload, idlePayload, offlinePayload, sessionRecord } from './fixtures';
+import { brawlState, drawQuality, inGamePayload, idlePayload, offlinePayload, todayRecord } from './fixtures';
 
 afterEach(cleanup);
 
@@ -110,6 +111,35 @@ describe('Panel', () => {
     expect(onToggleSideboard).toHaveBeenCalled();
   });
 
+  it('marks counts as ceilings and says why when cards left the library unseen', () => {
+    const payload = inGamePayload();
+    payload.state = { ...payload.state!, library_size: 21, unseen: 24, draw_pool: 45 };
+    const { container } = render(<Panel {...panelProps({ payload })} />);
+    expect(container.querySelector('.note.warn')?.textContent).toContain('24 cards left your library');
+    // The note leads the list, where it cannot scroll out of sight.
+    expect(container.querySelector('.list-body')?.firstElementChild?.className).toBe('note warn');
+    expect(screen.getByRole('button', { name: /Lands, 11 of 20 left/ }).textContent).toContain('≤11/20');
+    expect(container.querySelector('.lands small')?.textContent).toBe('up to 11 of 21 left');
+    const rage = container.querySelector('[data-key="Monstrous Rage"] .cnt');
+    expect(rage?.textContent).toBe('≤4/4');
+    expect(rage?.getAttribute('title')).toBe('At most 4 left');
+    // A card with none left is certain: no ceiling mark.
+    expect(container.querySelector('[data-key="Shock"] .cnt')?.textContent).toBe('0/4');
+  });
+
+  it('warns that counts may be stale after a message Arena only summarized', () => {
+    const payload = inGamePayload();
+    payload.state = { ...payload.state!, log_gap: true };
+    const { container } = render(<Panel {...panelProps({ payload })} />);
+    expect(container.querySelector('.note.warn')?.textContent).toContain("Arena's log skipped a large move");
+    expect(container.querySelector('[data-key="Monstrous Rage"] .cnt')?.textContent).toBe('4/4');
+  });
+
+  it('shows no note while every card is accounted for', () => {
+    const { container } = render(<Panel {...panelProps()} />);
+    expect(container.querySelector('.note.warn')).toBeNull();
+  });
+
   it('keeps the final library up on the results screen', () => {
     const payload = inGamePayload();
     payload.state = { ...payload.state!, game_active: false, game_over: true };
@@ -133,13 +163,14 @@ describe('Panel', () => {
   });
 });
 
-describe('Session record', () => {
-  const withSession = (session = sessionRecord(), base = inGamePayload()) => ({ ...base, session });
+describe("Today's record", () => {
+  const withSession = (today = todayRecord(), base = inGamePayload()) => ({ ...base, today });
 
   it('shows the record, win rate and Play / Draw win rates on one line by default', () => {
     const { container } = render(<Panel {...panelProps({ payload: withSession() })} />);
     const footer = container.querySelector('.ss.ss-line');
     expect(footer).toBeTruthy();
+    expect(footer?.querySelector('.ss-lab')?.textContent).toBe('Today');
     expect(footer?.querySelector('.ss-rec')?.textContent).toBe('6–2');
     expect(footer?.querySelector('.ss-rate')?.textContent).toBe('75%');
     expect(Array.from(footer?.querySelectorAll('.ss-pd-v .ss-up') ?? []).map((el) => el.textContent)).toEqual(['67%', '80%']);
@@ -148,17 +179,44 @@ describe('Session record', () => {
     expect(container.querySelector('.panel')?.lastElementChild).toBe(footer);
   });
 
-  it('splits Play and Draw records under a win/loss bar', () => {
+  describe('full (the Stream Kit record widget)', () => {
     const settings = { ...defaultSettings(), sessionRecord: 'split' as const };
-    const { container } = render(<Panel {...panelProps({ payload: withSession(), settings })} />);
-    expect(container.querySelector('.ss.ss-split')).toBeTruthy();
-    expect((container.querySelector('.ss-bar i') as HTMLElement).style.width).toBe('75%');
-    const sides = Array.from(container.querySelectorAll('.ss-sides > span')).map((el) => el.textContent);
-    expect(sides).toEqual(['Play2–167%', 'Draw4–180%']);
+    const footer = (session = todayRecord()) => render(<Panel {...panelProps({ payload: withSession(session), settings })} />).container.querySelector('.ss.ss-split');
+
+    it('puts the record over the rank and deck chips, with Play and Draw columns', () => {
+      const el = footer();
+      expect(el?.querySelector('.ss-rec')?.textContent).toBe('6–2');
+      expect(el?.querySelector('.ss-rate')?.textContent).toBe('75%');
+      expect(Array.from(el?.querySelectorAll('.ss-chip') ?? []).map((chip) => chip.textContent)).toEqual(['Diamond 2 · 3/6', 'Deck 3–1']);
+      // Each side's win rate over its record, from the first game.
+      expect(Array.from(el?.querySelectorAll('.ss-col') ?? []).map((col) => col.textContent)).toEqual(['Play67%2–1', 'Draw80%4–1']);
+      expect(el?.getAttribute('aria-label')).toMatch(/rank: Diamond 2 · 3\/6; with this deck: 3 wins, 1 loss/);
+    });
+
+    it('shows no rank outside ranked queues and keeps the deck record', () => {
+      const el = footer({ ...todayRecord(), rank: null });
+      expect(Array.from(el?.querySelectorAll('.ss-chip') ?? []).map((chip) => chip.textContent)).toEqual(['Deck 3–1']);
+    });
+
+    it('drops the chips without a rank or a deck result, and a side with no games', () => {
+      // An older tracker sends neither field.
+      const { rank: _rank, deck: _deck, ...older } = todayRecord();
+      const el = footer({ ...older, draw: { wins: 0, losses: 0 } });
+      expect(el?.querySelector('.ss-chips')).toBeNull();
+      expect(Array.from(el?.querySelectorAll('.ss-col') ?? []).map((col) => col.textContent)).toEqual(['Play67%2–1']);
+      expect(footer({ ...todayRecord(), deck: { wins: 0, losses: 0 }, rank: null })?.querySelector('.ss-chips')).toBeNull();
+    });
+
+    it('names Mythic by rank or percentile', () => {
+      const mythic = { rank_class: 'Mythic', rank_level: 1, rank_step: 0, rank_steps: 1, mythic_percentile: 92, mythic_rank: null };
+      expect(rankText(mythic)).toBe('Mythic 92%');
+      expect(rankText({ ...mythic, mythic_rank: 431 })).toBe('Mythic #431');
+      expect(rankText({ ...mythic, mythic_percentile: null })).toBe('Mythic');
+    });
   });
 
   it('shows draws, a red rate under 50% and a dash for a side with no games', () => {
-    const session = { ...sessionRecord(), wins: 1, losses: 3, draws: 1, win_rate: 25, play: { wins: 1, losses: 3 }, draw: { wins: 0, losses: 0 } };
+    const session = { ...todayRecord(), wins: 1, losses: 3, draws: 1, win_rate: 25, play: { wins: 1, losses: 3 }, draw: { wins: 0, losses: 0 } };
     const { container } = render(<Panel {...panelProps({ payload: withSession(session) })} />);
     expect(container.querySelector('.ss-rec')?.textContent).toBe('1–3–1');
     expect(container.querySelector('.ss-pd-v .ss-down')?.textContent).toBe('25%');
@@ -166,15 +224,60 @@ describe('Session record', () => {
   });
 
   it('stays between games and hides when off, before the first result, or without a tracker', () => {
-    const { container, rerender } = render(<Panel {...panelProps({ payload: withSession(sessionRecord(), idlePayload()) })} />);
+    const { container, rerender } = render(<Panel {...panelProps({ payload: withSession(todayRecord(), idlePayload()) })} />);
     expect(screen.getByText(/Waiting for a match/)).toBeTruthy();
     expect(container.querySelector('.ss')).toBeTruthy();
     rerender(<Panel {...panelProps({ payload: withSession(), settings: { ...defaultSettings(), sessionRecord: 'off' } })} />);
     expect(container.querySelector('.ss')).toBeNull();
-    rerender(<Panel {...panelProps({ payload: withSession({ ...sessionRecord(), games: 0, wins: 0, losses: 0, win_rate: null, play: { wins: 0, losses: 0 }, draw: { wins: 0, losses: 0 } }) })} />);
+    rerender(<Panel {...panelProps({ payload: withSession({ ...todayRecord(), games: 0, wins: 0, losses: 0, win_rate: null, play: { wins: 0, losses: 0 }, draw: { wins: 0, losses: 0 } }) })} />);
     expect(container.querySelector('.ss')).toBeNull();
     rerender(<Panel {...panelProps({ payload: offlinePayload(), link: 'offline' })} />);
     expect(container.querySelector('.ss')).toBeNull();
+  });
+});
+
+describe('flood meter', () => {
+  const withMeter = (floodMeter: 'off' | 'above' | 'below', payload = inGamePayload()) =>
+    render(
+      <Panel
+        {...panelProps({
+          payload: { ...payload, today: todayRecord(), draw_quality: drawQuality() },
+          settings: { ...defaultSettings(), floodMeter },
+        })}
+      />,
+    ).container;
+
+  it('sits at the very bottom when set below today\'s record', () => {
+    const container = withMeter('below');
+    const meter = container.querySelector('.fm');
+    expect(meter?.classList.contains('fm-flood')).toBe(true);
+    expect(meter?.querySelector('.fm-status')?.textContent).toBe('Flooding');
+    expect(meter?.querySelector('.fm-numbers')?.textContent).toBe('7 of 10 · exp 4.0 (+3.0)');
+    expect(container.querySelector('.panel')?.lastElementChild).toBe(meter);
+    expect(meter?.previousElementSibling?.classList.contains('ss')).toBe(true);
+    // The gauge: gold screw zone from the left, blue flood zone to the right, the dot at 7 of 10.
+    const style = (meter as HTMLElement).style;
+    expect(style.getPropertyValue('--fm-now')).toBe('70%');
+    expect(style.getPropertyValue('--fm-expected')).toBe('40%');
+    expect(parseFloat(style.getPropertyValue('--fm-screw'))).toBeLessThan(40);
+    expect(parseFloat(style.getPropertyValue('--fm-flood'))).toBeGreaterThan(40);
+  });
+
+  it('goes above today\'s record by default, or nowhere when off', () => {
+    expect(defaultSettings().floodMeter).toBe('above');
+    const above = withMeter('above');
+    expect(above.querySelector('.fm')?.nextElementSibling?.classList.contains('ss')).toBe(true);
+    cleanup();
+    expect(withMeter('off').querySelector('.fm')).toBeNull();
+  });
+
+  it('shows only with a game on screen, and not before a card is seen', () => {
+    expect(withMeter('below', idlePayload()).querySelector('.fm')).toBeNull();
+    cleanup();
+    const { container } = render(
+      <Panel {...panelProps({ payload: { ...inGamePayload(), draw_quality: { ...drawQuality(), total_cards_seen: 0, lands_seen: 0 } } })} />,
+    );
+    expect(container.querySelector('.fm')).toBeNull();
   });
 });
 
@@ -201,6 +304,27 @@ describe('deckTone', () => {
     expect(deckTone(14, 60)).toBe('low');
     expect(deckTone(60, 100)).toBe('ok');
     expect(deckTone(50, 100)).toBe('warn');
+  });
+});
+
+describe('App with the deck panel off (opponent only)', () => {
+  it('draws nothing of the deck panel, and still opens the settings when asked', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => undefined)));
+    (window as { __TAPPS_SETTINGS__?: object }).__TAPPS_SETTINGS__ = { deckPanel: false };
+    const { container } = render(<App />);
+    await vi.waitFor(() => expect(container.querySelector('.root.deck-off')).toBeTruthy());
+    expect(container.querySelector('.rail')).toBeNull();
+    expect(container.querySelector('.panel')).toBeNull();
+    expect(container.querySelector('.root')?.children.length).toBe(0);
+    // The tracker's menu, or the opponent panel's gear, asks for the settings.
+    window.dispatchEvent(new CustomEvent('tapps:overlay-open-settings'));
+    await vi.waitFor(() => expect(screen.getByRole('dialog', { name: 'Overlay settings' })).toBeTruthy());
+    expect(container.querySelector('.rail')).toBeNull();
+    // The tracker turns the deck panel back on: the rail returns.
+    window.dispatchEvent(new CustomEvent('tapps:overlay-settings', { detail: { ...defaultSettings(), deckPanel: true } }));
+    await vi.waitFor(() => expect(container.querySelector('.rail')).toBeTruthy());
+    delete (window as { __TAPPS_SETTINGS__?: object }).__TAPPS_SETTINGS__;
+    vi.unstubAllGlobals();
   });
 });
 
@@ -242,15 +366,30 @@ describe('Flyout', () => {
     expect(screen.getByText('850 px')).toBeTruthy();
   });
 
-  it('switches the session record between off, one line and split', () => {
+  it("switches today's record between off, one line and full", () => {
     const onChange = vi.fn();
     render(<Flyout settings={defaultSettings()} platform="windows" onChange={onChange} onClose={() => undefined} onQuit={() => undefined} />);
-    const group = screen.getByRole('group', { name: 'Session record' });
+    const group = screen.getByRole('group', { name: "Today's record" });
     expect(group.querySelector('button.on')?.textContent).toBe('One line');
-    fireEvent.click(screen.getByText('Split'));
+    fireEvent.click(within(group).getByText('Full'));
     expect(onChange.mock.calls[0][0].sessionRecord).toBe('split');
-    fireEvent.click(screen.getByText('Off'));
+    fireEvent.click(within(group).getByText('Off'));
     expect(onChange.mock.calls[1][0].sessionRecord).toBe('off');
+  });
+
+  it('frames today\'s record and the flood meter together, under Rows', () => {
+    const onChange = vi.fn();
+    const { container } = render(<Flyout settings={defaultSettings()} platform="windows" onChange={onChange} onClose={() => undefined} onQuit={() => undefined} />);
+    const box = screen.getByRole('group', { name: 'Bottom of the panel' });
+    expect(box.previousElementSibling?.textContent).toMatch(/^Rows/);
+    expect(Array.from(box.querySelectorAll('.r > span:first-child')).map((el) => el.textContent)).toEqual(['Flood meter', "Today's record"]);
+    const flood = within(box).getByRole('group', { name: 'Flood meter' });
+    expect(flood.querySelector('button.on')?.textContent).toBe('Above');
+    fireEvent.click(within(flood).getByText('Below'));
+    expect(onChange.mock.calls[0][0].floodMeter).toBe('below');
+    fireEvent.click(within(flood).getByText('Off'));
+    expect(onChange.mock.calls[1][0].floodMeter).toBe('off');
+    expect(container.querySelectorAll('.box')).toHaveLength(1);
   });
 
   it('restores every preference but keeps the window and the panel state', () => {
@@ -261,7 +400,7 @@ describe('Flyout', () => {
       scale: 150,
       panelMaxHeight: 400,
       dock: 'right' as const,
-      hotkeysWindows: { toggle: 'Ctrl+Alt+T', visibility: 'Ctrl+Alt+H' },
+      hotkeysWindows: { toggle: 'Ctrl+Alt+T', visibility: 'Ctrl+Alt+H', opponent: 'Ctrl+Alt+O' },
       panelOpen: true,
       panelPinned: true,
       positions: { leftY: 120, rightY: null, floatX: 40, floatY: 50 },
@@ -308,5 +447,57 @@ describe('Panel hover', () => {
     } finally {
       document.elementFromPoint = original;
     }
+  });
+
+  it('clears the highlight when the cursor moves onto the board beside the panel', () => {
+    // The gutter is still inside the window, so the shell keeps reporting a
+    // point; it is just not on a row.
+    const onHover = vi.fn();
+    const { rerender, container } = render(<Panel {...panelProps({ onHover })} />);
+    const target = container.querySelectorAll<HTMLElement>('.row[data-key]')[2];
+    const gutter = document.createElement('div');
+    const original = document.elementFromPoint;
+    try {
+      document.elementFromPoint = () => target;
+      rerender(<Panel {...panelProps({ onHover, cursor: { x: 40, y: 140 } })} />);
+      // (.pct.hot is an odds colour, not a highlight.)
+      expect(container.querySelectorAll('.list [data-key].hot')).toHaveLength(1);
+      document.elementFromPoint = () => gutter;
+      rerender(<Panel {...panelProps({ onHover, cursor: { x: 450, y: 140 } })} />);
+      expect(container.querySelectorAll('.list [data-key].hot')).toHaveLength(0);
+      expect(onHover.mock.calls.at(-1)).toEqual([null, null]);
+    } finally {
+      document.elementFromPoint = original;
+    }
+  });
+
+  it('highlights the Lands and Sideboard rows under the cursor without a card preview', () => {
+    const onHover = vi.fn();
+    const payload = inGamePayload();
+    payload.state!.sideboard = [{ name: 'Obliterating Bolt', type_category: 'Sorcery', mana_cost: '{1}{R}', mana_value: 2, count: 3, land: false }];
+    const { rerender, container } = render(<Panel {...panelProps({ payload, onHover })} />);
+    const original = document.elementFromPoint;
+    try {
+      for (const selector of ['.land-row', '.side-row']) {
+        const target = container.querySelector<HTMLElement>(selector)!;
+        document.elementFromPoint = () => target;
+        rerender(<Panel {...panelProps({ payload, onHover, cursor: { x: 40, y: Math.random() * 500 } })} />);
+        expect(target.classList.contains('hot')).toBe(true);
+        expect(onHover.mock.calls.at(-1)).toEqual([null, null]);
+      }
+    } finally {
+      document.elementFromPoint = original;
+    }
+  });
+
+  it('never highlights list rows with CSS :hover, which sticks once the window passes the mouse to Arena', async () => {
+    // From disk: vitest hands CSS imports (?raw included) back empty.
+    const fsModule = 'node:fs';
+    const { readFileSync } = (await import(/* @vite-ignore */ fsModule)) as { readFileSync: (path: string, encoding: 'utf8') => string };
+    // Relative to overlay/, where vitest runs (npm test).
+    const css = readFileSync('src/styles.css', 'utf8');
+    expect(css).toMatch(/\.row\.hot \{/);
+    expect(css).not.toMatch(/\.row:hover/);
+    expect(css).not.toMatch(/\.grp-toggle:hover/);
   });
 });

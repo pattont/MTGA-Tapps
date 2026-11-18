@@ -64,6 +64,10 @@ pub const PANEL_GUTTER: i32 = 282;
 /// rail as beside the panel; the window has to lend it 1.2× the pixels.
 pub const RAIL_GUTTER: i32 = PANEL_GUTTER * 6 / 5;
 pub const PANEL_MIN_HEIGHT: i32 = 160;
+/// The opponent panel's rail: as wide as the deck rail, shorter (no logo,
+/// no gear). Drawn at RAIL_BOOST like the deck rail: its content is 163 px
+/// laid out (overlay/scripts/screenshots.mjs logs it), 196 px drawn.
+pub const OPPONENT_RAIL_HEIGHT: i32 = 196;
 
 /// Vertical gap kept from the work area's top and bottom when clamping.
 const EDGE_MARGIN: i32 = 8;
@@ -87,6 +91,51 @@ pub fn size_for(layout: Layout, content_height: i32, work_area: &Rect, max_heigh
             height: fit_height(scaled(content_height), work_area, max_height),
         },
     }
+}
+
+/// The opponent window's size: its own (shorter) rail, or a panel exactly
+/// like the deck panel's. It never shows the settings flyout.
+pub fn opponent_size_for(layout: Layout, content_height: i32, work_area: &Rect, max_height: u32, scale_pct: u32) -> Size {
+    match layout {
+        Layout::Rail => {
+            let scaled = |v: i32| (v as i64 * scale_pct.clamp(50, 200) as i64 / 100) as i32;
+            Size { width: scaled(RAIL_WIDTH), height: scaled(OPPONENT_RAIL_HEIGHT) }
+        }
+        Layout::Panel => size_for(Layout::Panel, content_height, work_area, max_height, scale_pct, false),
+    }
+}
+
+/// The opponent panel docks on the edge opposite the deck panel, so the two
+/// never overlap; beside a floating deck panel it takes the right edge.
+pub fn opponent_dock(deck: Dock) -> Dock {
+    match deck {
+        Dock::Left | Dock::Float => Dock::Right,
+        Dock::Right => Dock::Left,
+    }
+}
+
+/// Where each window docks: (deck window, opponent window). With the deck
+/// panel on, the Dock setting is the deck panel's and the opponent takes the
+/// other edge. With it off (opponent only), the setting places the panel the
+/// player sees, the opponent's (the right edge for Float: it never floats),
+/// and the empty deck window, which then only ever shows the settings, takes
+/// the edge across from it.
+pub fn pane_docks(setting: Dock, deck_panel: bool) -> (Dock, Dock) {
+    if deck_panel {
+        return (setting, opponent_dock(setting));
+    }
+    let opponent = match setting {
+        Dock::Left => Dock::Left,
+        Dock::Right | Dock::Float => Dock::Right,
+    };
+    (opponent_dock(opponent), opponent)
+}
+
+/// Click-through for the deck window while the deck panel is off: nothing is
+/// drawn in it, so it never takes the mouse, except while the settings are
+/// open in it.
+pub fn hidden_click_through(flown_out: bool) -> bool {
+    !flown_out
 }
 
 /// The panel's height: its content, between the minimum and the smaller of
@@ -247,6 +296,36 @@ mod tests {
         assert_eq!(size_for(Layout::Rail, 100, &WORK, 300, 100, true).height, RAIL_HEIGHT);
         assert_eq!(size_for(Layout::Rail, 5000, &WORK, 300, 100, true).height, 1055 - 16);
         assert_eq!(size_for(Layout::Rail, 640, &WORK, 300, 150, true).width, (RAIL_WIDTH + RAIL_GUTTER) * 3 / 2);
+    }
+
+    #[test]
+    fn opponent_only_puts_the_opponent_panel_where_the_dock_setting_says() {
+        // Both panels: the setting is the deck panel's.
+        assert_eq!(pane_docks(Dock::Left, true), (Dock::Left, Dock::Right));
+        assert_eq!(pane_docks(Dock::Right, true), (Dock::Right, Dock::Left));
+        assert_eq!(pane_docks(Dock::Float, true), (Dock::Float, Dock::Right));
+        // Opponent only: the setting is the opponent panel's, and the empty
+        // deck window (the settings' home) is never on the same edge.
+        assert_eq!(pane_docks(Dock::Left, false), (Dock::Right, Dock::Left));
+        assert_eq!(pane_docks(Dock::Right, false), (Dock::Left, Dock::Right));
+        assert_eq!(pane_docks(Dock::Float, false), (Dock::Left, Dock::Right));
+    }
+
+    #[test]
+    fn a_deck_window_with_its_panel_off_takes_the_mouse_only_for_the_settings() {
+        assert!(hidden_click_through(false));
+        assert!(!hidden_click_through(true));
+    }
+
+    #[test]
+    fn the_opponent_panel_takes_the_other_edge() {
+        assert_eq!(opponent_dock(Dock::Left), Dock::Right);
+        assert_eq!(opponent_dock(Dock::Right), Dock::Left);
+        assert_eq!(opponent_dock(Dock::Float), Dock::Right);
+        // Its rail is its own height; its panel is the deck panel's.
+        assert_eq!(opponent_size_for(Layout::Rail, 9999, &WORK, 4000, 100), Size { width: RAIL_WIDTH, height: OPPONENT_RAIL_HEIGHT });
+        assert_eq!(opponent_size_for(Layout::Rail, 9999, &WORK, 4000, 150).height, OPPONENT_RAIL_HEIGHT * 3 / 2);
+        assert_eq!(opponent_size_for(Layout::Panel, 500, &WORK, 800, 100), size_for(Layout::Panel, 500, &WORK, 800, 100, false));
     }
 
     #[test]

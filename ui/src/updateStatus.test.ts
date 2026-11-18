@@ -118,6 +118,17 @@ describe('updatePillModel', () => {
     ).toMatchObject({ kind: 'retry', label: 'Update failed — retry', title: 'Checksum mismatch' });
   });
 
+  it('names Windows when Smart App Control blocked the installer', () => {
+    const blocked = updatePillModel(
+      updateStatus({ state: 'error', error: { code: 'blocked-by-windows', message: 'Smart App Control blocked it' } }),
+    );
+    expect(blocked).toMatchObject({
+      kind: 'retry',
+      label: 'Blocked by Windows — retry',
+      title: 'Smart App Control blocked it',
+    });
+  });
+
   it('hides skipped versions unless the update is mandatory', () => {
     expect(updatePillModel(updateStatus({ state: 'available', skipped: true })).visible).toBe(false);
     const mandatory = updatePillModel(updateStatus({ state: 'available', skipped: true, mandatory: true }));

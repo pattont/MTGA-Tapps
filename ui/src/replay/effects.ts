@@ -276,6 +276,11 @@ export function removalKind(draft: BoardDraft, event: MoveEvent, prev: ObjectSta
   }
 }
 
+function paysForOwnAbility(draft: BoardDraft, obj: ObjId): boolean {
+  const top = draft.base.stack[draft.base.stack.length - 1];
+  return top?.kind === 'activated' && top.obj === obj;
+}
+
 function noteMove(window: WindowDraft, draft: BoardDraft, event: MoveEvent): void {
   const prev = draft.get(event.obj);
   if (event.to === 'battlefield') {
@@ -286,6 +291,10 @@ function noteMove(window: WindowDraft, draft: BoardDraft, event: MoveEvent): voi
   if (prev?.zone === 'battlefield') {
     const kind = removalKind(draft, event, prev);
     if (!kind) return;
+    // A card sacrificed to pay for its own ability (Fabled Passage, Strip
+    // Mine, a Treasure) leaves at once: held, it sat dimmed beside the land
+    // it fetched until the next action.
+    if (kind === 'sacrificed' && paysForOwnAbility(draft, event.obj)) return;
     const marks = window.object(event.obj);
     let source: EffectSource | null;
     if (event.by) source = sourceFor(window, event.by, draft);

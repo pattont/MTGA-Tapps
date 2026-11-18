@@ -197,17 +197,6 @@ function WidgetOptions({
       onChange={(sort) => onChange({ sort })}
     />
   );
-  const period = (
-    <Select
-      label="Record"
-      value={options.period}
-      choices={[
-        ['session', 'Session'],
-        ['today', 'Today'],
-      ]}
-      onChange={(period) => onChange({ period })}
-    />
-  );
   switch (widget.id) {
     case 'overlay':
       return (
@@ -271,7 +260,6 @@ function WidgetOptions({
             choices={GAME_COUNTS.map((count) => [count, count === 1 ? 'Last game only' : `Last ${count}`] as [number, string])}
             onChange={(count) => onChange({ count })}
           />
-          {period}
         </>
       );
     case 'matchup':
@@ -287,11 +275,7 @@ function WidgetOptions({
         </>
       );
     case 'record':
-      return (
-        <>
-          {period}
-        </>
-      );
+      return null;
     case 'deckstats':
       return idle;
     case 'opponent':
@@ -320,14 +304,12 @@ function WidgetOptions({
             choices={SECONDS.map((seconds) => [seconds, `${seconds} seconds`] as [number, string])}
             onChange={(seconds) => onChange({ seconds })}
           />
-          {period}
         </>
       );
     case 'break':
       return (
         <>
           <TextField label="Title" value={options.title} onChange={(title) => onChange({ title })} />
-          {period}
         </>
       );
     case 'spotlight':

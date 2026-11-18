@@ -40,7 +40,7 @@ lands, combat, life totals, stack resolution), writes tracked games to the local
 analytics database, and serves the dashboard. The **Live Scoreboard** page
 sits right in the dashboard: both players' life, colors, and deck, your record
 with this deck and against this opponent (and, in Brawl, against their
-commander), the turn clock, session record, today's games, and a play-by-play
+commander), the turn clock, today's record and games, and a play-by-play
 feed that reads exactly like the per-game timeline — no separate window to
 manage. Between games the previous game's final scoreboard stays up until the
 next match starts.
@@ -150,7 +150,8 @@ backup of your history. Both live in [Settings](#settings).
 **The long game.** Match-level records (a Bo3 counts once, like the ladder
 does), win-rate trends, How Games End with per-reason percentages — concedes,
 damage, decking, poison, timeouts — Constructed Ranked lifetime and per-season
-stats beside the rank chart, session habits and fatigue splits, format
+stats beside the rank chart, win rates by weekday, time of day and games into
+the day, every day you played with its record, format
 breakdowns, and a database health audit that can repair its own
 inconsistencies. Historical backfills recover stats where the recorded
 events contain enough evidence; unavailable values remain blank.
@@ -162,8 +163,7 @@ menu-bar / tray icon. A **Tracker** card at the top shows your game count,
 version and file locations. Below it:
 
 - **General**: **Startup** (start with Windows or macOS, and whether to open the
-  dashboard), **Sessions** (how long a break starts a new session; four hours by
-  default) and **Updates** (automatic checks, downloads and installs, plus
+  dashboard) and **Updates** (automatic checks, downloads and installs, plus
   **Check now**).
 - **Features**: on/off switches for the [in-game overlay](#in-game-overlay),
   [Buy on Paper](#buy-on-paper) and [Deck AI](#ai-deck-identification-optional),
@@ -175,7 +175,7 @@ version and file locations. Below it:
 Running Tapps Tracker again while it's already open does nothing, so you never
 get two copies tracking at once.
 
-![Settings: Startup, Sessions, Updates, the in-game overlay, Buy on Paper, Deck AI and Deck Finder creators](docs/images/general-settings.png)
+![Settings: Startup, Updates, the in-game overlay, Buy on Paper, Deck AI and Deck Finder creators](docs/images/general-settings.png)
 
 ## In-game overlay
 
@@ -208,10 +208,28 @@ into one row, the sideboard is a row, and in Brawl the cards already drawn
 collapse into a **Drawn** group. When the game ends the final library stays
 up, marked **FINAL**, until you leave the results screen.
 
-The foot of the panel shows this session's record: wins–losses, win rate, and
-your win rate on the play and on the draw. It stays up between games. Pick
-**One line** (the default), **Split** (a win/loss bar with the Play and Draw
-records under it) or **Off** under **Session record** in the ⚙ menu.
+The foot of the panel shows today's record (every game since midnight):
+wins–losses, win rate, and your win rate on the play and on the draw. It stays
+up between games. Pick **One line** (the default), **Full** (the Stream Kit
+Record widget: your rank in ranked games, your record with this deck today, and
+Play and Draw columns) or **Off** under **Today's record** in the ⚙ menu.
+
+### The opponent panel
+
+A second panel sits on the other edge of the screen, up only during games.
+**Settings → In-game overlay → Panels** picks what the overlay shows: **Both**
+panels (the default), **My deck** alone, or **Opponent** alone, for players who
+find their own deck list too busy. Open, it shows the opponent's deck (their
+commander in Brawl, a guess from your own past games when Deck AI has named
+decks with the same cards, otherwise their colours), your record against that
+deck, how many cards and lands they have played, and every card they have
+played, grouped by type with mana costs, laid out like the deck panel (lands
+fold into one row that opens). A new play lights up for a moment, and hovering
+a card shows it. Folded, its rail shows their colours, how many different
+cards they have played (it pulses when a new one shows), and your record
+against them (your win rate once the record is too long to fit). It has its own pin and its own hotkey (`Alt+Shift+O` / `⌥⇧O`).
+It shows only cards the opponent has played in front of you; the deck name is
+a guess and says so.
 
 Pin the panel to keep it out, or leave it unpinned and the rail unfolds it on
 hover and folds it back a few seconds after the cursor leaves. Scale,
@@ -236,9 +254,9 @@ Twelve transparent widgets for OBS and Streamlabs:
 - **Deck tracker**: copies left and next-draw odds for each card.
 - **Scorebug**: a TV-style bar with both players, life totals that flash when they
   change, the turn and whose it is, and the match score in Bo3.
-- **Record**: wins, losses and win rate for this session or today, on the play and on the
-  draw, rank, and your record with this deck over the same span.
-- **Recent games**: today's games under the session record (the last 1 to 25).
+- **Record**: today's wins, losses and win rate, on the play and on the draw, rank,
+  and your record with this deck today.
+- **Recent games**: today's games under today's record (the last 1 to 25).
 - **Deck stats**: the current deck's win rate and record, with ranked and casual,
   play and draw, and recent form, each optional.
 - **Matchup**: opponent, colors, likely deck, head-to-head, play or draw, Bo3 game.
@@ -248,8 +266,8 @@ Twelve transparent widgets for OBS and Streamlabs:
   Game Detail's verdict and the chance the next draw is a land.
 - **Game result**: a Victory or Defeat card for a few seconds after each game.
 - **Card spotlight**: a large image of each card as it's cast.
-- **Intermission**: your own title over the session, today's results, the deck and
-  the rank climb, for a "be right back" scene.
+- **Intermission**: your own title over today's record and results, the deck and
+  the rank climb since midnight, for a "be right back" scene.
 
 A card list too long for its source (a 100-card Brawl deck) scrolls itself slowly.
 
@@ -267,7 +285,7 @@ streaming PC). Thanks to MrNaosu for the idea.
 
 **Live Scoreboard** — while you play: both life totals with color pips and
 deck, your records with this deck and against this opponent, the turn and
-game clock, your live session record, today's finished games, and a
+game clock, today's record and finished games, and a
 play-by-play feed identical to the per-game timeline:
 
 ![Live Scoreboard](docs/images/live-log.png)
@@ -289,7 +307,8 @@ profile judged from damage pace, win-rate bars, and per-game combat telemetry,
 searchable and sortable. Recorded deck history has no deck-count limit, including
 decks later removed from Arena; the table shows ten rows per page. Decks and
 All Games offer numbered pages, first/last controls and a Go to page field.
-Sessions offers the same controls with 15 rows per page and no session-count cap:
+Days (every day you played, with its record) offers the same controls with 15 rows
+per page and no cap:
 
 ![Decks table on the Overview](docs/images/deck-overview.png)
 
@@ -579,16 +598,28 @@ icon. Prefer to build it or run it from source? See
 
 ## What isn't tracked
 
-Some game modes are intentionally excluded from your saved stats, because
+Some game modes are left out of your saved stats by default, because
 mixing them into constructed analytics would skew win rates and draw math:
 
 - **Jump In!** (`Jump_In_*` events)
 - **Midweek Magic** (`MWM_*` events)
-- **Momir** and similar novelty modes
+- **Momir**
 - **Welcome Deck Duels** (pre-made deck vs pre-made deck)
 - **Practice games against Sparky** (the Arena bot) — this includes bot
   Color Challenges; Starter Deck Duels against human opponents ARE tracked
-- Games the tracker joined mid-way (no reliable opener/draw data)
+
+Want them anyway? Switch them on in **Settings → Saved game modes**, and
+their games are saved like any other from the next game on. A Momir event run
+as Midweek Magic needs both switched on.
+
+Direct Challenge games against a friend are saved by default, and the
+**Challenges** page (in the sidebar, below Formats) shows your record against
+each friend and every game you played. When a friend is helping you test a deck
+rather than playing to win, switch off **Direct Challenge** in the same Settings
+card and those games stay out too; switch it back on when you play them for real.
+
+Games the tracker joined mid-way are never saved (it has no reliable
+opener or draw data for them).
 
 These games still display live in the tracker window (with a note that
 they won't be saved), and the in-game overlay works in them like in any
@@ -638,6 +669,30 @@ copied onward only by whatever sync client owns that folder — see
 [Backup & restore](#backup--restore). It carries your Deck AI key unless you
 untick *Include API keys*.
 
+## Code signing policy
+
+Windows releases are moving to free code signing provided by
+[SignPath.io](https://about.signpath.io/), certificate by
+[SignPath Foundation](https://signpath.org/). The project has applied; until
+signing is in place, Windows builds are unsigned and Windows may warn about
+them (see [QUICKSTART.md](QUICKSTART.md)). macOS builds carry the project's
+own self-signed signature and are not notarized by Apple.
+
+- **What gets signed:** only the Windows release files built from this
+  repository by its [GitHub Actions release workflow](.github/workflows/release.yml):
+  `MTGA Tracker.exe`, the overlay's `tapps-overlay.exe` and
+  `MTGA-Tracker-<version>-setup.exe`. Third-party libraries they include
+  (the Python runtime, Qt, Frida) are shipped as their projects publish them.
+- **Committers and reviewers:** [Travis Patton](https://github.com/pattont).
+  Changes from anyone else arrive as pull requests and are reviewed before
+  merging.
+- **Approvers:** [Travis Patton](https://github.com/pattont) approves each
+  release's signing request by hand, after checking the draft release built
+  for that tag.
+- **Privacy:** see [Data & privacy](#data--privacy). The app has no telemetry
+  and no account; its network requests are the ones listed there, each made
+  for the feature that needs it.
+
 ## The dashboard
 
 `mtga-tracker-app` serves it and opens it in your browser automatically unless
@@ -647,7 +702,7 @@ passed for that run.
 | Route | What you get |
 | --- | --- |
 | `#/` | Overview: metrics, best deck, trends, ranked progress, recent games, decks, Brawl, opponents |
-| `#/live` | Live Scoreboard: the current game, session record, today's games, play-by-play |
+| `#/live` | Live Scoreboard: the current game, today's record and games, play-by-play |
 | `#/deck/<name>` | Deck drill-down: cards, mulligans, versions, land stats, streaks, vs-colors, commanders |
 | `#/game/<id>` | Game detail: draw quality, life chart, hands, timeline, notes |
 | `#/card/<name>` | Card drill-down: by-deck performance, repeat draws, opener impact |
@@ -656,7 +711,7 @@ passed for that run.
 | `#/replay` | Replay (beta) list; `#/replay/<id>` plays a completed game and can export video |
 | `#/deckfinder` | Deck Finder: browse, export or save decklists from creators and sites |
 | `#/deck-manager` | Deck Manager (beta): saved collections, revisions, Trash and supported Arena transfers |
-| `#/settings` | Tracker status, startup, sessions, updates, overlay, Buy on Paper, Deck AI, creators, Stream Kit, backup/restore, collection export |
+| `#/settings` | Tracker status, startup, updates, overlay, Buy on Paper, Deck AI, creators, Stream Kit, backup/restore, collection export |
 | `/stream.html?widget=` | A Stream Kit widget (links built in Settings → Streaming) |
 | `#/audit` | Database health findings |
 | `#/reset` | Reset tracker data: what a reset deletes and keeps, and the reset itself |

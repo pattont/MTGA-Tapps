@@ -13,14 +13,19 @@ interface Props {
 
 /**
  * Every preference back to its default. What is not a preference stays:
- * the window's remembered positions and monitor, and whether the panel is
- * on and pinned (those belong to the arrow, chevron and pin).
+ * the window's remembered positions and monitor, whether the panel is
+ * on and pinned (those belong to the arrow, chevron and pin), and which
+ * panels are on (the tracker's Settings → Panels).
  */
 export function restoredDefaults(current: Settings): Settings {
   return {
     ...defaultSettings(),
+    deckPanel: current.deckPanel,
+    opponentPanel: current.opponentPanel,
     panelOpen: current.panelOpen,
     panelPinned: current.panelPinned,
+    opponentOpen: current.opponentOpen,
+    opponentPinned: current.opponentPinned,
     positions: current.positions,
     monitor: current.monitor,
   };
@@ -71,7 +76,7 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
   const hotkeys = platform === 'macos' ? settings.hotkeysMacos : settings.hotkeysWindows;
   const setHotkeys = (next: Settings['hotkeysMacos']) =>
     onChange(platform === 'macos' ? { ...settings, hotkeysMacos: next } : { ...settings, hotkeysWindows: next });
-  const capture = (which: 'toggle' | 'visibility') => (event: KeyboardEvent) => {
+  const capture = (which: 'toggle' | 'visibility' | 'opponent') => (event: KeyboardEvent) => {
     event.preventDefault();
     const chord = chordFromEvent(event);
     if (!chord) return;
@@ -208,16 +213,6 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
         </span>
       </div>
       <div class="r">
-        <span>Session record</span>
-        <span class="seg" role="group" aria-label="Session record">
-          {(['off', 'scoreboard', 'split'] as const).map((style) => (
-            <button key={style} type="button" class={settings.sessionRecord === style ? 'on' : ''} onClick={() => onChange({ ...settings, sessionRecord: style })}>
-              {style === 'off' ? 'Off' : style === 'scoreboard' ? 'One line' : 'Split'}
-            </button>
-          ))}
-        </span>
-      </div>
-      <div class="r">
         <span>Rows</span>
         <span class="seg" role="group" aria-label="Density">
           <button type="button" class={settings.density === 'comfortable' ? 'on' : ''} onClick={() => onChange({ ...settings, density: 'comfortable' })}>
@@ -228,6 +223,30 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
           </button>
         </span>
       </div>
+      {/* What the panel shows below the card list. */}
+      <div class="box" role="group" aria-label="Bottom of the panel">
+        <span class="box-h">Bottom of the panel</span>
+        <div class="r">
+          <span>Flood meter</span>
+          <span class="seg" role="group" aria-label="Flood meter" title="Above or below today's record">
+            {(['off', 'above', 'below'] as const).map((place) => (
+              <button key={place} type="button" class={(settings.floodMeter ?? 'above') === place ? 'on' : ''} onClick={() => onChange({ ...settings, floodMeter: place })}>
+                {place === 'off' ? 'Off' : place === 'above' ? 'Above' : 'Below'}
+              </button>
+            ))}
+          </span>
+        </div>
+        <div class="r">
+          <span>Today's record</span>
+          <span class="seg" role="group" aria-label="Today's record">
+            {(['off', 'scoreboard', 'split'] as const).map((style) => (
+              <button key={style} type="button" class={settings.sessionRecord === style ? 'on' : ''} onClick={() => onChange({ ...settings, sessionRecord: style })}>
+                {style === 'off' ? 'Off' : style === 'scoreboard' ? 'One line' : 'Full'}
+              </button>
+            ))}
+          </span>
+        </div>
+      </div>
       <label class="r">
         <span>Hide when Arena isn't in front</span>
         <input
@@ -236,9 +255,11 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
           onChange={(event) => onChange({ ...settings, hideWhenArenaNotInFront: (event.currentTarget as HTMLInputElement).checked })}
         />
       </label>
-      <div class="r">
+      {/* Which panels are on is chosen in the tracker's Settings (Panels);
+          a panel that is off has no hotkey. */}
+      <div class={`r${settings.deckPanel ? '' : ' off'}`}>
         <span>Toggle rail / panel</span>
-        <button type="button" class="hot" onKeyDown={capture('toggle')} title="Click, then press the new chord">
+        <button type="button" class="hot" onKeyDown={capture('toggle')} title="Click, then press the new chord" disabled={!settings.deckPanel}>
           {hotkeyLabel(hotkeys.toggle, platform)}
         </button>
       </div>
@@ -246,6 +267,12 @@ export function Flyout({ settings, platform, onChange, onClose, onQuit }: Props)
         <span>Show / hide</span>
         <button type="button" class="hot" onKeyDown={capture('visibility')} title="Click, then press the new chord">
           {hotkeyLabel(hotkeys.visibility, platform)}
+        </button>
+      </div>
+      <div class={`r${settings.opponentPanel ? '' : ' off'}`}>
+        <span>Toggle opponent panel</span>
+        <button type="button" class="hot" onKeyDown={capture('opponent')} title="Click, then press the new chord" disabled={!settings.opponentPanel}>
+          {hotkeyLabel(hotkeys.opponent ?? 'Alt+Shift+O', platform)}
         </button>
       </div>
       <div class="r">

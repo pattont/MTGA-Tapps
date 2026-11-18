@@ -104,10 +104,10 @@ describe('StreamKitSettings', () => {
     expect(link('Deck stats').value).toBe(`${ORIGIN}/stream.html?widget=deckstats&hide=turn`);
 
     const record = screen.getByRole('article', { name: 'Record' });
-    fireEvent.change(within(record).getByLabelText('Record'), { target: { value: 'today' } });
-    expect(link('Record').value).toBe(`${ORIGIN}/stream.html?widget=record&period=today`);
+    // Every record is today's: there is no Session | Today choice.
+    expect(within(record).queryByRole('combobox')).toBeNull();
     fireEvent.click(within(record).getByLabelText('Deck record'));
-    expect(link('Record').value).toBe(`${ORIGIN}/stream.html?widget=record&period=today&hide=deck`);
+    expect(link('Record').value).toBe(`${ORIGIN}/stream.html?widget=record&hide=deck`);
 
     const opponent = screen.getByRole('article', { name: 'What they’re on' });
     fireEvent.click(within(opponent).getByLabelText('Card art'));
