@@ -164,7 +164,8 @@ export function challengeStats(games: ChallengeGameRow[], friends: ChallengeFrie
       .filter((row) => row.losses > 0 && row.deck !== bestDeck?.deck)
       .sort((a, b) => (a.winRate ?? 0) - (b.winRate ?? 0) || b.losses - a.losses)[0] ?? null;
 
-  const wins = decided.filter((game) => game.outcome === 'win' && game.total_turns != null);
+  // A win at 0 turns is a concession before turn 1, not a fast win.
+  const wins = decided.filter((game) => game.outcome === 'win' && (game.total_turns ?? 0) > 0);
   const fastest = [...wins].sort(
     (a, b) => (a.total_turns ?? 0) - (b.total_turns ?? 0) || (a.duration_seconds ?? Infinity) - (b.duration_seconds ?? Infinity),
   )[0];

@@ -14,6 +14,19 @@ beforeEach(() => {
 });
 
 describe('StreamKitSettings', () => {
+  it('groups the widgets under the sidebar’s headings', () => {
+    render(<StreamKitSettings origin={ORIGIN} />);
+    const groups = screen.getAllByRole('heading', { level: 2 }).map((node) => node.textContent);
+    expect(groups).toEqual(['Your deck', 'The game', 'Your record', 'Breaks']);
+    const deck = document.getElementById('stream-kit-deck') as HTMLElement;
+    expect(within(deck).getAllByRole('article').map((node) => node.getAttribute('aria-label'))).toEqual([
+      'Full overlay',
+      'Deck tracker',
+      'Flood / screw meter',
+    ]);
+    expect(document.getElementById('stream-kit-start')).toHaveTextContent('Getting started');
+  });
+
   it('lists every widget with its link and a sample-data preview', () => {
     render(<StreamKitSettings origin={ORIGIN} />);
     expect(link('Deck tracker').value).toBe(`${ORIGIN}/stream.html?widget=deck`);
@@ -31,21 +44,36 @@ describe('StreamKitSettings', () => {
     expect(screen.getByText(/Stream Kit idea/)).toHaveTextContent('Thank you, MrNaosu, for the amazing Stream Kit idea!');
   });
 
-  it('puts shared and per-widget choices in the links and remembers them', () => {
+  it('puts each widget’s own size, background and credit in its link and remembers them', () => {
     const { unmount } = render(<StreamKitSettings origin={ORIGIN} />);
-    fireEvent.change(screen.getByLabelText('Size'), { target: { value: '150' } });
-    fireEvent.click(screen.getByLabelText(/Tapps Tracker/));
     const spotlight = screen.getByRole('article', { name: 'Card spotlight' });
+    fireEvent.change(within(spotlight).getByLabelText('Size'), { target: { value: '150' } });
+    fireEvent.change(within(spotlight).getByLabelText('Background'), { target: { value: 'glass' } });
+    // The credit checkbox sits beside Preview, on by default.
+    const credit = within(spotlight).getByLabelText('Show “Tapps Tracker” credit');
+    expect(credit).toBeChecked();
+    fireEvent.click(credit);
     fireEvent.change(within(spotlight).getByLabelText('Cards from'), { target: { value: 'opponent' } });
 
-    expect(link('Card spotlight').value).toBe(`${ORIGIN}/stream.html?widget=spotlight&scale=150&brand=0&who=opponent`);
-    // The spotlight's choice stays on the spotlight.
-    expect(link('Deck tracker').value).toBe(`${ORIGIN}/stream.html?widget=deck&scale=150&brand=0`);
+    expect(link('Card spotlight').value).toBe(`${ORIGIN}/stream.html?widget=spotlight&scale=150&bg=glass&brand=0&who=opponent`);
+    // The spotlight's choices stay on the spotlight.
+    expect(link('Deck tracker').value).toBe(`${ORIGIN}/stream.html?widget=deck`);
     expect(within(spotlight).getByText('450 × 705')).toBeInTheDocument();
 
     unmount();
     render(<StreamKitSettings origin={ORIGIN} />);
-    expect(link('Card spotlight').value).toBe(`${ORIGIN}/stream.html?widget=spotlight&scale=150&brand=0&who=opponent`);
+    expect(link('Card spotlight').value).toBe(`${ORIGIN}/stream.html?widget=spotlight&scale=150&bg=glass&brand=0&who=opponent`);
+  });
+
+  it('starts every widget from the size, background and credit once chosen for all of them', () => {
+    localStorage.setItem('mtga-stream-kit', JSON.stringify({ shared: { scale: 125, bg: 'none', brand: false }, widgets: {} }));
+    render(<StreamKitSettings origin={ORIGIN} />);
+    expect(link('Deck tracker').value).toBe(`${ORIGIN}/stream.html?widget=deck&scale=125&bg=none&brand=0`);
+    const deck = screen.getByRole('article', { name: 'Deck tracker' });
+    fireEvent.change(within(deck).getByLabelText('Size'), { target: { value: '100' } });
+    expect(link('Deck tracker').value).toBe(`${ORIGIN}/stream.html?widget=deck&bg=none&brand=0`);
+    // Other widgets keep the older choice.
+    expect(link('Record').value).toBe(`${ORIGIN}/stream.html?widget=record&scale=125&bg=none&brand=0`);
   });
 
   it('builds the full overlay link from its slider and sideboard choice', () => {
@@ -55,10 +83,10 @@ describe('StreamKitSettings', () => {
     expect(within(overlay).getByText('520 × 960')).toBeInTheDocument();
     fireEvent.change(within(overlay).getByLabelText(/Background/), { target: { value: '30' } });
     fireEvent.change(within(overlay).getByLabelText('Sideboard'), { target: { value: 'below' } });
-    // The shared background choice belongs to the other widgets.
-    fireEvent.change(screen.getByLabelText('Background', { selector: 'select' }), { target: { value: 'glass' } });
+    // The overlay's background is its slider; it has no Solid / See-through choice.
+    expect(within(overlay).queryByLabelText('Background', { selector: 'select' })).toBeNull();
+    expect(within(overlay).getByLabelText('Size')).toHaveValue('100');
     expect(link('Full overlay').value).toBe(`${ORIGIN}/stream.html?widget=overlay&opacity=30&sideboard=below`);
-    expect(link('Deck tracker').value).toBe(`${ORIGIN}/stream.html?widget=deck&bg=glass`);
     expect(within(overlay).getByText('320 × 1320')).toBeInTheDocument();
     expect(within(overlay).getByText('30%')).toBeInTheDocument();
   });
@@ -105,7 +133,12 @@ describe('StreamKitSettings', () => {
 
     const record = screen.getByRole('article', { name: 'Record' });
     // Every record is today's: there is no Session | Today choice.
-    expect(within(record).queryByRole('combobox')).toBeNull();
+    expect(within(record).queryByLabelText('Record', { selector: 'select' })).toBeNull();
+    // Its only dropdowns are its own size and background.
+    expect(within(record).getAllByRole('combobox')).toEqual([
+      within(record).getByLabelText('Size'),
+      within(record).getByLabelText('Background'),
+    ]);
     fireEvent.click(within(record).getByLabelText('Deck record'));
     expect(link('Record').value).toBe(`${ORIGIN}/stream.html?widget=record&hide=deck`);
 

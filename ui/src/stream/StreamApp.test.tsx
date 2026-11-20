@@ -30,7 +30,8 @@ afterEach(() => {
 describe('StreamApp', () => {
   it('explains itself without a widget', () => {
     renderWidget('');
-    expect(screen.getByText(/Stream Kit/)).toBeInTheDocument();
+    expect(screen.getByText('Tapps Tracker Stream Kit')).toBeInTheDocument();
+    expect(screen.getByText(/The Stream Kit page in the dashboard builds these links/)).toBeInTheDocument();
   });
 
   it('applies scale and background to the root', () => {

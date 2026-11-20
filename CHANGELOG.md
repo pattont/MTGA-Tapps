@@ -66,6 +66,11 @@
 - **Very long histories load on Windows.** Past 32,766 recorded games the Overview and All Games failed to load on Windows. They now load at any size.
 - **Nothing to do after updating.** The first launch prepares your existing games in the background (a few seconds for a very long history) while tracking starts right away, and every page shows the same numbers as before.
 
+### Stream Kit
+
+- **The Stream Kit has its own page.** It had grown to most of Settings, so it moved to a page of its own: the broadcast icon at the top right, between the light/dark switch and Settings. The widgets are grouped as Your deck, The game, Your record and Breaks, and the sidebar jumps between them. Settings → Streaming now just links to it, and your widget choices and links are unchanged.
+- **Size, background and the credit are set per widget.** Each Stream Kit widget has its own Size and Background, and a **Show “Tapps Tracker” credit** checkbox beside Preview, so one source can be bigger or text-only without changing the rest. The size, background and credit you had picked for all widgets become each widget's starting point.
+
 ### Settings
 
 - **Restore defaults.** The bottom of Settings has a **Restore defaults** button. It lists what goes back (startup, updates, saved game modes, the overlay, Buy on Paper and Deck AI's on/off) and what stays (your Deck AI keys, Deck Finder creators, Stream Kit links, backups, games and decks) before it changes anything.
@@ -82,6 +87,7 @@
 - **Replay: fetch lands leave when sacrificed.** Fabled Passage, Escape Tunnel, Strip Mine and other cards sacrificed for their own ability used to stay dimmed on the battlefield until the next action. They now go straight to the graveyard.
 - **Rooms and split cards show one cost.** A two-part card's mana cost on the deck and game pages could change between launches. It is now always the front face's.
 - **The Stream Kit's Opponent widget shows mana costs and card art.** Each card was listed with its type attached ("Ajani's Pridemate (Creature 2/2)"), which left it with no cost, no art, and out of mana-value order. It now lists the card by its name, and a creature cast at two sizes counts as one card.
+- **Dropdown arrows sit inside the box.** On some dropdowns the arrow touched the right edge; every dropdown now has it inset.
 
 ## 0.7.7.1
 

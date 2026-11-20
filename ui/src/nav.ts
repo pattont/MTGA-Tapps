@@ -117,6 +117,16 @@ export const settingsNavItems: AppNavItem[] = [
   { id: 'settings-tracker', label: 'Settings' },
 ];
 
+// The Stream Kit page (#/stream-kit): one entry per group of widgets.
+export const streamKitNavItems: AppNavItem[] = [
+  { id: 'back-to-dashboard', label: '\u2190 Back to dashboard', route: '#overview' },
+  { id: 'stream-kit-start', label: 'Getting started' },
+  { id: 'stream-kit-deck', label: 'Your deck' },
+  { id: 'stream-kit-game', label: 'The game' },
+  { id: 'stream-kit-record', label: 'Your record' },
+  { id: 'stream-kit-breaks', label: 'Breaks' },
+];
+
 // The Replay list page (#/replay). The player page (#/replay/<id>) brings
 // its own layout and no section nav.
 export const replayNavItems: AppNavItem[] = [

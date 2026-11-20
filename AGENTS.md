@@ -102,8 +102,10 @@ Repo layout:
   version follows each commit without a reinstall; frozen builds and the PyInstaller
   spec still use `_version.py`. Never
   bump or invent a version in code. For pre-tag screenshots, the dashboard accepts
-  `?screenshotVersion=<version>` before its hash route; this changes only the sidebar
-  footer label, not the actual package version or update check.
+  `?screenshotVersion=<version>` before its hash route (`ui/src/screenshotVersion.ts`):
+  the sidebar footer, Settings' Tracker version tile and the Updates card (Installed,
+  Latest, its tag and status line, as up to date unless a newer release is published)
+  show it. Labels only: the actual package version, update check and actions are unchanged.
 
 ### Entry points
 
@@ -470,8 +472,12 @@ Primary code paths:
   served by the dashboard at `/stream.html?widget=<id>`. No app shell, no `styles.css`,
   transparent page (`stream/stream.css`, sized in em from `--sk-scale`). Every option
   lives in the URL (`stream/options.ts`: `streamUrl` writes only the widget's own
-  non-default options), so the tracker stores nothing; Settings → Streaming
-  (`StreamKitSettings.tsx`) builds the links and keeps its choices in localStorage.
+  non-default options), so the tracker stores nothing; the Stream Kit page
+  (`#/stream-kit`, a topbar icon between the theme toggle and Settings;
+  `StreamKitSettings.tsx`, widgets grouped by `options.WIDGET_GROUPS`, whose ids are
+  `nav.streamKitNavItems`' anchors) builds the links and keeps its choices in localStorage.
+  Size, background and credit are set per widget (`readsOption`; the full overlay has its
+  own background slider); the saved `shared` choices from before are each widget's starting point.
   A `preview=1` page follows those choices live (`stream/previewSync.ts`: the
   `storage` event rebuilds its options and address); OBS sources never do.
   `overlay` is the in-game panel plus its sideboard (right/left/below/off) with the
@@ -531,7 +537,7 @@ Primary code paths:
   Database Health section), then `SettingsGroup`s General (Startup beside Updates), Tracking (the full-width Saved game modes card,
   `SavedGameModes.tsx`: one tile per mode with the feature cards' `FeatureSwitch`, three by
   two, saving each switch as it flips; labels in `ui/src/savedGameModes.ts`), Features (overlay, Buy on Paper, Deck AI, creators),
-  Streaming (the full-width Stream Kit card) and
+  Streaming (a Stream Kit card that only links to `#/stream-kit`) and
   Your data (Backup beside Export at 60/40, `columns="split"`, stacking under 1240px), then
   Defaults: Restore defaults (`RestoreDefaults.tsx`, a confirmation listing what goes back and
   what stays) posts `POST /api/settings/restore-defaults` `{"confirm": true}`

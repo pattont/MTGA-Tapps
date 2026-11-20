@@ -1,11 +1,13 @@
 import { useEffect, useId, useState } from 'react';
-import { Copy, ExternalLink, Heart } from 'lucide-react';
+import { Copy, ExternalLink, Eye, Heart, Layers, Moon } from 'lucide-react';
 import {
   DEFAULT_OPTIONS,
+  readsOption,
   shows,
   TITLE_MAX,
+  WIDGET_GROUPS,
   WIDGET_PARTS,
-  WIDGETS,
+  widgetInfo,
   streamUrl,
   widgetSize,
   type StreamOptions,
@@ -13,12 +15,14 @@ import {
   type WidgetInfo,
 } from '../stream/options';
 import { STREAM_KIT_STORAGE_KEY } from '../stream/previewSync';
+import { Section } from './Section';
 
 /**
- * Settings → Streaming: builds the OBS browser-source links for the Stream
- * Kit widgets. The options live in each link, so this page only remembers
+ * The Stream Kit page (#/stream-kit): builds the OBS browser-source links for
+ * the widgets. The options live in each link, so this page only remembers
  * the choices in the browser for next time; the tracker stores nothing.
  */
+
 
 const SCALES = [75, 100, 125, 150, 200];
 const SECONDS = [5, 8, 12, 20];
@@ -27,6 +31,11 @@ const GAME_COUNTS = [1, 3, 5, 10, 15, 20, 25];
 type Shared = Pick<StreamOptions, 'scale' | 'bg' | 'brand'>;
 type PerWidget = Partial<Record<WidgetId, Partial<StreamOptions>>>;
 interface Saved {
+  /**
+   * Size, background and credit were once set for every widget at once. Each
+   * widget now has its own; these older choices stay its starting point, so
+   * links made before keep their look.
+   */
   shared: Shared;
   widgets: PerWidget;
 }
@@ -338,6 +347,42 @@ function WidgetOptions({
   }
 }
 
+/** Size and background, per widget. The full overlay has its own background slider. */
+function LookOptions({
+  widget,
+  options,
+  onChange,
+}: {
+  widget: WidgetInfo;
+  options: StreamOptions;
+  onChange: (patch: Partial<StreamOptions>) => void;
+}) {
+  return (
+    <>
+      {readsOption(widget, 'scale') ? (
+        <Select
+          label="Size"
+          value={options.scale}
+          choices={SCALES.map((scale) => [scale, `${scale}%`] as [number, string])}
+          onChange={(scale) => onChange({ scale })}
+        />
+      ) : null}
+      {readsOption(widget, 'bg') ? (
+        <Select
+          label="Background"
+          value={options.bg}
+          choices={[
+            ['solid', 'Solid'],
+            ['glass', 'See-through'],
+            ['none', 'None'],
+          ]}
+          onChange={(bg) => onChange({ bg })}
+        />
+      ) : null}
+    </>
+  );
+}
+
 function WidgetCard({
   widget,
   options,
@@ -377,12 +422,11 @@ function WidgetCard({
         </span>
       </div>
       <p className="settings-hint">{widget.description}</p>
-      {widget.options.length > 0 ? (
-        <div className="stream-kit-options">
-          <WidgetOptions widget={widget} options={options} onChange={onChange} />
-          <ShowParts widget={widget} options={options} onChange={onChange} />
-        </div>
-      ) : null}
+      <div className="stream-kit-options">
+        <LookOptions widget={widget} options={options} onChange={onChange} />
+        <WidgetOptions widget={widget} options={options} onChange={onChange} />
+        <ShowParts widget={widget} options={options} onChange={onChange} />
+      </div>
       <div className="stream-kit-link">
         <input
           aria-label={`${widget.title} link`}
@@ -406,6 +450,12 @@ function WidgetCard({
           <ExternalLink aria-hidden="true" />
           Preview
         </a>
+        {readsOption(widget, 'brand') ? (
+          <label className="settings-check stream-kit-credit">
+            <input checked={options.brand} type="checkbox" onChange={(event) => onChange({ brand: event.target.checked })} />
+            Show “Tapps Tracker” credit
+          </label>
+        ) : null}
       </div>
     </article>
   );
@@ -422,66 +472,90 @@ export function StreamKitSettings({ origin = window.location.origin }: { origin?
     }
   }, [saved]);
 
-  const setShared = (patch: Partial<Shared>) => setSaved((current) => ({ ...current, shared: { ...current.shared, ...patch } }));
   const setWidget = (id: WidgetId, patch: Partial<StreamOptions>) =>
     setSaved((current) => ({ ...current, widgets: { ...current.widgets, [id]: { ...current.widgets[id], ...patch } } }));
 
   return (
-    <div className="stream-kit">
-      <div className="stream-kit-intro">
-        <p className="settings-hint">
-          In OBS or Streamlabs, add a <strong>Browser</strong> source for each widget, paste its link and set the size
-          shown. Widgets are transparent and appear only when there is something to show, while the tracker runs.
-          Preview opens a widget with sample data, and follows your changes here while it is open.
-        </p>
-        <p className="settings-hint stream-kit-idle-note">
-          <strong>Not streaming?</strong> You can ignore this. Nothing here runs until a widget is open in OBS or a
-          browser, so it uses no extra memory, CPU or network.
-        </p>
-        <p className="settings-hint">
-          <strong>Using several widgets?</strong> Each has a <strong>Show</strong> list: turn off anything another
-          widget already shows, so the same number isn’t on screen twice.
-        </p>
-      </div>
-      <div className="stream-kit-shared">
-        <Select
-          label="Size"
-          value={saved.shared.scale}
-          choices={SCALES.map((scale) => [scale, `${scale}%`] as [number, string])}
-          onChange={(scale) => setShared({ scale })}
-        />
-        <Select
-          label="Background"
-          value={saved.shared.bg}
-          choices={[
-            ['solid', 'Solid'],
-            ['glass', 'See-through'],
-            ['none', 'None (text only)'],
-          ]}
-          onChange={(bg) => setShared({ bg })}
-        />
-        <label className="settings-check">
-          <input checked={saved.shared.brand} type="checkbox" onChange={(event) => setShared({ brand: event.target.checked })} />
-          Show a small “Tapps Tracker” credit
-        </label>
-      </div>
-      <div className="stream-kit-widgets">
-        {WIDGETS.map((widget) => (
-          <WidgetCard
-            key={widget.id}
-            widget={widget}
-            origin={origin}
-            options={{ ...DEFAULT_OPTIONS, ...saved.shared, ...saved.widgets[widget.id] }}
-            onChange={(patch) => setWidget(widget.id, patch)}
-          />
-        ))}
-      </div>
+    <>
+      <Section
+        id="stream-kit-start"
+        title="Getting started"
+        description="Widgets for OBS and Streamlabs that show viewers your game. Each one is a link you add as a source."
+      >
+        <div className="stream-kit-start">
+          <ol className="stream-kit-steps">
+            <li>
+              <span className="stream-kit-step-number">1</span>
+              <span>
+                <strong>Pick a widget</strong>
+                <span>Set its size, look and what it shows.</span>
+              </span>
+            </li>
+            <li>
+              <span className="stream-kit-step-number">2</span>
+              <span>
+                <strong>Copy its link</strong>
+                <span>With <em>Copy link</em> under the widget.</span>
+              </span>
+            </li>
+            <li>
+              <span className="stream-kit-step-number">3</span>
+              <span>
+                <strong>Add it to OBS</strong>
+                <span>As a <em>Browser</em> source, at the size shown.</span>
+              </span>
+            </li>
+          </ol>
+          <ul className="stream-kit-tips">
+            <li>
+              <Eye aria-hidden="true" />
+              <span>
+                <strong>Preview</strong> shows a widget with sample data and follows your changes while it’s open. Widgets
+                are see-through and appear only when there’s something to show.
+              </span>
+            </li>
+            <li>
+              <Layers aria-hidden="true" />
+              <span>
+                <strong>Using more than one widget?</strong> Some show the same thing, like the turn number or your
+                record. Untick it in one widget’s <strong>Show</strong> list so it appears on screen only once.
+              </span>
+            </li>
+            <li>
+              <Moon aria-hidden="true" />
+              <span>
+                <strong>Not streaming?</strong> Nothing here runs until a widget is open in OBS or a browser, so it costs
+                no memory, CPU or network.
+              </span>
+            </li>
+          </ul>
+        </div>
+      </Section>
+      {WIDGET_GROUPS.map((group) => (
+        <div key={group.id} className="settings-group stream-kit-group" id={group.id}>
+          <h2 className="settings-group-heading">{group.title}</h2>
+          <div className="stream-kit-widgets">
+            {group.widgets.map((id) => {
+              const widget = widgetInfo(id);
+              return (
+                <WidgetCard
+                  key={id}
+                  widget={widget}
+                  origin={origin}
+                  options={{ ...DEFAULT_OPTIONS, ...saved.shared, ...saved.widgets[id] }}
+                  onChange={(patch) => setWidget(id, patch)}
+                />
+              );
+            })}
+          </div>
+        </div>
+      ))}
       <p className="stream-kit-thanks">
         <Heart aria-hidden="true" />
         <span>
           Thank you, <strong>MrNaosu</strong>, for the amazing Stream Kit idea!
         </span>
       </p>
-    </div>
+    </>
   );
 }

@@ -752,6 +752,12 @@ describe('App', () => {
     await waitFor(() => expect(document.documentElement.dataset.theme).toBe('light'));
     expect(screen.getByRole('button', { name: 'Switch to dark mode' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '#/settings');
+    // The Stream Kit has its own page, its icon between the theme toggle and Settings.
+    const topbarControls = Array.from(document.querySelectorAll('.topbar-actions .topbar-icon-link')).map(
+      (node) => node.getAttribute('aria-label'),
+    );
+    expect(topbarControls).toEqual(['Switch to dark mode', 'Stream Kit', 'Settings']);
+    expect(screen.getByRole('link', { name: 'Stream Kit' })).toHaveAttribute('href', '#/stream-kit');
     // DB Health moved into Settings — it is no longer a sidebar entry.
     expect(screen.queryByRole('link', { name: 'DB Health' })).not.toBeInTheDocument();
     // About 0.5 s alone, but it is the file's first full App render plus four

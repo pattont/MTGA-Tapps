@@ -166,6 +166,9 @@ describe('Settings page layout', () => {
       'Export MTGA Collection',
       'Restore defaults',
     ]);
+    // The Stream Kit card only points to the Stream Kit page.
+    expect(screen.getByRole('link', { name: 'Open Stream Kit' })).toHaveAttribute('href', '#/stream-kit');
+    expect(screen.queryByRole('article', { name: 'Full overlay' })).not.toBeInTheDocument();
   });
 
   it('shows games captured before the version, and keeps Database Health as a small link', async () => {

@@ -97,6 +97,13 @@ describe('challengeStats', () => {
     expect(stats.longestGame).toMatchObject({ game: { game_id: long.game_id }, friend: 'Opponent' });
   });
 
+  it('skips wins with no turns played for the fastest win', () => {
+    const conceded = game({ outcome: 'win', total_turns: 0 });
+    const real = game({ outcome: 'win', total_turns: 6 });
+    expect(challengeStats([conceded, real], []).fastestWin?.game.game_id).toBe(real.game_id);
+    expect(challengeStats([conceded], []).fastestWin).toBeNull();
+  });
+
   it('gives each friend their most-shown colours and current streak', () => {
     const games = [
       game({ opponent_name: 'Pal', opp_colors: 'UB', outcome: 'loss' }),

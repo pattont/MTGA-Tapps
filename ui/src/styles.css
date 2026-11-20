@@ -514,18 +514,6 @@ a {
   color: var(--text);
 }
 
-/* Custom inset chevron: styled selects pin the native arrow to the very
-   edge of the control, which reads as touching the border. */
-.filter-bar select,
-.table-filter select {
-  padding-right: 30px;
-  appearance: none;
-  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8" viewBox="0 0 12 8"><path d="M1 1.5l5 5 5-5" fill="none" stroke="%23848f9c" stroke-width="1.8" stroke-linecap="round"/></svg>');
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  background-size: 12px 8px;
-}
-
 .filter-bar select:hover,
 .filter-bar select:focus-visible,
 .table-filter select:hover,
@@ -8313,12 +8301,8 @@ a.sidebar-deck-finder {
   .deck-detail-controls label { flex: 1 1 100%; }
 }
 
-/* Native select arrows sit flush against the edge; draw our own with breathing room. */
 .deck-manager-status-filter, .deck-manager-native-bar select, .deckfinder-detail-actions select, .deck-manager-modal .deck-detail-controls select {
   font: inherit; font-size: 0.9rem;
-  appearance: none; -webkit-appearance: none; padding-right: 38px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat; background-position: right 12px center; background-size: 16px;
 }
 .deck-detail-notes-body input, .deck-detail-notes-body textarea, .deck-detail-controls select { font-weight: 400; color: var(--text); }
 
@@ -8916,48 +8900,106 @@ a.sidebar-deck-finder {
 
 /* Settings: the Buy on Paper card reuses the overlay card. */
 
-/* Settings → Streaming: Stream Kit links (the widgets themselves are styled
+/* Settings → Streaming points to the Stream Kit page. */
+.settings-stream-kit-link {
+  justify-items: start;
+}
+
+/* The Stream Kit page (#/stream-kit): links and options (the widgets themselves are styled
    in stream/stream.css, a separate page). */
-.stream-kit {
+
+/* Getting started: three numbered steps side by side, then short tips. */
+.stream-kit-start {
+  container-type: inline-size;
   display: grid;
-  gap: 16px;
-  /* The intro continues the card's description, at the same spacing. */
-  margin: 6px 16px 16px;
+  gap: 14px;
+  margin: 10px 16px 16px;
 }
 
-.stream-kit .settings-hint {
+.stream-kit-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
   margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-/* The two intro paragraphs read as one block, spaced like the card's
-   description above them. */
-.stream-kit-intro {
+.stream-kit-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.stream-kit-steps li > span:last-child {
+  display: grid;
+  gap: 2px;
+}
+
+.stream-kit-steps strong {
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.stream-kit-steps em {
+  color: var(--text);
+  font-style: normal;
+  font-weight: 600;
+}
+
+.stream-kit-step-number {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.stream-kit-tips {
   display: grid;
   gap: 6px;
-}
-
-.stream-kit-intro .settings-hint {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
   font-size: 0.82rem;
   line-height: 1.4;
 }
 
-.stream-kit-idle-note strong {
+.stream-kit-tips li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.stream-kit-tips svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
   color: var(--accent);
 }
 
-.stream-kit-shared {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 12px 20px;
+.stream-kit-tips strong {
+  color: var(--text);
 }
 
-.stream-kit-shared .settings-field {
-  min-width: 170px;
-}
-
-.stream-kit-shared .settings-check {
-  min-height: 36px;
+@container (max-width: 760px) {
+  .stream-kit-steps {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .stream-kit-widgets {
@@ -8989,7 +9031,7 @@ a.sidebar-deck-finder {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  margin: 0;
+  margin: 22px 0 4px;
   color: var(--muted);
   font-size: 0.85rem;
 }
@@ -9047,8 +9089,8 @@ a.sidebar-deck-finder {
   gap: 10px;
 }
 
-.stream-kit .settings-field select,
-.stream-kit .settings-field input[type='text'] {
+.stream-kit-options .settings-field select,
+.stream-kit-options .settings-field input[type='text'] {
   width: 100%;
   min-width: 0;
 }
@@ -9081,6 +9123,12 @@ a.sidebar-deck-finder {
   grid-column: 1 / -1;
 }
 
+.stream-kit-credit {
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .stream-kit-link {
   display: flex;
   flex-wrap: wrap;
@@ -9089,7 +9137,7 @@ a.sidebar-deck-finder {
   margin-top: auto;
 }
 
-.stream-kit-link input {
+.stream-kit-link input[type='text'] {
   flex: 1 1 100%;
   min-width: 0;
   min-height: 36px;
@@ -9437,4 +9485,19 @@ a.sidebar-deck-finder {
   color: var(--muted);
   font-size: 0.85rem;
   font-weight: 600;
+}
+
+/* Every dropdown draws its own arrow, inset from the right edge. A styled
+   select pins the browser's arrow flush against its border, so this applies
+   to all of them, whatever page they are on. The !important beats each
+   control's own `background` shorthand, which would otherwise drop the arrow,
+   and any tighter padding. A new dropdown needs nothing extra. */
+select:not([multiple]):not([size]) {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 32px !important;
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8" viewBox="0 0 12 8"><path d="M1 1.5l5 5 5-5" fill="none" stroke="%23848f9c" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>') !important;
+  background-repeat: no-repeat !important;
+  background-position: right 12px center !important;
+  background-size: 12px 8px !important;
 }

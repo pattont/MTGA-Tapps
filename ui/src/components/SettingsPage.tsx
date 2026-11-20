@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Bot, CalendarClock, Gamepad2, Tag } from 'lucide-react';
+import { Bot, CalendarClock, Gamepad2, Radio, Tag } from 'lucide-react';
+import { STREAM_KIT_ROUTE_HASH } from '../routes';
 import { Badge } from './Badge';
 import { BackupCard } from './BackupCard';
 import { RESET_ROUTE } from './ResetPage';
@@ -31,11 +32,11 @@ import {
   type TrackingSettings,
 } from '../api';
 import { formatDateTime } from '../format';
-import { StreamKitSettings } from './StreamKitSettings';
 import { FeatureSwitch } from './FeatureSwitch';
 import { RestoreDefaults } from './RestoreDefaults';
 import { SavedGameModes } from './SavedGameModes';
 import { savedModeCount } from '../savedGameModes';
+import { screenshotUpdateStatus, screenshotVersion } from '../screenshotVersion';
 import { Section } from './Section';
 import { useSharedUpdateStatus } from './useUpdateStatus';
 import {
@@ -120,7 +121,9 @@ function deckAiProvider(deckAi: DeckAiSettings): DeckAiProviderSettings | undefi
 }
 
 function TrackerOverview({ info, deckAi }: { info: TrackerInfoSettings; deckAi: DeckAiSettings | null }) {
-  const status = useSharedUpdateStatus().status;
+  const shownVersion = screenshotVersion();
+  const status = screenshotUpdateStatus(useSharedUpdateStatus().status, shownVersion);
+  const version = shownVersion ?? info.version;
   const first = parseDate(info.first_game_at);
   const last = parseDate(info.last_game_at);
   const games = info.games;
@@ -155,7 +158,7 @@ function TrackerOverview({ info, deckAi }: { info: TrackerInfoSettings; deckAi: 
           value={last ? dayLabel(last) : '—'}
           detail={last ? formatDateTime(info.last_game_at as string) : undefined}
         />
-        <MetricCard icon={<Tag />} label="Tracker version" value={displayVersion(info.version) || info.version} detail={versionDetail} />
+        <MetricCard icon={<Tag />} label="Tracker version" value={displayVersion(version) || version} detail={versionDetail} />
         <MetricCard
           icon={<Bot />}
           label="Deck AI"
@@ -209,7 +212,7 @@ function savedModesBadge(tracking: TrackingSettings | null) {
 
 /** The update state when there is one; otherwise why this copy can't update itself. */
 function UpdatesBadge({ settings }: { settings: UpdateSettings }) {
-  const status = useSharedUpdateStatus().status;
+  const status = screenshotUpdateStatus(useSharedUpdateStatus().status, screenshotVersion());
   if (!settings.check) return <StatusBadge tone="off">Off</StatusBadge>;
   switch (status?.state) {
     case 'ready':
@@ -754,9 +757,14 @@ export function SettingsPage() {
         <Section
           id="settings-streaming"
           title="Stream Kit"
-          description="Widgets for OBS and Streamlabs that show viewers your overlay, deck, record, recent games, matchup and the cards being cast."
+          description="Widgets for OBS and Streamlabs that show viewers your overlay, deck, record, recent games, matchup and the cards being cast. They have a page of their own."
         >
-          <StreamKitSettings />
+          <div className="settings-form settings-stream-kit-link">
+            <a className="deck-neutral-button" href={STREAM_KIT_ROUTE_HASH}>
+              <Radio aria-hidden="true" />
+              Open Stream Kit
+            </a>
+          </div>
         </Section>
       </SettingsGroup>
 
@@ -947,7 +955,7 @@ function UpdatesForm({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const status = controller.status;
+  const status = screenshotUpdateStatus(controller.status, screenshotVersion());
 
   async function update(change: UpdateSettingsChange) {
     setBusy(true);

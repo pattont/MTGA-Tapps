@@ -56,8 +56,8 @@ Rules:
   per-widget `sort`, `lands`, `who`, `seconds`, `opponent=0`, `idle=show`,
   and the full overlay's `opacity=0..100`, `sideboard=right|left|below|off`,
   `names=type|white`, and recent games' `count=1..25` and `record=0`),
-  so OBS keeps them and the tracker stores nothing. Settings → Streaming builds
-  the URLs, copies them, and remembers the choices in browser localStorage.
+  so OBS keeps them and the tracker stores nothing. The Stream Kit page
+  (`#/stream-kit`) builds the URLs, copies them, and remembers the choices in browser localStorage.
 - `demo=1` shows sample data so streamers can place and size sources without a
   game running; `preview=1` paints a checkerboard behind the widget in a
   normal browser tab.

@@ -236,6 +236,13 @@ export function parseSettingsRoute(hash: string): boolean {
   return hash === '#/settings' || hash.startsWith('#/settings?');
 }
 
+/** The Stream Kit's own page: OBS widget links and their options. */
+export const STREAM_KIT_ROUTE_HASH = '#/stream-kit';
+
+export function parseStreamKitRoute(hash: string): boolean {
+  return hash === STREAM_KIT_ROUTE_HASH || hash.startsWith(`${STREAM_KIT_ROUTE_HASH}?`);
+}
+
 export function parseLiveRoute(hash: string): boolean {
   return hash === '#/live' || hash.startsWith('#/live?');
 }

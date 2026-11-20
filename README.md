@@ -168,7 +168,8 @@ version and file locations. Below it:
 - **Features**: on/off switches for the [in-game overlay](#in-game-overlay),
   [Buy on Paper](#buy-on-paper) and [Deck AI](#ai-deck-identification-optional),
   and the creators [Deck Finder](#deck-finder) follows.
-- **Streaming**: the [Stream Kit](#stream-kit-obs-widgets) widget links.
+- **Streaming**: a link to the [Stream Kit](#stream-kit-obs-widgets) page, which has
+  its own icon at the top right.
 - **Your data**: [backup & restore](#backup--restore) and
   [collection export](#export-your-collection).
 
@@ -215,6 +216,8 @@ Record widget: your rank in ranked games, your record with this deck today, and
 Play and Draw columns) or **Off** under **Today's record** in the ⚙ menu.
 
 ### The opponent panel
+
+<img src="docs/images/opponent-overlay-panel.png" alt="The overlay's opponent panel: their deck, your record against it and the cards they have played" width="302">
 
 A second panel sits on the other edge of the screen, up only during games.
 **Settings → In-game overlay → Panels** picks what the overlay shows: **Both**
@@ -271,7 +274,8 @@ Twelve transparent widgets for OBS and Streamlabs:
 
 A card list too long for its source (a 100-card Brawl deck) scrolls itself slowly.
 
-In **Settings → Streaming**, pick the options, copy a widget's link and paste it
+On the **Stream Kit** page (the broadcast icon at the top right, next to Settings),
+pick the options, copy a widget's link and paste it
 into a **Browser** source at the size shown; **Preview** shows it with sample data.
 Each widget has a **Show** list, so with several on screen you can turn off a
 number another one already shows.
@@ -279,7 +283,7 @@ Widgets appear only when there's something to show, and nothing runs until one i
 open. They work on the computer that runs the tracker (not yet from a second
 streaming PC). Thanks to MrNaosu for the idea.
 
-![Settings → Streaming: the Stream Kit widgets with their options and links](docs/images/stream-kit.png)
+![The Stream Kit page: the widgets with their options and links](docs/images/stream-kit.png)
 
 ## Screenshots
 
@@ -324,6 +328,13 @@ per page and no cap:
 name opening a page with your full history against them:
 
 ![All Opponents page](docs/images/opponents.png)
+
+**Challenges** — your Direct Challenge games against friends: your record
+against each one, bragging rights (favorite victim, nemesis, best and worst
+deck, fastest win, longest game), how each deck has done and every game, with
+replays (sample friends):
+
+![Challenges page](docs/images/challenges.png)
 
 ## Replay (beta)
 
@@ -711,8 +722,10 @@ passed for that run.
 | `#/replay` | Replay (beta) list; `#/replay/<id>` plays a completed game and can export video |
 | `#/deckfinder` | Deck Finder: browse, export or save decklists from creators and sites |
 | `#/deck-manager` | Deck Manager (beta): saved collections, revisions, Trash and supported Arena transfers |
-| `#/settings` | Tracker status, startup, updates, overlay, Buy on Paper, Deck AI, creators, Stream Kit, backup/restore, collection export |
-| `/stream.html?widget=` | A Stream Kit widget (links built in Settings → Streaming) |
+| `#/settings` | Tracker status, startup, updates, saved game modes, overlay, Buy on Paper, Deck AI, creators, backup/restore, collection export |
+| `#/stream-kit` | Stream Kit: every widget's options, link, Copy link and Preview |
+| `#/challenges` | Challenges: your Direct Challenge games and record against each friend |
+| `/stream.html?widget=` | A Stream Kit widget (links built on the Stream Kit page, `#/stream-kit`) |
 | `#/audit` | Database health findings |
 | `#/reset` | Reset tracker data: what a reset deletes and keeps, and the reset itself |
 

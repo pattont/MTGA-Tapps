@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_OPTIONS, parseStreamOptions, streamUrl, widgetInfo, widgetSize, type StreamOptions } from './options';
+import { streamKitNavItems } from '../nav';
+import {
+  DEFAULT_OPTIONS,
+  WIDGET_GROUPS,
+  WIDGETS,
+  parseStreamOptions,
+  streamUrl,
+  widgetInfo,
+  widgetSize,
+  type StreamOptions,
+} from './options';
 
 describe('parseStreamOptions', () => {
   it('reads every option and falls back to defaults', () => {
@@ -116,5 +126,14 @@ describe('streamUrl', () => {
     expect(streamUrl('http://x', 'spotlight', { seconds: 5 }, { demo: true, preview: true })).toBe(
       'http://x/stream.html?widget=spotlight&seconds=5&demo=1&preview=1',
     );
+  });
+});
+
+describe('Stream Kit page groups', () => {
+  it('lists every widget once, and the sidebar names every group', () => {
+    const grouped = WIDGET_GROUPS.flatMap((group) => group.widgets);
+    expect([...grouped].sort()).toEqual(WIDGETS.map((widget) => widget.id).sort());
+    const anchors = streamKitNavItems.filter((item) => !item.route).map((item) => item.id);
+    expect(anchors).toEqual(['stream-kit-start', ...WIDGET_GROUPS.map((group) => group.id)]);
   });
 });

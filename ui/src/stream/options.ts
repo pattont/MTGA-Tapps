@@ -275,6 +275,14 @@ export const WIDGETS: WidgetInfo[] = [
   },
 ];
 
+/** The Stream Kit page's groups of widgets, in order; their ids are its sidebar's anchors. */
+export const WIDGET_GROUPS: ReadonlyArray<{ id: string; title: string; widgets: readonly WidgetId[] }> = [
+  { id: 'stream-kit-deck', title: 'Your deck', widgets: ['overlay', 'deck', 'lands'] },
+  { id: 'stream-kit-game', title: 'The game', widgets: ['scorebug', 'matchup', 'opponent', 'spotlight'] },
+  { id: 'stream-kit-record', title: 'Your record', widgets: ['record', 'games', 'deckstats', 'result'] },
+  { id: 'stream-kit-breaks', title: 'Breaks', widgets: ['break'] },
+];
+
 export const DEFAULT_OPTIONS: StreamOptions = {
   widget: null,
   scale: 100,
@@ -298,6 +306,11 @@ export const DEFAULT_OPTIONS: StreamOptions = {
 
 /** Options every widget reads. */
 const COMMON: Array<keyof StreamOptions> = ['scale', 'bg', 'brand'];
+
+/** Whether a widget's link carries an option (its own, or one of the shared look options it reads). */
+export function readsOption(widget: WidgetInfo, key: keyof StreamOptions): boolean {
+  return [...(widget.shared ?? COMMON), ...widget.options].includes(key);
+}
 
 const SCALE_RANGE: [number, number] = [50, 300];
 const SECONDS_RANGE: [number, number] = [3, 30];

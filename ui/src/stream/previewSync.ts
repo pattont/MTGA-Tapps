@@ -1,5 +1,5 @@
 /**
- * A Preview tab follows Settings → Streaming live: Settings saves its choices
+ * A Preview tab follows the Stream Kit page live: the page saves its choices
  * to localStorage, and a stream page opened with preview=1 rebuilds its
  * options (and its address) whenever they change in another tab. OBS sources
  * never set preview, so their URL stays the only truth.
