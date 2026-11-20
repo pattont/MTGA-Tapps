@@ -1414,7 +1414,14 @@ Important tables:
   lost/replaced, tokens created/destroyed/sacrificed/exiled, poison_added. Convention:
   NULL means "not tracked when this game was recorded" and renders as a dash — a backfill
   or the live tracker writes real zeros. Opponent `*_drawn` columns stay NULL forever
-  (hidden information).
+  (hidden information). `library_remaining` (migration 39) is each seat's library size
+  when the game ended, Arena's last `ZoneType_Library` listing
+  (`GameState.library_size_by_seat`, both seats); NULL when never listed or when a
+  summarized message came after the last listing (`library_stale_seats`), since
+  the count may then be wrong. Game Detail shows it under Cards beside `participants.deck_size`
+  (the opponent's is `observed`: opening hand + library + command zone); the deck page
+  averages it. Readers select it only when the column exists (`_table_columns`): the
+  dashboard never migrates, so a database the tracker has not opened yet shows a dash.
 - `game_turns`: observed turn start/end timestamps and duration by active seat; `timing_source`
   distinguishes exact `live` rows, exact `recovered_previous_turn_logs` rows restored from
   durable console headers, and `estimated_header_events` historical backfills.

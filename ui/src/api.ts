@@ -648,6 +648,7 @@ export interface DeckInteractionSide {
   cards_discarded: number | null;
   cards_milled: number | null;
   cards_exiled: number | null;
+  library_remaining?: number | null;
   removal_played: number | null;
   removal_drawn: number | null;
   wipes_played: number | null;
@@ -893,6 +894,9 @@ export interface GameTurnTimingRow {
 
 export interface GameParticipantStatsRow {
   role: string;
+  /** Cards in the deck at the start: the submitted list for you, Arena's
+      opening hand + library (+ command zone) for the opponent. */
+  deck_size?: number | null;
   attack_steps: number;
   attacking_creatures: number;
   attackers_lost: number;
@@ -920,6 +924,8 @@ export interface GameParticipantStatsRow {
   creatures_bounced?: number | null;
   noncreatures_bounced?: number | null;
   poison_added?: number | null;
+  /** Library size when the game ended; null when unknown. */
+  library_remaining?: number | null;
   counters_drawn?: number | null;
   counters_played?: number | null;
   spells_countered?: number | null;

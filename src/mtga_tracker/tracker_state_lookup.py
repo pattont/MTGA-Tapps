@@ -542,6 +542,7 @@ class TrackerStateLookupMixin:
                 continue
             g = self.game_state
             g.library_size_by_seat[int(owner_seat)] = len(obj_ids)
+            g.library_stale_seats.discard(int(owner_seat))
             g.library_ids_by_seat[int(owner_seat)] = frozenset(
                 int(obj_id) for obj_id in obj_ids if isinstance(obj_id, int)
             )
@@ -561,6 +562,9 @@ class TrackerStateLookupMixin:
         g = self.game_state
         if not g.in_match or g.match_complete or g.player_seat_id is None:
             return
+        # Either library may have changed unseen (saved as unknown at game end
+        # unless Arena lists it again first).
+        g.library_stale_seats.update((1, 2))
         if g.library_log_gap:
             return
         g.library_log_gap = True

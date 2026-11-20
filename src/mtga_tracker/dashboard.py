@@ -2260,6 +2260,7 @@ _INTERACTION_STAT_COLUMNS = (
     "cards_discarded",
     "cards_milled",
     "cards_exiled",
+    "library_remaining",
     "removal_played",
     "removal_drawn",
     "wipes_played",
@@ -2296,9 +2297,13 @@ def _interaction_deck_profile(
     opponent drawn columns stay NULL — their draws are hidden information.
     """
     select_parts = ["COUNT(s.removal_played) AS games_tracked"]
+    # A column added by a migration the tracker has not run on this database
+    # yet reads as NULL (a dash), never as an error.
+    present = _table_columns(conn, "game_participant_stats")
     for prefix, alias in (("p", "s"), ("o", "os")):
         for column in _INTERACTION_STAT_COLUMNS:
-            select_parts.append(f"ROUND(AVG({alias}.{column}), 2) AS {prefix}_{column}")
+            value = f"{alias}.{column}" if column in present else "NULL"
+            select_parts.append(f"ROUND(AVG({value}), 2) AS {prefix}_{column}")
         other = "os" if alias == "s" else "s"
         select_parts.append(f"ROUND(AVG({other}.spells_countered), 2) AS {prefix}_counters_landed")
         select_parts.append(
@@ -5179,11 +5184,18 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
             for row in timeline
             if row.get("player_life") is not None and row.get("opponent_life") is not None
         ]
+        # NULL until the tracker has added the column to this database.
+        library_remaining = (
+            "s.library_remaining"
+            if "library_remaining" in _table_columns(conn, "game_participant_stats")
+            else "NULL"
+        )
         participant_stats = _dict_rows(
             conn.execute(
-                """
+                f"""
                 SELECT
                   p.role,
+                  p.deck_size,
                   s.attack_steps,
                   s.attacking_creatures,
                   s.attackers_lost,
@@ -5210,6 +5222,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                   s.creatures_bounced,
                   s.noncreatures_bounced,
                   s.poison_added,
+                  {library_remaining} AS library_remaining,
                   s.counters_drawn,
                   s.counters_played,
                   s.spells_countered,

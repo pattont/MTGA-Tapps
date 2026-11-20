@@ -916,6 +916,7 @@ export function DeckDetailPage({
         ['Discarded', 'cards_discarded'],
         ['Milled', 'cards_milled'],
         ['Exiled', 'cards_exiled'],
+        ['Library left at the end', 'library_remaining'],
       ],
     },
     {

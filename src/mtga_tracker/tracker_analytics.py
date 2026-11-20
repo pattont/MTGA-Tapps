@@ -1531,6 +1531,7 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
         # damage_taken means externally inflicted life loss; life_lost keeps the
         # raw total including the participant's own payments/self damage.
         damage_taken = max(0, life_lost - self_damage)
+        library_remaining = self._final_library_size(seat_id)
         conn.execute(
             """
             INSERT INTO game_participant_stats (
@@ -1562,6 +1563,7 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
                 creatures_bounced,
                 noncreatures_bounced,
                 poison_added,
+                library_remaining,
                 counters_drawn,
                 counters_played,
                 spells_countered,
@@ -1576,7 +1578,7 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
                 scry_top,
                 scry_bottom
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(game_id, participant_id) DO UPDATE SET
                 attack_steps = excluded.attack_steps,
                 attacking_creatures = excluded.attacking_creatures,
@@ -1604,6 +1606,7 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
                 creatures_bounced = excluded.creatures_bounced,
                 noncreatures_bounced = excluded.noncreatures_bounced,
                 poison_added = excluded.poison_added,
+                library_remaining = excluded.library_remaining,
                 counters_drawn = excluded.counters_drawn,
                 counters_played = excluded.counters_played,
                 spells_countered = excluded.spells_countered,
@@ -1647,6 +1650,7 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
                 int(stats.get("creatures_bounced", 0)),
                 int(stats.get("noncreatures_bounced", 0)),
                 int(stats.get("poison_added", 0)),
+                library_remaining,
                 int(stats.get("counters_drawn", 0)),
                 int(stats.get("counters_played", 0)),
                 int(stats.get("spells_countered", 0)),
@@ -1662,6 +1666,17 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
                 int(stats.get("scry_bottom", 0)),
             ),
         )
+
+    def _final_library_size(self, seat_id: Optional[int]) -> Optional[int]:
+        """The seat's library size as Arena last listed it, or None when it
+        was never listed or a summarized message may have changed it since."""
+        if seat_id not in (1, 2):
+            return None
+        g = self.game_state
+        if int(seat_id) in g.library_stale_seats:
+            return None
+        size = g.library_size_by_seat.get(int(seat_id))
+        return int(size) if size is not None else None
 
     def _refresh_session_participant_stats(self, conn: sqlite3.Connection) -> None:
         """Recompute session role aggregates from persisted game rows."""

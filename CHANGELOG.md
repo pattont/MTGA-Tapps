@@ -52,6 +52,10 @@
 - **Play / Draw shows how often you are on the play.** A new **% of Games** column gives each side's share of your games in its own colour (teal for the play, purple for the draw). On a typical laptop or desktop window, Play / Draw and Momentum now sit one above the other so neither table cuts off its Win Rate column; on a wide screen they stay side by side.
 - **"Last 7 days" means seven calendar days.** The Period filter and the Win Rate Trend's day ranges counted back in hours from the current minute, so games dropped out one at a time through the day. They now cover today and the days before it, from midnight: Last 30 days is today plus the 29 days before, and the trend's Day is today.
 
+### Game Detail
+
+- **Deck size and how many cards were left in each library.** Combat & Resources → Cards has two new rows for you and your opponent: **Deck size** (your opponent's counted from Arena's opening hand and library, so you can spot a 61-card or 80-card deck, and shown for past games too) and **Library left at the end**, from Arena's own count of each library. A game that ended right after a mill too big for Arena to log in full shows a dash rather than a number that might be wrong, and so do games recorded before this version. The deck page shows the average library left.
+
 ### Faster with a long history
 
 - **The Overview, All Games and deck pages load several times faster** once you have thousands of games. In our tests with about 38,000 games, the Overview opened in about 1 second instead of 9 the first time (and instantly after that), All Games in under a second instead of 5, and a typical deck page in under half a second instead of 5.

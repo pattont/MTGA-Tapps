@@ -172,6 +172,9 @@ class GameState:
         self.library_returns: Dict[str, int] = {}
         self.library_seen_annotations: set = set()
         self.library_size_by_seat: Dict[int, int] = {}
+        #: Seats whose library size may be out of date: Arena summarized a
+        #: message (no zones logged) since it last listed that library.
+        self.library_stale_seats: set = set()
         #: Each seat's library zone id and the instance ids Arena last listed
         #: in it, to recognize a message that shows the player every card.
         self.library_zone_by_seat: Dict[int, int] = {}

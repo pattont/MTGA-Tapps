@@ -316,6 +316,7 @@ class AnalyticsStore:
                 creatures_bounced INTEGER,
                 noncreatures_bounced INTEGER,
                 poison_added INTEGER,
+                library_remaining INTEGER,
                 counters_drawn INTEGER,
                 counters_played INTEGER,
                 spells_countered INTEGER,
@@ -780,6 +781,7 @@ class AnalyticsStore:
             # stored since (US logs on a day-first Windows, issue #51).
             (37, AnalyticsStore._migrate_v21_repair_swapped_log_dates),
             (38, AnalyticsStore._migrate_v38_prune_console_logs),
+            (39, AnalyticsStore._migrate_v39_library_remaining),
         )
 
     @staticmethod
@@ -1355,6 +1357,16 @@ class AnalyticsStore:
                 f"🗓️  Repaired {repaired} row(s) whose dates were stored with month and "
                 "day swapped."
             )
+
+    @staticmethod
+    def _migrate_v39_library_remaining(conn: sqlite3.Connection) -> None:
+        """Add library_remaining: each seat's library size when the game ended
+        (nullable: unknown for games recorded before it, never reconstructed)."""
+        existing = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(game_participant_stats)")
+        }
+        if "library_remaining" not in existing:
+            conn.execute("ALTER TABLE game_participant_stats ADD COLUMN library_remaining INTEGER")
 
     @staticmethod
     def _migrate_v20_poison_stat(conn: sqlite3.Connection) -> None:
