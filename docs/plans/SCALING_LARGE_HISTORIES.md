@@ -1,212 +1,557 @@
 # Scaling to tens of thousands of games
 
-Status: planned, not built. Measured 2026-11-09 during the performance pass.
-The question it answers: what happens to a player who logs 2,000–3,000 ranked
-games a month, a year from now?
+Status: Steps 0 to 8 are built on the `scaling-large-histories` branch
+(2026-11-15). Steps 0 to 8 passed a live check on the dev Mac (Step 8 on
+2026-11-16, on a normal history: the long-history half of it has only run in
+scripts). Windows has not been run in the real app yet.
+What is left is listed under "Still to do".
+The question this answers: what happens to a player who logs 2,000–3,000
+ranked games a month, a year from now?
+
+How the built parts work is in AGENTS.md (`game_derived.py`, the
+`dashboard.py` entry). This file keeps the measurements, the reasons, and the
+remaining work.
+
+## The tools every step is checked with
+
+- `scripts/build_scaled_db.py --factor N --out FILE` writes a copy of a real
+  database holding N times its history: replicas shifted into the past, with
+  their own session, match, game and participant ids and their own opponent
+  names. It reads the source read-only. `game_events` is replicated only with
+  `--events`; `console_logs`, `raw_game_payloads` and `rank_snapshots` never
+  (the script's docstring says why).
+- `scripts/dashboard_payloads.py dump --db COPY --out DIR` calls every read
+  endpoint for a fixed set of requests taken from the database (the Overview
+  under several filters, All Games, decks, games, opponents, cards, search,
+  audit), writes each payload as JSON, and prints the cold time and size of
+  each. `--src <other checkout>/src` runs another checkout's code, so `main`
+  and a branch are compared on the same file. Cards are the most-played ones
+  plus a spread of rarer ones and the two-part cards; the card page is also
+  read under each filter, and search as it is typed (one, two, three letters,
+  a card type, a half of a two-part card).
+- `scripts/dashboard_payloads.py diff A B` lists every value that differs
+  between two dumps. **"The pages and their numbers do not change" means this
+  prints `0 differ`.** "Last 7 days" in a dump counts back from the newest
+  game in the copy, not from the clock: two dumps made half an hour apart
+  once differed by the one game that had left the window in between (windows
+  were hours then; they are calendar days since Step 7, and a dump made on
+  another day would still differ without the pin).
+- Both pin SQLite's bound-parameter limit to 32,766 on every connection, so a
+  Mac run fails where a Windows user would.
+
+Two kinds of copy were measured, because Travis's history is half games
+recorded before decklists were captured (2026-07-25) and a future heavy
+player's is not:
+
+- **mixed**: the whole real database (1,264 games) times 10 and 30.
+- **modern**: only its 675 games that submitted a decklist, times 19 and 56.
+  This is the shape a long history recorded from now on will have.
 
 ## Measured
 
-Travis's real database (1,256 games, 160 MB) was replicated 10x and 30x with
-new ids and shifted dates (`game_events`, `console_logs` and raw payloads were
-not replicated, so the file sizes below understate a real database of that
-size by roughly 3x). Cold timings over HTTP against the dashboard, after the
-2026-11-08 fixes:
+Cold times of the functions behind each endpoint on the dev Mac, 2026-11-09.
+"Before" is 0.7.7 plus the Step 0 fix (0.7.7 itself fails past 32,766 games
+on Windows); "after" is this branch with the stored values filled in.
 
-| Page | 1,256 games | 12,560 games | 37,680 games |
+| Page | modern, 12,825 games | modern, 37,800 games | mixed, 37,920 games |
 | --- | --- | --- | --- |
-| Overview (`/api/snapshot`) | 0.3 s, 380 KB | 3.1 s, 790 KB | 7.9 s, 1.5 MB |
-| All Games (`/api/games`) | 0.15 s, 757 KB | 2.1 s, 7.5 MB | 8.9 s, 22 MB |
-| Deck page (`/api/deck`) | 0.2 s | 2.3 s | 6.7 s |
-| Game page (`/api/game`) | 0.02 s | 0.06 s | 0.16 s |
-| Live Scoreboard / overlay polls | < 1 ms | 20 ms | 58 ms |
-| Dashboard process RSS | 115 MB | 196 MB | 364 MB |
+| Overview (`/api/snapshot`) | 2.8 s → 1.1 s | 9.1 s → 3.6 s | 9.8 s → 5.6 s |
+| Overview, last 7 days | 1.0 s → 0.13 s | 3.2 s → 0.38 s | 3.0 s → 0.38 s |
+| Overview, one deck | 1.8 s → 0.25 s | 5.6 s → 0.8 s | 6.4 s → 1.9 s |
+| All Games (`/api/games`) | 1.6 s → 0.31 s | 5.1 s → 1.0 s, 22 MB | 5.5 s → 3.0 s |
+| All Games, last 30 days | 0.28 s → 0.02 s | 0.83 s → 0.03 s | 0.80 s → 0.03 s |
+| Deck page, average of 17 decks | 1.5 s → 0.14 s | 4.8 s → 0.44 s | 4.6 s → 0.42 s |
+| Deck page, the most-played deck | 1.8 s → 0.5 s | 5.9 s → 1.6 s | 6.6 s → 2.6 s |
+| Opponent page | 0.19 s → 0.01 s | 0.55 s → 0.05 s | 0.52 s → 0.09 s |
+| Card page (`/api/card`), median of 26 cards | not measured | 2.0 s → 0.3 s | 1.7 s → 0.26 s |
+| Card page, a basic land (half of all games) | not measured | 2.4 s → 0.9 s | 2.1 s → 0.8 s |
+| Card search, the first after a new game | not measured | 0.2–2.6 s → 0.9 s | 0.2–1.6 s → 0.9 s |
+| Card search, each keystroke after that | not measured | 0.2–2.6 s → 0.01 s | 0.2–1.6 s → 0.01 s |
+| Opponents list | 0.04 s, 1.8 MB | 0.11 s, 5.4 MB | 0.11 s, 4.5 MB |
+| Game page | 0.07 s | 0.2 s | 0.2 s |
 
-Everything scales linearly with the number of games, nothing quadratic. The
-second request of each page within 60 s is served from the response cache in
-about 10 ms; the cost is paid on every first visit and after every finished
-game. The Overview is the landing page, so at 37k games the tracker opens on an
-eight-second spinner. That is the number that decides whether a heavy player
-keeps the tracker.
+The mixed copy gains less on the Overview and All Games because 47% of its
+games have no decklist of their own, and those are computed live on purpose
+(see "What is stored"). A real history has at most a few thousand such games.
 
-### Where the Overview's time goes (12,560 games, profiled)
+The card and search rows were measured on new copies of the same two shapes
+(38,136 and 38,100 games); "before" for them is Step 2. A search used to cost
+0.2 s for a selective query and up to 2.6 s for a single letter, every
+keystroke.
 
-| Part | Share | What it is |
+Payloads: `0 differ` between the Step 0 code and this branch on the real
+database, both mixed copies and both modern copies, with the stored table
+absent, part filled and full. One difference from 0.7.7 is intended: a
+two-part card's mana cost (Step 0). Step 3: `0 differ` against Step 2 on the
+real database and both 38k copies (136 payloads each), with the card-name
+indexes absent and present.
+
+Upgrade, simulated on the 37,800-game modern copy: the new build's first open
+(schema and maintenance) took 0.2 s; the background pass stored all 37,800
+games in 5 s alone and 15 s while another thread wrote to the database every
+50 ms; one of those writes waited 149 ms at worst, 24 ms on average.
+
+## What was built
+
+### Step 0 — the hard failure and the tools
+
+The first measurement ran on a Mac, whose SQLite binds up to 500,000
+parameters in one statement. The SQLite in the Windows build binds 32,766
+(confirmed on the Windows 11 test machine). `_draw_quality_batch`,
+`_mana_readiness_rows` and `_deck_decklist_analysis` bound one parameter per
+game, so past 32,766 games in view the Overview and All Games did not get
+slow on Windows, they failed with "too many SQL variables": thirteen months
+of play at 2,500 games a month. Every id list now goes through
+`dashboard._in_chunks`, and a test reads every page over more games than a
+pinned limit allows.
+
+The payload diff's first run also found a bug unrelated to scale: a two-part
+card's cost on the deck and game pages came from walking a set, so a Room
+showed its first door's cost, its second door's, or both joined, depending on
+the launch. It now always shows the front face's.
+
+### Step 1 — a view costs what it shows
+
+- History-filtered card queries start from `games` (`CROSS JOIN` order). The
+  planner used to scan the whole card table and test each row's game; starting
+  from the games in view is 35–40% faster over a whole history and about 50
+  times faster for a week.
+- The deck filter reads the deck's games from the `(role, deck_name)` index
+  instead of testing every game ever recorded.
+- Deck colours and deck images are built for the decks a page shows; observed
+  cards are read only for decks with no decklist, and openers and draws only
+  for decks that have never played a nonland card.
+- The Overview picks its 100 recent games before joining their cards.
+- The always-on test for untracked modes (Jump In, Midweek Magic) leaves every
+  statement when the database holds no such match.
+- `normalize_match_format` remembers its answers.
+- The response cache keys on the event log only for the game page, so a game
+  in progress no longer rebuilds a visible Overview on every 20-second poll;
+  the safety-net TTL grows with a page's build time.
+
+### Step 2 — each finished game's derived values, stored once
+
+`game_derived`, one row per game: the draw-quality dict as
+`draw_quality_metrics` returned it, the submitted deck's colours, and the
+opponent's colour letters. Written by the tracker at game end and by a
+background pass after launch; read by `_draw_quality_batch`,
+`_participant_deck_color_map` and `_opponent_letters`, each of which computes
+live for any game without a current row.
+
+**What is stored** is only what belongs to the game alone. A game with no
+decklist of its own borrows the nearest decklist of the same deck for its
+land rate, and that answer moves when other games are added, renamed or
+re-dated: its draw quality is stored as NULL and always computed live. On the
+real database that is 589 of 1,264 games, all from before 2026-07-25.
+
+**Format labels are not stored.** A match's format can be rewritten after the
+game, and the memo makes the label free.
+
+**What drops a row**: a card's colour or cost learned later (the games that
+used the card), a repaired "Card #N" label (every row), an audit repair
+(every row), a reset. A backup merge never copies the table. Bumping
+`game_derived.RULES_VERSION` recomputes everything; a test fails when
+`draw_quality_metrics` answers differently without the bump.
+
+**Upgrade**: the table is created empty with the schema, which is instant.
+The pass runs on a daemon thread after "Now ready to track", in batches of
+500, newest games first, sharing a lock with the game-end save so it never
+stores an answer computed from a half-written game. It can stop at any point
+and continue at the next launch. An older build ignores the table.
+
+### Step 3 — the card page and card search
+
+**Card page.** Every statement scanned a whole card table for the name, and
+two parts read the whole history whatever the card:
+
+- The name match (`display_name = ? OR display_name LIKE 'Name (%'`) is now
+  written so both halves use an index on `display_name COLLATE NOCASE`, with
+  the same rows: LIKE was always case-insensitive, and the exact half asks the
+  index for any case and keeps the exact spelling. Four indexes (card summary,
+  opening hands, draws, decklists): 45–55 MB on a 1.1–1.3 GB file at 38,000
+  games, about 4%. Until they exist the same rows come from a scan and the
+  page takes about 1 s.
+- The background pass builds them after it has stored the derived values:
+  1.2 s in total at 38,100 games, during which a concurrent write waited
+  385 ms at worst. They are not in the schema baseline because that runs
+  before tracking starts.
+- Repeat draws read each game's hand, draw and deck totals only for the games
+  the card was in (it used to total every game ever recorded).
+- "How often could they have cast it" reads the opponent colours stored in
+  Step 2. It still reads every game in view, about 0.1 s at 38,000 games,
+  which is most of what a rarely played card's page now costs.
+
+A card in half of all games (a basic land) still costs 0.9 s: about 20,000
+games' rows are read by six statements, and the repeat-draw table does its
+arithmetic per game.
+
+**Search** matches anywhere in the name and ranks by games, so no index
+narrows it. The card table is instead summed once per display name (one
+statement, 0.7 s at 38,000 games) and kept in memory under the response
+cache's fingerprint and TTL; a keystroke compares the query with a few
+thousand names. The first search after a new game pays the 0.9 s; requests
+that arrive while it is being built wait for it instead of building their own.
+A card recorded under several names ("Opt", "Opt (Instant)") is merged per
+query, counting a game once; deck counts and last-seen dates are worked out
+only for the results returned. Which row names a result and gives its type
+used to depend on the query plan; it is now the card's earliest row.
+
+Tried and dropped: finding search matches through the name index. Reading a
+card's rows through an index costs about seven times a sequential read per
+row, so it only won for queries matching under 4% of rows.
+
+### Step 4 — the Overview's last second
+
+The targets were an Overview under 1 s at about 13,000 games and under 3 s at
+about 38,000. Measured on new copies (13,186, 38,864 and 38,490 games), best
+of three, Step 3's code against this step's on the same stored rows:
+
+| Page | modern, 13,186 games | modern, 38,864 games | mixed, 38,490 games |
+| --- | --- | --- | --- |
+| Overview | 0.96 s → 0.69 s | 3.4 s → 2.4 s | 5.4 s → 4.6 s |
+| Overview, last 7 days | 0.12 s → 0.07 s | 0.45 s → 0.23 s | 0.39 s → 0.21 s |
+| Overview, one deck | 0.21 s → 0.17 s | 0.75 s → 0.66 s | 1.9 s → 1.7 s |
+| All Games | 0.28 s → 0.20 s | 0.94 s → 0.70 s | 3.0 s → 2.5 s |
+| Deck page, the most-played deck | 0.41 s → 0.33 s | 1.5 s → 1.0 s | 2.7 s → 2.2 s |
+
+The payload diff printed `136 identical, 0 differ` against Step 3 on all
+three copies and on the real database with the table full, emptied, half
+filled, and still in its Step 2 shape (no summary columns). The mixed copy
+still spends most of its time computing live the 46% of its games that have
+no decklist of their own.
+
+What changed:
+
+- **A few numbers per game, stored beside the dict.** Land availability on
+  curve and win rate by opening lands counted every game's opening hand with
+  two subqueries each and read every land draw; the flood / screw split and
+  All Games decoded every game's whole draw-quality dict to read five
+  numbers. `game_derived` now also holds the opening hand's cards and lands,
+  the turn of each land drawn, and the dict's counts and verdicts
+  (`SUMMARY_COLUMNS`). `store` fills them from the same computation; a game
+  without a current row is counted the old way inside the same statement
+  (`COALESCE(stored column, live subquery)`), so the numbers cannot differ.
+  `RULES_VERSION` is 2: the pass re-stores every row after the update, 9 s in
+  the background at 38,000 games, and pages compute live until it is done.
+  Pages opened during the pass are not held up by it: on a 38,520-game copy a
+  7-day Overview took 146 ms alone and 145 to 184 ms while the pass ran in
+  the same process.
+- **Games first, everywhere.** Step 1 fixed the join order for the card
+  tables. Nine more Overview statements still started from every player row
+  and looked its game up, so "last 7 days" joined the whole history for each.
+- **Recent games pick their 30 first.** Both recent-games tables sorted every
+  game in view with all its per-game subqueries (opponent colours, commanders,
+  turn times) and then kept 30: 60 ms at 38,000 games, now under 1 ms.
+- Smaller: opponent colours are labelled once per distinct combination, not
+  once per game; card counts use the game's integer rowid; deck images leave
+  lands out of the first pass; cleaned card names are remembered (a deck page
+  cleaned the same few hundred names half a million times).
+
+The Overview at 38,000 games is now about forty statements, none over 0.35 s:
+deck images (0.3 s), opponent threats (0.25 s), the drawn-card table (0.2 s),
+each deck's newest decklist (0.13 s), and about seventeen aggregates of 40 to
+65 ms that each read every game in view once.
+
+**The page cache** builds a page once however many requests ask for it at
+the same moment (two tabs, a poll during a navigation), and holds at most
+64 MB of bodies, oldest dropped first (All Games is 22 MB at 38,000 games;
+the old limit was 64 bodies of any size).
+
+### Step 5 — the app itself was running throttled on macOS
+
+Every number above was measured by calling the dashboard's functions from a
+terminal. In the running app on the dev Mac (M4 Max, 2026-11-10) the same
+Overview took 500 ms against 95 ms from a terminal, on the same database with
+the same code, and all of it was CPU time inside SQLite. Every thread of the
+app was at scheduling priority 4, the background band: macOS had napped it,
+as it does a menu-bar app with no window, and its threads ran on the
+efficiency cores. A terminal process forced into the same band
+(`taskpolicy -b`) slowed the same way (96 ms to 350 ms). At 38,000 games that
+factor would turn a 2.4 s Overview into more than 10 s.
+
+`app_nap.stay_awake()` now runs at launch: it begins an
+`NSProcessInfo` activity (user initiated, idle system sleep allowed), the
+documented way out of App Nap, and holds it for the life of the process.
+
+Checked in the running app after a restart (2026-11-10, read-only, 5 to 10
+minutes after launch): every thread at priority 20 instead of 4, and an
+uncached Overview over HTTP in 128 ms against 123 ms for a direct call from a
+terminal (before: 500 ms against 95 ms). Priority 20 is the utility band, not
+a terminal process's 31: the app keeps full speed on an idle machine and
+still gives way to Arena. A windowless Qt probe was never napped within two
+minutes, so only the app itself could show this. Not yet seen: the same check
+after the app has sat for hours.
+
+Windows has no App Nap; the live check there should still compare a page's
+time in the app with the numbers above.
+
+### Step 6 — search ready before the first keystroke; backup, restore and merge at size
+
+**Search.** Serving the Overview starts `warm_card_search`, a daemon thread
+that brings the search summary up to date. The first search after a new game
+no longer pays the 0.9 s (at 38,000 games) unless it is typed within that
+second of the page opening, in which case it waits for the build already
+under way.
+
+**Backup, restore and merge** were measured on a 38,520-game copy with its
+event log (4.7 million event rows, a 3.0 GB file), dev Mac, 2026-11-10:
+
+| Operation | Time | Notes |
 | --- | --- | --- |
-| SQL | ~45% | 169 statements; the costly ones scan `game_card_summary`, `game_deck_cards`, `game_drawn_cards` and `game_opening_hand_cards` across all history: deck land profile (0.5 s), deck visuals window query (0.3 s), card roles (0.25 s), drawn-card table (0.15 s) |
-| Per-game draw quality in Python | ~30% | `_draw_quality_batch` → `draw_quality_metrics` once per game, every request, over the opener and draws of every game |
-| Format normalisation | ~12% | `normalize_match_format` ~37,000 calls per request on a handful of distinct raw labels |
-| Row conversion, colours, labels | ~13% | `_dict_rows`, `_display_opponent_colors`, `format_label` per row |
+| Backup | 33 s | 13 s snapshot, 20 s compression; the file is 300 MB |
+| Restore onto another database | 2.6 s | includes the safety copy of the 1,284-game database it replaced |
+| Merge into a 1,284-game database | 507 s → 34 s | 37,236 games added |
+| Background pass after the merge | 15 s | the merged games' stored values |
 
-The deck page has the same shape: it builds deck-wide maps for *every* deck
-(`_deck_color_map`, `_deck_visuals`) and the full card-role table, then picks
-one deck out.
+The merge was the only one out of line. Every copied row that has a card
+column looks up this computer's id for the card in a temporary map, and the
+map had no key: each of 4.7 million event rows read all 2,263 entries twice.
+With the map keyed by the snapshot's id the merge takes 34 s, and all 31
+tables of the merged database are row-for-row identical to the slow merge's.
 
-## Principle
+### Step 7 — slow pages are ready before they are opened
 
-Per-game facts that never change once the game is over are computed once,
-stored, and read back. Aggregates (win rates by deck, format, mulligan count,
-opener lands, momentum) stay as SQL over indexed columns: they are cheap when
-the per-row inputs are columns rather than Python. Only games recorded since
-the last launch need computing. When a rule changes, a version constant is
-bumped and one pass recomputes every stored row; the mechanism already exists
-(`maintenance_state`, see AGENTS.md).
+Travis's decision (2026-11-10): rebuild at game end rather than show the last
+copy with a game missing. Everything here applies only to a page whose build
+took 0.25 s or more; a normal history never has one, and its pages behave as
+before.
 
-This is not a rewrite of the dashboard. It is one new table, one write at game
-end, one startup pass, and a handful of read functions switching from
-"compute per row" to "read the column". The pages, their payloads and their
-numbers do not change; a test proves it.
+**At game end.** The tracker tells the dashboard a game was saved
+(`note_game_finished`, 0.2 ms). The slow pages asked for in the last four
+hours (at most four, most recent first) are rebuilt on a daemon thread once
+the fingerprint has stopped moving for two seconds: a rank change and an AI
+archetype land seconds after the game, and a rebuild before them would be
+thrown away. The fingerprint is watched for 90 s after each game.
 
-## Step 1 — exact quick wins (no schema change)
+**Past the TTL.** The TTL is a safety net; while the fingerprint is unchanged
+a rebuild gives the same body unless a "last N days" window has moved past a
+game. `_games_filter` is the one place a page reads the clock, so the cache
+records each build's windows and works out when the oldest game in one
+leaves it. Until then a page past its TTL is sent as it is and rebuilt behind
+the request; from then on the request waits for the rebuild.
 
-1. Memoise `normalize_match_format` / `format_label` on their arguments
-   (`functools.lru_cache`; the inputs are a few dozen distinct raw labels).
-   Removes ~12% of every page.
-2. Make the deck page compute its maps for the requested deck only
-   (`_deck_color_map`, `_deck_visuals`, the card-role table all accept a deck
-   filter). The deck page becomes proportional to the deck, not the history.
-3. Index review for the scanning queries above with `EXPLAIN QUERY PLAN` on the
-   30x copy; add covering indexes where a scan over `game_card_summary` or
-   `game_deck_cards` can become an index range (candidates:
-   `game_deck_cards(participant_id, deck_zone, display_name)`,
-   `game_card_summary(game_id, display_name)`).
-4. All Games: send only the fields the page renders (the response is 22 MB at
-   37k games, much of it unused per-row text).
+As first built (553ddb4) a window counted back N times 24 hours from the
+current minute, so a daily player's 30-day trend lost a game every few
+minutes during the hours they played a month ago. Waiting on each loss would
+have undone the step, so the old body was also sent for 30 minutes after one,
+with the window's far edge that much out of date. Travis's correction
+(2026-11-10): a window is days, not hours, and nothing should fall off by the
+minute. "Last N days" is now today and the N - 1 days before it, from local
+midnight (`_day_window_start`): the same games as a From date of that first
+day. A window moves once a day, the 30-minute allowance is gone, and a page
+sent past its TTL is exactly what a rebuild would give. The first request for
+a slow page after midnight waits for it once, unless a game ended since (the
+game-end rebuild already used the new day).
 
-Expected: Overview and deck page roughly halve; All Games transfer shrinks.
-Each change is verifiable by comparing payloads before and after on the real
-database copy (byte-identical except for removed unused fields).
+This changes numbers on purpose, the one place this plan does: a "last N
+days" page no longer holds the games between N times 24 hours ago and the
+midnight after. Checked on a copy of the 1,284-game history at four clock
+times: 54 pages (Overview, All Games, three decks, four cards, at 1, 2, 7,
+30, 60 and 90 days) are byte-identical to what the previous commit gives for
+the matching From date, and the 136-page dump differs from the previous
+commit only in the 7-day Overview.
 
-## Step 2 — stored per-game derived values
+Measured through the real HTTP handler on a 38,520-game copy of the mixed
+history (dev Mac, terminal, 2026-11-10):
 
-New table `game_derived`, one row per game (or per player participant):
+| | Before | After |
+| --- | --- | --- |
+| Overview, opened after a game | 5.1 s | 14 ms |
+| All Games, opened after a game | 3.7 s | 25 ms |
+| Overview, opened past its TTL, nothing new | 5.1 s | 33 ms |
+| Overview, opened one second after a game (before the rebuild) | 5.1 s | 5.4 s |
+| First open of a page since launch, or of a filter not opened lately | 5.1 s | 5.1 s |
 
-| Column | Source today |
-| --- | --- |
-| `is_flood`, `is_screw`, `is_land_streak`, `cards_seen`, `lands_seen`, `land_seen_pct`, `flood_probability_pct`, `screw_probability_pct`, `expected_land_rate`, `land_rate_source`, `reason` | `draw_quality_metrics` over opener + draws + decklist |
-| `format_label`, `format_family`, `is_ranked` | `format_normalizer` over `matches.format` / `best_of` |
-| `deck_colors` | `_participant_deck_color_map` over the submitted decklist and `cards.color_identity` |
-| `opp_colors` | revealed cards / opponent commanders and `cards.color_identity` |
-| `rules_version` | the constant that recomputes rows when any rule above changes |
+Both pages were rebuilt 14 s after the game was saved, with a busy Python
+thread running beside them. That thread ran at about 61% of its speed alone
+while the rebuild lasted: the cost to the log reader of a rebuild is the same
+as that of a page opened by hand, for those seconds. Rebuilds nobody waits
+for run one at a time and hold back while a request builds a page; before
+that rule a request that overlapped a rebuild took 9.4 s instead of 5.4 s.
+Payload diff against the previous commit on the 1,284-game copy:
+`136 identical, 0 differ`.
 
-Writers:
-- The tracker, at game end, in the same persistence step as the game row,
-  calling the exact functions the dashboard uses today.
-- A startup pass with a `maintenance_state` watermark on `games.rowid`
-  (games without a row), plus a full recompute when `rules_version` changes.
+Not covered: the first open after the app starts (nothing is on record yet;
+Step 8 covers the Overview), a filter not asked for in the last four hours,
+the second or two between a game's end and its rebuild, and the first open
+of a "last N days" page after midnight when no game has ended since.
 
-Refresh triggers (the two inputs that can change after a game ends):
-- **Card colours.** The startup colour/mana backfill fills `cards` rows that
-  were unknown when a game was played. When it writes any row, mark the
-  derived rows of games that reference those cards for recompute (one query
-  over `game_card_summary`/`game_deck_cards` by `card_id`).
-- **Borrowed decklists.** A game with no submitted list borrows the deck's
-  nearest list for its land rate (`land_rate_source = deck_history`). Travis
-  considers this a non-issue in the current build. Before building, count
-  such games on a real database (`land_rate_source != 'submitted'` in Game
-  Detail); if the count is zero or negligible, store the verdict as computed
-  and let the versioned recompute cover the rest.
+In the real app (dev Mac, 2026-11-12): the four games played after the
+restart onto this step were saved normally and each got its stored row, so
+the game-end call cost no game.
 
-Readers to switch: `dashboard_snapshot` (recent games, draw-quality tables,
-momentum, deck table colours), `all_games`, `deck_detail` (Normal/Flood/Screw
-split, land profile), `game_detail` (the badge; it can keep computing live for
-the current game). Each reads `game_derived` and falls back to computing only
-for a game that has no row yet (the game in progress).
+### Step 8 — the Overview's cold build, the trend's range, the first open
 
-Exactness: a test loads a real database copy, runs the old compute path and
-the stored path over every game, and asserts every value identical; the live
-write and the backfill share one function so they cannot diverge.
+Travis, 2026-11-15, on the changelog's "about 2.5 seconds": an improvement,
+but not a great page load. Three things were still a wait at 38,000 games,
+and each got its own fix. The numbers do not change: the 136-page payload
+diff prints `0 differ` on the 1,307-game history (built in line, and again
+with side by side forced on) and on a 38,772-game modern copy.
 
-Expected: Overview and All Games lose their per-game Python entirely and most
-of their card-table scans; at 37k games the Overview should be well under a
-second cold.
+**The cold build runs its statements side by side.** No single statement
+was left to fix: the page is about forty statements that each read the
+games in view and do not depend on one another. SQLite runs a statement
+without holding the interpreter, so on several read-only connections they
+overlap (`_PageReads`). What it took to make that pay:
 
-## Step 3 — what stays large
+- Only the sums go to the other threads. A statement that hands Python a
+  row per game gives the interpreter up at every row, and two threads doing
+  that wait on each other each time: with everything spread over four
+  threads the page took 1.5 s, and with the per-game parts as a second chain
+  on one of them still 1.5 s. Kept on the request's thread, one after
+  another, 0.85 s.
+- A hundred small statements at once are slower than in line (0.18 s became
+  0.55 s on four threads), so a helper runs as one read, never split.
+- Each connection gets a 32 MB page cache. With SQLite's default 2 MB the
+  statements push the games' pages out for each other.
+- The longest reads (each deck's cards, the opponents' cards) go to the
+  front of the queue.
 
-- `console_logs` is already a rolling window: `CONSOLE_LOG_RETENTION_DAYS` (30)
-  is pruned at every store connect, and migration 38 made the first cut and
-  compacted the file. It no longer grows with the history. The one copy of the
-  printed history that remains is `game_events` (`visible = 1`), roughly
-  1.7 GB at 37k games; the [raw log archive](RAW_LOG_ARCHIVE.md) plan decides
-  whether the originals replace any of it. Nothing in this plan depends on
-  that decision.
-- `raw_game_payloads` is pruned after 30 days and does not grow either.
-- Backups and merges move whole tables; a multi-GB database makes the
-  pre-update backup and restore slow. Measure once Step 2 is in.
-- The dashboard process holds about 10 KB of RSS per game across its caches
-  (364 MB at 37k). The response cache is bounded by entry count, not bytes;
-  bound it by bytes.
+The switch is the length of the history (2,000 games recorded), not the
+games in view: a 90-day Overview of a long history still reads every shown
+deck's cards. Below it, on one or two cores, and for a build nobody waits
+for (a rebuild after a game, the warm-up below) the page is built in line as
+before, on one core.
 
-## Upgrading an existing database
+**The trend's range no longer rebuilds the page.** The dashboard asks for
+the whole Overview again with `trend_days` or `trend_games` whenever the
+Win Rate Trend's range changes, and the default page carries
+`trend_days=30`. Only the `trend` rows depend on it. `/api/snapshot` now
+caches the Overview once per set of filters and each range's games
+separately, and joins the two (`snapshot_body`, byte-identical to the
+function's own output).
 
-What a user with history sees on the first launch after an update that
-carries Step 2. The updater's side is unchanged: the signed download, the
-mandatory `pre-update` `.tappsbackup`, the hand-off and the "Updated to X"
-notice all run as they do today, and the backup is the recovery path.
+**The first open after launch.** When the background pass has finished, the
+tracker tells the dashboard (`warm_overview`), which builds the page the
+dashboard opens on if the history is long. From then on a finished game
+keeps it ready (Step 7).
 
-Two mechanisms exist for one-time work at startup, and they block different
-things. Which one Step 2 uses is the design decision:
+**Sections that only count games are counted by SQLite.** Opponent colours
+took a row per game into Python and then asked for the stored letters in 43
+slices; the stored letters are now grouped in one statement
+(`_opponent_color_tallies`), and only games without a current row come back
+one by one. The Brawl record is grouped by format and outcome. The land
+profile reads each game's stored summary with the game instead of in
+slices. Together about 0.1 s of the in-line build and 0.05 s side by side:
+small, because the two largest per-game parts (mana readiness, the land
+profile's loop) still need every game.
 
-- **A numbered migration** runs inside `AnalyticsStore` construction, on the
-  launcher's main thread, before the dashboard thread or the tracker exist
-  (`app.start_dashboard` builds the store first). A migration that recomputes
-  every game would make a 37k-game launch sit with no tray icon, no dashboard
-  and no tracking until it finishes. Step 2's backfill must **not** be a
-  migration. The migration creates the empty `game_derived` table and nothing
-  else, which is instant.
-- **A watermarked startup pass** runs in the tracker thread, inside the
-  startup banner (`tracker_runtime`, next to turn-time recovery and the colour
-  backfill), after the dashboard is already serving. The dashboard stays up
-  while it runs, but the tracker prints "Now ready to track" only when the
-  passes finish. A pass that takes minutes on a large database delays
-  tracking: a user who updates and starts a game at once would be attached
-  mid-game, and that game is never persisted.
+Measured on a 38,772-game modern copy (dev Mac, terminal, 2026-11-15). The
+Mac was in use all day, so every figure is a best-of-several, and the first
+runs, under a load of 10 to 50, read a third higher (2.7 s before, 0.84 s
+after). These are from the evening, at a load of about 6:
 
-So the backfill is a watermarked pass with two additions:
+| | Before | After |
+| --- | --- | --- |
+| Overview, cold | 2.0 s | 0.62 s |
+| Overview, cold, built in line (one core, as a rebuild after a game is) | 2.0 s | 1.9 s |
+| Overview, last 90 days, cold | 0.44 s | 0.20 s |
+| Another trend range, through the HTTP handler | a cold Overview | 64 to 156 ms |
+| First open after launch | a cold Overview | 24 ms, after the build on one core in the background |
+| Overview, cold, 39,210-game mixed copy | 3.6 s | 2.1 s |
+| Overview, cold, the real 1,307 games | 0.09 s | unchanged (0.07 s if forced on) |
 
-1. **Bounded work per launch, or a background thread.** The pass processes
-   games in batches (say 500 per transaction, newest first, so Recent Games is
-   fast first) and either stops after a time budget and resumes at the next
-   launch from its watermark, or runs on a daemon thread after the banner so
-   tracking starts immediately. Either way the tracker is ready within
-   seconds of launch regardless of history size. The budget must still make
-   progress on a database where the budget is never enough; batching by
-   rowid with a persisted watermark guarantees that.
-2. **Readers never wait for it.** Every reader of `game_derived` falls back to
-   today's compute path for games without a row (the plan already requires
-   this for the game in progress). During the backfill the dashboard is
-   exactly as fast as it is today, and gets faster as rows land. Nothing is
-   wrong or missing while the pass is incomplete; the Overview is only slow.
+By statements at once: three 0.74 s, four 0.62 s, six 0.58 s. Four is the
+setting: two more cores for 0.04 s is a poor trade on a machine that is
+running Arena.
 
-Rows written by the live tracker at game end and rows written by the pass
-come from one function, so a game recorded between launch and the pass
-reaching it is not a special case.
+What sets the pace now is the request's own thread: the per-game parts
+(mana readiness 0.13 s, the land profile 0.14 s, opponent colours 0.11 s,
+match results 0.07 s) after 0.12 s of statements the rest depend on. The
+mixed copy gains least because half its games have no stored draw quality
+and are computed in Python.
 
-Other upgrade properties worth stating:
+The deck page was profiled and left alone: 0.87 s for a 4,698-game deck is
+78 statements of at most 37 ms, five of which take 30,000 to 60,000 card
+rows into Python. There is no long statement to move to another thread, and
+a typical deck's page is 0.4 s.
 
-- **Rule changes later.** Bumping `rules_version` makes the pass recompute
-  every row under the same budget; until it reaches a game, the game's row is
-  stale, not missing. Readers prefer a row whose version matches the current
-  constant and otherwise fall back to computing live, so a rule change never
-  shows old verdicts, only slower pages until the pass catches up.
-- **Downgrade.** `game_derived` is additive. An older build ignores the table
-  and computes live, as it does today; `db_newer_than_app` reports it. No
-  data is lost in either direction.
-- **Backups and merges.** `game_derived` is derived data and need not travel
-  in `.tappsbackup`; a restore or merge clears the watermark
-  (`merge_snapshot_into` already clears `maintenance_state`) and the next
-  launch recomputes. A reset empties it (`RESET_TABLES`).
-- **Disk.** One narrow row per game, a few hundred bytes; at 37k games about
-  10–20 MB. Negligible against the 160 MB per 1,256 games the history already
-  costs.
-- **First launch cost, measured before shipping.** Time the pass on the 10x
-  and 30x copies with the batch size chosen; the acceptance number is
-  "tracking ready in under five seconds on the 30x copy", not the total
-  backfill time.
+Not measured: Windows, and the running Mac app (its threads sit in the
+utility band, see Step 5).
 
-## Order
+Tried and set aside, with what each measured on the same copy:
 
-Step 1 first (exact, small, measurable), then Step 2 behind a plan review, then
-Step 3 together with the archive decision. Re-measure on the 10x and 30x copies
-after each step with the same table as above; the build script lives in the
-performance-pass scratch notes and takes a minute to recreate from a real
-database with `.backup`.
+- **Every statement on four threads, per-game parts included:** 1.5 s. The
+  per-game parts fight for the interpreter (above).
+- **The per-game parts as two chains** (one on the request's thread, one on
+  another): 1.5 s against 1.2 s with one chain at the time.
+- **More than four at once:** five 0.83 s, six 0.84 s. Replaying only the
+  statements, without the page's Python, eight threads took 5 s where one
+  took 2.5 s: the 224 small statements queue for the interpreter.
+- **A shorter interpreter switch interval** (0.5 ms for 5 ms): 2.2 s. Worse.
+- **Memory-mapped reads** (`PRAGMA mmap_size`): the fastest of all for the
+  bare statements (0.55 s on four threads against 1.10 s, and 2.0 s against
+  2.4 s on one). Not used: a failed read of a mapped file is a crash, not an
+  error, and it could not be tried on Windows. A larger page cache gets
+  most of it (0.63 s); 32 MB a connection is the setting, 64 MB was no
+  better in the page and 512 MB was worse.
+- **A pre-joined table of the games in view:** built in 57 ms; a sum over it
+  took 10 ms against 35 to 55. About 0.6 s over the page for rewriting every
+  statement, and nothing for the three longest (each deck's cards, the cards
+  drawn, the opponents' cards: 0.3 s each, which read card tables).
+- **The switch on the games in view** (first version): left a 90-day
+  Overview of a long history in line at 0.56 s. It is the history's length.
+
+## Still to do
+
+In the order they are worth doing.
+
+1. **Live check on Windows.** Run this branch against a copy of a real
+   database: first launch after the "update" (the pass runs, tracking starts
+   at once), a few real games (a row per game appears in `game_derived`), the
+   four card-name indexes appear, and the same pages before and after. Then
+   the payload diff once more on that copy. Done on the dev Mac on 2026-11-09
+   for Steps 0 to 3. At 1,264 games, then six played: the pass stored every
+   game within a second of launch, each new game got its row at game end, no
+   earlier row of the game tables changed, and the payload diff printed
+   `0 differ` with the table full against emptied. After the next restart
+   (1,277 games): the four indexes were there and the running dashboard
+   answered card pages and searches in milliseconds.
+2. **Step 8 in the running app with a long history, and on Windows.** On a
+   scaled copy: the launch warm-up runs after the background pass, the
+   Overview builds side by side, and a trend range answers without a
+   rebuild. The Mac half on a normal history passed on 2026-11-16 (app
+   restarted onto `f219bd9`, 1,307 games, so the page builds in line and
+   there is no warm-up): every thread at priority 20; an Overview nobody had
+   asked for took 105 to 108 ms over HTTP against 94 to 97 ms for the same
+   call in a script, byte for byte the same body; the same page again 2.5 ms;
+   another trend range 8 ms. The side-by-side build was then timed at the
+   app's priority on a 38,772-game copy (`taskpolicy -c utility`, which ps
+   shows as 20): 0.63 s, the same as from a terminal (in line 2.0 s; in the
+   background band a napped app ran in, 3.7 s). Step 5 passed its second check on 2026-11-12: after 22
+   hours all 17 threads of the Mac app were still at priority 20. Step 4
+   passed its own on 2026-11-10: after the restart all 1,284 `game_derived`
+   rows were at `rules_version` 2 with their summary columns filled, none
+   missing. Step 6 in the running app: searches answered in 4 ms.
+3. **The Overview's cold build below half a second at 38,000 games**, if it
+   matters (Step 8 took it from 2.0 s to 0.62 s). The per-game parts on the
+   request's thread set the pace. What is left of them needs every game:
+   mana readiness decodes each game's land turns (storing "lands by turn 2
+   to 5" per game would make it a sum, at the price of a rules version), and
+   the land profile needs the newest listed and newest classified game as
+   well as its sums. A pre-joined temporary table of the games in view was
+   measured and is not worth it: a sum over it took 10 ms against 35 to 55,
+   about 0.6 s in all, with every statement rewritten.
+4. **All Games is 22 MB at 37,800 games** (decided 2026-11-10: leave it), about 600 bytes a game, nearly all
+   of it rendered. It now builds in a second, so the size is the cost: page it
+   on the server (sorting and search then move there too) or accept it.
+   Measured 2026-11-10 on a 38,520-game body (23.5 MB): the browser's side is
+   small (Node 22: parsed in 61 ms into 27 MB of objects, a sort by deck name
+   20 ms, a text filter 6 ms), and the page shows 30 rows whatever the total.
+   The size only costs on a network; gzip takes the body to 1.7 MB, which is
+   the answer if the dashboard is ever served to a second PC.
+5. **The first open after the app starts** still builds each slow page
+   once, except the Overview the dashboard opens on (Step 8). Remembering
+   the last few pages across a restart and rebuilding them after the
+   background pass would cover the rest. Not built.
+6. `game_events` is the one table that still grows with the history
+   (decided 2026-11-10: leave it for now). In the
+   1,284-game database (2026-11-10) the table and its two indexes are 62 MB of
+   109 MB, about 395 bytes a row. A game recorded with replay capture holds
+   about 200 rows (half of them silent replay rows) against 110 for an older
+   game, so a history recorded from now on grows by roughly 70 to 80 KB a
+   game for events: near 3 GB at 38,000 games, not the 1.7 GB the scaled
+   copies of this mixed history showed. No list page reads it; it costs disk
+   and backup time (33 s for a 3 GB file). The
+   [raw log archive](RAW_LOG_ARCHIVE.md) plan decides whether the originals
+   replace any of it.

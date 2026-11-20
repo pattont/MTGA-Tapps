@@ -972,6 +972,53 @@ def test_install_not_applied_keeps_the_download(tmp_path):
     assert (updates / "MTGA-Tracker-0.6.6-macos.zip").exists()
 
 
+def _blocked_harness(tmp_path, *, kind="windows-installer", state="on", log=None):
+    updates = _pending(tmp_path)
+    if log is not None:
+        journal = json.loads((updates / "pending.json").read_text())
+        journal["log"] = str(log)
+        (updates / "pending.json").write_text(json.dumps(journal))
+    h = Harness(tmp_path, routes=False, kind=kind)
+    h.manager._installer.smart_app_control_state = lambda: state
+    h.manager._startup_tasks()
+    return h.manager.status()
+
+
+def test_a_windows_install_blocked_by_smart_app_control_says_so(tmp_path):
+    status = _blocked_harness(tmp_path)
+    assert status["state"] == "error"
+    assert status["error"]["code"] == "blocked-by-windows"
+    message = status["error"]["message"]
+    assert "Smart App Control" in message and "v0.6.6" in message and "v0.6.5.3" in message
+
+
+def test_smart_app_control_is_not_blamed_when_setup_ran(tmp_path):
+    log = tmp_path / "install-0.6.6.log"
+    log.write_text("Setup started")
+    status = _blocked_harness(tmp_path, log=log)
+    assert status["error"]["code"] == "install-not-applied"
+
+
+@pytest.mark.parametrize("state", ["off", "evaluation", None])
+def test_smart_app_control_is_not_blamed_unless_it_is_on(tmp_path, state):
+    assert _blocked_harness(tmp_path, state=state)["error"]["code"] == "install-not-applied"
+
+
+def test_smart_app_control_is_not_blamed_on_macos(tmp_path):
+    status = _blocked_harness(tmp_path, kind="macos-app")
+    assert status["error"]["code"] == "install-not-applied"
+
+
+def test_smart_app_control_is_not_blamed_without_a_journal(tmp_path):
+    # Only Setup itself relaunches without pending.json, so it ran.
+    h = Harness(
+        tmp_path, routes=False, kind="windows-installer", launch_flags={"update_failed": "0.6.6"}
+    )
+    h.manager._installer.smart_app_control_state = lambda: "on"
+    h.manager._startup_tasks()
+    assert h.manager.status()["error"]["code"] == "install-failed"
+
+
 def test_update_failed_flag_reports_install_failed(tmp_path):
     _pending(tmp_path)
     h = Harness(tmp_path, routes=False, launch_flags={"update_failed": "0.6.6"})

@@ -1058,6 +1058,12 @@ html.sk-preview .sk:has(.sko, .sb, .rs, .br) {
   font-size: 10px;
 }
 
+.sko .note.warn {
+  padding: 5px 6px;
+  color: var(--accent-strong);
+  line-height: 1.35;
+}
+
 /* The credit sits in the header's top-right corner, above the turn, where
    the in-game overlay has its buttons: no extra line. */
 .sko .corner {

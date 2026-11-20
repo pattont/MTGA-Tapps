@@ -47,8 +47,8 @@ function Widget({ options }: { options: StreamOptions }) {
         <div className="sk-panel sk-help">
           <div className="sk-title">{PRODUCT_NAME} Stream Kit</div>
           <p>
-            Add <code>?widget=</code> and one of {WIDGETS.map((widget) => widget.id).join(', ')}. Settings → Streaming
-            builds these links for you.
+            Add <code>?widget=</code> and one of {WIDGETS.map((widget) => widget.id).join(', ')}. The Stream Kit page in
+            the dashboard builds these links for you.
           </p>
         </div>
       );

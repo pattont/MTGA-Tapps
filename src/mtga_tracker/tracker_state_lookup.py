@@ -540,7 +540,74 @@ class TrackerStateLookupMixin:
             obj_ids = zone.get("objectInstanceIds", [])
             if owner_seat not in (1, 2) or not isinstance(obj_ids, list):
                 continue
-            self.game_state.library_size_by_seat[int(owner_seat)] = len(obj_ids)
+            g = self.game_state
+            g.library_size_by_seat[int(owner_seat)] = len(obj_ids)
+            g.library_stale_seats.discard(int(owner_seat))
+            g.library_ids_by_seat[int(owner_seat)] = frozenset(
+                int(obj_id) for obj_id in obj_ids if isinstance(obj_id, int)
+            )
+            if zone.get("zoneId") is not None:
+                g.library_zone_by_seat[int(owner_seat)] = int(zone["zoneId"])
+            if owner_seat == g.player_seat_id and g.library_log_gap:
+                # The size is current again; what the summary hid now shows
+                # as cards the overlay cannot place (build_overlay_state).
+                g.library_log_gap = False
+                self._live_status_dirty = True
+
+    def _note_summarized_message(self) -> None:
+        """Arena logged a message as "Message summarized because ..." (over
+        50 objects or annotations, e.g. half a library milled at once): no
+        zones, objects or annotations reach the log. Until Arena next lists
+        the player's library the overlay may be showing cards that are gone."""
+        g = self.game_state
+        if not g.in_match or g.match_complete or g.player_seat_id is None:
+            return
+        # Either library may have changed unseen (saved as unknown at game end
+        # unless Arena lists it again first).
+        g.library_stale_seats.update((1, 2))
+        if g.library_log_gap:
+            return
+        g.library_log_gap = True
+        self._live_status_dirty = True
+
+    def _observe_library_reveal(self, game_objects: Any) -> None:
+        """Take the player's library from a message that shows all of it.
+
+        A search ("search your library for ...") sends every library card
+        to its owner as an object in the library zone. That is the exact
+        library, so it replaces the running count: whatever left unseen
+        before it (a mill Arena only summarized, a face-down exile) stops
+        mattering. Runs after the message's own zone transfers, which the
+        objects already reflect. A partial look (scry, top-N) matches fewer
+        ids than the library holds and is ignored."""
+        g = self.game_state
+        seat = g.player_seat_id
+        if seat is None or (g.turn_number or 0) < 1 or not isinstance(game_objects, list):
+            return
+        zone_id = g.library_zone_by_seat.get(int(seat))
+        library_ids = g.library_ids_by_seat.get(int(seat))
+        if zone_id is None or not library_ids:
+            return
+        shown: Dict[int, Dict[str, Any]] = {}
+        for obj in game_objects:
+            if not isinstance(obj, dict) or obj.get("zoneId") != zone_id:
+                continue
+            instance_id = obj.get("instanceId")
+            if isinstance(instance_id, int) and obj.get("grpId"):
+                shown[instance_id] = obj
+        if not shown or set(shown) != set(library_ids):
+            return
+        snapshot: Dict[str, int] = {}
+        for obj in shown.values():
+            name = str(self._card_name_from_game_object(obj) or "").strip()
+            if not name or name.startswith("Card #"):
+                continue
+            snapshot[name] = snapshot.get(name, 0) + 1
+        g.library_snapshot = snapshot
+        g.library_departures = {}
+        g.library_returns = {}
+        g.library_log_gap = False
+        self._live_status_dirty = True
 
     def _observe_library_zone_transfer(
         self,

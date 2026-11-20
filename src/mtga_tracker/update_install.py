@@ -4,6 +4,8 @@ process to exit before it touches any file.
 
 - Windows (Inno Setup installs only): the next `setup.exe` runs silently with
   `/WAITPID=<our pid>`; the installer's own `[Run]` entry relaunches the app.
+  A cmd.exe watcher relaunches the old version when Setup fails before it
+  could (`windows_watch_command`).
 - macOS (`.app` bundles): the zip is extracted with `ditto`, verified with
   `codesign`, and an embedded bash helper swaps the bundles after we exit.
 - Everything else links out to the release page.
@@ -22,7 +24,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field, replace
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from .updater_manifest import is_release_build, versions_equal
@@ -206,6 +208,42 @@ def detect_install(
     return InstallInfo("unknown", False, "unsupported-platform", executable=executable)
 
 
+#: Smart App Control's state lives in this value: 0 off, 1 on (it blocks
+#: unsigned code without reputation), 2 evaluation (it blocks nothing).
+SMART_APP_CONTROL_KEY = r"SYSTEM\CurrentControlSet\Control\CI\Policy"
+SMART_APP_CONTROL_VALUE = "VerifiedAndReputablePolicyState"
+_SMART_APP_CONTROL_STATES = {0: "off", 1: "on", 2: "evaluation"}
+
+
+def _read_smart_app_control_value() -> Optional[int]:
+    import winreg  # type: ignore[import-not-found]
+
+    access = winreg.KEY_READ | getattr(winreg, "KEY_WOW64_64KEY", 0x0100)
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, SMART_APP_CONTROL_KEY, 0, access) as key:
+            value = winreg.QueryValueEx(key, SMART_APP_CONTROL_VALUE)[0]
+    except OSError:
+        return None
+    return value if isinstance(value, int) else None
+
+
+def smart_app_control_state(
+    *,
+    platform: Optional[str] = None,
+    reader: Optional[Callable[[], Optional[int]]] = None,
+) -> Optional[str]:
+    """Return "on", "evaluation" or "off" on Windows; None elsewhere or when the
+    value is missing (Windows 10, older Windows 11) or unreadable. Read only
+    to explain a failed install, never to refuse one."""
+    if (platform or sys.platform) != "win32":
+        return None
+    try:
+        value = (reader or _read_smart_app_control_value)()
+    except Exception:
+        return None
+    return _SMART_APP_CONTROL_STATES.get(value) if isinstance(value, int) else None
+
+
 # --- child environment ------------------------------------------------------------
 
 
@@ -253,6 +291,53 @@ def windows_command(plan: InstallPlan) -> str:
     return " ".join(parts)
 
 
+#: Environment variables the watcher's cmd line reads its paths from. cmd
+#: never re-parses an expanded value, so a path with %, ^ or & stays literal.
+WATCH_SETUP_VAR = "TAPPS_SETUP_COMMAND"
+WATCH_EXE_VAR = "TAPPS_RELAUNCH_EXE"
+
+
+def _safe_version_token(version: str) -> str:
+    """A version as a bare cmd argument: PEP 440 characters only, else none."""
+    text = str(version or "")
+    if text and all(ch.isalnum() or ch in ".+-_" for ch in text):
+        return text
+    return ""
+
+
+def windows_watch_command(plan: InstallPlan, *, system_root: str) -> tuple:
+    """(command line, extra environment) for the Windows hand-off.
+
+    Setup itself relaunches the tracker after a success, and after an install
+    that began and failed (DeinitializeSetup). When Setup never gets that far,
+    nothing would: Smart App Control blocking the unsigned setup .tmp it
+    unpacks, or the setup.exe itself, left users with no tracker at all. So
+    with relaunch requested, a Microsoft-signed cmd.exe starts Setup, waits
+    for it, and on any non-zero exit starts the old exe with --update-failed.
+    A second relaunch after a failed install is harmless: the later one
+    waits for the instance lock and exits quietly (app.main).
+
+    `if errorlevel 0 if not errorlevel 1` is a run-time test for exactly 0
+    (%errorlevel% would expand before Setup ran, and `if errorlevel 1` alone
+    misses the negative codes of a crash)."""
+    setup = windows_command(plan)
+    if not plan.relaunch:
+        return setup, {}
+    executable = plan.executable or Path(sys.executable)
+    cmd = PureWindowsPath(system_root) / "System32" / "cmd.exe"
+    relaunch = f'start "" "%{WATCH_EXE_VAR}%" {UPDATE_FAILED_FLAG}'
+    version = _safe_version_token(plan.to_version)
+    if version:
+        relaunch += f" {version}"
+    script = (
+        f'start "" /wait %{WATCH_SETUP_VAR}% '
+        "& (if errorlevel 0 if not errorlevel 1 exit 0) "
+        f"& {relaunch}"
+    )
+    command = f'"{cmd}" /d /v:off /s /c "{script}"'
+    return command, {WATCH_SETUP_VAR: setup, WATCH_EXE_VAR: str(executable)}
+
+
 def _reset_dll_directory() -> None:
     """The PyInstaller bootloader's SetDllDirectoryW(_internal) is inherited
     by children (and their children: the relaunched tracker). Undo it."""
@@ -273,11 +358,15 @@ def spawn_windows_installer(
     environ: Optional[Mapping[str, str]] = None,
 ) -> Any:
     reset_dll_directory()
-    command = windows_command(plan)
+    source_env = os.environ if environ is None else environ
+    system_root = source_env.get("SystemRoot") or source_env.get("SYSTEMROOT") or r"C:\Windows"
+    command, extra_env = windows_watch_command(plan, system_root=system_root)
     app_dir = Path(plan.executable).resolve().parent if plan.executable else None
+    env = clean_child_env(environ, app_dir=app_dir)
+    env.update(extra_env)
     kwargs = dict(
         cwd=str(Path(plan.asset_path).parent),
-        env=clean_child_env(environ, app_dir=app_dir),
+        env=env,
         close_fds=True,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,

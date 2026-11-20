@@ -56,6 +56,13 @@ ANCHOR_OVERRIDE_MIN_SIZE = 250
 #: A validated block this big is unambiguously the collection — safe to stop
 #: scanning early instead of reading the rest of Arena's memory.
 EARLY_ACCEPT_MIN_SIZE = 1000
+#: Arena owns at most four copies of a card (extra copies go to the vault),
+#: so a real collection's quantities are almost all 1-4. Arena also keeps
+#: other card-keyed tables in memory, with the player's cards among the keys
+#: and small numbers as values (one export read 39-47 and 73-81 for every
+#: card). A block whose values are mostly above four is one of those.
+PLAYSET_MAX = 4
+MIN_PLAYSET_SHARE = 0.9
 SCAN_WINDOW_BYTES = 8 * 1024 * 1024  # ±4 MB read around each anchor hit
 MAX_REGION_BYTES = 256 * 1024 * 1024  # skip huge regions to bound the scan
 
@@ -407,6 +414,11 @@ def score_and_validate(
     return None
 
 
+def _holds_card_counts(block: Dict[int, int]) -> bool:
+    playsets = sum(1 for qty in block.values() if qty <= PLAYSET_MAX)
+    return playsets >= len(block) * MIN_PLAYSET_SHARE
+
+
 def _validate_block(
     block: Dict[int, int],
     duplicates: int,
@@ -428,6 +440,8 @@ def _validate_block(
     if sum(block.values()) > 500_000:
         return False
     if duplicates > max(25, int(len(block) * 0.05)):
+        return False
+    if not _holds_card_counts(block):
         return False
     # Several of the player's OWN cards clustered in one block is decisive
     # even when the block is mostly cards the tracker has never seen played —
@@ -621,7 +635,7 @@ def scan_collection(
     if result is not None:
         progress(f"Mapping {len(result)} cards…")
         return result
-    largest = max((len(block) for block, _dupes in blocks), default=0)
+    largest = max((len(b) for b, _dupes in blocks if _holds_card_counts(b)), default=0)
     first_pass_blocks = len(blocks)
 
     # Pass 2: anchorless full sweep — only reached when nothing matched an
@@ -645,7 +659,7 @@ def scan_collection(
         anchors=len(anchors),
         anchor_hits=anchor_hits,
         blocks=first_pass_blocks + len(blocks),
-        largest=max([largest] + [len(block) for block, _dupes in blocks]),
+        largest=max([largest] + [len(b) for b, _dupes in blocks if _holds_card_counts(b)]),
     )
 
 

@@ -1,5 +1,98 @@
 # Changelog
 
+## Unreleased
+
+**An opponent panel in the overlay, records that count today instead of a "session", a Challenges page for games with friends, and pages that stay quick with tens of thousands of games.**
+
+### Opponent panel in the overlay
+
+- **See what your opponent is on without leaving the game.** With the in-game overlay on, a second panel now appears on the other edge of the screen during games. It names their deck (their commander in Brawl, a guess from your own history when Deck AI has named decks with those cards, otherwise their colours), shows your record against it, and lists every card they have played by type with mana costs, laid out like the deck panel (lands fold into one row). New plays light up for a moment, and hovering a card shows it.
+- **Fold it away and still see the gist.** Folded, it is a small rail with their colours, how many different cards they have played (it pulses when a new one appears) and your record against them. It has its own pin and hotkey (`Alt+Shift+O`, `⌥⇧O` on a Mac), and it hides between games.
+- **Pick which panels you want.** Settings → In-game overlay → **Panels**: **Both** (the default), **My deck** (no opponent panel, and it costs nothing while off) or **Opponent** (the deck panel and its rail go away and the opponent panel takes the side you chose under Dock; the overlay's ⚙ settings then open from the gear on the opponent panel or from the tracker's menu).
+
+### More in the overlay
+
+- **A flood meter at the bottom of the deck panel.** During a game it shows lands seen against what your deck should give, with the gold Mana screw zone on the left, the blue Flood zone on the right, and the status (Normal, Flooding, Mana screw, Land streak). In ⚙ → **Flood meter**, put it **Above** today's record (the default), **Below** it, or turn it **Off**. Today's record and the flood meter sit together in a framed **Bottom of the panel** group, under Rows.
+- **Today's record can look like the Stream Kit Record widget.** ⚙ → Today's record → **Full** (it replaces Split) shows today's record and win rate, your rank in ranked games, your record with the current deck today, and Play and Draw columns with your win rate on each side and the record under it.
+- **Cards beside the open overlay can be clicked and dragged.** The overlay kept the space where its card preview and sideboard appear, so on a smaller screen the leftmost cards in your hand ignored the mouse until you collapsed the panel. That space now belongs to Arena unless the sideboard or the settings are open in it.
+- **A hovered card no longer stays highlighted** after the mouse moves from the panel onto the board.
+- **The panel is a little taller by default.** **Max panel height** now defaults to 850 pixels instead of 800, which cut a 16-row deck list off by a few pixels. A height you chose yourself is kept.
+
+### Today, not "this session"
+
+- **Every record now counts today, from midnight.** A "session" ended when you restarted the app or took a four-hour break, which nobody plays by: a restart at 11:45 PM zeroed your record, while the app left open overnight kept counting. The Live Scoreboard, the overlay and the Stream Kit now all show **Today**: every game that started since midnight on your computer's clock. A game that starts at 11:58 PM counts for the day it started.
+- **The Overview's Sessions table is now Days**: one row per day you played, with the time you played and how many sittings it came in (a game an hour or more after the last one starts a new sitting), games, record, play/draw and win rate. **Session Fatigue** is now **Games Into the Day**: your win rate by how many games into the day you were.
+- **Stream Kit links keep working.** The Record, Recent games, Game result and Intermission widgets lose their Session | Today choice; a link with `period=session` or `period=today` simply shows today. Your rank climb counts from midnight, and the Intermission card no longer shows how long the session ran.
+- **Settings → Sessions is gone**, along with its break setting; there is nothing left for it to change.
+
+### Live Scoreboard
+
+- **A Today box with more in it.** The record and win rate with a win/loss bar, your record on the play and on the draw, the current streak, how many games were flood or mana screw, and each deck's record today. **Today's Games** below it holds exactly the games the record counts, so after midnight yesterday's last game no longer sits under Today. The Runtime and Tracker tiles are gone.
+- **More during a game:**
+  - **Land meter:** lands seen against what your deck should have given you, on a gauge with the flood and screw zones, plus the chance your next draw is a land.
+  - **Opponent's cards:** everything they have played this game, by type with mana costs, in its own box beside the feed.
+  - **Best-of-three score** beside "Game 2 of 3".
+  - **Your record against their colours:** "14–19 vs Azorius decks" under the opponent's name (not in Brawl, where the commander record shows).
+  - **Search and filter the feed** by card name or any text, by event type or by who acted. Game Detail's timeline gets the same search box.
+- The games list has an **All games** link, and the page no longer grows a second scroll bar with a long list: only the list scrolls.
+
+### Challenges: games against your friends
+
+- **A Challenges page for your Direct Challenge games**, in the sidebar below Formats. It shows your record against each friend (a Best-of-3 counts once) and every game you played against them, with replays, 20 to a page and searchable by friend or deck. No challenges yet? It tells you how to start one.
+- **Bragging rights for the group chat.** At the top: your match and game record, how you do on the play and on the draw, and your current and best win streaks. Below that: your Favorite victim and your Nemesis (the friends you beat and lose to most, from two matches on), your Best and Worst deck (from three games), your Fastest win and your Longest game. The friends table shows the colours each friend plays and your current streak against them, and a Your decks table shows how each deck has done against your friends.
+
+### Saved game modes
+
+- **Keep friendly test games out of your stats.** Settings has a new **Saved game modes** card. Its **Direct Challenge** switch decides whether games against a friend are saved. Switch it off while a friend helps you try out a deck, and those games stay out of your stats, deck records and today's record (they still show on the Live Scoreboard and in the overlay). It is on by default, so nothing changes until you switch it off, and a change applies from the next game.
+- **Save the modes the tracker used to skip, if you want them.** The same card lists Jump In!, Midweek Magic, Momir, Welcome Deck Duels and practice games vs Sparky. They stay off by default, so nothing changes; switch one on and its games are saved and show in your stats from the next game.
+
+### Overview
+
+- **Formats is split into Constructed and Limited**, each with its own heading and sorted on its own, so the per-set draft and sealed rows sit together.
+- **Play / Draw shows how often you are on the play.** A new **% of Games** column gives each side's share of your games in its own colour (teal for the play, purple for the draw). On a typical laptop or desktop window, Play / Draw and Momentum now sit one above the other so neither table cuts off its Win Rate column; on a wide screen they stay side by side.
+- **"Last 7 days" means seven calendar days.** The Period filter and the Win Rate Trend's day ranges counted back in hours from the current minute, so games dropped out one at a time through the day. They now cover today and the days before it, from midnight: Last 30 days is today plus the 29 days before, and the trend's Day is today.
+
+### Game Detail
+
+- **Deck size and how many cards were left in each library.** Combat & Resources → Cards has two new rows for you and your opponent: **Deck size** (your opponent's counted from Arena's opening hand and library, so you can spot a 61-card or 80-card deck, and shown for past games too) and **Library left at the end**, from Arena's own count of each library. A game that ended right after a mill too big for Arena to log in full shows a dash rather than a number that might be wrong, and so do games recorded before this version. The deck page shows the average library left.
+
+### Faster with a long history
+
+- **The Overview, All Games and deck pages load several times faster** once you have thousands of games. In our tests with about 38,000 games, the Overview opened in about 1 second instead of 9 the first time (and instantly after that), All Games in under a second instead of 5, and a typical deck page in under half a second instead of 5.
+- **Filters cost what they show.** A week of games, one deck or one opponent no longer reads your whole history. A 7-day Overview that took 3 seconds at that size now takes about a quarter of a second.
+- **Card pages and search keep up.** A card's page opens in about a third of a second instead of 2, and search answers each letter instantly instead of taking up to 2 seconds.
+- **Pages are ready when you look.** With a very long history, the Overview and the pages you opened lately are brought up to date in the background a few seconds after each game, and the Overview is worked out at launch, so opening them doesn't wait. A history of normal size already opens that fast and is left alone.
+- **Changing the trend's range is instant.** Picking 90 days or the last 50 games on the Win Rate Trend no longer works the whole Overview out again.
+- **No slowdown while you play.** An Overview left open no longer recalculates every 20 seconds during a game.
+- **Merging a big backup takes seconds, not minutes.** Adding 37,000 games from another computer's backup took over 8 minutes; it now takes about half a minute, with the same result.
+- **Less memory.** Recently opened pages kept ready to show again are limited to 64 MB however large your pages grow, and a page opened in two tabs at once is built once.
+- **macOS: the dashboard runs at full speed.** macOS treated the tracker as an idle background app and slowed every dashboard page down about four times. The tracker now tells macOS it is working. Your Mac still sleeps as usual.
+- **Very long histories load on Windows.** Past 32,766 recorded games the Overview and All Games failed to load on Windows. They now load at any size.
+- **Nothing to do after updating.** The first launch prepares your existing games in the background (a few seconds for a very long history) while tracking starts right away, and every page shows the same numbers as before.
+
+### Stream Kit
+
+- **The Stream Kit has its own page.** It had grown to most of Settings, so it moved to a page of its own: the broadcast icon at the top right, between the light/dark switch and Settings. The widgets are grouped as Your deck, The game, Your record and Breaks, and the sidebar jumps between them. Settings → Streaming now just links to it, and your widget choices and links are unchanged.
+- **Size, background and the credit are set per widget.** Each Stream Kit widget has its own Size and Background, and a **Show “Tapps Tracker” credit** checkbox beside Preview, so one source can be bigger or text-only without changing the rest. The size, background and credit you had picked for all widgets become each widget's starting point.
+
+### Settings
+
+- **Restore defaults.** The bottom of Settings has a **Restore defaults** button. It lists what goes back (startup, updates, saved game modes, the overlay, Buy on Paper and Deck AI's on/off) and what stays (your Deck AI keys, Deck Finder creators, Stream Kit links, backups, games and decks) before it changes anything.
+- **Clearer name for the data reset.** The link in Settings' Tracker card that resets your games and stats is now called **Reset tracker data**, not "Reset Settings", since it never touched your settings.
+
+### Fixes
+
+- **Overlay: no more cards listed that a big mill already took.** When more than about 25 cards leave your library at once (an opponent milling half of it), Arena's log leaves the whole move out, and the overlay went on showing every copy as still in the library. It now reads your full library whenever you search it, which Arena does list, and corrects every count from that. Until then it says how many cards left unnamed, marks each count as the most that can be left (≤4), and works the odds out over the cards it cannot place. The Stream Kit's in-game panel and deck list do the same.
+- **No more doubled events after Arena resends the game.** Arena sometimes repeats earlier events when it resends the whole game state, and the tracker recorded them again: a land "sacrificed" twice, or a land played twice. Repeats are now skipped.
+- **A renamed deck's next game uses the new name.** If you renamed a deck and played it right away (for example a deck added from Deck Finder under its video title), that first game was recorded under the old name. The game now takes the name the deck has when you queue.
+- **Collection export no longer gives wrong copy counts.** A scan could take another of Arena's card tables for your collection and export 39 to 81 copies of every card. Such a table is now skipped; if your collection isn't found, the export says so instead of writing a wrong file.
+- **Windows: a blocked update no longer closes the tracker for good.** When Windows Smart App Control blocked the update's installer, the tracker had already closed to make way for it and nothing reopened it. Now the version you had comes back by itself, and the update status says Windows blocked the installer (it isn't code-signed yet) instead of only "Update failed".
+- **Replays of Leyline games on the draw.** In a game recorded before 0.7.7 where you began with a Leyline on the battlefield and your opponent went first, the replay listed the opponent's whole first turn under Pre-game and showed an empty "Turn 1 – Your turn". Turn 1 is now the opponent's and holds their first turn.
+- **Replay: fetch lands leave when sacrificed.** Fabled Passage, Escape Tunnel, Strip Mine and other cards sacrificed for their own ability used to stay dimmed on the battlefield until the next action. They now go straight to the graveyard.
+- **Rooms and split cards show one cost.** A two-part card's mana cost on the deck and game pages could change between launches. It is now always the front face's.
+- **The Stream Kit's Opponent widget shows mana costs and card art.** Each card was listed with its type attached ("Ajani's Pridemate (Creature 2/2)"), which left it with no cost, no art, and out of mana-value order. It now lists the card by its name, and a creature cast at two sizes counts as one card.
+- **Dropdown arrows sit inside the box.** On some dropdowns the arrow touched the right edge; every dropdown now has it inset.
+
 ## 0.7.7.1
 
 **Deck Manager works with Arena again.**

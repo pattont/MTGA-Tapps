@@ -1,26 +1,22 @@
 import type { LivePayload } from '../../api';
 import { rankText } from '../../format';
-import { gamesIn, PERIOD_LABEL, periodRecord } from '../liveView';
+import { gamesIn, todayRecord } from '../liveView';
 import { shows, type StreamOptions } from '../options';
 import { useLiveSnapshot } from '../useLive';
 import { Brand } from './Brand';
 import { StatColumn } from './StatColumn';
 
 export function RecordView({ payload, options }: { payload: LivePayload; options: StreamOptions }) {
-  const totals = periodRecord(payload, options.period);
+  const totals = todayRecord(payload);
   const wins = totals?.wins ?? 0;
   const losses = totals?.losses ?? 0;
   const draws = totals?.draws ?? 0;
   const now = payload.now;
   const rank = shows(options, 'rank') ? now?.rank : null;
-  // The deck's record over the same span as the headline (today or this session).
+  // The deck's record today, like the headline.
   const deckRecord = now?.deck_record;
   const deck =
-    shows(options, 'deck') && deckRecord
-      ? options.period === 'today'
-        ? { wins: deckRecord.today_wins, losses: deckRecord.today_losses }
-        : { wins: deckRecord.session_wins ?? 0, losses: deckRecord.session_losses ?? 0 }
-      : null;
+    shows(options, 'deck') && deckRecord ? { wins: deckRecord.today_wins, losses: deckRecord.today_losses } : null;
   const deckShown = deck && deck.wins + deck.losses > 0 ? deck : null;
   // Play / draw on the right; a side with no games yet is left out.
   const sides = shows(options, 'turn')
@@ -32,7 +28,7 @@ export function RecordView({ payload, options }: { payload: LivePayload; options
   return (
     <div className="sk-panel sk-record">
       <div className="sk-record-head">
-        <span className="sk-label">{PERIOD_LABEL[options.period]}</span>
+        <span className="sk-label">Today</span>
         <Brand show={options.brand} />
       </div>
       <div className="sk-record-body">

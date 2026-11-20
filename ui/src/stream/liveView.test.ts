@@ -8,8 +8,6 @@ import {
   landZones,
   matchLine,
   percent,
-  periodGames,
-  periodRecord,
   rankName,
   rankOrder,
   resultFacts,
@@ -17,6 +15,8 @@ import {
   showsGame,
   span,
   streak,
+  todayGames,
+  todayRecord,
 } from './liveView';
 
 const now = DEMO_LIVE.now as LiveNow;
@@ -53,22 +53,17 @@ describe('live view helpers', () => {
     expect(secondsSince(null, 0)).toBeNull();
   });
 
-  it('picks the games and record for a session or today', () => {
+  it("picks today's games and record, from midnight", () => {
     const at = (id: string, started_at: string | null) => game({ id, started_at });
     const payload = {
       ...DEMO_LIVE,
-      session: { ...DEMO_LIVE.session!, id: 'S2' },
-      games: [at('S2:match:2:game:1', '2026-11-06T00:10:00'), at('S1:match:9:game:1', '2026-11-05T23:50:00')],
+      games: [at('S2:match:2:game:1', '2026-11-06T00:10:00'), at('S2:match:1:game:1', '2026-11-05T23:50:00')],
     };
     const midnight = new Date(2026, 10, 6, 0, 30).getTime();
-    expect(periodGames(payload, 'session', midnight).map((row) => row.id)).toEqual(['S2:match:2:game:1']);
-    expect(periodGames(payload, 'today', midnight).map((row) => row.id)).toEqual(['S2:match:2:game:1']);
-    const late = { ...payload, session: { ...payload.session, id: 'S1' } };
-    // Past midnight the session still holds the game from yesterday evening.
-    expect(periodGames(late, 'session', midnight).map((row) => row.id)).toEqual(['S1:match:9:game:1']);
-    expect(periodRecord(payload, 'today')).toBe(DEMO_LIVE.today);
-    expect(periodRecord(payload, 'session')?.wins).toBe(6);
-    expect(periodRecord(null, 'today')).toBeNull();
+    // The game from 23:50 belongs to yesterday, even in the same tracker session.
+    expect(todayGames(payload, midnight).map((row) => row.id)).toEqual(['S2:match:2:game:1']);
+    expect(todayRecord(payload)).toBe(DEMO_LIVE.today);
+    expect(todayRecord(null)).toBeNull();
   });
 
   it('finds the current streak', () => {

@@ -284,25 +284,50 @@ def merge_settings_section(name: str, values: Dict[str, Any], path: Optional[Pat
     _write_document(path, document)
 
 
-#: Hours without a game after which a new match starts a new session; 0 means
-#: a session ends only when the app closes.
-SESSION_BREAK_HOURS_CHOICES = (0, 1, 2, 3, 4, 6, 8, 12)
-DEFAULT_SESSION_BREAK_HOURS = 4
+#: Game modes whose saving is a choice (Settings → Saved game modes,
+#: ``tracking.<key>``), with the default for a file that never chose. Direct
+#: Challenge games are saved unless turned off; the rest were never saved
+#: before the setting existed, so they stay out until switched on.
+#: Mid-game attaches are not here: half a game is never saved.
+TRACKED_MODE_DEFAULTS: Dict[str, bool] = {
+    "direct_challenge": True,
+    "jump_in": False,
+    "midweek_magic": False,
+    "momir": False,
+    "welcome_deck": False,
+    "practice": False,
+}
 
 
-def session_break_hours(path: Optional[Path] = None) -> int:
-    """The saved session break (``sessions.break_hours``), or the default."""
-    value = read_settings_section("sessions", path).get("break_hours")
-    if isinstance(value, bool) or value not in SESSION_BREAK_HOURS_CHOICES:
-        return DEFAULT_SESSION_BREAK_HOURS
-    return int(value)
+def tracked_modes(path: Optional[Path] = None) -> Dict[str, bool]:
+    """Whether each optional game mode is saved, defaults filled in."""
+    section = read_settings_section("tracking", path)
+    modes = {}
+    for key, default in TRACKED_MODE_DEFAULTS.items():
+        value = section.get(key)
+        modes[key] = value if isinstance(value, bool) else default
+    return modes
 
 
-def save_session_break_hours(hours: Any, path: Optional[Path] = None) -> int:
-    """Persist the session break; raises ValueError for an unsupported value."""
-    if isinstance(hours, bool) or hours not in SESSION_BREAK_HOURS_CHOICES:
-        raise ValueError(
-            "'break_hours' must be one of " + ", ".join(map(str, SESSION_BREAK_HOURS_CHOICES))
-        )
-    merge_settings_section("sessions", {"break_hours": int(hours)}, path)
-    return session_break_hours(path)
+def save_tracked_modes(changes: Any, path: Optional[Path] = None) -> Dict[str, bool]:
+    """Persist some of the mode switches; raises ValueError for anything but
+    known keys with boolean values, and for an empty change."""
+    if not isinstance(changes, dict) or not changes:
+        raise ValueError("Send at least one game mode to change")
+    for key, value in changes.items():
+        if key not in TRACKED_MODE_DEFAULTS:
+            raise ValueError(f"Unknown game mode {key!r}")
+        if not isinstance(value, bool):
+            raise ValueError(f"{key!r} must be a boolean")
+    merge_settings_section("tracking", dict(changes), path)
+    return tracked_modes(path)
+
+
+def track_direct_challenge(path: Optional[Path] = None) -> bool:
+    """Whether Direct Challenge games are saved (``tracking.direct_challenge``, default on)."""
+    return tracked_modes(path)["direct_challenge"]
+
+
+def save_track_direct_challenge(enabled: Any, path: Optional[Path] = None) -> bool:
+    """Persist the Direct Challenge switch; raises ValueError for a non-boolean."""
+    return save_tracked_modes({"direct_challenge": enabled}, path)["direct_challenge"]

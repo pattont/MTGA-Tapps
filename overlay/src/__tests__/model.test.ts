@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildSections, isSingleton, landDanger, manaSymbols, oddsTone, oddsWithin, shortFormat, sortRows, typeClass } from '../model';
+import { buildSections, isSingleton, landDanger, libraryNotice, manaSymbols, oddsTone, oddsWithin, shortFormat, sortRows, typeClass, unseenCount } from '../model';
+import { drawStatus, landZones } from '../floodMeter';
 import { brawlState, inGameState } from './fixtures';
 
 describe('oddsWithin', () => {
@@ -21,6 +22,17 @@ describe('buildSections', () => {
     expect(sections.lands[0].total).toBe(16);
     expect(sections.lands[1].left).toBe(3);
     expect(sections.drawn).toEqual([]);
+  });
+
+  it('takes grouped land odds over the cards not seen to leave when some left unseen', () => {
+    // 24 cards milled in a message Arena only summarized: 21 left of a pool of 45.
+    const state = { ...inGameState(), library_size: 21, unseen: 24, draw_pool: 45 };
+    const [basic] = buildSections(state, 'odds', 'grouped').lands;
+    expect(basic.left).toBe(8);
+    expect(basic.odds['1']).toBeCloseTo(17.8, 1); // 8 in 45, not 8 in 21
+    // Never more draws than the library holds.
+    const last = buildSections({ ...state, library_size: 1 }, 'odds', 'grouped').lands[0];
+    expect(last.odds['3']).toBe(last.odds['1']);
   });
 
   it('lists every land when asked', () => {
@@ -49,6 +61,24 @@ describe('buildSections', () => {
     expect(byName).toEqual([...byName].sort((a, b) => a.localeCompare(b)));
     const byOdds = sortRows(rows, 'odds').map((r) => r.odds['1']);
     expect(byOdds).toEqual([...byOdds].sort((a, b) => b - a));
+  });
+});
+
+describe('libraryNotice', () => {
+  it('says nothing while every card is accounted for', () => {
+    expect(unseenCount(inGameState())).toBe(0);
+    expect(libraryNotice(inGameState())).toBeNull();
+  });
+
+  it('says how many cards left unseen and that counts are ceilings', () => {
+    const state = { ...inGameState(), unseen: 24, log_gap: true };
+    expect(unseenCount(state)).toBe(24);
+    expect(libraryNotice(state)).toBe("24 cards left your library and Arena's log didn't name them. Counts show the most that can be left.");
+    expect(libraryNotice({ ...state, unseen: 1 })).toContain("1 card left your library and Arena's log didn't name it.");
+  });
+
+  it('warns after a summarized message until the library is listed again', () => {
+    expect(libraryNotice({ ...inGameState(), log_gap: true })).toBe("Arena's log skipped a large move. Counts may be out of date until your next draw.");
   });
 });
 
@@ -85,5 +115,19 @@ describe('labels', () => {
     expect(typeClass('Legendary Creature')).toBe('creature');
     expect(typeClass('Enchantment')).toBe('ench');
     expect(typeClass(undefined)).toBe('other');
+  });
+});
+
+describe('flood meter numbers (a copy of the Stream Kit Lands widget\'s)', () => {
+  it('marks ≤10 % tails as screw and flood, like draw_quality', () => {
+    // 10 cards from 60 with 24 lands: 1 land or fewer is screw, 7 or more flood.
+    expect(landZones(60, 24, 10)).toEqual({ screwMax: 1, floodMin: 7 });
+  });
+
+  it('names the status in the dashboard\'s order', () => {
+    expect(drawStatus({ is_flood: true, is_screw: true, is_land_streak: true })).toBe('flood');
+    expect(drawStatus({ is_flood: false, is_screw: true, is_land_streak: true })).toBe('screw');
+    expect(drawStatus({ is_flood: false, is_screw: false, is_land_streak: true })).toBe('streak');
+    expect(drawStatus({ is_flood: false, is_screw: false, is_land_streak: false })).toBe('normal');
   });
 });

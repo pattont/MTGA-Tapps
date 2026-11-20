@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import functools
 import hashlib
 import html
 import json
@@ -20,8 +21,19 @@ import sys
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
-from urllib.parse import parse_qs, quote, unquote, urlparse
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    NamedTuple,
+    Optional,
+    Set,
+    Tuple,
+)
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 from .draw_quality import (
     deck_land_stats,
@@ -32,7 +44,15 @@ from .draw_quality import (
 )
 from .colors import _MANA_PIP_RE, color_combo_label, normalize_colors
 from .colors import score_deck_colors as _score_deck_colors
-from .format_normalizer import format_label, normalize_match_format
+from . import game_derived
+from .format_normalizer import (
+    format_label,
+    is_midweek_format,
+    is_momir_format,
+    is_welcome_deck_format,
+    normalize_match_format,
+)
+from .settings import TRACKED_MODE_DEFAULTS, tracked_modes
 from .paths import DATA_DIR
 
 
@@ -63,6 +83,253 @@ DEFAULT_STATIC_DIR = _default_static_dir()
 def _dict_rows(cursor: sqlite3.Cursor) -> List[Dict[str, Any]]:
     columns = [column[0] for column in cursor.description or []]
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+#: Ids bound into one ``IN (...)`` list. SQLite refuses a statement with more
+#: bound parameters than its compiled limit: 32,766 in the Windows build's
+#: SQLite, 500,000 in the macOS one. A long history holds more games than
+#: that, so a query that binds one id per game, deck or participant must go
+#: through ``_in_chunks`` or it fails with "too many SQL variables" on Windows
+#: while passing every test on a Mac.
+_SQL_IN_CHUNK = 900
+
+
+def _in_chunks(values: Iterable[Any]) -> Iterator[Tuple[str, List[Any]]]:
+    """``(placeholders, ids)`` for each slice of an id list, for ``IN (...)``.
+
+    Each id lands in exactly one slice, so a per-id ``GROUP BY`` or a per-id
+    list built from the rows is the same as from one statement.
+    """
+    items = list(values)
+    for start in range(0, len(items), _SQL_IN_CHUNK):
+        chunk = items[start : start + _SQL_IN_CHUNK]
+        yield ",".join("?" * len(chunk)), chunk
+
+
+#: With at least this many games recorded, a page runs its independent
+#: statements side by side (``_PageReads``). The whole history counts, not
+#: the games in view: a filtered Overview still reads every deck's cards.
+#: Below it the page is built exactly as it always was.
+_SIDE_BY_SIDE_MIN_GAMES = 2000
+#: Statements of one page running at once, the request's own thread included.
+#: Four took the Overview at 38,000 games from 2.7 s to about 0.85 s; five
+#: and six were no faster (the thread that takes rows into Python sets the
+#: pace by then).
+_SIDE_BY_SIDE_READS = 4
+#: Page cache of each connection of a side-by-side page, in KiB. Every
+#: statement reads the games in view again, and with SQLite's default 2 MB a
+#: long history's statements push those pages out for each other.
+_SIDE_BY_SIDE_CACHE_KIB = 32 * 1024
+
+
+#: ``on`` is set on a thread whose page build nobody is waiting for (a rebuild
+#: after a game, a page made ready at launch).
+_unhurried = threading.local()
+
+
+def _side_by_side_reads(games: int) -> int:
+    """How many of a page's statements run at once in a history of ``games``
+    games: one (in line, as written) for a normal history, for a machine
+    with one or two cores, and for a build nobody is waiting for, which
+    should not take four cores from a game that is being played."""
+    if games < _SIDE_BY_SIDE_MIN_GAMES or getattr(_unhurried, "on", False):
+        return 1
+    return max(1, min(_SIDE_BY_SIDE_READS, (os.cpu_count() or 1) - 1))
+
+
+class _Read:
+    """One read handed to ``_PageReads``: ``result()`` is what it returned,
+    or raises what it raised."""
+
+    __slots__ = ("_reads", "_fn", "_args", "_done", "_value", "_error")
+
+    def __init__(self, reads: "_PageReads", fn: Callable[..., Any], args: Tuple[Any, ...]) -> None:
+        self._reads = reads
+        self._fn = fn
+        self._args = args
+        self._done = threading.Event()
+        self._value: Any = None
+        self._error: Optional[BaseException] = None
+
+    def _run(self, conn: sqlite3.Connection) -> None:
+        try:
+            self._value = self._fn(conn, *self._args)
+        except BaseException as error:  # handed to whoever asks for the result
+            self._error = error
+        self._done.set()
+
+    def _fail(self, error: BaseException) -> None:
+        self._error = error
+        self._done.set()
+
+    def result(self) -> Any:
+        # The asking thread works through the queue instead of only waiting.
+        while not self._done.is_set():
+            waiting = self._reads._take()
+            if waiting is None:
+                self._done.wait()
+                break
+            waiting._run(self._reads._conn)
+        if self._error is not None:
+            raise self._error
+        return self._value
+
+
+class _PageReads:
+    """Runs the independent reads of one page, side by side on a long history.
+
+    A page is dozens of statements that each read the games in view and do
+    not depend on one another. SQLite runs a statement without holding the
+    interpreter, so on several read-only connections they overlap: the same
+    statements and the same rows, in a fraction of the time.
+
+    ``call(fn, *args)`` runs ``fn(conn, *args)`` and ``rows`` / ``row`` run
+    one statement; each returns a ``_Read`` at once. Until ``expect`` is told
+    of a long history the work is done right there on the caller's
+    connection, in the order it is written, and raises there. After it, a
+    read is queued for the other threads, each with a connection of its own,
+    and for the calling thread whenever it waits in ``result()``;
+    ``first=True`` puts a read known to be long at the head of the queue.
+
+    A function handed over runs on another thread and another connection:
+    it must read only the database and the values passed to it, never state
+    of the calling thread (``_games_filter`` reports "last N days" windows
+    per thread, so build the filter before, not inside).
+    """
+
+    def __init__(self, db_uri: str, conn: sqlite3.Connection) -> None:
+        self._uri = db_uri
+        self._conn = conn
+        self._queue: "collections.deque[_Read]" = collections.deque()
+        self._wake = threading.Condition()
+        self._closed = False
+        self._worker_conns: List[sqlite3.Connection] = []
+        self._threads: List[threading.Thread] = []
+
+    def __enter__(self) -> "_PageReads":
+        return self
+
+    def expect(self, games: int) -> None:
+        """Tell it how many games the history holds, before the first read:
+        enough of them and the reads from here on run side by side."""
+        if self._threads:
+            return
+        reads = _side_by_side_reads(games)
+        if reads < 2:
+            return
+        self._conn.execute(f"PRAGMA cache_size = -{_SIDE_BY_SIDE_CACHE_KIB}")
+        self._threads = [
+            threading.Thread(target=self._work, name=f"dashboard-read-{number}", daemon=True)
+            for number in range(reads - 1)
+        ]
+        for thread in self._threads:
+            thread.start()
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        with self._wake:
+            self._closed = True
+            abandoned = list(self._queue)
+            self._queue.clear()
+            if exc_type is not None:
+                # The page failed: stop what the other threads are reading.
+                for conn in self._worker_conns:
+                    conn.interrupt()
+            self._wake.notify_all()
+        for read in abandoned:
+            read._fail(RuntimeError("the page was finished before this read ran"))
+        for thread in self._threads:
+            thread.join()
+
+    def call(self, fn: Callable[..., Any], *args: Any, first: bool = False) -> _Read:
+        read = _Read(self, fn, args)
+        if not self._threads:
+            read._run(self._conn)
+            if read._error is not None:
+                raise read._error
+            return read
+        with self._wake:
+            if first:
+                self._queue.appendleft(read)
+            else:
+                self._queue.append(read)
+            self._wake.notify()
+        return read
+
+    def rows(self, sql: str, params: Iterable[Any] = (), *, first: bool = False) -> _Read:
+        """The statement's rows as dicts (``_dict_rows``)."""
+        return self.call(_read_dict_rows, sql, tuple(params), first=first)
+
+    def row(self, sql: str, params: Iterable[Any] = (), *, first: bool = False) -> _Read:
+        """The statement's first row."""
+        return self.call(_read_first_row, sql, tuple(params), first=first)
+
+    def _take(self) -> Optional[_Read]:
+        with self._wake:
+            return self._queue.popleft() if self._queue else None
+
+    def _work(self) -> None:
+        conn: Optional[sqlite3.Connection] = None
+        try:
+            while True:
+                with self._wake:
+                    while not self._queue and not self._closed:
+                        self._wake.wait()
+                    if self._closed:
+                        return
+                    read = self._queue.popleft()
+                if conn is None:
+                    try:
+                        conn = sqlite3.connect(self._uri, uri=True)
+                        conn.execute("PRAGMA query_only = ON")
+                        conn.execute(f"PRAGMA cache_size = -{_SIDE_BY_SIDE_CACHE_KIB}")
+                    except BaseException as error:
+                        if conn is not None:
+                            conn.close()
+                            conn = None
+                        read._fail(error)
+                        continue
+                    with self._wake:
+                        self._worker_conns.append(conn)
+                read._run(conn)
+        finally:
+            if conn is not None:
+                with self._wake:
+                    if conn in self._worker_conns:
+                        self._worker_conns.remove(conn)
+                conn.close()
+
+
+def _read_dict_rows(
+    conn: sqlite3.Connection, sql: str, params: Tuple[Any, ...]
+) -> List[Dict[str, Any]]:
+    return _dict_rows(conn.execute(sql, params))
+
+
+def _read_first_row(conn: sqlite3.Connection, sql: str, params: Tuple[Any, ...]) -> Any:
+    return conn.execute(sql, params).fetchone()
+
+
+def _deck_name_filters(
+    deck_names: Optional[Iterable[Any]], *, missing_as_unknown: bool = False
+) -> List[Tuple[str, List[Any]]]:
+    """``(" AND p.deck_name IN (...)", names)`` per slice of deck names, to
+    limit a per-deck query to the decks a page shows. ``None`` means every
+    deck: one empty fragment. No names means no query at all.
+
+    A deck's rows all match one slice, so per-deck grouping and ranking are
+    the same as over every deck. ``missing_as_unknown`` also matches a NULL
+    name for "(unknown)", the label such games are shown under.
+    """
+    if deck_names is None:
+        return [("", [])]
+    names = sorted({str(name) for name in deck_names if name is not None})
+    filters: List[Tuple[str, List[Any]]] = []
+    for placeholders, chunk in _in_chunks(names):
+        clause = f"p.deck_name IN ({placeholders})"
+        if missing_as_unknown and "(unknown)" in chunk:
+            clause = f"({clause} OR p.deck_name IS NULL)"
+        filters.append((f" AND {clause}", chunk))
+    return filters
 
 
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
@@ -97,7 +364,7 @@ def _replay_availability(
 ) -> Dict[str, Dict[str, Optional[str]]]:
     """``{game_id: {"state", "reason"}}`` for a whole result set.
 
-    Set-based on purpose: one ``IN`` lookup per 500 ids against the covering
+    Set-based on purpose: one ``IN`` lookup per slice of ids against the covering
     ``idx_game_events_game_time`` index plus one for ``replay_version`` —
     never a correlated subquery per row (about 1 ms for 1,100 games).
     """
@@ -105,9 +372,7 @@ def _replay_availability(
     with_events: Set[str] = set()
     recorded: Set[str] = set()
     has_version = "replay_version" in _table_columns(conn, "games")
-    for start in range(0, len(ids), 500):
-        chunk = ids[start : start + 500]
-        marks = ",".join("?" * len(chunk))
+    for marks, chunk in _in_chunks(ids):
         with_events.update(
             str(row[0])
             for row in conn.execute(
@@ -145,8 +410,11 @@ _TYPE_SUFFIX_RE = re.compile(r"\s*\([^()]*\)\s*$")
 _BRACKET_CONTENT_RE = re.compile(r"\[([^\]\n]+)\]")
 
 
+@functools.lru_cache(maxsize=65536)
 def _clean_card_name(display_name: Optional[str]) -> Optional[str]:
-    """Strip the trailing '(Type)' suffix tracker display names carry."""
+    """Strip the trailing '(Type)' suffix tracker display names carry.
+    Remembered: a deck page asks for the same few hundred names half a
+    million times."""
     if not display_name:
         return display_name
     cleaned = _TYPE_SUFFIX_RE.sub("", display_name).strip()
@@ -374,6 +642,122 @@ def _draw_quality_batch(
 ) -> Dict[str, Dict[str, Any]]:
     """participant_id -> draw-quality metrics for many games at once.
 
+    A finished game's metrics are read from ``game_derived`` when it has a
+    current row with its own land rate; every other game (one recorded since
+    the last background pass, or one that borrows another game's decklist)
+    is computed by ``_compute_draw_quality_batch``. Both give the same dict.
+    """
+    ids = [pid for pid, _ in participants if pid]
+    if not ids:
+        return {}
+    stored = game_derived.load_by_participant(conn, ids, draw_quality=True)
+    found = {pid: row.draw_quality for pid, row in stored.items() if row.draw_quality is not None}
+    if len(found) < len(ids):
+        found.update(
+            _compute_draw_quality_batch(
+                conn, [(pid, size) for pid, size in participants if pid and pid not in found]
+            )
+        )
+    return {pid: found[pid] for pid in ids if pid in found}
+
+
+def _draw_summary_batch(
+    conn: sqlite3.Connection,
+    participants: List[Tuple[str, Optional[int]]],
+) -> Tuple[Dict[str, game_derived.DrawSummary], Dict[str, Dict[str, Any]]]:
+    """participant_id -> the draw-quality numbers a list of games shows
+    (cards and lands seen, flood / screw / land streak), for many games.
+
+    The same answers as ``_draw_quality_batch`` gives, without decoding a
+    stored game's whole dict to read them. Also returns the full dicts of the
+    games that had to be computed, keyed the same way.
+    """
+    ids = [pid for pid, _ in participants if pid]
+    if not ids:
+        return {}, {}
+    summaries = game_derived.load_draw_summaries(conn, ids)
+    computed: Dict[str, Dict[str, Any]] = {}
+    if len(summaries) < len(ids):
+        computed = _compute_draw_quality_batch(
+            conn, [(pid, size) for pid, size in participants if pid and pid not in summaries]
+        )
+        for pid, quality in computed.items():
+            summaries[pid] = game_derived.draw_summary(quality)
+    return summaries, computed
+
+
+#: A player's opening hand as the Overview counts it. Both statements name the
+#: player's participant ``p``; ``game_derived`` stores what they return.
+_OPENING_CARDS_SQL = (
+    "(SELECT COUNT(*) FROM game_opening_hand_cards oh WHERE oh.participant_id = p.id)"
+)
+_OPENING_LANDS_SQL = """(
+    SELECT COUNT(*) FROM game_opening_hand_cards oh
+    WHERE oh.participant_id = p.id
+      AND (oh.type_category = 'Land' OR oh.display_name LIKE '%(Land)')
+)"""
+
+
+def _derived_join(conn: sqlite3.Connection) -> str:
+    """``LEFT JOIN`` of each player's current stored row as ``gd`` for a
+    statement that names the player's participant ``p``; empty when this
+    database has no stored summaries to join (see ``_stored_or``)."""
+    if not game_derived.columns_ready(conn):
+        return ""
+    return (
+        f"LEFT JOIN {game_derived.TABLE} gd ON gd.participant_id = p.id "
+        f"AND gd.rules_version = {int(game_derived.RULES_VERSION)}"
+    )
+
+
+def _stored_or(join: str, column: str, live_sql: str) -> str:
+    """The stored column where the game has a current row, else the live
+    expression: one statement gives the same number either way."""
+    return f"COALESCE(gd.{column}, {live_sql})" if join else live_sql
+
+
+def _compute_opening_lands(
+    conn: sqlite3.Connection, participant_ids: Iterable[Any]
+) -> Dict[str, Tuple[int, int]]:
+    """participant_id -> (cards, lands) in the opening hand, computed."""
+    result: Dict[str, Tuple[int, int]] = {}
+    for placeholders, chunk in _in_chunks(participant_ids):
+        for pid, cards, lands in conn.execute(
+            f"SELECT p.id, {_OPENING_CARDS_SQL}, {_OPENING_LANDS_SQL} "
+            f"FROM participants p WHERE p.id IN ({placeholders})",
+            chunk,
+        ):
+            result[str(pid)] = (int(cards or 0), int(lands or 0))
+    return result
+
+
+def _compute_land_draw_turns(
+    conn: sqlite3.Connection, participant_ids: Iterable[Any]
+) -> Dict[str, List[Optional[int]]]:
+    """participant_id -> the turn of each land the player visibly drew (None
+    for a draw whose turn was not captured), computed. A player who drew no
+    land is absent."""
+    turns: Dict[str, List[Optional[int]]] = {}
+    for placeholders, chunk in _in_chunks(participant_ids):
+        for pid, turn in conn.execute(
+            f"""
+            SELECT participant_id, turn_number
+            FROM game_drawn_cards
+            WHERE participant_id IN ({placeholders})
+              AND (type_category = 'Land' OR display_name LIKE '%(Land)')
+            """,
+            chunk,
+        ):
+            turns.setdefault(str(pid), []).append(turn)
+    return turns
+
+
+def _compute_draw_quality_batch(
+    conn: sqlite3.Connection,
+    participants: List[Tuple[str, Optional[int]]],
+) -> Dict[str, Dict[str, Any]]:
+    """participant_id -> draw-quality metrics for many games at once, computed.
+
     Same rules as _game_draw_quality (this game's decklist, else the nearest
     same-deck decklist, else the size heuristic) but in a handful of set
     queries instead of three per game — the difference between the overview
@@ -385,102 +769,106 @@ def _draw_quality_batch(
     fallback_size = {pid: size for pid, size in participants if pid}
     if not ids:
         return {}
-    placeholders = ",".join("?" for _ in ids)
     opener: Dict[str, List[Dict[str, Any]]] = {}
-    for record in _dict_rows(
-        conn.execute(
-            f"""
-            SELECT participant_id, display_name,
-                   COALESCE(type_category, 'Other') AS type_category
-            FROM game_opening_hand_cards
-            WHERE participant_id IN ({placeholders})
-            ORDER BY hand_position, copy_number
-            """,
-            ids,
-        )
-    ):
-        opener.setdefault(record["participant_id"], []).append(record)
     drawn: Dict[str, List[Dict[str, Any]]] = {}
-    for record in _dict_rows(
-        conn.execute(
-            f"""
-            SELECT participant_id, display_name,
-                   COALESCE(type_category, 'Other') AS type_category,
-                   draw_position, source
-            FROM game_drawn_cards
-            WHERE participant_id IN ({placeholders})
-            ORDER BY draw_position
-            """,
-            ids,
-        )
-    ):
-        drawn.setdefault(record["participant_id"], []).append(record)
     recorded: Dict[str, int] = {}
-    for pid, cards_drawn in conn.execute(
-        f"SELECT participant_id, cards_drawn FROM game_participant_stats "
-        f"WHERE participant_id IN ({placeholders})",
-        ids,
-    ):
-        recorded[pid] = int(cards_drawn or 0)
     decklists: Dict[str, Tuple[int, int]] = {}
-    for pid, size, lands in conn.execute(
-        f"""
-        SELECT participant_id, SUM(quantity),
-               SUM(CASE WHEN type_category = 'Land' THEN quantity ELSE 0 END)
-        FROM game_deck_cards
-        WHERE deck_zone = 'deck' AND participant_id IN ({placeholders})
-        GROUP BY participant_id
-        """,
-        ids,
-    ):
-        if int(size or 0) > 0:
-            decklists[pid] = (int(size), int(lands or 0))
+    # One slice of games at a time: a whole history is more ids than SQLite
+    # binds in one statement (see _in_chunks). A game's rows all arrive in
+    # its own slice, so each per-game list keeps the statement's order.
+    for placeholders, chunk in _in_chunks(ids):
+        for record in _dict_rows(
+            conn.execute(
+                f"""
+                SELECT participant_id, display_name,
+                       COALESCE(type_category, 'Other') AS type_category
+                FROM game_opening_hand_cards
+                WHERE participant_id IN ({placeholders})
+                ORDER BY hand_position, copy_number
+                """,
+                chunk,
+            )
+        ):
+            opener.setdefault(record["participant_id"], []).append(record)
+        for record in _dict_rows(
+            conn.execute(
+                f"""
+                SELECT participant_id, display_name,
+                       COALESCE(type_category, 'Other') AS type_category,
+                       draw_position, source
+                FROM game_drawn_cards
+                WHERE participant_id IN ({placeholders})
+                ORDER BY draw_position
+                """,
+                chunk,
+            )
+        ):
+            drawn.setdefault(record["participant_id"], []).append(record)
+        for pid, cards_drawn in conn.execute(
+            f"SELECT participant_id, cards_drawn FROM game_participant_stats "
+            f"WHERE participant_id IN ({placeholders})",
+            chunk,
+        ):
+            recorded[pid] = int(cards_drawn or 0)
+        for pid, size, lands in conn.execute(
+            f"""
+            SELECT participant_id, SUM(quantity),
+                   SUM(CASE WHEN type_category = 'Land' THEN quantity ELSE 0 END)
+            FROM game_deck_cards
+            WHERE deck_zone = 'deck' AND participant_id IN ({placeholders})
+            GROUP BY participant_id
+            """,
+            chunk,
+        ):
+            if int(size or 0) > 0:
+                decklists[pid] = (int(size), int(lands or 0))
 
     # Nearest same-deck decklist for games that submitted none.
     missing = [pid for pid in ids if pid not in decklists]
     borrowed: Dict[str, Tuple[int, int]] = {}
     if missing:
         deck_of: Dict[str, Tuple[str, str]] = {}
-        for pid, deck_name, played_at in conn.execute(
-            f"""
-            SELECT p.id, p.deck_name, COALESCE(g.started_at, g.ended_at, '')
-            FROM participants p
-            JOIN games g ON g.id = p.game_id
-            WHERE p.id IN ({",".join("?" for _ in missing)})
-            """,
-            missing,
-        ):
-            if deck_name:
-                deck_of[pid] = (str(deck_name), str(played_at or ""))
-        deck_names = sorted({name for name, _ in deck_of.values()})
-        history: Dict[str, List[Tuple[str, str]]] = {}
-        if deck_names:
+        for placeholders, chunk in _in_chunks(missing):
             for pid, deck_name, played_at in conn.execute(
                 f"""
                 SELECT p.id, p.deck_name, COALESCE(g.started_at, g.ended_at, '')
                 FROM participants p
                 JOIN games g ON g.id = p.game_id
-                WHERE p.role = 'player'
-                  AND p.deck_name IN ({",".join("?" for _ in deck_names)})
-                  AND EXISTS (
-                      SELECT 1 FROM game_deck_cards d
-                      WHERE d.participant_id = p.id AND d.deck_zone = 'deck'
-                  )
+                WHERE p.id IN ({placeholders})
                 """,
-                deck_names,
+                chunk,
             ):
-                history.setdefault(str(deck_name), []).append((str(played_at or ""), pid))
+                if deck_name:
+                    deck_of[pid] = (str(deck_name), str(played_at or ""))
+        deck_names = sorted({name for name, _ in deck_of.values()})
+        history: Dict[str, List[Tuple[str, str]]] = {}
+        if deck_names:
+            for placeholders, chunk in _in_chunks(deck_names):
+                for pid, deck_name, played_at in conn.execute(
+                    f"""
+                    SELECT p.id, p.deck_name, COALESCE(g.started_at, g.ended_at, '')
+                    FROM participants p
+                    JOIN games g ON g.id = p.game_id
+                    WHERE p.role = 'player'
+                      AND p.deck_name IN ({placeholders})
+                      AND EXISTS (
+                          SELECT 1 FROM game_deck_cards d
+                          WHERE d.participant_id = p.id AND d.deck_zone = 'deck'
+                      )
+                    """,
+                    chunk,
+                ):
+                    history.setdefault(str(deck_name), []).append((str(played_at or ""), pid))
             history_ids = [pid for entries in history.values() for _, pid in entries]
             history_stats: Dict[str, Tuple[int, int]] = {}
-            for chunk_start in range(0, len(history_ids), 900):
-                chunk = history_ids[chunk_start : chunk_start + 900]
+            for placeholders, chunk in _in_chunks(history_ids):
                 for pid, size, lands in conn.execute(
                     f"""
                     SELECT participant_id, SUM(quantity),
                            SUM(CASE WHEN type_category = 'Land' THEN quantity ELSE 0 END)
                     FROM game_deck_cards
                     WHERE deck_zone = 'deck'
-                      AND participant_id IN ({",".join("?" for _ in chunk)})
+                      AND participant_id IN ({placeholders})
                     GROUP BY participant_id
                     """,
                     chunk,
@@ -522,6 +910,68 @@ def _draw_quality_batch(
             quality["land_rate_source"] = source
         result[pid] = quality
     return result
+
+
+def _opponent_letters(
+    conn: sqlite3.Connection, game_ids: Iterable[Any]
+) -> Dict[str, Tuple[str, str]]:
+    """game_id -> (revealed-card colour letters, commander colour letters) of
+    the opponent, for ``_display_opponent_colors``: read from ``game_derived``
+    where a game has a current row, computed otherwise. A game with neither
+    may be absent."""
+    ids = list(dict.fromkeys(str(value) for value in game_ids if value))
+    if not ids:
+        return {}
+    stored = game_derived.load_by_game(conn, ids)
+    result = {game_id: (row.opp_revealed, row.opp_commander) for game_id, row in stored.items()}
+    missing = [game_id for game_id in ids if game_id not in stored]
+    if missing:
+        result.update(_compute_opponent_letters(conn, missing))
+    return result
+
+
+def _compute_opponent_letters(
+    conn: sqlite3.Connection, game_ids: Iterable[Any]
+) -> Dict[str, Tuple[str, str]]:
+    """Opponent colour letters per game from the cards the opponent revealed
+    and, for Brawl, their recorded commanders. One grouped pass per slice of
+    games (a correlated subquery per row costs far more over a history)."""
+    revealed: Dict[str, str] = {}
+    commander: Dict[str, str] = {}
+    try:
+        for placeholders, chunk in _in_chunks(game_ids):
+            for game_id, letters in conn.execute(
+                f"""
+                SELECT s.game_id,
+                       GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
+                FROM game_card_summary s
+                JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
+                JOIN cards c ON c.id = s.card_id
+                WHERE s.game_id IN ({placeholders})
+                GROUP BY s.game_id
+                """,
+                chunk,
+            ):
+                revealed[str(game_id)] = str(letters or "")
+            for game_id, letters in conn.execute(
+                f"""
+                SELECT po.game_id,
+                       GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
+                FROM participant_commanders pc
+                JOIN participants po ON po.id = pc.participant_id AND po.role = 'opponent'
+                JOIN cards c ON c.name = pc.card_name
+                WHERE po.game_id IN ({placeholders})
+                GROUP BY po.game_id
+                """,
+                chunk,
+            ):
+                commander[str(game_id)] = str(letters or "")
+    except sqlite3.OperationalError:
+        return {}
+    return {
+        game_id: (revealed.get(game_id, ""), commander.get(game_id, ""))
+        for game_id in set(revealed) | set(commander)
+    }
 
 
 def _display_opponent_colors(
@@ -617,13 +1067,20 @@ def _split_name_variants(conn: sqlite3.Connection, clean_name: str) -> List[str]
 
 
 def _card_name_clause(alias: str, variants: List[str]) -> str:
-    """SQL fragment matching a display-name column against every variant."""
+    """SQL fragment matching a display-name column against every variant:
+    the exact name, or the name followed by a "(Type)" suffix.
+
+    Both halves are written so the ``display_name COLLATE NOCASE`` indexes
+    (``CARD_NAME_INDEXES``) can serve them: LIKE is case-insensitive, and the
+    exact half asks the index for the name in any case and then keeps only the
+    exact spelling. Without the indexes the same rows come from a scan."""
     column = f"{alias}.display_name" if alias else "display_name"
-    return "(" + " OR ".join([f"{column} = ? OR {column} LIKE ?"] * len(variants)) + ")"
+    one = f"({column} = ? COLLATE NOCASE AND {column} = ?) OR {column} LIKE ?"
+    return "(" + " OR ".join([one] * len(variants)) + ")"
 
 
 def _card_name_params(variants: List[str]) -> Tuple[str, ...]:
-    return tuple(param for variant in variants for param in (variant, f"{variant} (%"))
+    return tuple(param for variant in variants for param in (variant, variant, f"{variant} (%"))
 
 
 def _card_image_url(arena_id: Optional[int], card_name: Optional[str]) -> Optional[str]:
@@ -675,52 +1132,56 @@ def _deck_decklist_analysis(
 
     deck_rows_by_game: Dict[str, List[Dict[str, Any]]] = {}
     sideboard_by_game: Dict[str, Dict[str, int]] = {}
-    placeholders = ",".join("?" for _ in participant_ids)
-    for row in _dict_rows(
-        conn.execute(
-            f"""
-            SELECT participant_id, display_name, type_category, deck_zone, quantity
-            FROM game_deck_cards
-            WHERE participant_id IN ({placeholders})
-            """,
-            list(participant_ids),
-        )
-    ):
-        game = game_by_participant.get(row["participant_id"])
-        if game is None:
-            continue
-        game_id = game["game_id"]
-        if row["deck_zone"] == "deck":
-            deck_rows_by_game.setdefault(game_id, []).append(row)
-        else:
-            sideboard_by_game.setdefault(game_id, {})[_clean_card_name(row["display_name"])] = int(
-                row["quantity"] or 0
-            )
-
-    seen_by_game: Dict[str, Dict[str, int]] = {}
-    seen_totals_by_game: Dict[str, int] = {}
-    for table in ("game_opening_hand_cards", "game_drawn_cards"):
+    # Sorted slices: SQLite walks an IN list in ascending order, so the rows
+    # come back in the order one statement over every id would give.
+    id_slices = list(_in_chunks(sorted(participant_ids)))
+    for placeholders, chunk in id_slices:
         for row in _dict_rows(
             conn.execute(
                 f"""
-                SELECT participant_id, display_name, COUNT(*) AS copies
-                FROM {table}
+                SELECT participant_id, display_name, type_category, deck_zone, quantity
+                FROM game_deck_cards
                 WHERE participant_id IN ({placeholders})
-                GROUP BY participant_id, display_name
                 """,
-                list(participant_ids),
+                chunk,
             )
         ):
             game = game_by_participant.get(row["participant_id"])
             if game is None:
                 continue
             game_id = game["game_id"]
-            clean = _clean_card_name(row["display_name"])
-            bucket = seen_by_game.setdefault(game_id, {})
-            bucket[clean] = bucket.get(clean, 0) + int(row["copies"] or 0)
-            seen_totals_by_game[game_id] = seen_totals_by_game.get(game_id, 0) + int(
-                row["copies"] or 0
-            )
+            if row["deck_zone"] == "deck":
+                deck_rows_by_game.setdefault(game_id, []).append(row)
+            else:
+                sideboard_by_game.setdefault(game_id, {})[_clean_card_name(row["display_name"])] = (
+                    int(row["quantity"] or 0)
+                )
+
+    seen_by_game: Dict[str, Dict[str, int]] = {}
+    seen_totals_by_game: Dict[str, int] = {}
+    for table in ("game_opening_hand_cards", "game_drawn_cards"):
+        for placeholders, chunk in id_slices:
+            for row in _dict_rows(
+                conn.execute(
+                    f"""
+                    SELECT participant_id, display_name, COUNT(*) AS copies
+                    FROM {table}
+                    WHERE participant_id IN ({placeholders})
+                    GROUP BY participant_id, display_name
+                    """,
+                    chunk,
+                )
+            ):
+                game = game_by_participant.get(row["participant_id"])
+                if game is None:
+                    continue
+                game_id = game["game_id"]
+                clean = _clean_card_name(row["display_name"])
+                bucket = seen_by_game.setdefault(game_id, {})
+                bucket[clean] = bucket.get(clean, 0) + int(row["copies"] or 0)
+                seen_totals_by_game[game_id] = seen_totals_by_game.get(game_id, 0) + int(
+                    row["copies"] or 0
+                )
 
     # --- Composition / dead-weight rows ---
     composition: Dict[str, Dict[str, Any]] = {}
@@ -1029,17 +1490,17 @@ def _opponent_threat_rows(
             SELECT
               s.display_name,
               COALESCE(s.type_category, 'Other') AS type_category,
-              COUNT(DISTINCT g.id) AS games,
+              COUNT(DISTINCT g.rowid) AS games,
               COALESCE(SUM(s.played_count), 0) AS plays,
               SUM(g.outcome = 'win') AS wins,
               SUM(g.outcome = 'loss') AS losses,
               ROUND(100.0 * SUM(g.outcome = 'loss') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS loss_rate
-            FROM game_card_summary s
-            JOIN participants p ON p.id = s.participant_id AND p.role = 'opponent'
-            JOIN games g ON g.id = s.game_id
+            FROM games g
+            CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'opponent'
+            CROSS JOIN game_card_summary s ON s.participant_id = p.id AND s.game_id = g.id
             WHERE {where} AND s.played_count > 0
             GROUP BY s.display_name
-            HAVING COUNT(DISTINCT g.id) >= 2
+            HAVING COUNT(DISTINCT g.rowid) >= 2
             ORDER BY loss_rate DESC, games DESC, s.display_name COLLATE NOCASE
             LIMIT 30
             """,
@@ -1069,8 +1530,8 @@ def _matchup_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> Li
               SUM(g.outcome = 'loss') AS losses,
               ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
             FROM games g
-            JOIN participants pp ON pp.game_id = g.id AND pp.role = 'player'
-            JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
+            CROSS JOIN participants pp ON pp.game_id = g.id AND pp.role = 'player'
+            CROSS JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
             WHERE {where}
             GROUP BY COALESCE(pp.deck_name, '(unknown)'), COALESCE(po.deck_archetype, '(unidentified)')
             ORDER BY COALESCE(pp.deck_name, '(unknown)') COLLATE NOCASE, games DESC
@@ -1080,47 +1541,77 @@ def _matchup_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> Li
     )
 
 
+def _opponent_color_tallies(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> Optional[Dict[Tuple[Any, str, str, Any], int]]:
+    """Games per (raw format, opponent's revealed letters, their commander
+    letters, outcome); None when the games cannot be read.
+
+    The games with a current ``game_derived`` row are counted by SQLite from
+    the stored letters, in one statement that returns a few hundred rows.
+    Only the games without one come back a row each, to have their letters
+    computed (``_opponent_letters``), as every game once did: 38,000 rows
+    into Python for a page that shows a dozen."""
+    games_sql = """
+        SELECT g.id, g.outcome, m.format
+        FROM games g
+        CROSS JOIN matches m ON m.id = g.match_id
+        CROSS JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
+        WHERE {where}{unstored}
+        """
+    stored_row = f"gd.game_id = g.id AND gd.rules_version = {int(game_derived.RULES_VERSION)}"
+    unstored = f" AND NOT EXISTS (SELECT 1 FROM {game_derived.TABLE} gd WHERE {stored_row})"
+    tallies: Dict[Tuple[Any, str, str, Any], int] = {}
+    games: Optional[List[Any]] = None
+    try:
+        if game_derived.table_exists(conn):
+            counted = conn.execute(
+                f"""
+                SELECT m.format, COALESCE(gd.opp_revealed, ''), COALESCE(gd.opp_commander, ''),
+                       g.outcome, COUNT(*)
+                FROM games g
+                CROSS JOIN matches m ON m.id = g.match_id
+                CROSS JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
+                CROSS JOIN {game_derived.TABLE} gd ON {stored_row}
+                WHERE {where}
+                GROUP BY 1, 2, 3, 4
+                """,
+                params,
+            ).fetchall()
+            games = conn.execute(
+                games_sql.format(where=where, unstored=unstored), params
+            ).fetchall()
+            for raw_format, letters, commander_letters, outcome, count in counted:
+                tallies[(raw_format, str(letters), str(commander_letters), outcome)] = int(count)
+    except sqlite3.Error:
+        # Stored rows that cannot be read are no rows: every game is computed.
+        tallies, games = {}, None
+    if games is None:
+        try:
+            games = conn.execute(games_sql.format(where=where, unstored=""), params).fetchall()
+        except sqlite3.OperationalError:
+            return None
+    opp_letters = _opponent_letters(conn, (row[0] for row in games))
+    for game_id, outcome, raw_format in games:
+        letters, commander_letters = opp_letters.get(str(game_id), ("", ""))
+        key = (raw_format, letters, commander_letters, outcome)
+        tallies[key] = tallies.get(key, 0) + 1
+    return tallies
+
+
 def _opponent_color_rows(
     conn: sqlite3.Connection, where: str, params: List[Any]
 ) -> List[Dict[str, Any]]:
     """Win/loss record grouped by the opponent's known color combination."""
-    try:
-        rows = conn.execute(
-            f"""
-            WITH revealed AS (
-              SELECT s.game_id, s.participant_id,
-                     GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL
-                                       THEN c.color_identity || 'C' END, '') AS letters
-              FROM game_card_summary s
-              JOIN cards c ON c.id = s.card_id
-              GROUP BY s.game_id, s.participant_id
-            ), commander_identity AS (
-              SELECT pc.participant_id,
-                     GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL
-                                       THEN c.color_identity || 'C' END, '') AS letters
-              FROM participant_commanders pc
-              JOIN cards c ON c.name = pc.card_name
-              GROUP BY pc.participant_id
-            )
-            SELECT
-              g.id,
-              g.outcome,
-              m.format,
-              revealed.letters,
-              commander_identity.letters
-            FROM games g
-            JOIN matches m ON m.id = g.match_id
-            JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
-            LEFT JOIN revealed ON revealed.game_id = g.id AND revealed.participant_id = po.id
-            LEFT JOIN commander_identity ON commander_identity.participant_id = po.id
-            WHERE {where}
-            """,
-            params,
-        ).fetchall()
-    except sqlite3.OperationalError:
+    # Count the games of each distinct (format, letters, outcome) first: a
+    # history has a few hundred of those, and the colours and their label
+    # depend on nothing else. Their order does not reach the result: a label
+    # names one set of colours, and the rows are sorted at the end.
+    tallies = _opponent_color_tallies(conn, where, params)
+    if tallies is None:
         return []
     buckets: Dict[str, Dict[str, Any]] = {}
-    for _game_id, outcome, raw_format, letters, commander_letters in rows:
+    for (raw_format, letters, commander_letters, outcome), count in tallies.items():
         colors = _display_opponent_colors(raw_format, letters, commander_letters)
         label = color_combo_label(colors)
         if not label:
@@ -1129,11 +1620,11 @@ def _opponent_color_rows(
         entry = buckets.setdefault(
             label, {"color_label": label, "colors": colors, "games": 0, "wins": 0, "losses": 0}
         )
-        entry["games"] += 1
+        entry["games"] += count
         if outcome == "win":
-            entry["wins"] += 1
+            entry["wins"] += count
         elif outcome == "loss":
-            entry["losses"] += 1
+            entry["losses"] += count
     total_games = sum(entry["games"] for entry in buckets.values())
     result = []
     for entry in buckets.values():
@@ -1155,13 +1646,16 @@ def _brawl_summary(conn: sqlite3.Connection, where: str, params: List[Any]) -> D
     identifier Arena used.
     """
     try:
+        # Counted per (format, outcome) by SQLite: a handful of rows, where a
+        # row per game was 38,000 for a page that shows one record.
         rows = conn.execute(
             f"""
-            SELECT m.format, g.outcome
+            SELECT m.format, g.outcome, COUNT(*)
             FROM games g
-            JOIN matches m ON m.id = g.match_id
-            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            CROSS JOIN matches m ON m.id = g.match_id
+            CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
             WHERE {where}
+            GROUP BY m.format, g.outcome
             """,
             params,
         ).fetchall()
@@ -1169,21 +1663,21 @@ def _brawl_summary(conn: sqlite3.Connection, where: str, params: List[Any]) -> D
         return {"games": 0, "wins": 0, "losses": 0, "win_rate": None, "queues": []}
     total = {"games": 0, "wins": 0, "losses": 0}
     queues: Dict[str, Dict[str, Any]] = {}
-    for raw_format, outcome in rows:
+    for raw_format, outcome, count in rows:
         normalized = normalize_match_format(str(raw_format or ""))
         if not normalized.is_brawl:
             continue
-        total["games"] += 1
+        total["games"] += count
         entry = queues.setdefault(
             normalized.label, {"format_label": normalized.label, "games": 0, "wins": 0, "losses": 0}
         )
-        entry["games"] += 1
+        entry["games"] += count
         if outcome == "win":
-            total["wins"] += 1
-            entry["wins"] += 1
+            total["wins"] += count
+            entry["wins"] += count
         elif outcome == "loss":
-            total["losses"] += 1
-            entry["losses"] += 1
+            total["losses"] += count
+            entry["losses"] += count
     queue_rows = list(queues.values())
     for entry in queue_rows:
         entry["win_rate"] = _win_rate(entry["wins"], entry["losses"])
@@ -1316,8 +1810,13 @@ def _schedule_rows(
     return {"by_weekday": weekday_rows, "by_time_of_day": hour_rows}
 
 
+#: Days table: a game starting this long after the previous one ended
+#: begins a new sitting (a separate stretch of play that day).
+SITTING_GAP_MINUTES = 60
+
+
 def _fatigue_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> List[Dict[str, Any]]:
-    """Win rate by Nth game of a tracker session."""
+    """Win rate by Nth game of the day (local calendar day, by start time)."""
     rows = _dict_rows(
         conn.execute(
             f"""
@@ -1325,7 +1824,7 @@ def _fatigue_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> Li
               SELECT
                 g.outcome,
                 ROW_NUMBER() OVER (
-                  PARTITION BY g.session_id
+                  PARTITION BY date(COALESCE(g.started_at, g.ended_at))
                   ORDER BY COALESCE(g.started_at, g.ended_at), g.id
                 ) AS nth
               FROM games g
@@ -1351,7 +1850,7 @@ def _fatigue_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> Li
         )
     )
     # Fresh baseline is games 1–4; fatigue only plausibly sets in from game 5,
-    # and marathon 20+ game sessions are common enough to earn their own tier.
+    # and marathon 20+ game days are common enough to earn their own tier.
     labels = {
         0: "Games 1–4",
         1: "Games 5–9",
@@ -1567,6 +2066,7 @@ def _opener_land_rows(
     conn: sqlite3.Connection, where: str, params: List[Any]
 ) -> List[Dict[str, Any]]:
     """Win rate by number of lands in the kept opening hand."""
+    stored = _derived_join(conn)
     rows = _dict_rows(
         conn.execute(
             f"""
@@ -1581,17 +2081,11 @@ def _opener_land_rows(
               SELECT
                 g.outcome,
                 COALESCE(p.mulligans, 0) AS mulligans,
-                (
-                  SELECT COUNT(*) FROM game_opening_hand_cards oh
-                  WHERE oh.participant_id = p.id
-                    AND (oh.type_category = 'Land' OR oh.display_name LIKE '%(Land)')
-                ) AS opener_lands,
-                (
-                  SELECT COUNT(*) FROM game_opening_hand_cards oh
-                  WHERE oh.participant_id = p.id
-                ) AS opener_cards
+                {_stored_or(stored, "opening_lands", _OPENING_LANDS_SQL)} AS opener_lands,
+                {_stored_or(stored, "opening_cards", _OPENING_CARDS_SQL)} AS opener_cards
               FROM games g
-              JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+              CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+              {stored}
               WHERE {where} AND g.outcome IN ('win', 'loss')
             )
             WHERE opener_cards > 0
@@ -1616,67 +2110,51 @@ def _mana_readiness_rows(
     Games with unknown-turn land draws are excluded per threshold to avoid
     counting a land as late/early when its draw turn was not captured.
     """
-    games = _dict_rows(
-        conn.execute(
-            f"""
-            SELECT
-              g.id AS game_id,
-              g.outcome,
-              p.id AS participant_id,
-              (
-                SELECT COUNT(*) FROM game_opening_hand_cards oh
-                WHERE oh.participant_id = p.id
-                  AND (oh.type_category = 'Land' OR oh.display_name LIKE '%(Land)')
-              ) AS opening_lands,
-              (
-                SELECT COUNT(*) FROM game_opening_hand_cards oh
-                WHERE oh.participant_id = p.id
-              ) AS opening_cards
-            FROM games g
-            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-            WHERE {where} AND g.outcome IN ('win', 'loss')
-            """,
-            params,
-        )
-    )
+    stored = _derived_join(conn)
+    games = conn.execute(
+        f"""
+        SELECT
+          g.outcome,
+          p.id,
+          {_stored_or(stored, "opening_cards", _OPENING_CARDS_SQL)},
+          {_stored_or(stored, "opening_lands", _OPENING_LANDS_SQL)},
+          {"gd.land_draw_turns" if stored else "NULL"}
+        FROM games g
+        CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+        {stored}
+        WHERE {where} AND g.outcome IN ('win', 'loss')
+        """,
+        params,
+    ).fetchall()
     if not games:
         return []
-    participant_ids = [row["participant_id"] for row in games]
-    placeholders = ",".join("?" for _ in participant_ids)
-    land_draws: Dict[str, List[Optional[int]]] = {}
-    for row in _dict_rows(
-        conn.execute(
-            f"""
-            SELECT participant_id, turn_number
-            FROM game_drawn_cards
-            WHERE participant_id IN ({placeholders})
-              AND (type_category = 'Land' OR display_name LIKE '%(Land)')
-            """,
-            participant_ids,
+    # Land draws of the games with no stored turns are read from their rows.
+    land_draws = _compute_land_draw_turns(conn, (row[1] for row in games if row[4] is None))
+    thresholds = (2, 3, 4, 5)
+    eligible = 0
+    # Per threshold: [on-time wins, on-time losses, behind wins, behind losses].
+    counts = [[0, 0, 0, 0] for _ in thresholds]
+    for outcome, participant_id, opening_cards, opening_lands, stored_turns in games:
+        if not int(opening_cards or 0):
+            continue
+        draws = (
+            game_derived.decode_turns(stored_turns)
+            if stored_turns is not None
+            else land_draws.get(str(participant_id), [])
         )
-    ):
-        land_draws.setdefault(row["participant_id"], []).append(row["turn_number"])
+        if any(turn is None for turn in draws):
+            continue
+        eligible += 1
+        lost = 0 if outcome == "win" else 1
+        opening_lands = int(opening_lands or 0)
+        for index, threshold in enumerate(thresholds):
+            lands_by_turn = opening_lands + sum(1 for turn in draws if int(turn) <= threshold)
+            counts[index][(0 if lands_by_turn >= threshold else 2) + lost] += 1
 
     rows: List[Dict[str, Any]] = []
-    for threshold in (2, 3, 4, 5):
-        on_time = {"wins": 0, "losses": 0}
-        behind = {"wins": 0, "losses": 0}
-        eligible = 0
-        for game in games:
-            if not int(game.get("opening_cards") or 0):
-                continue
-            draws = land_draws.get(game["participant_id"], [])
-            if any(turn is None for turn in draws):
-                continue
-            eligible += 1
-            lands_by_turn = int(game.get("opening_lands") or 0) + sum(
-                1 for turn in draws if turn is not None and int(turn) <= threshold
-            )
-            bucket = on_time if lands_by_turn >= threshold else behind
-            if game.get("outcome") == "win":
-                bucket["wins"] += 1
-            else:
-                bucket["losses"] += 1
+    for threshold, tally in zip(thresholds, counts):
+        on_time = {"wins": tally[0], "losses": tally[1]}
+        behind = {"wins": tally[2], "losses": tally[3]}
         if not eligible:
             continue
         on_time_games = on_time["wins"] + on_time["losses"]
@@ -1727,9 +2205,9 @@ def _combat_deck_rows(
               SUM(s.blockers_lost) AS blockers_lost,
               ROUND(AVG(s.life_gained), 1) AS avg_life_gained,
               ROUND(AVG(g.player_turns), 1) AS avg_player_turns
-            FROM game_participant_stats s
-            JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
-            JOIN games g ON g.id = s.game_id
+            FROM games g
+            CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            CROSS JOIN game_participant_stats s ON s.participant_id = p.id AND s.game_id = g.id
             WHERE {where}
             GROUP BY COALESCE(p.deck_name, '(unknown)')
             HAVING COUNT(*) > 0
@@ -1782,6 +2260,7 @@ _INTERACTION_STAT_COLUMNS = (
     "cards_discarded",
     "cards_milled",
     "cards_exiled",
+    "library_remaining",
     "removal_played",
     "removal_drawn",
     "wipes_played",
@@ -1818,9 +2297,13 @@ def _interaction_deck_profile(
     opponent drawn columns stay NULL — their draws are hidden information.
     """
     select_parts = ["COUNT(s.removal_played) AS games_tracked"]
+    # A column added by a migration the tracker has not run on this database
+    # yet reads as NULL (a dash), never as an error.
+    present = _table_columns(conn, "game_participant_stats")
     for prefix, alias in (("p", "s"), ("o", "os")):
         for column in _INTERACTION_STAT_COLUMNS:
-            select_parts.append(f"ROUND(AVG({alias}.{column}), 2) AS {prefix}_{column}")
+            value = f"{alias}.{column}" if column in present else "NULL"
+            select_parts.append(f"ROUND(AVG({value}), 2) AS {prefix}_{column}")
         other = "os" if alias == "s" else "s"
         select_parts.append(f"ROUND(AVG({other}.spells_countered), 2) AS {prefix}_counters_landed")
         select_parts.append(
@@ -1843,9 +2326,9 @@ def _interaction_deck_profile(
         conn.execute(
             f"""
             SELECT {', '.join(select_parts)}
-            FROM game_participant_stats s
-            JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
-            JOIN games g ON g.id = s.game_id
+            FROM games g
+            CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            CROSS JOIN game_participant_stats s ON s.participant_id = p.id AND s.game_id = g.id
             LEFT JOIN participants op ON op.game_id = g.id AND op.role = 'opponent'
             LEFT JOIN game_participant_stats os
               ON os.game_id = g.id AND os.participant_id = op.id
@@ -1963,9 +2446,9 @@ def _combat_split_rows(
               ROUND(AVG(s.cards_drawn), 1) AS avg_cards_drawn,
               ROUND(AVG(s.cards_discarded + s.cards_milled), 1) AS avg_cards_denied,
               ROUND(AVG(g.duration_seconds), 0) AS avg_duration_seconds
-            FROM game_participant_stats s
-            JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
-            JOIN games g ON g.id = s.game_id
+            FROM games g
+            CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+            CROSS JOIN game_participant_stats s ON s.participant_id = p.id AND s.game_id = g.id
             WHERE {where} AND g.outcome IN ('win', 'loss')
             GROUP BY split
             ORDER BY split = 'Wins' DESC
@@ -1975,35 +2458,148 @@ def _combat_split_rows(
     )
 
 
+#: SQL tests for the matches of an optional game mode the dashboard hides
+#: while Settings → Saved game modes leaves it off (legacy rows, from
+#: before those games were left out, must not count). Ticked, its games are
+#: history like any other.
+_HIDDEN_MODE_SQL: Dict[str, Tuple[str, ...]] = {
+    "jump_in": ("mj.format LIKE 'Jump!_In%' ESCAPE '!'",),
+    "midweek_magic": (
+        "mj.format LIKE 'MWM%'",
+        "mj.format LIKE 'Midweek%'",
+        "COALESCE(mj.queue, '') LIKE 'MWM%'",
+        "COALESCE(mj.event_name, '') LIKE 'MWM%'",
+    ),
+}
+
+#: Bumped by ``note_tracking_changed``; the saved modes are read again then,
+#: and otherwise at most every ``_SAVED_MODES_TTL`` seconds (a hand edit).
+_tracking_generation = 0
+_SAVED_MODES_TTL = 30.0
+_saved_modes_memo: Optional[Tuple[int, float, Dict[str, bool]]] = None
+
+
+def note_tracking_changed() -> None:
+    """Settings → Saved game modes changed: read it again on the next page."""
+    global _tracking_generation, _saved_modes_memo
+    _tracking_generation += 1
+    _saved_modes_memo = None
+
+
+def _saved_modes() -> Dict[str, bool]:
+    """Which optional game modes are saved (``settings.tracked_modes``)."""
+    global _saved_modes_memo
+    memo = _saved_modes_memo
+    now = time.monotonic()
+    if memo is not None and memo[0] == _tracking_generation and memo[1] > now:
+        return memo[2]
+    try:
+        modes = tracked_modes()
+    except Exception:  # noqa: BLE001 - an unreadable settings file keeps the defaults
+        modes = dict(TRACKED_MODE_DEFAULTS)
+    _saved_modes_memo = (_tracking_generation, now + _SAVED_MODES_TTL, modes)
+    return modes
+
+
+def _hidden_mode_keys() -> Tuple[str, ...]:
+    """The modes whose games pages hide right now, for the cache fingerprint."""
+    saved = _saved_modes()
+    return tuple(mode for mode in _HIDDEN_MODE_SQL if not saved.get(mode, False))
+
+
+def _untracked_match_sql() -> Optional[str]:
+    """A test on ``matches mj`` for the matches pages hide, or None for none."""
+    tests = [test for mode in _hidden_mode_keys() for test in _HIDDEN_MODE_SQL[mode]]
+    return "(" + " OR ".join(tests) + ")" if tests else None
+
+
+def _format_mode_saved(*values: Any) -> bool:
+    """True for a format of an optional mode that is switched on in every mode it belongs to.
+
+    The UI keeps Midweek Magic, Momir and Welcome Deck Duels out of its
+    format lists as a safeguard; a row marked ``saved_mode`` is shown anyway.
+    """
+    modes = [
+        mode
+        for mode, test in (
+            ("midweek_magic", is_midweek_format),
+            ("momir", is_momir_format),
+            ("welcome_deck", is_welcome_deck_format),
+        )
+        if any(test(str(value or "")) for value in values)
+    ]
+    saved = _saved_modes()
+    return bool(modes) and all(saved.get(mode, False) for mode in modes)
+
+
+#: A Direct Challenge (friend) match, any variant, the way
+#: ``format_normalizer.is_direct_challenge_format`` reads it: letters and
+#: digits of the format, queue or event name, without case.
+_DIRECT_CHALLENGE_TEXT_SQL = (
+    "REPLACE(REPLACE(REPLACE(COALESCE(mc.format, '') || '|' || COALESCE(mc.queue, '')"
+    " || '|' || COALESCE(mc.event_name, ''), '_', ''), ' ', ''), '-', '')"
+)
+_DIRECT_CHALLENGE_MATCH_SQL = (
+    f"({_DIRECT_CHALLENGE_TEXT_SQL} LIKE '%directgame%'"
+    f" OR {_DIRECT_CHALLENGE_TEXT_SQL} LIKE '%directchallenge%')"
+)
+
+
+def _has_untracked_matches(db_path: Path, match_sql: str) -> bool:
+    """Whether any match of a hidden mode lingers in this database. True
+    when it cannot be told."""
+    try:
+        db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
+        with sqlite3.connect(db_uri, uri=True) as conn:
+            conn.execute("PRAGMA query_only = ON")
+            return (
+                conn.execute(f"SELECT 1 FROM matches mj WHERE {match_sql} LIMIT 1").fetchone()
+                is not None
+            )
+    except (sqlite3.Error, OSError):
+        return True
+
+
 def _games_filter(
     deck: Optional[str],
     fmt: Optional[str],
     days: Optional[int],
     since: Optional[str] = None,
     until: Optional[str] = None,
+    *,
+    db_path: Optional[Path] = None,
 ) -> Tuple[str, List[Any]]:
-    """WHERE fragment (referencing games alias `g`) plus bound params."""
-    # Jump In and Midweek Magic games are intentionally untracked; hide them
-    # from every aggregate even if legacy rows linger in the database.
-    clauses = [
-        """NOT EXISTS (
+    """WHERE fragment (referencing games alias `g`) plus bound params.
+
+    Jump In and Midweek Magic games are hidden from every aggregate while
+    Settings → Saved game modes leaves them off, even if legacy rows
+    linger in the database. That test runs for every game in every statement
+    of a page, so with ``db_path`` it is asked once up front and left out
+    when the database holds no such match.
+    """
+    clauses: List[str] = []
+    untracked_sql = _untracked_match_sql()
+    if untracked_sql and (db_path is None or _has_untracked_matches(db_path, untracked_sql)):
+        clauses.append(
+            f"""NOT EXISTS (
           SELECT 1 FROM matches mj
-          WHERE mj.id = g.match_id AND (
-            mj.format LIKE 'Jump!_In%' ESCAPE '!'
-            OR mj.format LIKE 'MWM%'
-            OR mj.format LIKE 'Midweek%'
-            OR COALESCE(mj.queue, '') LIKE 'MWM%'
-            OR COALESCE(mj.event_name, '') LIKE 'MWM%'
-          )
+          WHERE mj.id = g.match_id AND {untracked_sql}
         )"""
-    ]
+        )
     params: List[Any] = []
     if deck:
+        # An id list read from the (role, deck_name) index, so a statement
+        # starts from this deck's games instead of testing every game ever
+        # recorded. "(unknown)" is the label of games with no deck name.
+        name_test = (
+            "(pf.deck_name = ? OR pf.deck_name IS NULL)"
+            if deck == "(unknown)"
+            else "pf.deck_name = ?"
+        )
         clauses.append(
-            """EXISTS (
-              SELECT 1 FROM participants pf
-              WHERE pf.game_id = g.id AND pf.role = 'player'
-                AND COALESCE(pf.deck_name, '(unknown)') = ?
+            f"""g.id IN (
+              SELECT pf.game_id FROM participants pf
+              WHERE pf.role = 'player' AND {name_test}
             )"""
         )
         params.append(deck)
@@ -2016,16 +2612,18 @@ def _games_filter(
         )
         params.append(fmt)
     if days:
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
-        clauses.append("COALESCE(g.started_at, g.ended_at) >= ?")
-        params.append(cutoff)
+        # The one place a page reads the clock; the response cache is told
+        # (see _clock_valid_until), so add any other there too.
+        _note_clock_window(days)
+        clauses.append(f"{_GAME_TIME_SQL.format(alias='g.')} >= ?")
+        params.append(_day_window_start(days, datetime.now()).isoformat(timespec="seconds"))
     if since:
         clauses.append("COALESCE(g.started_at, g.ended_at) >= ?")
         params.append(f"{since}T00:00:00" if len(since) == 10 else since)
     if until:
         clauses.append("COALESCE(g.started_at, g.ended_at) <= ?")
         params.append(f"{until}T23:59:59" if len(until) == 10 else until)
-    return " AND ".join(clauses), params
+    return " AND ".join(clauses) or "1 = 1", params
 
 
 def _win_rate(wins: int, losses: int) -> Optional[float]:
@@ -2047,10 +2645,11 @@ def _grouped_format_rows(
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Format performance grouped by display label.
 
-    Midweek Magic events are intentionally omitted because those rotating queues
-    are not part of the tracker's supported format analytics. The second return
-    value remains an empty compatibility field for older dashboard clients.
+    Midweek Magic events are omitted while Settings → Saved game modes leaves
+    them off. The second return value remains an empty compatibility
+    field for older dashboard clients.
     """
+    hide_midweek = "midweek_magic" in _hidden_mode_keys()
     raw_rows = _dict_rows(
         conn.execute(
             f"""
@@ -2085,7 +2684,7 @@ def _grouped_format_rows(
         normalized = normalize_match_format(
             row["raw_format"], default_best_of=int(row["best_of"] or 1)
         )
-        if normalized.is_midweek:
+        if normalized.is_midweek and hide_midweek:
             continue
         _accumulate(top, normalized.label, row)
 
@@ -2093,6 +2692,8 @@ def _grouped_format_rows(
         rows = []
         for entry in bucket.values():
             entry["win_rate"] = _win_rate(entry["wins"], entry["losses"])
+            if _format_mode_saved(entry["format_label"], *entry["raw_formats"]):
+                entry["saved_mode"] = True
             entry["raw_formats"] = ", ".join(sorted(entry["raw_formats"]))
             rows.append(entry)
         rows.sort(key=lambda item: (-item["games"], item["format_label"]))
@@ -2101,46 +2702,99 @@ def _grouped_format_rows(
     return _finish(top)[:20], []
 
 
-def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
-    rows = _dict_rows(
+def _deck_visuals(
+    conn: sqlite3.Connection, deck_names: Optional[Iterable[Any]] = None
+) -> Dict[str, Dict[str, Any]]:
+    """The card that stands for each deck (its most-played nonland card).
+
+    ``deck_names`` limits the work to the decks a page shows; a deck's card
+    is judged from its whole history either way.
+
+    Played cards outrank opening-hand and drawn cards, and nonlands outrank
+    lands, so a deck that has played any nonland card is settled by its
+    played cards alone. Only the decks that have not (no plays recorded, or
+    only lands) read their openers and draws as well.
+    """
+    if deck_names is not None:
+        deck_names = list(deck_names)
+    rows: Dict[str, Dict[str, Any]] = {}
+    for deck_filter, deck_params in _deck_name_filters(deck_names, missing_as_unknown=True):
+        for row in _deck_visual_rows(conn, deck_filter, deck_params, played_only=True):
+            if (row.get("type_category") or "Other") != "Land":
+                rows[row["deck_name"]] = row
+    if deck_names is None:
+        every_deck = [
+            str(row[0])
+            for row in conn.execute(
+                "SELECT DISTINCT COALESCE(deck_name, '(unknown)') FROM participants "
+                "WHERE role = 'player'"
+            )
+        ]
+    else:
+        every_deck = [str(name) for name in deck_names if name is not None]
+    unsettled = [name for name in every_deck if name not in rows]
+    for deck_filter, deck_params in _deck_name_filters(unsettled, missing_as_unknown=True):
+        for row in _deck_visual_rows(conn, deck_filter, deck_params):
+            rows[row["deck_name"]] = row
+    visuals: Dict[str, Dict[str, Any]] = {}
+    for deck_name, row in rows.items():
+        card_name = row.get("card_name") or _clean_card_name(row.get("display_name"))
+        image_url = _card_image_url(row.get("arena_id"), card_name)
+        # New sets often reach Scryfall before their Arena-ID mapping does;
+        # the by-name URL is the client's fallback when the arena URL 404s.
+        fallback_url = _card_image_url(None, card_name) if row.get("arena_id") else None
+        visuals[deck_name] = {
+            "card_id": row.get("card_id"),
+            "card_name": card_name,
+            "type_category": row.get("type_category") or "Other",
+            "image_url": image_url,
+            "image_fallback_url": fallback_url if fallback_url != image_url else None,
+            "source": "local_metadata",
+        }
+    return visuals
+
+
+#: (card table, alias, how often a card counts, source rank) per kind of
+#: evidence for a deck's card, best first.
+_DECK_VISUAL_SOURCES = (
+    ("game_card_summary", "s", "SUM(COALESCE(s.played_count, 0))", 1),
+    ("game_opening_hand_cards", "h", "COUNT(*)", 2),
+    ("game_drawn_cards", "d", "COUNT(*)", 3),
+)
+
+
+def _deck_visual_rows(
+    conn: sqlite3.Connection,
+    deck_filter: str,
+    deck_params: List[Any],
+    *,
+    played_only: bool = False,
+) -> List[Dict[str, Any]]:
+    """Each deck's best-ranked card: nonlands first, then played over opener
+    over drawn, then the most often seen. ``played_only`` reads played
+    nonland cards alone (the caller keeps no land from that pass), which
+    leaves the lands, a third of the rows, out of the grouping."""
+    sources = _DECK_VISUAL_SOURCES[:1] if played_only else _DECK_VISUAL_SOURCES
+    nonland = "\n                AND COALESCE({alias}.type_category, 'Other') != 'Land'"
+    candidates = "\n              UNION ALL\n".join(
+        f"""              SELECT
+                COALESCE(p.deck_name, '(unknown)') AS deck_name,
+                {alias}.card_id,
+                {alias}.display_name,
+                COALESCE({alias}.type_category, 'Other') AS type_category,
+                {activity} AS activity_count,
+                {rank} AS source_rank
+              FROM participants p
+              JOIN {table} {alias} ON {alias}.participant_id = p.id
+              WHERE p.role = 'player'{deck_filter}{nonland.format(alias=alias) if played_only else ""}
+              GROUP BY p.deck_name, {alias}.card_id, {alias}.display_name, {alias}.type_category"""
+        for table, alias, activity, rank in sources
+    )
+    return _dict_rows(
         conn.execute(
-            """
+            f"""
             WITH candidate_cards AS (
-              SELECT
-                COALESCE(p.deck_name, '(unknown)') AS deck_name,
-                s.card_id,
-                s.display_name,
-                COALESCE(s.type_category, 'Other') AS type_category,
-                SUM(COALESCE(s.played_count, 0)) AS activity_count,
-                1 AS source_rank
-              FROM participants p
-              JOIN game_card_summary s ON s.participant_id = p.id
-              WHERE p.role = 'player'
-              GROUP BY p.deck_name, s.card_id, s.display_name, s.type_category
-              UNION ALL
-              SELECT
-                COALESCE(p.deck_name, '(unknown)') AS deck_name,
-                h.card_id,
-                h.display_name,
-                COALESCE(h.type_category, 'Other') AS type_category,
-                COUNT(*) AS activity_count,
-                2 AS source_rank
-              FROM participants p
-              JOIN game_opening_hand_cards h ON h.participant_id = p.id
-              WHERE p.role = 'player'
-              GROUP BY p.deck_name, h.card_id, h.display_name, h.type_category
-              UNION ALL
-              SELECT
-                COALESCE(p.deck_name, '(unknown)') AS deck_name,
-                d.card_id,
-                d.display_name,
-                COALESCE(d.type_category, 'Other') AS type_category,
-                COUNT(*) AS activity_count,
-                3 AS source_rank
-              FROM participants p
-              JOIN game_drawn_cards d ON d.participant_id = p.id
-              WHERE p.role = 'player'
-              GROUP BY p.deck_name, d.card_id, d.display_name, d.type_category
+{candidates}
             ),
             ranked AS (
               SELECT
@@ -2172,29 +2826,15 @@ def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
             FROM ranked r
             LEFT JOIN cards c ON c.id = r.card_id
             WHERE r.rank = 1
-            """
+            """,
+            deck_params * len(sources),
         )
     )
-    visuals: Dict[str, Dict[str, Any]] = {}
-    for row in rows:
-        deck_name = row["deck_name"]
-        card_name = row.get("card_name") or _clean_card_name(row.get("display_name"))
-        image_url = _card_image_url(row.get("arena_id"), card_name)
-        # New sets often reach Scryfall before their Arena-ID mapping does;
-        # the by-name URL is the client's fallback when the arena URL 404s.
-        fallback_url = _card_image_url(None, card_name) if row.get("arena_id") else None
-        visuals[deck_name] = {
-            "card_id": row.get("card_id"),
-            "card_name": card_name,
-            "type_category": row.get("type_category") or "Other",
-            "image_url": image_url,
-            "image_fallback_url": fallback_url if fallback_url != image_url else None,
-            "source": "local_metadata",
-        }
-    return visuals
 
 
-def _deck_color_map(conn: sqlite3.Connection) -> Dict[str, str]:
+def _deck_color_map(
+    conn: sqlite3.Connection, deck_names: Optional[Iterable[Any]] = None
+) -> Dict[str, str]:
     """WUBRG colors per deck, judged lands-first from real casting requirements.
 
     Preferred evidence is the newest submitted decklist; decks tracked before
@@ -2202,34 +2842,47 @@ def _deck_color_map(conn: sqlite3.Connection) -> Dict[str, str]:
     playing (max copies seen in any one game as the quantity). Both paths
     feed _score_deck_colors: land identities dominate, only strictly
     required pips count for spells, and single-card colors are ignored.
+
+    ``deck_names`` limits the work to the decks a page shows. The observed
+    cards are read only for decks the decklists left without colors, so a
+    history recorded entirely with decklists never scans them.
     """
     if not _table_exists(conn, "cards"):
         return {}
     has_mana = "mana_cost" in {row[1] for row in conn.execute("PRAGMA table_info(cards)")}
     cost_column = 'c."mana_cost"' if has_mana else "NULL"
     result: Dict[str, str] = {}
+    if deck_names is not None:
+        deck_names = list(deck_names)
+    deck_filters = _deck_name_filters(deck_names)
     if _table_exists(conn, "game_deck_cards"):
+        latest: List[Any] = []
         try:
-            latest = conn.execute(
-                """
-                SELECT deck_name, game_id FROM (
-                  SELECT
-                    p.deck_name AS deck_name,
-                    p.game_id AS game_id,
-                    ROW_NUMBER() OVER (
-                      PARTITION BY p.deck_name
-                      ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
-                    ) AS rn
-                  FROM participants p
-                  JOIN games g ON g.id = p.game_id
-                  WHERE p.role = 'player' AND COALESCE(p.deck_name, '') != ''
-                    AND EXISTS (
-                      SELECT 1 FROM game_deck_cards dc
-                      WHERE dc.participant_id = p.id AND dc.deck_zone = 'deck'
-                    )
-                ) WHERE rn = 1
-                """
-            ).fetchall()
+            for deck_filter, deck_params in deck_filters:
+                latest.extend(
+                    conn.execute(
+                        f"""
+                        SELECT deck_name, game_id FROM (
+                          SELECT
+                            p.deck_name AS deck_name,
+                            p.game_id AS game_id,
+                            ROW_NUMBER() OVER (
+                              PARTITION BY p.deck_name
+                              ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
+                            ) AS rn
+                          FROM participants p
+                          JOIN games g ON g.id = p.game_id
+                          WHERE p.role = 'player' AND COALESCE(p.deck_name, '') != ''
+                            {deck_filter}
+                            AND EXISTS (
+                              SELECT 1 FROM game_deck_cards dc
+                              WHERE dc.participant_id = p.id AND dc.deck_zone = 'deck'
+                            )
+                        ) WHERE rn = 1
+                        """,
+                        deck_params,
+                    ).fetchall()
+                )
         except sqlite3.OperationalError:
             latest = []
         for deck_name, game_id in latest:
@@ -2246,23 +2899,40 @@ def _deck_color_map(conn: sqlite3.Connection) -> Dict[str, str]:
             result[str(deck_name)] = _score_deck_colors(card_rows)
     # Decks with no captured decklist (tracked before submitted-deck capture,
     # or scoring empty above): judge from the cards they were seen playing.
+    observed: List[Any] = []
     try:
-        observed = conn.execute(
-            f"""
-            SELECT
-              p.deck_name,
-              s.type_category,
-              {("MAX(c.mana_cost)" if has_mana else "NULL")} AS mana_cost,
-              MAX(c.color_identity) AS color_identity,
-              MAX(s.played_count) AS copies
-            FROM participants p
-            JOIN game_card_summary s ON s.participant_id = p.id
-            LEFT JOIN cards c ON c.id = s.card_id
-            WHERE p.role = 'player' AND COALESCE(p.deck_name, '') != ''
-              AND s.played_count > 0
-            GROUP BY p.deck_name, s.display_name, s.type_category
-            """
-        ).fetchall()
+        if deck_names is None:
+            candidates = [
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT DISTINCT deck_name FROM participants "
+                    "WHERE role = 'player' AND COALESCE(deck_name, '') != ''"
+                )
+            ]
+        else:
+            candidates = [str(name) for name in deck_names if name]
+        uncolored = [name for name in candidates if not result.get(name)]
+        for deck_filter, deck_params in _deck_name_filters(uncolored):
+            observed.extend(
+                conn.execute(
+                    f"""
+                    SELECT
+                      p.deck_name,
+                      s.type_category,
+                      {("MAX(c.mana_cost)" if has_mana else "NULL")} AS mana_cost,
+                      MAX(c.color_identity) AS color_identity,
+                      MAX(s.played_count) AS copies
+                    FROM participants p
+                    JOIN game_card_summary s ON s.participant_id = p.id
+                    LEFT JOIN cards c ON c.id = s.card_id
+                    WHERE p.role = 'player' AND COALESCE(p.deck_name, '') != ''
+                      {deck_filter}
+                      AND s.played_count > 0
+                    GROUP BY p.deck_name, s.display_name, s.type_category
+                    """,
+                    deck_params,
+                ).fetchall()
+            )
     except sqlite3.OperationalError:
         observed = []
     observed_by_deck: Dict[str, List[Any]] = {}
@@ -2277,6 +2947,24 @@ def _deck_color_map(conn: sqlite3.Connection) -> Dict[str, str]:
 
 
 def _participant_deck_color_map(
+    conn: sqlite3.Connection, participant_ids: Iterable[Any]
+) -> Dict[str, str]:
+    """WUBRG colors from each game's submitted player deck snapshot: read
+    from ``game_derived`` where a game has a current row, computed otherwise.
+    A game that submitted no decklist is absent from the result either way.
+    """
+    ids = list(dict.fromkeys(str(value) for value in participant_ids if value))
+    if not ids:
+        return {}
+    stored = game_derived.load_by_participant(conn, ids)
+    result = {pid: row.deck_colors for pid, row in stored.items() if row.deck_colors is not None}
+    missing = [pid for pid in ids if pid not in stored]
+    if missing:
+        result.update(_compute_participant_deck_color_map(conn, missing))
+    return result
+
+
+def _compute_participant_deck_color_map(
     conn: sqlite3.Connection, participant_ids: Iterable[Any]
 ) -> Dict[str, str]:
     """WUBRG colors from each game's submitted player deck snapshot.
@@ -2296,9 +2984,7 @@ def _participant_deck_color_map(
     cost_column = 'c."mana_cost"' if has_mana else "NULL"
     rows_by_participant: Dict[str, List[Any]] = {}
     # Stay below SQLite's variable limit when All Games contains a long history.
-    for offset in range(0, len(participant_ids), 400):
-        chunk = participant_ids[offset : offset + 400]
-        placeholders = ",".join("?" for _ in chunk)
+    for placeholders, chunk in _in_chunks(participant_ids):
         try:
             rows = conn.execute(
                 f"""
@@ -2324,6 +3010,18 @@ def _participant_deck_color_map(
     return {
         participant_id: _score_deck_colors(rows)
         for participant_id, rows in rows_by_participant.items()
+    }
+
+
+def _decks_without_game_colors(
+    rows: Iterable[Dict[str, Any]], game_deck_colors: Dict[str, str]
+) -> Set[str]:
+    """Deck names of the game rows whose own submitted decklist gave no
+    colors: the only rows that fall back to the deck-level color map."""
+    return {
+        str(row.get("deck_name") or "")
+        for row in rows
+        if not game_deck_colors.get(str(row.get("player_participant_id")))
     }
 
 
@@ -2479,6 +3177,83 @@ def _with_commander_block(text: Optional[str], commanders: List[Dict[str, Any]])
     return f"{head}\n\n{block}{marker}{tail}"
 
 
+#: The 30 newest games in view, picked before their per-game columns are
+#: read: sorting whole rows and then keeping 30 ran every correlated subquery
+#: (opponent colours, commanders, turn times) once per game in view. Games
+#: first, so an unfiltered view walks the ``started_at`` index and stops at 30.
+_NEWEST_GAMES_CTE = """WITH newest AS (
+                  SELECT g.id AS game_id, p.id AS participant_id
+                  FROM games g
+                  CROSS JOIN matches m ON m.id = g.match_id
+                  CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                  WHERE {where}
+                  ORDER BY g.started_at DESC
+                  LIMIT 30
+                )"""
+
+
+def _trend_range(
+    deck: Optional[str],
+    fmt: Optional[str],
+    trend_days: Optional[int],
+    trend_games: Optional[int],
+    db_path: Path,
+) -> Tuple[str, List[Any], str]:
+    """``(where, params, limit)`` of the Win Rate Trend's own range: the last
+    N days (0: all time) or the last N games, plus the 29 before them that
+    fill the first point's rolling window. Deck and format still apply; the
+    page's period does not."""
+    where, params = _games_filter(
+        deck,
+        fmt,
+        None if trend_games is not None else (trend_days or None),
+        db_path=db_path,
+    )
+    return where, params, (f"LIMIT {trend_games + 29}" if trend_games is not None else "")
+
+
+def _trend_rows(
+    conn: sqlite3.Connection, where: str, params: List[Any], limit: str
+) -> List[Dict[str, Any]]:
+    """The decided games the trend is drawn from, oldest first."""
+    rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              g.id AS game_id,
+              COALESCE(g.started_at, g.ended_at) AS started_at,
+              g.outcome
+            FROM games g
+            WHERE {where} AND g.outcome IN ('win', 'loss')
+            ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
+            {limit}
+            """,
+            params,
+        )
+    )
+    rows.reverse()
+    return rows
+
+
+def snapshot_trend(
+    db_path: Path = DEFAULT_DB_PATH,
+    deck: Optional[str] = None,
+    fmt: Optional[str] = None,
+    trend_days: Optional[int] = None,
+    trend_games: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """``dashboard_snapshot(...)["trend"]`` for a trend range, without the
+    rest of the Overview (which a trend range does not change)."""
+    db_path = Path(db_path).expanduser()
+    if not db_path.is_file():
+        raise FileNotFoundError(f"Dashboard database not found: {db_path}")
+    where, params, limit = _trend_range(deck, fmt, trend_days, trend_games, db_path)
+    db_uri = db_path.resolve().as_uri() + "?mode=ro"
+    with sqlite3.connect(db_uri, uri=True) as conn:
+        conn.execute("PRAGMA query_only = ON")
+        return _trend_rows(conn, where, params, limit)
+
+
 def dashboard_snapshot(
     db_path: Path = DEFAULT_DB_PATH,
     deck: Optional[str] = None,
@@ -2494,26 +3269,23 @@ def dashboard_snapshot(
 
     Optional filters narrow aggregates: `deck` matches the player's deck name,
     `fmt` matches the raw queue/format string, and `days` keeps games started
-    within the last N days. A trend range overrides the overview's
+    today or in the N - 1 days before it (whole calendar days, local time:
+    `_day_window_start`). A trend range overrides the overview's
     days/since/until range; game-count ranges include 29 earlier games so the
     first plotted point can use the full 30-game rolling window.
     """
     db_path = Path(db_path).expanduser()
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
-    where, params = _games_filter(deck, fmt, days, since, until)
-    trend_where, trend_params = (
-        _games_filter(deck, fmt, None if trend_games is not None else (trend_days or None))
-        if trend_days is not None or trend_games is not None
-        else (where, params)
-    )
-    trend_limit = (
-        f"LIMIT {trend_games + 29}"
-        if trend_games is not None
-        else ("" if trend_days is not None else "LIMIT 200")
-    )
+    where, params = _games_filter(deck, fmt, days, since, until, db_path=db_path)
+    if trend_days is not None or trend_games is not None:
+        trend_where, trend_params, trend_limit = _trend_range(
+            deck, fmt, trend_days, trend_games, db_path
+        )
+    else:
+        trend_where, trend_params, trend_limit = where, params, "LIMIT 200"
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
-    with sqlite3.connect(db_uri, uri=True) as conn:
+    with sqlite3.connect(db_uri, uri=True) as conn, _PageReads(db_uri, conn) as reads:
         conn.execute("PRAGMA query_only = ON")
         summary = conn.execute(
             f"""
@@ -2528,6 +3300,11 @@ def dashboard_snapshot(
             """,
             params,
         ).fetchone()
+        # From here the statements are independent of one another; on a long
+        # history they run side by side (``_PageReads``). ``*_read`` is a
+        # statement on its way, collected at the end.
+        reads.expect(int(conn.execute("SELECT COUNT(*) FROM games").fetchone()[0] or 0))
+        player_name_read = reads.call(_dominant_player_name)
         deck_rows = _dict_rows(
             conn.execute(
                 f"""
@@ -2539,7 +3316,7 @@ def dashboard_snapshot(
                   ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate,
                   MAX(COALESCE(g.started_at, g.ended_at)) AS last_played
                 FROM games g
-                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
                 WHERE {where}
                 GROUP BY p.deck_name
                 ORDER BY games DESC, win_rate DESC
@@ -2547,10 +3324,9 @@ def dashboard_snapshot(
                 params,
             )
         )
-        format_rows, midweek_rows = _grouped_format_rows(conn, where, params)
-        play_draw_rows = _dict_rows(
-            conn.execute(
-                f"""
+        format_rows_read = reads.call(_grouped_format_rows, where, params)
+        play_draw_rows_read = reads.rows(
+            f"""
                 SELECT
                   CASE p.went_first WHEN 1 THEN 'On the play' WHEN 0 THEN 'On the draw' ELSE 'Unknown' END AS play_draw,
                   COUNT(*) AS games,
@@ -2564,12 +3340,10 @@ def dashboard_snapshot(
                 GROUP BY p.went_first
                 ORDER BY play_draw
                 """,
-                params,
-            )
+            params,
         )
-        deck_play_draw_rows = _dict_rows(
-            conn.execute(
-                f"""
+        deck_play_draw_rows_read = reads.rows(
+            f"""
                 SELECT
                   COALESCE(p.deck_name, '(unknown)') AS deck_name,
                   CASE p.went_first WHEN 1 THEN 'On the play' WHEN 0 THEN 'On the draw' ELSE 'Unknown' END AS play_draw,
@@ -2578,17 +3352,26 @@ def dashboard_snapshot(
                   SUM(g.outcome = 'loss') AS losses,
                   ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
                 FROM games g
-                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
                 WHERE {where}
                 GROUP BY p.deck_name, p.went_first
                 ORDER BY deck_name, play_draw
                 """,
-                params,
-            )
+            params,
         )
-        draw_quality_rows = _dict_rows(
-            conn.execute(
-                f"""
+        # The 100 newest games are picked first: joining every game's opener
+        # and draws and then keeping 100 read the whole history's cards.
+        draw_quality_rows_read = reads.rows(
+            f"""
+                WITH newest AS (
+                  SELECT g.id
+                  FROM games g
+                  JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                  WHERE {where}
+                  GROUP BY g.id
+                  ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
+                  LIMIT 100
+                )
                 SELECT
                   g.id AS game_id,
                   COALESCE(g.started_at, g.ended_at) AS started_at,
@@ -2613,36 +3396,33 @@ def dashboard_snapshot(
                 LEFT JOIN (
                   SELECT game_id, participant_id, display_name, type_category, 'opening' AS source
                   FROM game_opening_hand_cards
+                  WHERE game_id IN (SELECT id FROM newest)
                   UNION ALL
                   SELECT game_id, participant_id, display_name, type_category, 'draw' AS source
                   FROM game_drawn_cards
+                  WHERE game_id IN (SELECT id FROM newest)
                 ) seen ON seen.game_id = g.id AND seen.participant_id = p.id
-                WHERE {where}
+                WHERE g.id IN (SELECT id FROM newest)
                 GROUP BY g.id
                 ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
                 LIMIT 100
                 """,
-                params,
-            )
+            params,
         )
-        opponents_total = int(
-            conn.execute(
-                f"""
+        opponents_total_read = reads.row(
+            f"""
                 SELECT COUNT(DISTINCT o.display_name)
                 FROM games g
-                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-                JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
+                CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                CROSS JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
                 WHERE {where} AND o.display_name IS NOT NULL AND o.display_name NOT IN ('', 'Opponent')
                 """,
-                params,
-            ).fetchone()[0]
-            or 0
+            params,
         )
         # Match-level record: a Bo3 counts once (you faced them once), with
         # the match decided by its games — not three separate rows of record.
-        top_opponent_rows = _dict_rows(
-            conn.execute(
-                f"""
+        top_opponent_rows_read = reads.rows(
+            f"""
                 SELECT
                   opponent_name,
                   COUNT(*) AS games,
@@ -2658,8 +3438,8 @@ def dashboard_snapshot(
                     SUM(g.outcome = 'loss') AS ml,
                     MAX(g.started_at) AS last_started
                   FROM games g
-                  JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-                  JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
+                  CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                  CROSS JOIN participants o ON o.game_id = g.id AND o.role = 'opponent'
                   WHERE {where} AND o.display_name IS NOT NULL AND o.display_name NOT IN ('', 'Opponent')
                   GROUP BY o.display_name, g.match_id
                 )
@@ -2667,31 +3447,28 @@ def dashboard_snapshot(
                 ORDER BY games DESC, opponent_name
                 LIMIT 5
                 """,
-                params,
-            )
+            params,
         )
-        drawn_card_rows = _dict_rows(
-            conn.execute(
-                f"""
+        drawn_card_rows_read = reads.rows(
+            f"""
                 SELECT
                   d.display_name,
                   COALESCE(d.type_category, 'Other') AS type_category,
                   COUNT(*) AS times_drawn,
-                  COUNT(DISTINCT d.game_id) AS games_seen
-                FROM game_drawn_cards d
-                JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
-                JOIN games g ON g.id = d.game_id
+                  COUNT(DISTINCT g.rowid) AS games_seen
+                FROM games g
+                CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                CROSS JOIN game_drawn_cards d ON d.participant_id = p.id AND d.game_id = g.id
                 WHERE {where}
                 GROUP BY d.display_name, d.type_category
                 ORDER BY times_drawn DESC, d.display_name
                 LIMIT 25
                 """,
-                params,
-            )
+            params,
+            first=True,
         )
-        momentum_rows = _dict_rows(
-            conn.execute(
-                f"""
+        momentum_rows_read = reads.rows(
+            f"""
                 WITH ordered_games AS (
                   SELECT
                     g.id,
@@ -2718,12 +3495,12 @@ def dashboard_snapshot(
                 GROUP BY previous_outcome
                 ORDER BY split
                 """,
-                params,
-            )
+            params,
         )
         recent_rows = _dict_rows(
             conn.execute(
                 f"""
+                {_NEWEST_GAMES_CTE.format(where=where)}
                 SELECT
                   g.id AS game_id,
                   g.match_id,
@@ -2782,32 +3559,28 @@ def dashboard_snapshot(
                     JOIN cards c ON c.name = pc.card_name
                     WHERE po.game_id = g.id AND po.role = 'opponent'
                   ) AS opponent_commander_colors
-                FROM games g
-                JOIN matches m ON m.id = g.match_id
-                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-                WHERE {where}
+                FROM newest n
+                CROSS JOIN games g ON g.id = n.game_id
+                CROSS JOIN matches m ON m.id = g.match_id
+                CROSS JOIN participants p ON p.id = n.participant_id
                 ORDER BY g.started_at DESC
-                LIMIT 30
                 """,
                 params,
             )
         )
-        trend_rows = _dict_rows(
-            conn.execute(
-                f"""
-                SELECT
-                  g.id AS game_id,
-                  COALESCE(g.started_at, g.ended_at) AS started_at,
-                  g.outcome
-                FROM games g
-                WHERE {trend_where} AND g.outcome IN ('win', 'loss')
-                ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
-                {trend_limit}
-                """,
-                trend_params,
-            )
+        # Only the decks this view lists (plus the recent games' decks, for
+        # their colour fallback): a narrow period must not pay for every
+        # deck ever played. The decks' cards and the opponents' cards are
+        # the longest reads, so they go to the front.
+        shown_decks = {row["deck_name"] for row in deck_rows} | {
+            str(row.get("deck_name") or "") for row in recent_rows
+        }
+        opponent_threat_rows_read = reads.call(_opponent_threat_rows, where, params, first=True)
+        deck_color_map_read = reads.call(_deck_color_map, shown_decks, first=True)
+        deck_visuals_read = reads.call(
+            _deck_visuals, {row["deck_name"] for row in deck_rows}, first=True
         )
-        trend_rows.reverse()
+        trend_rows = _trend_rows(conn, trend_where, trend_params, trend_limit)
         rank_progress_rows = _dict_rows(
             conn.execute(
                 """
@@ -2887,27 +3660,52 @@ def dashboard_snapshot(
                 params,
             )
         )
-        session_rows = _dict_rows(
+        # One row per local calendar day played, by each game's start time
+        # (a game past midnight belongs to the day it started). A sitting is a
+        # stretch of play: a game that starts SITTING_GAP_MINUTES or more after
+        # the previous one ended begins a new one.
+        day_rows = _dict_rows(
             conn.execute(
                 f"""
+                WITH day_games AS (
+                  SELECT
+                    g.id,
+                    g.outcome,
+                    g.duration_seconds,
+                    p.went_first,
+                    date(COALESCE(g.started_at, g.ended_at)) AS day,
+                    COALESCE(g.started_at, g.ended_at) AS start_at,
+                    COALESCE(g.ended_at, g.started_at) AS end_at
+                  FROM games g
+                  LEFT JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                  WHERE {where} AND COALESCE(g.started_at, g.ended_at) IS NOT NULL
+                ),
+                marked AS (
+                  SELECT
+                    *,
+                    LAG(end_at) OVER (PARTITION BY day ORDER BY start_at, id) AS previous_end
+                  FROM day_games
+                )
                 SELECT
-                  s.id AS session_id,
-                  s.started_at,
-                  s.ended_at,
-                  s.runtime_seconds AS duration_seconds,
-                  COUNT(g.id) AS games,
-                  SUM(g.outcome = 'win') AS wins,
-                  SUM(g.outcome = 'loss') AS losses,
-                  SUM(g.outcome = 'draw') AS draws,
-                  SUM(p.went_first = 1) AS on_play,
-                  SUM(p.went_first = 0) AS on_draw,
-                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
-                FROM tracker_sessions s
-                JOIN games g ON g.session_id = s.id
-                LEFT JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-                WHERE {where}
-                GROUP BY s.id
-                ORDER BY s.started_at DESC, s.id DESC
+                  day,
+                  MIN(start_at) AS first_game_at,
+                  MAX(end_at) AS last_game_at,
+                  SUM(duration_seconds) AS duration_seconds,
+                  SUM(
+                    previous_end IS NULL
+                    OR (julianday(start_at) - julianday(previous_end)) * 1440
+                       >= {SITTING_GAP_MINUTES}
+                  ) AS sittings,
+                  COUNT(id) AS games,
+                  SUM(outcome = 'win') AS wins,
+                  SUM(outcome = 'loss') AS losses,
+                  SUM(outcome = 'draw') AS draws,
+                  SUM(went_first = 1) AS on_play,
+                  SUM(went_first = 0) AS on_draw,
+                  ROUND(100.0 * SUM(outcome = 'win') / NULLIF(SUM(outcome IN ('win', 'loss')), 0), 1) AS win_rate
+                FROM marked
+                GROUP BY day
+                ORDER BY day DESC
                 """,
                 params,
             )
@@ -2924,30 +3722,53 @@ def dashboard_snapshot(
             )
         ]
         format_options = []
+        hidden_modes = _hidden_mode_keys()
+        jump_in_test = (
+            "WHERE COALESCE(format, '(unknown)') NOT LIKE 'Jump!_In%' ESCAPE '!'"
+            if "jump_in" in hidden_modes
+            else ""
+        )
         for row in conn.execute(
-            """
+            f"""
                 SELECT COALESCE(format, '(unknown)') AS raw_format, MAX(COALESCE(best_of, 1))
                 FROM matches
-                WHERE COALESCE(format, '(unknown)') NOT LIKE 'Jump!_In%' ESCAPE '!'
+                {jump_in_test}
                 GROUP BY raw_format
                 ORDER BY raw_format COLLATE NOCASE
                 """
         ):
             normalized = normalize_match_format(row[0], default_best_of=int(row[1] or 1))
-            if normalized.is_midweek:
+            if normalized.is_midweek and "midweek_magic" in hidden_modes:
                 continue
-            format_options.append({"raw_format": row[0], "format_label": normalized.label})
-        combat_deck_rows = _combat_deck_rows(conn, where, params)
-        combat_split_rows = _combat_split_rows(conn, where, params)
+            option = {"raw_format": row[0], "format_label": normalized.label}
+            if _format_mode_saved(row[0], normalized.label):
+                option["saved_mode"] = True
+            format_options.append(option)
+        combat_deck_rows_read = reads.call(_combat_deck_rows, where, params)
+        combat_split_rows_read = reads.call(_combat_split_rows, where, params)
+        schedule_read = reads.call(_schedule_rows, where, params)
+        inventory = _latest_inventory(conn)
+        fatigue_rows_read = reads.call(_fatigue_rows, where, params)
+        outcome_reason_rows_read = reads.call(_outcome_reason_rows, where, params)
+        opener_land_rows_read = reads.call(_opener_land_rows, where, params)
+        matchup_rows_read = reads.call(_matchup_rows, where, params)
+        your_commander_rows_read = reads.call(_commander_rows, where, params, "player")
+        faced_commander_rows_read = reads.call(_commander_rows, where, params, "opponent")
+        brawl_summary_read = reads.call(_brawl_summary, where, params)
+        # The reads above are sums: SQLite does the work and hands back a few
+        # rows. The ones below hand Python a row per game. Two threads doing
+        # that at once wait on each other for the interpreter at every row
+        # (as two chains the page took 1.5 s where this takes 0.85), so they
+        # stay on this thread, one after another, while the sums run.
         mana_readiness_rows = _mana_readiness_rows(conn, where, params)
         # Overall flood/screw/normal profile for the homepage's Land
         # Statistics section — same computation the deck page uses, across
         # every game the current filters cover.
         land_profile = _deck_land_profile(conn, where, params)
-        schedule = _schedule_rows(conn, where, params)
-        inventory = _latest_inventory(conn)
-        fatigue_rows = _fatigue_rows(conn, where, params)
         streaks = _streak_summary(conn, where, params)
+        # (Opponent colours are a sum too once every game has its stored
+        # row, but take a row per game for the games that have none.)
+        opponent_color_rows = _opponent_color_rows(conn, where, params)
         match_results = _match_level_results(conn, where, params)
         match_summary = _summarize_match_results(match_results)
         ranked_results = [
@@ -2968,16 +3789,28 @@ def dashboard_snapshot(
             ]
             ranked_season_summary = _summarize_match_results(seasonal_results)
             ranked_season_summary["season_ordinal"] = season_ordinal
-        outcome_reason_rows = _outcome_reason_rows(conn, where, params)
-        opener_land_rows = _opener_land_rows(conn, where, params)
-        opponent_threat_rows = _opponent_threat_rows(conn, where, params)
-        matchup_rows = _matchup_rows(conn, where, params)
-        opponent_color_rows = _opponent_color_rows(conn, where, params)
-        your_commander_rows = _commander_rows(conn, where, params, "player")
-        brawl_summary = _brawl_summary(conn, where, params)
-        faced_commander_rows = _commander_rows(conn, where, params, "opponent")
-        deck_visuals = _deck_visuals(conn)
-        deck_color_map = _deck_color_map(conn)
+        format_rows, midweek_rows = format_rows_read.result()
+        play_draw_rows = play_draw_rows_read.result()
+        deck_play_draw_rows = deck_play_draw_rows_read.result()
+        draw_quality_rows = draw_quality_rows_read.result()
+        opponents_total = int(opponents_total_read.result()[0] or 0)
+        top_opponent_rows = top_opponent_rows_read.result()
+        drawn_card_rows = drawn_card_rows_read.result()
+        momentum_rows = momentum_rows_read.result()
+        combat_deck_rows = combat_deck_rows_read.result()
+        combat_split_rows = combat_split_rows_read.result()
+        schedule = schedule_read.result()
+        fatigue_rows = fatigue_rows_read.result()
+        outcome_reason_rows = outcome_reason_rows_read.result()
+        opener_land_rows = opener_land_rows_read.result()
+        opponent_threat_rows = opponent_threat_rows_read.result()
+        matchup_rows = matchup_rows_read.result()
+        your_commander_rows = your_commander_rows_read.result()
+        faced_commander_rows = faced_commander_rows_read.result()
+        brawl_summary = brawl_summary_read.result()
+        player_name = player_name_read.result()
+        deck_visuals = deck_visuals_read.result()
+        deck_color_map = deck_color_map_read.result()
         for row in deck_rows:
             deck_name = row["deck_name"]
             row["deck_visual"] = deck_visuals.get(deck_name, _empty_deck_visual(deck_name))
@@ -3009,7 +3842,7 @@ def dashboard_snapshot(
         "losses": int(summary[2] or 0),
         "draws": int(summary[3] or 0),
         "win_rate": summary[4],
-        "player_name": _dominant_player_name(conn),
+        "player_name": player_name,
     }
     total_games = summary_dict["games"]
     for row in drawn_card_rows:
@@ -3086,7 +3919,7 @@ def dashboard_snapshot(
         "trend": trend_rows,
         "rank_progress": rank_progress_rows,
         "matches": match_rows,
-        "sessions": session_rows,
+        "days_played": day_rows,
         "filters": {
             "deck": deck,
             "format": fmt,
@@ -3118,7 +3951,7 @@ def deck_detail(
     db_path = Path(db_path).expanduser()
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
-    where, params = _games_filter(deck_name, fmt, days, since, until)
+    where, params = _games_filter(deck_name, fmt, days, since, until, db_path=db_path)
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
@@ -3138,7 +3971,7 @@ def deck_detail(
         if not summary or not summary[0]:
             raise LookupError(f"No recorded games for deck: {deck_name}")
         # Last played ignores the page filters: it describes the deck itself.
-        deck_where, deck_params = _games_filter(deck_name, None, None)
+        deck_where, deck_params = _games_filter(deck_name, None, None, db_path=db_path)
         last_played = conn.execute(
             f"SELECT MAX(COALESCE(g.started_at, g.ended_at)) FROM games g WHERE {deck_where}",
             deck_params,
@@ -3175,9 +4008,9 @@ def deck_detail(
                 conn.execute(
                     f"""
                     SELECT dc.game_id, dc.display_name
-                    FROM game_deck_cards dc
-                    JOIN participants p ON p.id = dc.participant_id AND p.role = 'player'
-                    JOIN games g ON g.id = dc.game_id
+                    FROM games g
+                    CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                    CROSS JOIN game_deck_cards dc ON dc.participant_id = p.id AND dc.game_id = g.id
                     WHERE {where}
                     """,
                     params,
@@ -3196,9 +4029,9 @@ def deck_detail(
                 conn.execute(
                     f"""
                     SELECT owned.display_name
-                    FROM {table_name} owned
-                    JOIN participants p ON p.id = owned.participant_id AND p.role = 'player'
-                    JOIN games g ON g.id = owned.game_id
+                    FROM games g
+                    CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                    CROSS JOIN {table_name} owned ON owned.participant_id = p.id AND owned.game_id = g.id
                     WHERE {where}
                     """,
                     params,
@@ -3226,9 +4059,9 @@ def deck_detail(
                   COALESCE(s.type_category, 'Other') AS type_category,
                   COALESCE(s.played_count, 0) AS times_played,
                   g.outcome
-                FROM game_card_summary s
-                JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
-                JOIN games g ON g.id = s.game_id
+                FROM games g
+                CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                CROSS JOIN game_card_summary s ON s.participant_id = p.id AND s.game_id = g.id
                 WHERE {where}
                 """,
                 params,
@@ -3268,9 +4101,9 @@ def deck_detail(
             conn.execute(
                 f"""
                 SELECT d.game_id, d.display_name, COALESCE(d.type_category, 'Other') AS type_category
-                FROM game_drawn_cards d
-                JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
-                JOIN games g ON g.id = d.game_id
+                FROM games g
+                CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                CROSS JOIN game_drawn_cards d ON d.participant_id = p.id AND d.game_id = g.id
                 WHERE {where}
                 """,
                 params,
@@ -3314,9 +4147,9 @@ def deck_detail(
                 f"""
                 WITH opener_games AS (
                   SELECT DISTINCT h.game_id, h.display_name, COALESCE(h.type_category, 'Other') AS type_category
-                  FROM game_opening_hand_cards h
-                  JOIN participants p ON p.id = h.participant_id AND p.role = 'player'
-                  JOIN games g ON g.id = h.game_id
+                  FROM games g
+                  CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                  CROSS JOIN game_opening_hand_cards h ON h.participant_id = p.id AND h.game_id = g.id
                   WHERE {where}
                 )
                 SELECT
@@ -3356,6 +4189,7 @@ def deck_detail(
         recent_rows = _dict_rows(
             conn.execute(
                 f"""
+                {_NEWEST_GAMES_CTE.format(where=where)}
                 SELECT
                   g.id AS game_id,
                   g.started_at,
@@ -3413,12 +4247,11 @@ def deck_detail(
                     JOIN cards c ON c.name = pc.card_name
                     WHERE po.game_id = g.id AND po.role = 'opponent'
                   ) AS opponent_commander_colors
-                FROM games g
-                JOIN matches m ON m.id = g.match_id
-                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-                WHERE {where}
+                FROM newest n
+                CROSS JOIN games g ON g.id = n.game_id
+                CROSS JOIN matches m ON m.id = g.match_id
+                CROSS JOIN participants p ON p.id = n.participant_id
                 ORDER BY g.started_at DESC
-                LIMIT 30
                 """,
                 params,
             )
@@ -3439,8 +4272,8 @@ def deck_detail(
             )
         )
         trend_rows.reverse()
-        deck_visuals = _deck_visuals(conn)
-        deck_colors = _deck_color_map(conn).get(deck_name, "")
+        deck_visuals = _deck_visuals(conn, [deck_name])
+        deck_colors = _deck_color_map(conn, [deck_name]).get(deck_name, "")
         deck_export = _deck_export_snapshot(conn, where, params, deck_name)
         # Arena-derived mana costs for every card the page can show; the UI
         # falls back to Scryfall for names missing from this map.
@@ -3616,6 +4449,7 @@ RESET_TABLES = (
     "rank_snapshots",
     "tracker_sessions",
     "maintenance_state",
+    "game_derived",
 )
 
 #: Tables a reset leaves alone, on purpose. Every table in the schema is in
@@ -3752,12 +4586,23 @@ def _deck_land_profile(conn: sqlite3.Connection, where: str, params: List[Any]) 
     classification reuses the shared draw-quality rules. Games with no visible
     cards (nothing to classify) are excluded from the split.
     """
+    # A game's stored summary comes with its row (what ``load_draw_summaries``
+    # reads, without asking again in slices of 900 games); ``has_summary`` is
+    # false for a game that has none and is computed below.
+    stored = _derived_join(conn)
+    summary_columns = (
+        "gd.cards_seen, gd.lands_seen, gd.total_draws, gd.land_draws, gd.land_flags, "
+        "gd.draw_quality_json IS NOT NULL AND gd.cards_seen IS NOT NULL"
+        if stored
+        else "NULL, NULL, NULL, NULL, NULL, 0"
+    )
     game_rows = conn.execute(
         f"""
-        SELECT g.id, p.id AS participant_id, p.deck_size
+        SELECT g.id, p.id AS participant_id, p.deck_size, {summary_columns}
         FROM games g
         JOIN matches m ON m.id = g.match_id
         JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+        {stored}
         WHERE {where}
         ORDER BY COALESCE(g.started_at, g.ended_at) DESC, g.id DESC
         """,
@@ -3768,31 +4613,67 @@ def _deck_land_profile(conn: sqlite3.Connection, where: str, params: List[Any]) 
     flood = screw = normal = 0
     sum_cards_seen = sum_lands_seen = sum_draws = sum_land_draws = 0
     expected_land_pct: Optional[float] = None
-    qualities = _draw_quality_batch(
-        conn, [(participant_id, row_deck_size) for _, participant_id, row_deck_size in game_rows]
+    summaries, computed = _draw_summary_batch(
+        conn, [(row[1], row[2]) for row in game_rows if not row[8]]
     )
-    for game_id, participant_id, row_deck_size in game_rows:
-        quality = qualities.get(participant_id)
-        if quality is None:
+    # The two games whose whole draw quality is read: the newest (rows are
+    # newest-first) with its own submitted list, and the newest classified.
+    newest_listed: Optional[Tuple[str, Optional[int]]] = None
+    newest_classified: Optional[Tuple[str, Optional[int]]] = None
+    for (
+        _game_id,
+        participant_id,
+        row_deck_size,
+        cards_seen,
+        lands_seen,
+        total_draws,
+        land_draws,
+        land_flags,
+        has_summary,
+    ) in game_rows:
+        if has_summary:
+            # A stored summary is always of a game with its own list.
+            own_list = True
+            is_flood = bool(int(land_flags or 0) & game_derived._FLOOD)
+            is_screw = bool(int(land_flags or 0) & game_derived._SCREW)
+        else:
+            summary = summaries.get(participant_id)
+            if summary is None:
+                continue
+            own_list = (
+                participant_id not in computed
+                or computed[participant_id].get("land_rate_source") == "decklist"
+            )
+            cards_seen, lands_seen = summary.cards_seen, summary.lands_seen
+            total_draws, land_draws = summary.total_draws, summary.land_draws
+            is_flood, is_screw = summary.is_flood, summary.is_screw
+        if newest_listed is None and own_list:
+            newest_listed = (participant_id, row_deck_size)
+        if not cards_seen:
             continue
-        if deck_size is None and quality.get("land_rate_source") == "decklist":
-            # Newest game (rows are newest-first) with its own submitted list.
-            deck_size = int(quality.get("deck_size") or 0) or None
-            lands = quality.get("deck_lands")
-        if not quality.get("total_cards_seen"):
-            continue
-        sum_cards_seen += int(quality.get("total_cards_seen") or 0)
-        sum_lands_seen += int(quality.get("lands_seen") or 0)
-        sum_draws += int(quality.get("total_draws") or 0)
-        sum_land_draws += int(quality.get("land_draws") or 0)
-        if expected_land_pct is None:
-            expected_land_pct = quality.get("expected_land_rate")
-        if quality.get("is_flood"):
+        sum_cards_seen += int(cards_seen or 0)
+        sum_lands_seen += int(lands_seen or 0)
+        sum_draws += int(total_draws or 0)
+        sum_land_draws += int(land_draws or 0)
+        if newest_classified is None:
+            newest_classified = (participant_id, row_deck_size)
+        if is_flood:
             flood += 1
-        elif quality.get("is_screw"):
+        elif is_screw:
             screw += 1
         else:
             normal += 1
+    wanted = [entry for entry in (newest_listed, newest_classified) if entry is not None]
+    details = {pid: computed[pid] for pid, _ in wanted if pid in computed}
+    details.update(
+        _draw_quality_batch(conn, [entry for entry in wanted if entry[0] not in details])
+    )
+    if newest_listed is not None and newest_listed[0] in details:
+        listed = details[newest_listed[0]]
+        deck_size = int(listed.get("deck_size") or 0) or None
+        lands = listed.get("deck_lands")
+    if newest_classified is not None and newest_classified[0] in details:
+        expected_land_pct = details[newest_classified[0]].get("expected_land_rate")
     classified = flood + screw + normal
     # The deck's land ratio comes from its newest submitted decklist (the same
     # numbers shown in Land Statistics); only decks with no decklist at all
@@ -3887,7 +4768,13 @@ def _card_mana_map(conn: sqlite3.Connection, names: Iterable[str]) -> Dict[str, 
             by_name[clean_name] = (str(cost), value)
     result: Dict[str, Dict[str, Any]] = {}
     for name in wanted:
-        for alias in _card_name_aliases(name):
+        # Front face, then the joined name, then the other faces. The cards
+        # table can hold a cost under each ("Unholy Annex", "Unholy Annex //
+        # Ritual Chamber" with both costs joined, "Ritual Chamber"), and a
+        # set's order changes with every launch, so the cost shown did too.
+        clean_name = _clean_card_name(name) or ""
+        faces = [part.strip() for part in clean_name.split(" // ") if part.strip()]
+        for alias in dict.fromkeys(faces[:1] + [clean_name] + faces[1:]):
             entry = by_name.get(alias)
             if entry is not None:
                 result[name] = {"mana_cost": entry[0], "mana_value": entry[1]}
@@ -3930,9 +4817,9 @@ def _deck_played_mana(
                   COALESCE(s.type_category, 'Other') AS type_category,
                   SUM(s.played_count) AS times_played
                 FROM games g
-                JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-                JOIN participants pt ON pt.game_id = g.id AND pt.role = ?
-                JOIN game_card_summary s ON s.game_id = g.id AND s.participant_id = pt.id
+                CROSS JOIN participants p ON p.game_id = g.id AND p.role = 'player'
+                CROSS JOIN participants pt ON pt.game_id = g.id AND pt.role = ?
+                CROSS JOIN game_card_summary s ON s.game_id = g.id AND s.participant_id = pt.id
                 WHERE s.played_count > 0 AND {where}
                 GROUP BY s.display_name, COALESCE(s.type_category, 'Other')
                 """,
@@ -4297,11 +5184,18 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
             for row in timeline
             if row.get("player_life") is not None and row.get("opponent_life") is not None
         ]
+        # NULL until the tracker has added the column to this database.
+        library_remaining = (
+            "s.library_remaining"
+            if "library_remaining" in _table_columns(conn, "game_participant_stats")
+            else "NULL"
+        )
         participant_stats = _dict_rows(
             conn.execute(
-                """
+                f"""
                 SELECT
                   p.role,
+                  p.deck_size,
                   s.attack_steps,
                   s.attacking_creatures,
                   s.attackers_lost,
@@ -4328,6 +5222,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                   s.creatures_bounced,
                   s.noncreatures_bounced,
                   s.poison_added,
+                  {library_remaining} AS library_remaining,
                   s.counters_drawn,
                   s.counters_played,
                   s.spells_countered,
@@ -4522,7 +5417,7 @@ def opponent_detail(
     requested_name = str(opponent_name or "").strip()
     if not requested_name:
         raise LookupError("Opponent name is required")
-    where, filter_params = _games_filter(deck, fmt, days, since, until)
+    where, filter_params = _games_filter(deck, fmt, days, since, until, db_path=db_path)
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
@@ -4606,9 +5501,11 @@ def opponent_detail(
                 (requested_name, *filter_params),
             )
         )
-        deck_color_map = _deck_color_map(conn)
         game_deck_colors = _participant_deck_color_map(
             conn, (row.get("player_participant_id") for row in game_rows)
+        )
+        deck_color_map = _deck_color_map(
+            conn, _decks_without_game_colors(game_rows, game_deck_colors)
         )
         _attach_replay_availability(conn, game_rows)
     for row in game_rows:
@@ -4648,55 +5545,64 @@ def _card_multiplicity(conn: sqlite3.Connection, variants: List[str]) -> Dict[st
     """
     name_clause = _card_name_clause("", variants)
     name_params = _card_name_params(variants)
+    # The card's rows are found first (by name), and the per-game totals are
+    # then read for those games only. Reading every game's totals to keep a
+    # few was most of this page's cost on a long history.
     seen_rows = _dict_rows(
         conn.execute(
             f"""
+            WITH
+            oh AS (
+              SELECT participant_id, COUNT(*) AS copies
+              FROM game_opening_hand_cards
+              WHERE {name_clause}
+              GROUP BY participant_id
+            ),
+            dr AS (
+              SELECT participant_id, COUNT(*) AS copies
+              FROM game_drawn_cards
+              WHERE {name_clause}
+              GROUP BY participant_id
+            ),
+            dc AS (
+              SELECT participant_id, SUM(quantity) AS quantity
+              FROM game_deck_cards
+              WHERE deck_zone = 'deck' AND {name_clause}
+              GROUP BY participant_id
+            ),
+            hit(participant_id) AS (
+              SELECT participant_id FROM oh
+              UNION
+              SELECT participant_id FROM dr
+              UNION
+              SELECT participant_id FROM dc WHERE quantity > 0
+            )
             SELECT
               g.id AS game_id,
               g.outcome,
               p.id AS participant_id,
               COALESCE(oh.copies, 0) + COALESCE(dr.copies, 0) AS copies_seen,
-              COALESCE(oh_total.total, 0) + COALESCE(dr_total.total, 0) AS cards_seen,
+              (
+                SELECT COUNT(*) FROM game_opening_hand_cards t
+                WHERE t.participant_id = p.id
+              ) + (
+                SELECT COUNT(*) FROM game_drawn_cards t
+                WHERE t.participant_id = p.id
+              ) AS cards_seen,
               dc.quantity AS copies_in_deck,
-              dc_total.deck_size AS deck_size
-            FROM games g
-            JOIN participants p ON p.game_id = g.id AND p.role = 'player'
-            LEFT JOIN (
-              SELECT participant_id, COUNT(*) AS copies
-              FROM game_opening_hand_cards
-              WHERE {name_clause}
-              GROUP BY participant_id
-            ) oh ON oh.participant_id = p.id
-            LEFT JOIN (
-              SELECT participant_id, COUNT(*) AS copies
-              FROM game_drawn_cards
-              WHERE {name_clause}
-              GROUP BY participant_id
-            ) dr ON dr.participant_id = p.id
-            LEFT JOIN (
-              SELECT participant_id, COUNT(*) AS total
-              FROM game_opening_hand_cards
-              GROUP BY participant_id
-            ) oh_total ON oh_total.participant_id = p.id
-            LEFT JOIN (
-              SELECT participant_id, COUNT(*) AS total
-              FROM game_drawn_cards
-              GROUP BY participant_id
-            ) dr_total ON dr_total.participant_id = p.id
-            LEFT JOIN (
-              SELECT participant_id, SUM(quantity) AS quantity
-              FROM game_deck_cards
-              WHERE deck_zone = 'deck' AND {name_clause}
-              GROUP BY participant_id
-            ) dc ON dc.participant_id = p.id
-            LEFT JOIN (
-              SELECT participant_id, SUM(quantity) AS deck_size
-              FROM game_deck_cards
-              WHERE deck_zone = 'deck'
-              GROUP BY participant_id
-            ) dc_total ON dc_total.participant_id = p.id
-            WHERE COALESCE(dc.quantity, 0) > 0
-               OR COALESCE(oh.copies, 0) + COALESCE(dr.copies, 0) > 0
+              (
+                SELECT SUM(t.quantity) FROM game_deck_cards t
+                WHERE t.participant_id = p.id AND t.deck_zone = 'deck'
+              ) AS deck_size
+            FROM hit
+            CROSS JOIN participants p ON p.id = hit.participant_id AND p.role = 'player'
+            CROSS JOIN games g ON g.id = p.game_id
+            LEFT JOIN oh ON oh.participant_id = p.id
+            LEFT JOIN dr ON dr.participant_id = p.id
+            LEFT JOIN dc ON dc.participant_id = p.id
+            -- The order the old whole-history statement returned its rows in,
+            -- so the expected-draws sums below add up in the same order.
+            ORDER BY p.deck_name, p.rowid
             """,
             name_params * 3,
         )
@@ -4783,8 +5689,8 @@ def _card_opponent_multiplicity(conn: sqlite3.Connection, variants: List[str]) -
               SUM(MAX(COALESCE(s.played_count, 0), COALESCE(s.drawn_count, 0)))
                 AS copies_seen
             FROM game_card_summary s
-            JOIN participants p ON p.id = s.participant_id AND p.role = 'opponent'
-            JOIN games g ON g.id = s.game_id
+            CROSS JOIN participants p ON p.id = s.participant_id AND p.role = 'opponent'
+            CROSS JOIN games g ON g.id = s.game_id
             WHERE {name_clause}
               AND (COALESCE(s.played_count, 0) > 0 OR COALESCE(s.drawn_count, 0) > 0)
             GROUP BY g.id, g.outcome
@@ -4881,31 +5787,34 @@ def _card_opponent_playable(
     if cost_row is None:
         return None
     pip_options = _pip_color_options(str(cost_row[0] or ""))
+    played = {
+        (str(game_id), str(participant_id))
+        for game_id, participant_id in conn.execute(
+            f"""
+            SELECT s.game_id, s.participant_id
+            FROM game_card_summary s
+            WHERE s.played_count > 0 AND {_card_name_clause('s', variants)}
+            """,
+            _card_name_params(variants),
+        )
+    }
     rows = conn.execute(
         f"""
-        SELECT
-          g.id,
-          (
-            SELECT GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
-            FROM game_card_summary s
-            JOIN cards c ON c.id = s.card_id
-            WHERE s.game_id = g.id AND s.participant_id = po.id
-          ) AS letters,
-          EXISTS (
-            SELECT 1 FROM game_card_summary s2
-            WHERE s2.game_id = g.id AND s2.participant_id = po.id
-              AND s2.played_count > 0 AND {_card_name_clause('s2', variants)}
-          ) AS played_it
+        SELECT g.id, po.id
         FROM games g
         JOIN participants po ON po.game_id = g.id AND po.role = 'opponent'
         WHERE {where}
         """,
-        (*_card_name_params(variants), *filter_params),
+        tuple(filter_params),
     ).fetchall()
+    # A card with no coloured pip is castable in every game: no colours to read.
+    letters = _opponent_letters(conn, (row[0] for row in rows)) if pip_options else {}
     games_possible = 0
     games_played = 0
-    for _game_id, letters, played_it in rows:
-        shown = {ch for ch in str(letters or "") if ch in "WUBRG"}
+    for game_id, participant_id in rows:
+        revealed, _commander = letters.get(str(game_id), ("", ""))
+        shown = {ch for ch in revealed if ch in "WUBRG"}
+        played_it = (str(game_id), str(participant_id)) in played
         castable = all(options & shown for options in pip_options)
         if played_it or castable:
             games_possible += 1
@@ -4942,7 +5851,7 @@ def card_detail(
     db_path = Path(db_path).expanduser()
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
-    where, filter_params = _games_filter(deck, fmt, days, since, until)
+    where, filter_params = _games_filter(deck, fmt, days, since, until, db_path=db_path)
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
@@ -4952,36 +5861,22 @@ def card_detail(
         name_clause_h = _card_name_clause("h", variants)
         name_clause_d = _card_name_clause("d", variants)
         match_params = (*_card_name_params(variants), *filter_params)
+        # Every statement here finds the card's rows by name first (CROSS JOIN
+        # keeps that order), so the page costs the games the card appeared in.
         all_usage = conn.execute(
             f"""
             SELECT
               COUNT(DISTINCT g.id) AS games_seen,
               COALESCE(SUM(s.played_count), 0) AS total_played
             FROM game_card_summary s
-            JOIN participants p ON p.id = s.participant_id
-            JOIN games g ON g.id = s.game_id
+            CROSS JOIN participants p ON p.id = s.participant_id
+            CROSS JOIN games g ON g.id = s.game_id
             WHERE {name_clause_s} AND {where}
             """,
             match_params,
         ).fetchone()
         if not all_usage or not all_usage[0]:
             raise LookupError(f"No recorded card for name: {clean_name}")
-        summary = conn.execute(
-            f"""
-            SELECT
-              COUNT(DISTINCT g.id) AS games_seen,
-              COALESCE(SUM(s.played_count), 0) AS total_played,
-              SUM(g.outcome = 'win') AS wins,
-              SUM(g.outcome = 'loss') AS losses,
-              ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
-            FROM game_card_summary s
-            JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
-            JOIN games g ON g.id = s.game_id
-            WHERE {name_clause_s}
-              AND s.played_count > 0 AND {where}
-            """,
-            match_params,
-        ).fetchone()
         by_role = _dict_rows(
             conn.execute(
                 f"""
@@ -4998,8 +5893,8 @@ def card_detail(
                     1
                   ) AS win_rate
                 FROM game_card_summary s
-                JOIN participants p ON p.id = s.participant_id
-                JOIN games g ON g.id = s.game_id
+                CROSS JOIN participants p ON p.id = s.participant_id
+                CROSS JOIN games g ON g.id = s.game_id
                 WHERE {name_clause_s}
                   AND s.played_count > 0 AND {where}
                 GROUP BY p.role
@@ -5007,6 +5902,13 @@ def card_detail(
                 """,
                 match_params,
             )
+        )
+        # Your own plays of the card: the 'player' row above, or zeros.
+        own = next((row for row in by_role if row["role"] == "player"), None)
+        summary = (
+            (own["games_seen"], own["total_played"], own["wins"], own["losses"], own["win_rate"])
+            if own
+            else (0, 0, None, None, None)
         )
         by_deck = _dict_rows(
             conn.execute(
@@ -5019,8 +5921,8 @@ def card_detail(
                   SUM(g.outcome = 'loss') AS losses,
                   ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
                 FROM game_card_summary s
-                JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
-                JOIN games g ON g.id = s.game_id
+                CROSS JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
+                CROSS JOIN games g ON g.id = s.game_id
                 WHERE {name_clause_s}
                   AND s.played_count > 0 AND {where}
                 GROUP BY p.deck_name
@@ -5038,8 +5940,8 @@ def card_detail(
               SUM(g.outcome = 'loss') AS losses,
               ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
             FROM game_opening_hand_cards h
-            JOIN participants p ON p.id = h.participant_id AND p.role = 'player'
-            JOIN games g ON g.id = h.game_id
+            CROSS JOIN participants p ON p.id = h.participant_id AND p.role = 'player'
+            CROSS JOIN games g ON g.id = h.game_id
             WHERE {name_clause_h} AND {where}
             """,
             match_params,
@@ -5048,8 +5950,8 @@ def card_detail(
             f"""
             SELECT COUNT(*) AS times_drawn
             FROM game_drawn_cards d
-            JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
-            JOIN games g ON g.id = d.game_id
+            CROSS JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
+            CROSS JOIN games g ON g.id = d.game_id
             WHERE {name_clause_d} AND {where}
             """,
             match_params,
@@ -5165,16 +6067,24 @@ def all_games(
     days: Optional[int] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
+    *,
+    challenges: bool = False,
 ) -> Dict[str, Any]:
     """Every tracked game (newest first) with match records and draw-quality flags.
 
     Unlike the snapshot's 25-row recent list, flags here are computed in one
     set-based pass so the full history stays cheap (<50ms on ~800 games).
+    ``challenges`` keeps only Direct Challenge games (the Challenges page).
     """
     db_path = Path(db_path).expanduser()
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
-    where, params = _games_filter(deck, fmt, days, since, until)
+    where, params = _games_filter(deck, fmt, days, since, until, db_path=db_path)
+    if challenges:
+        where = (
+            f"{where} AND g.match_id IN"
+            f" (SELECT mc.id FROM matches mc WHERE {_DIRECT_CHALLENGE_MATCH_SQL})"
+        )
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
@@ -5217,61 +6127,35 @@ def all_games(
                 params,
             )
         )
-        # Opponent colors for every game in one grouped pass (a correlated
-        # subquery per row costs ~15x more over the full history).
-        opp_letters: Dict[str, str] = {}
-        opp_commander_letters: Dict[str, str] = {}
-        try:
-            for game_id, letters in conn.execute(
-                """
-                SELECT s.game_id,
-                       GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
-                FROM game_card_summary s
-                JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
-                JOIN cards c ON c.id = s.card_id
-                GROUP BY s.game_id
-                """
-            ):
-                opp_letters[str(game_id)] = str(letters or "")
-            for game_id, letters in conn.execute(
-                """
-                SELECT po.game_id,
-                       GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
-                FROM participant_commanders pc
-                JOIN participants po ON po.id = pc.participant_id AND po.role = 'opponent'
-                JOIN cards c ON c.name = pc.card_name
-                GROUP BY po.game_id
-                """
-            ):
-                opp_commander_letters[str(game_id)] = str(letters or "")
-        except sqlite3.OperationalError:
-            opp_letters = {}
+        opp_letters = _opponent_letters(conn, (row.get("game_id") for row in rows))
         for row in rows:
-            row["opp_color_letters"] = opp_letters.get(str(row.get("game_id")), "")
-            row["opp_commander_letters"] = opp_commander_letters.get(str(row.get("game_id")), "")
-        qualities = _draw_quality_batch(
+            revealed, commander = opp_letters.get(str(row.get("game_id")), ("", ""))
+            row["opp_color_letters"] = revealed
+            row["opp_commander_letters"] = commander
+        summaries, _computed = _draw_summary_batch(
             conn,
             [(row["player_participant_id"], row.get("deck_size")) for row in rows],
         )
-        deck_color_map = _deck_color_map(conn)
         game_deck_colors = _participant_deck_color_map(
             conn, (row.get("player_participant_id") for row in rows)
         )
+        deck_color_map = _deck_color_map(conn, _decks_without_game_colors(rows, game_deck_colors))
         _attach_replay_availability(conn, rows)
 
+    no_draws = game_derived.draw_summary(draw_quality_metrics([], [], 0, 60))
     for row in rows:
         participant_id = row.pop("player_participant_id", None)
         row["deck_colors"] = game_deck_colors.get(str(participant_id)) or deck_color_map.get(
             str(row.get("deck_name") or ""), ""
         )
         row.pop("deck_size", None)
-        quality = qualities.get(participant_id) or draw_quality_metrics([], [], 0, 60)
-        row["is_flood"] = quality["is_flood"]
-        row["is_screw"] = quality["is_screw"]
-        row["is_land_streak"] = quality["is_land_streak"]
-        row["cards_seen"] = quality["total_cards_seen"]
-        row["lands_seen"] = quality["lands_seen"]
-        row["land_seen_pct"] = quality["land_seen_pct"]
+        summary = summaries.get(participant_id) or no_draws
+        row["is_flood"] = summary.is_flood
+        row["is_screw"] = summary.is_screw
+        row["is_land_streak"] = summary.is_land_streak
+        row["cards_seen"] = summary.cards_seen
+        row["lands_seen"] = summary.lands_seen
+        row["land_seen_pct"] = summary.land_seen_pct
         row["format_label"] = format_label(
             row.get("raw_format"), default_best_of=int(row.get("best_of") or 1)
         )
@@ -5289,6 +6173,52 @@ def all_games(
                 str(row.get("opponent_commander_colors") or "")
             )
     return {"games": rows, "total": len(rows)}
+
+
+def challenges(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
+    """Direct Challenge games against friends: every game, newest first, and a
+    record per friend that counts a Bo3 match once (like the Opponents page)."""
+    games = all_games(db_path, challenges=True)["games"]
+    matches: Dict[str, Dict[str, Any]] = {}
+    for row in games:
+        match = matches.setdefault(
+            str(row.get("match_id") or row.get("game_id")),
+            {
+                "friend": str(row.get("opponent_name") or "").strip() or "Opponent",
+                "wins": int(row.get("match_wins") or 0),
+                "losses": int(row.get("match_losses") or 0),
+                "games": 0,
+                "last_played": None,
+            },
+        )
+        match["games"] += 1
+        started = row.get("started_at")
+        if started and (match["last_played"] is None or started > match["last_played"]):
+            match["last_played"] = started
+    friends: Dict[str, Dict[str, Any]] = {}
+    for match in matches.values():
+        friend = friends.setdefault(
+            match["friend"],
+            {
+                "friend": match["friend"],
+                "matches": 0,
+                "games": 0,
+                "wins": 0,
+                "losses": 0,
+                "last_played": None,
+            },
+        )
+        friend["matches"] += 1
+        friend["games"] += match["games"]
+        friend["wins"] += int(match["wins"] > match["losses"])
+        friend["losses"] += int(match["losses"] > match["wins"])
+        last = match["last_played"]
+        if last and (friend["last_played"] is None or last > friend["last_played"]):
+            friend["last_played"] = last
+    rows = sorted(friends.values(), key=lambda row: (-row["matches"], row["friend"].lower()))
+    for row in rows:
+        row["win_rate"] = _win_rate(row["wins"], row["losses"])
+    return {"games": games, "friends": rows, "total": len(games)}
 
 
 def game_annotation(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str, Any]:
@@ -5470,6 +6400,202 @@ def global_search(
     return {"cards": cards, "decks": decks, "opponents": opponents}
 
 
+# ---------------------------------------------------------------------------
+# Card search. A query matches anywhere in a card's display name, so no index
+# narrows it, and ranking needs every match's game count: read row by row,
+# one keystroke cost the whole card table (1.5 s for one letter at 38,000
+# games). The table is instead summed up once per display name and kept
+# while the analytics fingerprint holds; a keystroke then compares the query
+# against a few thousand names.
+# ---------------------------------------------------------------------------
+
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+_JUMP_IN_MATCH_SQL = """EXISTS (
+    SELECT 1 FROM matches mj
+    WHERE mj.id = g.match_id AND mj.format LIKE 'Jump!_In%' ESCAPE '!'
+)"""
+
+
+def _card_search_filter() -> str:
+    """Card search leaves Jump In games out while they are not saved."""
+    return f"NOT {_JUMP_IN_MATCH_SQL}" if "jump_in" in _hidden_mode_keys() else "1 = 1"
+
+
+class _SearchName(NamedTuple):
+    """Everything recorded under one ``game_card_summary.display_name``."""
+
+    #: The display name with ASCII letters lowered: what SQLite's LIKE compares.
+    folded: str
+    #: Names that are one card share a key ("Opt", "Opt (Instant)").
+    key: str
+    first_row: int
+    card_name: str
+    type_category: str
+    games: int
+    played: int
+    last_seen: Optional[str]
+    #: Comma-joined rowids of the games the name appears in, kept only for a
+    #: card with several names: their games are counted once between them.
+    game_rows: str
+    #: Comma-joined rowids of the player participants who had the card, to
+    #: count the decks of the few results a search returns.
+    player_rows: str
+
+
+class _CardSearchIndex(NamedTuple):
+    names: Tuple[_SearchName, ...]
+    #: key -> how many display names share it.
+    variants: Dict[str, int]
+    #: key -> games across all of a card's names, filled in as searches ask.
+    games_across: Dict[str, int]
+    #: player participant rowid (as text) -> deck name.
+    deck_of: Dict[str, str]
+
+
+def _search_games(index: _CardSearchIndex, key: str, names: List[_SearchName]) -> int:
+    """Games holding any of these names of one card, each game once."""
+    if len(names) == 1:
+        return names[0].games
+    whole = len(names) == index.variants[key]
+    games = index.games_across.get(key) if whole else None
+    if games is None:
+        games = len(set().union(*(name.game_rows.split(",") for name in names)))
+        if whole:
+            index.games_across[key] = games
+    return games
+
+
+def _build_card_search_index(conn: sqlite3.Connection) -> _CardSearchIndex:
+    rows = conn.execute(
+        f"""
+        SELECT
+          s.display_name,
+          MIN(s.id),
+          COUNT(DISTINCT g.rowid),
+          SUM(s.played_count),
+          MAX(NULLIF(COALESCE(g.started_at, g.ended_at), '')),
+          GROUP_CONCAT(g.rowid),
+          GROUP_CONCAT(CASE WHEN p.role = 'player' THEN p.rowid END)
+        FROM games g
+        CROSS JOIN game_card_summary s ON s.game_id = g.id
+        CROSS JOIN participants p ON p.id = s.participant_id
+        WHERE {_card_search_filter()}
+        GROUP BY s.display_name
+        """
+    ).fetchall()
+    deck_of = {
+        str(rowid): deck_name
+        for rowid, deck_name in conn.execute(
+            "SELECT rowid, deck_name FROM participants "
+            "WHERE role = 'player' AND deck_name IS NOT NULL AND deck_name != '(unknown)'"
+        )
+    }
+    # The card type shown is the one on the card's earliest row.
+    type_by_row: Dict[int, Optional[str]] = {}
+    for placeholders, chunk in _in_chunks(row[1] for row in rows):
+        type_by_row.update(
+            conn.execute(
+                f"SELECT id, type_category FROM game_card_summary WHERE id IN ({placeholders})",
+                chunk,
+            )
+        )
+    names: List[_SearchName] = []
+    variants: Dict[str, int] = {}
+    for display_name, first_row, games, played, last_seen, game_rows, player_rows in rows:
+        card_name = _clean_card_name(display_name) or display_name
+        key = card_name.casefold()
+        variants[key] = variants.get(key, 0) + 1
+        names.append(
+            _SearchName(
+                folded=display_name.translate(_ASCII_LOWER),
+                key=key,
+                first_row=int(first_row),
+                card_name=card_name,
+                type_category=type_by_row.get(first_row) or "Other",
+                games=int(games or 0),
+                played=int(played or 0),
+                last_seen=last_seen,
+                game_rows=str(game_rows or ""),
+                player_rows=str(player_rows or ""),
+            )
+        )
+    return _CardSearchIndex(
+        names=tuple(
+            name if variants[name.key] > 1 else name._replace(game_rows="") for name in names
+        ),
+        variants=variants,
+        games_across={},
+        deck_of=deck_of,
+    )
+
+
+_card_search_memo: Dict[str, Tuple[Tuple[Any, ...], float, _CardSearchIndex]] = {}
+#: Held while an index is built, so the requests of one typed word build it once.
+_card_search_lock = threading.Lock()
+
+
+def _card_search_index(db_path: Path) -> _CardSearchIndex:
+    """The search index of this database: kept while the analytics
+    fingerprint is unchanged and, like a cached response, no longer than a
+    TTL that covers what the fingerprint cannot see."""
+    fingerprint = _analytics_fingerprint(db_path, event_log=False)
+    key = str(db_path)
+    with _card_search_lock:
+        entry = _card_search_memo.get(key)
+        started = time.monotonic()
+        if (
+            fingerprint is not None
+            and entry is not None
+            and entry[0] == fingerprint
+            and entry[1] > started
+        ):
+            return entry[2]
+        db_uri = db_path.resolve().as_uri() + "?mode=ro"
+        with sqlite3.connect(db_uri, uri=True) as conn:
+            conn.execute("PRAGMA query_only = ON")
+            index = _build_card_search_index(conn)
+        _card_search_memo.pop(key, None)
+        if fingerprint is not None:
+            built = time.monotonic()
+            ttl = min(
+                _RESPONSE_CACHE_TTL_MAX_SECONDS,
+                max(
+                    _RESPONSE_CACHE_TTL_SECONDS,
+                    (built - started) * _RESPONSE_CACHE_TTL_PER_BUILD_SECOND,
+                ),
+            )
+            while len(_card_search_memo) >= 4:
+                _card_search_memo.pop(next(iter(_card_search_memo)))
+            _card_search_memo[key] = (fingerprint, built + ttl, index)
+        return index
+
+
+#: Held by the one thread that is warming the search summary.
+_card_search_warming = threading.Lock()
+
+
+def warm_card_search(db_path: Path) -> Optional[threading.Thread]:
+    """Bring the search summary up to date on a daemon thread, so the first
+    search after a new game does not wait for it (0.9 s at 38,000 games).
+    Called whenever the Overview is served; does nothing while an earlier
+    call is still at work. Returns the thread it started, if any."""
+    if not _card_search_warming.acquire(blocking=False):
+        return None
+
+    def work() -> None:
+        try:
+            _card_search_index(Path(db_path).expanduser())
+        except Exception:
+            # A search builds it itself and reports what went wrong.
+            pass
+        finally:
+            _card_search_warming.release()
+
+    thread = threading.Thread(target=work, name="card-search-warm", daemon=True)
+    thread.start()
+    return thread
+
+
 def search_cards(
     db_path: Path = DEFAULT_DB_PATH, query: str = "", limit: int = 8
 ) -> List[Dict[str, Any]]:
@@ -5482,83 +6608,46 @@ def search_cards(
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
 
-    escaped_query = clean_query.replace("!", "!!").replace("%", "!%").replace("_", "!_")
-    db_uri = db_path.resolve().as_uri() + "?mode=ro"
-    with sqlite3.connect(db_uri, uri=True) as conn:
-        conn.execute("PRAGMA query_only = ON")
-        rows = _dict_rows(
-            conn.execute(
-                """
-                SELECT
-                  s.game_id,
-                  s.display_name,
-                  s.type_category,
-                  s.played_count,
-                  p.role,
-                  COALESCE(p.deck_name, '(unknown)') AS deck_name,
-                  COALESCE(g.started_at, g.ended_at) AS seen_at
-                FROM game_card_summary s
-                JOIN participants p ON p.id = s.participant_id
-                JOIN games g ON g.id = s.game_id
-                WHERE s.display_name LIKE ? ESCAPE '!' COLLATE NOCASE
-                  AND NOT EXISTS (
-                    SELECT 1 FROM matches mj
-                    WHERE mj.id = g.match_id AND mj.format LIKE 'Jump!_In%' ESCAPE '!'
-                  )
-                """,
-                (f"%{escaped_query}%",),
-            )
-        )
-
-    matches: Dict[str, Dict[str, Any]] = {}
-    for row in rows:
-        card_name = _clean_card_name(row.get("display_name")) or row["display_name"]
-        key = card_name.casefold()
-        entry = matches.setdefault(
-            key,
-            {
-                "card_name": card_name,
-                "type_category": row.get("type_category") or "Other",
-                "game_ids": set(),
-                "deck_names": set(),
-                "total_played": 0,
-                "last_seen_at": None,
-            },
-        )
-        entry["game_ids"].add(row["game_id"])
-        if row["role"] == "player" and row["deck_name"] != "(unknown)":
-            entry["deck_names"].add(row["deck_name"])
-        entry["total_played"] += int(row.get("played_count") or 0)
-        if row.get("seen_at") and (
-            entry["last_seen_at"] is None or row["seen_at"] > entry["last_seen_at"]
-        ):
-            entry["last_seen_at"] = row["seen_at"]
+    index = _card_search_index(db_path)
+    # What `display_name LIKE '%query%'` matches: the query anywhere in the
+    # name, ASCII letters compared without case.
+    needle = clean_query.translate(_ASCII_LOWER)
+    matched: Dict[str, List[_SearchName]] = {}
+    for name in index.names:
+        if needle in name.folded:
+            matched.setdefault(name.key, []).append(name)
 
     query_folded = clean_query.casefold()
-    ranked = sorted(
-        matches.values(),
-        key=lambda item: (
-            (
-                0
-                if item["card_name"].casefold() == query_folded
-                else 1 if item["card_name"].casefold().startswith(query_folded) else 2
-            ),
-            -len(item["game_ids"]),
-            -item["total_played"],
-            item["card_name"].casefold(),
-        ),
-    )
-    return [
-        {
-            "card_name": item["card_name"],
-            "type_category": item["type_category"],
-            "games_seen": len(item["game_ids"]),
-            "deck_count": len(item["deck_names"]),
-            "total_played": item["total_played"],
-            "last_seen_at": item["last_seen_at"],
+    ranked = []
+    for key, names in matched.items():
+        first = min(names, key=lambda name: name.first_row)
+        folded = first.card_name.casefold()
+        games = _search_games(index, key, names)
+        played = sum(name.played for name in names)
+        place = 0 if folded == query_folded else 1 if folded.startswith(query_folded) else 2
+        ranked.append((place, -games, -played, folded, first, names))
+    ranked.sort(key=lambda item: item[:4])
+
+    results = []
+    for _place, games, played, _folded, first, names in ranked[: max(1, min(limit, 25))]:
+        seen = [name.last_seen for name in names if name.last_seen]
+        decks = {
+            index.deck_of[row]
+            for name in names
+            for row in name.player_rows.split(",")
+            if row in index.deck_of
         }
-        for item in ranked[: max(1, min(limit, 25))]
-    ]
+        results.append(
+            {
+                "card_name": first.card_name,
+                "type_category": first.type_category,
+                "games_seen": -games,
+                "deck_count": len(decks),
+                "total_played": -played,
+                "last_seen_at": max(seen) if seen else None,
+            }
+        )
+    return results
 
 
 def _table(headers: List[str], rows: List[Dict[str, Any]]) -> str:
@@ -5739,21 +6828,162 @@ def render_snapshot_json(snapshot: Dict[str, Any]) -> bytes:
 # or a database reset all move the fingerprint; a live_status heartbeat does
 # not, so the cache survives an idle tracker. A short TTL is the safety net
 # for anything the fingerprint cannot see (a repair, a date-window rollover).
+#
+# The event log is part of the key only for the pages that show it (the game
+# page's timeline). It grows with every line of a game in progress, and that
+# game is in no other page until it ends: keyed on it, a visible Overview was
+# rebuilt on every 20-second poll for as long as a game lasted.
+#
+# The TTL grows with what a page costs to build, so the safety-net rebuild of
+# a page that takes seconds (a very long history) stays a small share of one
+# core instead of running once a minute.
+#
+# Nobody waits for a slow page that was built before (slow: a build of
+# _WARM_MIN_BUILD_SECONDS or more, which a normal history never reaches, so
+# none of this runs for one):
+# - Past its TTL with the fingerprint unchanged, the body is sent at once and
+#   rebuilt behind the request. A page reads the clock only through "last N
+#   days" (_games_filter), whose window is whole calendar days and so moves
+#   only at local midnight; its games stay the same until the midnight that
+#   drops the day of its oldest one (_clock_valid_until). Until then the body
+#   sent is the one a rebuild would give; from then on the request waits for
+#   the rebuild, as every request past the TTL used to.
+# - When a game ends the tracker calls note_game_finished, and the slow pages
+#   asked for lately (_warm_views) are rebuilt on a daemon thread once the
+#   game's late writes (a rank change, an AI archetype) have settled.
+# Rebuilds nobody is waiting for run one at a time, and wait for a request
+# that is building a page of its own (two builds at once share one
+# interpreter lock: 6 s became 9 s for the request).
 # ---------------------------------------------------------------------------
 
 _RESPONSE_CACHE_TTL_SECONDS = 60.0
+#: A body that took N seconds to build is kept at least this many times N.
+_RESPONSE_CACHE_TTL_PER_BUILD_SECOND = 30.0
+_RESPONSE_CACHE_TTL_MAX_SECONDS = 600.0
+#: Endpoints whose payload includes rows of the event log.
+_EVENT_LOG_PATHS = frozenset({"/api/game"})
 _RESPONSE_CACHE_MAX_ENTRIES = 64
-_response_cache: (
-    "collections.OrderedDict[Tuple[str, str, str], Tuple[Tuple[Any, ...], float, bytes]]"
-) = collections.OrderedDict()
+#: All bodies together. All Games is 22 MB at 38,000 games: a count alone
+#: would let a few filters of it hold hundreds of megabytes.
+_RESPONSE_CACHE_MAX_BYTES = 64 * 1024 * 1024
+#: A page that took this long to build is kept ready (see above).
+_WARM_MIN_BUILD_SECONDS = 0.25
+#: The pages a finished game changes. One game's page or replay is not among
+#: them: a later game leaves it as it was.
+_WARM_PATHS = frozenset(
+    {"/api/snapshot", "/api/games", "/api/deck", "/api/opponents", "/api/opponent", "/api/card"}
+)
+#: How many slow pages are rebuilt when a game ends: the ones asked for most
+#: recently, and only within this long of being asked for.
+_WARM_VIEWS_MAX = 4
+_WARM_VIEW_IDLE_SECONDS = 4 * 3600.0
+#: After a game the fingerprint is read this often, for this long; pages are
+#: rebuilt once it has stopped moving for one interval.
+_WARM_SETTLE_SECONDS = 2.0
+_WARM_WATCH_SECONDS = 90.0
+#: How long a rebuild nobody is waiting for holds back for requests' builds.
+_BEHIND_WAIT_SECONDS = 60.0
+
+_PageKey = Tuple[str, str, str]
+
+
+class _CachedPage(NamedTuple):
+    fingerprint: Tuple[Any, ...]
+    expires: float  # time.monotonic()
+    body: bytes
+    #: Until when (local wall clock) the passing of time cannot change the
+    #: body. None: not worked out, so the page is rebuilt when it expires.
+    clock_until: Optional[datetime]
+
+
+class _WarmView(NamedTuple):
+    database: Path  # resolved, to match the path the tracker names
+    db_path: Path
+    path: str
+    query: str
+    compute: "Callable[[], bytes]"
+    asked: float  # time.monotonic()
+
+
+_response_cache: "collections.OrderedDict[_PageKey, _CachedPage]" = collections.OrderedDict()
 _response_cache_lock = threading.Lock()
+#: One lock per page being built, so requests for the same page that arrive
+#: during its build wait for that body instead of each building their own.
+_response_builds: Dict[_PageKey, threading.Lock] = {}
+#: Pages being rebuilt behind a request that was sent the body it replaces.
+_refreshing: Dict[_PageKey, threading.Thread] = {}
+#: Held by the one rebuild nobody is waiting for that may run.
+_behind_builds = threading.Lock()
+#: Requests building a page or waiting for one being built (one-item list:
+#: read and written under _response_cache_lock).
+_requests_building = [0]
+#: The slow pages asked for lately, most recent last.
+_warm_views: "collections.OrderedDict[_PageKey, _WarmView]" = collections.OrderedDict()
+#: Databases with a game-end watch running, and when each watch ends.
+_warm_watches: Dict[Path, float] = {}
+
+#: A game's time as the "last N days" filter reads it.
+_GAME_TIME_SQL = "COALESCE({alias}started_at, {alias}ended_at)"
+_clock_windows = threading.local()
+
+
+def _note_clock_window(days: int) -> None:
+    """Record that the page being built on this thread counts back ``days``
+    from now. Nothing is recorded outside a cached build."""
+    windows = getattr(_clock_windows, "days", None)
+    if windows is not None:
+        windows.add(days)
+
+
+def _day_window_start(days: int, now: datetime) -> datetime:
+    """Where "last N days" begins: local midnight, N - 1 days before today.
+    Today and the N - 1 days before it, so the window is N calendar days and
+    a game leaves it at midnight with the rest of its day, never by the
+    minute. (One day is today, as the Live Scoreboard's Today is.)"""
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight - timedelta(days=days - 1)
+
+
+def _clock_valid_until(
+    db_path: Path, windows: Iterable[Any], since: datetime
+) -> Optional[datetime]:
+    """Until when a body built at ``since`` stays what a rebuild would give,
+    as far as the clock goes. A "last N days" window holds the same games
+    until the midnight that drops the day of its oldest one, so that
+    midnight, the earliest over the page's windows, is the answer; with no
+    window, or none holding a game, the clock never changes the body. None
+    when it cannot be told."""
+    until = datetime.max
+    try:
+        db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
+        with sqlite3.connect(db_uri, uri=True) as conn:
+            game_time = _GAME_TIME_SQL.format(alias="")
+            for days in windows:
+                start = _day_window_start(days, since)
+                oldest = conn.execute(
+                    f"SELECT MIN({game_time}) FROM games WHERE {game_time} >= ?",
+                    (start.isoformat(timespec="seconds"),),
+                ).fetchone()[0]
+                if oldest is None:
+                    continue
+                # The filter compares text, and so must this: only a time
+                # written the way the cutoff is can be counted forward.
+                text = str(oldest)
+                if len(text) < 19 or text[10] != "T":
+                    return None
+                oldest_day = datetime.fromisoformat(text[:10])
+                until = min(until, oldest_day + timedelta(days=days))
+    except (sqlite3.Error, OSError, ValueError, OverflowError, TypeError):
+        return None
+    return until
+
 
 _FINGERPRINT_SQL = """
 SELECT
   (SELECT COUNT(*) FROM games),
   (SELECT MAX(rowid) FROM games),
   (SELECT MAX(ended_at) FROM games),
-  (SELECT MAX(id) FROM game_events),
+  {event_log},
   (SELECT COUNT(*) FROM participants),
   (SELECT COUNT(deck_archetype) FROM participants),
   (SELECT COUNT(*) FROM game_annotations),
@@ -5766,46 +6996,400 @@ SELECT
 """
 
 
-def _analytics_fingerprint(db_path: Path) -> Optional[Tuple[Any, ...]]:
+def _analytics_fingerprint(db_path: Path, *, event_log: bool = True) -> Optional[Tuple[Any, ...]]:
     """Cheap snapshot of "has anything the read endpoints depend on changed?".
     None when it cannot be computed (missing table on an old DB) — callers
-    then skip the cache rather than risk serving stale data."""
+    then skip the cache rather than risk serving stale data. ``event_log``
+    adds the event log's newest row, for the pages that show events."""
+    newest_event = "(SELECT MAX(id) FROM game_events)" if event_log else "NULL"
     try:
         db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
         with sqlite3.connect(db_uri, uri=True) as conn:
             conn.execute("PRAGMA query_only = ON")
-            row = conn.execute(_FINGERPRINT_SQL).fetchone()
-        return tuple(row) if row is not None else None
+            row = conn.execute(_FINGERPRINT_SQL.format(event_log=newest_event)).fetchone()
+        # The games a page hides follow Settings → Saved game modes.
+        return tuple(row) + (_hidden_mode_keys(),) if row is not None else None
     except (sqlite3.Error, OSError):
         return None
+
+
+def _cached_body(key: _PageKey, fingerprint: Tuple[Any, ...]) -> Optional[bytes]:
+    with _response_cache_lock:
+        entry = _response_cache.get(key)
+        if (
+            entry is not None
+            and entry.fingerprint == fingerprint
+            and entry.expires > time.monotonic()
+        ):
+            _response_cache.move_to_end(key)
+            return entry.body
+    return None
 
 
 def cached_response(db_path: Path, path: str, query: str, compute: "Callable[[], bytes]") -> bytes:
     """Return the cached JSON body for (db, path, query) while the analytics
     fingerprint is unchanged and the entry is younger than the TTL; otherwise
-    compute, store, and return it."""
-    fingerprint = _analytics_fingerprint(db_path)
+    compute, store, and return it. A page is built by one request at a time:
+    others asking for it meanwhile wait and take the body it stored. A slow
+    page past its TTL is sent as it is and rebuilt behind the request while
+    the fingerprint is unchanged and no "last N days" window of it has moved
+    past a game (which happens only at midnight).
+
+    ``compute`` may be called again later, from another thread (a rebuild
+    behind a request, or after a game): it must read only the database and
+    the values it was made with."""
+    return _page_body(db_path, path, query, compute, asked=True)
+
+
+def _page_body(
+    db_path: Path, path: str, query: str, compute: "Callable[[], bytes]", *, asked: bool
+) -> bytes:
+    """``cached_response``; ``asked`` is False for a rebuild nobody is waiting
+    for, which always builds a page that is not current."""
+    fingerprint = _analytics_fingerprint(db_path, event_log=path in _EVENT_LOG_PATHS)
     if fingerprint is None:
         return compute()
     key = (str(db_path), path, query)
     now = time.monotonic()
+    kept: Optional[bytes] = None
     with _response_cache_lock:
+        view = _warm_views.get(key)
+        if asked and view is not None:
+            # The newest request's closure, so an old handler can be freed.
+            _warm_views[key] = view._replace(compute=compute, asked=now)
+            _warm_views.move_to_end(key)
         entry = _response_cache.get(key)
-        if entry is not None and entry[0] == fingerprint and entry[1] > now:
-            _response_cache.move_to_end(key)
-            return entry[2]
-    body = compute()
+        if entry is not None and entry.fingerprint == fingerprint:
+            if entry.expires > now:
+                _response_cache.move_to_end(key)
+                return entry.body
+            if asked and entry.clock_until is not None and datetime.now() < entry.clock_until:
+                kept = entry.body
+    if kept is not None and _refresh_behind(db_path, path, query, compute, key):
+        return kept
+    return _build_page(db_path, path, query, compute, key, fingerprint, asked=asked)
+
+
+def _build_page(
+    db_path: Path,
+    path: str,
+    query: str,
+    compute: "Callable[[], bytes]",
+    key: _PageKey,
+    fingerprint: Tuple[Any, ...],
+    *,
+    asked: bool,
+) -> bytes:
     with _response_cache_lock:
-        _response_cache[key] = (fingerprint, now + _RESPONSE_CACHE_TTL_SECONDS, body)
-        _response_cache.move_to_end(key)
-        while len(_response_cache) > _RESPONSE_CACHE_MAX_ENTRIES:
-            _response_cache.popitem(last=False)
+        building = _response_builds.setdefault(key, threading.Lock())
+        if asked:
+            _requests_building[0] += 1
+    try:
+        building.acquire()
+        try:
+            body = _cached_body(key, fingerprint)
+            if body is not None:
+                return body
+            clock_started = datetime.now()
+            started = time.monotonic()
+            _clock_windows.days = windows = set()
+            try:
+                body = compute()
+            finally:
+                del _clock_windows.days
+            built = time.monotonic()
+            ttl = min(
+                _RESPONSE_CACHE_TTL_MAX_SECONDS,
+                max(
+                    _RESPONSE_CACHE_TTL_SECONDS,
+                    (built - started) * _RESPONSE_CACHE_TTL_PER_BUILD_SECOND,
+                ),
+            )
+            slow = built - started >= _WARM_MIN_BUILD_SECONDS
+            clock_until = _clock_valid_until(db_path, windows, clock_started) if slow else None
+            with _response_cache_lock:
+                _response_cache[key] = _CachedPage(fingerprint, built + ttl, body, clock_until)
+                _response_cache.move_to_end(key)
+                held = sum(len(entry.body) for entry in _response_cache.values())
+                # Oldest first; the body just built always stays.
+                while len(_response_cache) > 1 and (
+                    len(_response_cache) > _RESPONSE_CACHE_MAX_ENTRIES
+                    or held > _RESPONSE_CACHE_MAX_BYTES
+                ):
+                    _, dropped = _response_cache.popitem(last=False)
+                    held -= len(dropped.body)
+                if slow and asked and path in _WARM_PATHS:
+                    database = Path(db_path).expanduser().resolve()
+                    _warm_views[key] = _WarmView(database, db_path, path, query, compute, built)
+                    _warm_views.move_to_end(key)
+                    while len(_warm_views) > _WARM_VIEWS_MAX:
+                        _warm_views.popitem(last=False)
+            return body
+        finally:
+            with _response_cache_lock:
+                if _response_builds.get(key) is building:
+                    del _response_builds[key]
+            building.release()
+    finally:
+        if asked:
+            with _response_cache_lock:
+                _requests_building[0] -= 1
+
+
+def _build_behind(db_path: Path, path: str, query: str, compute: "Callable[[], bytes]") -> None:
+    """Bring a page up to date with nobody waiting for it: one such build at
+    a time, and after the builds requests are waiting for."""
+    with _behind_builds:
+        give_up = time.monotonic() + _BEHIND_WAIT_SECONDS
+        while _requests_building[0] and time.monotonic() < give_up:
+            time.sleep(0.05)
+        _unhurried.on = True
+        try:
+            _page_body(db_path, path, query, compute, asked=False)
+        finally:
+            _unhurried.on = False
+
+
+def _refresh_behind(
+    db_path: Path, path: str, query: str, compute: "Callable[[], bytes]", key: _PageKey
+) -> bool:
+    """Rebuild a page on a daemon thread while its request is sent the body
+    it has. False when no thread could be started (the request then builds
+    the page itself); True also when a rebuild is already under way."""
+
+    def work() -> None:
+        try:
+            _build_behind(db_path, path, query, compute)
+        except Exception:
+            # The next request builds the page itself and reports the error.
+            with _response_cache_lock:
+                _response_cache.pop(key, None)
+        finally:
+            with _response_cache_lock:
+                _refreshing.pop(key, None)
+
+    with _response_cache_lock:
+        if key in _refreshing or key in _response_builds:
+            return True
+        thread = threading.Thread(target=work, name="page-refresh", daemon=True)
+        _refreshing[key] = thread
+    try:
+        thread.start()
+    except RuntimeError:
+        with _response_cache_lock:
+            _refreshing.pop(key, None)
+        return False
+    return True
+
+
+def note_game_finished(db_path: Path) -> Optional[threading.Thread]:
+    """A finished game has been saved: rebuild the slow pages asked for
+    lately, so the next look at them does not wait. The tracker calls this at
+    game end. It returns at once; the work is a daemon thread that watches
+    the fingerprint for a while (a rank change and an AI archetype are
+    written seconds after the game) and rebuilds once it has settled. Does
+    nothing when no such page is on record, which is every normal history.
+    Returns the thread it started, if any."""
+    database = Path(db_path).expanduser().resolve()
+    now = time.monotonic()
+    with _response_cache_lock:
+        if not _views_to_warm(database, now):
+            return None
+        watching = database in _warm_watches
+        _warm_watches[database] = now + _WARM_WATCH_SECONDS
+        if watching:
+            return None
+    thread = threading.Thread(
+        target=_watch_and_warm, args=(database,), name="page-warm", daemon=True
+    )
+    try:
+        thread.start()
+    except RuntimeError:
+        with _response_cache_lock:
+            _warm_watches.pop(database, None)
+        return None
+    return thread
+
+
+def _views_to_warm(database: Path, now: float) -> List[_WarmView]:
+    """This database's slow pages asked for lately. Holds no lock itself."""
+    return [
+        view
+        for view in _warm_views.values()
+        if view.database == database and now - view.asked < _WARM_VIEW_IDLE_SECONDS
+    ]
+
+
+def _watch_and_warm(database: Path) -> None:
+    seen: Optional[Tuple[Any, ...]] = None
+    warmed: Optional[Tuple[Any, ...]] = None
+    while True:
+        time.sleep(_WARM_SETTLE_SECONDS)
+        now = time.monotonic()
+        with _response_cache_lock:
+            views = _views_to_warm(database, now)
+            if not views or now >= _warm_watches.get(database, 0.0):
+                _warm_watches.pop(database, None)
+                return
+        fingerprint = _analytics_fingerprint(database, event_log=False)
+        settled = fingerprint is not None and fingerprint == seen
+        seen = fingerprint
+        if not settled or fingerprint == warmed:
+            continue
+        warmed = fingerprint
+        # The page asked for last is the likeliest to be opened next.
+        for view in reversed(views):
+            try:
+                _build_behind(view.db_path, view.path, view.query, view.compute)
+            except Exception:
+                # Whoever opens the page builds it and sees what went wrong.
+                pass
+
+
+def forget_warm_views() -> None:
+    """Drop the record of slow pages (tests; the bodies are another matter)."""
+    with _response_cache_lock:
+        _warm_views.clear()
+
+
+#: The cache's name for a trend range's games (not an endpoint).
+_TREND_CACHE_PATH = "/api/snapshot/trend"
+#: Overview bodies put together from a cached Overview and a cached trend:
+#: key -> (that Overview body, that trend body, the result). Good for as long
+#: as the cache hands back those same two objects.
+_trend_bodies: "collections.OrderedDict[Tuple[str, str, str], Tuple[bytes, bytes, bytes]]" = (
+    collections.OrderedDict()
+)
+_TREND_BODIES_MAX = 8
+
+
+def snapshot_body(
+    db_path: Path,
+    *,
+    deck: Optional[str] = None,
+    fmt: Optional[str] = None,
+    days: Optional[int] = None,
+    season: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    trend_days: Optional[int] = None,
+    trend_games: Optional[int] = None,
+) -> bytes:
+    """The ``/api/snapshot`` body, through the response cache.
+
+    A trend range changes the trend's games and nothing else, so the Overview
+    is cached once per set of filters and the range's games separately, and
+    the two are put together here: choosing another range reads a few hundred
+    games, not the whole Overview again. The bytes are what
+    ``render_snapshot_json(dashboard_snapshot(...))`` gives for the same
+    arguments."""
+    filters = (
+        ("deck", deck),
+        ("format", fmt),
+        ("days", days),
+        ("season", season),
+        ("since", since),
+        ("until", until),
+    )
+    query = urlencode([(name, value) for name, value in filters if value is not None])
+    overview = cached_response(
+        db_path,
+        "/api/snapshot",
+        query,
+        lambda: render_snapshot_json(
+            dashboard_snapshot(
+                db_path, deck=deck, fmt=fmt, days=days, season=season, since=since, until=until
+            )
+        ),
+    )
+    if trend_days is None and trend_games is None:
+        return overview
+    trend_query = urlencode(
+        [
+            (name, value)
+            for name, value in (
+                ("deck", deck),
+                ("format", fmt),
+                ("trend_days", trend_days),
+                ("trend_games", trend_games),
+            )
+            if value is not None
+        ]
+    )
+    trend = cached_response(
+        db_path,
+        _TREND_CACHE_PATH,
+        trend_query,
+        lambda: render_snapshot_json(snapshot_trend(db_path, deck, fmt, trend_days, trend_games)),
+    )
+    key = (str(db_path), query, trend_query)
+    with _response_cache_lock:
+        made = _trend_bodies.get(key)
+        if made is not None and made[0] is overview and made[1] is trend:
+            _trend_bodies.move_to_end(key)
+            return made[2]
+    payload = json.loads(overview)
+    payload["trend"] = json.loads(trend)
+    body = render_snapshot_json(payload)
+    with _response_cache_lock:
+        _trend_bodies[key] = (overview, trend, body)
+        _trend_bodies.move_to_end(key)
+        while len(_trend_bodies) > _TREND_BODIES_MAX:
+            _trend_bodies.popitem(last=False)
     return body
+
+
+#: Databases a dashboard server of this process serves: resolved path -> the
+#: path its handler names it by, which is the one the cache keys on.
+_served_databases: Dict[Path, Path] = {}
+
+
+def warm_overview(db_path: Path) -> Optional[threading.Thread]:
+    """Get the Overview ready before anyone opens it, when the history is
+    long enough for it to be a wait (``_SIDE_BY_SIDE_MIN_GAMES``); nothing
+    happens for a normal one, or when this process serves no dashboard for
+    the database. The tracker calls this at launch once the stored per-game
+    values are in place. It builds the page the dashboard opens on (no
+    filters, the trend's default 30 days) on a daemon thread, on one core,
+    and from then on a finished game keeps it ready
+    (``note_game_finished``). Returns the thread it started, if any."""
+    with _response_cache_lock:
+        served = _served_databases.get(Path(db_path).expanduser().resolve())
+    if served is None:
+        return None
+    db_path = served
+
+    def work() -> None:
+        _unhurried.on = True
+        try:
+            db_uri = db_path.expanduser().resolve().as_uri() + "?mode=ro"
+            conn = sqlite3.connect(db_uri, uri=True)
+            try:
+                games = conn.execute("SELECT COUNT(*) FROM games").fetchone()[0]
+            finally:
+                conn.close()
+            if int(games or 0) >= _SIDE_BY_SIDE_MIN_GAMES:
+                snapshot_body(db_path, trend_days=30)
+        except Exception:
+            # Whoever opens the page builds it and sees what went wrong.
+            pass
+        finally:
+            _unhurried.on = False
+
+    thread = threading.Thread(target=work, name="overview-warm", daemon=True)
+    try:
+        thread.start()
+    except RuntimeError:
+        return None
+    return thread
 
 
 def clear_response_cache() -> None:
     with _response_cache_lock:
         _response_cache.clear()
+        _trend_bodies.clear()
+    with _card_search_lock:
+        _card_search_memo.clear()
     # A write (a reset that replaces the file, above all) must not leave the
     # overlay poll reading a connection to the old database.
     from . import live_api
@@ -6085,6 +7669,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/api/settings"):
             # Web Settings page (Deck AI + Deck Finder creators).
             from . import settings_api
+
+            if parsed.path == "/api/settings/restore-defaults":
+                # Changes many settings at once (the login item, the overlay):
+                # only the local dashboard may ask, like updates.
+                origin = urlparse(self.headers.get("Origin") or "")
+                content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip()
+                if (
+                    origin.hostname and origin.hostname not in {"localhost", "127.0.0.1", "::1"}
+                ) or content_type != "application/json":
+                    _send_bytes(
+                        self,
+                        403,
+                        b'{"error":"Use the local dashboard to restore defaults."}',
+                        "application/json",
+                        {"Cache-Control": "no-store"},
+                    )
+                    return
 
             try:
                 length = int(self.headers.get("Content-Length") or 0)
@@ -6444,7 +8045,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
-        if request_path == "/api/settings":
+        if request_path in ("/api/settings", "/api/settings/tracking"):
             from . import settings_api
 
             handled = settings_api.handle_get(request_path, self.db_path)
@@ -6523,23 +8124,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except ValueError:
                 season = None
             try:
-                body = cached_response(
+                body = snapshot_body(
                     self.db_path,
-                    request_path,
-                    parsed.query,
-                    lambda: render_snapshot_json(
-                        dashboard_snapshot(
-                            self.db_path,
-                            deck=common["deck"],
-                            fmt=common["fmt"],
-                            days=common["days"],
-                            season=season,
-                            since=common["since"],
-                            until=common["until"],
-                            trend_days=trend_days,
-                            trend_games=trend_games,
-                        )
-                    ),
+                    deck=common["deck"],
+                    fmt=common["fmt"],
+                    days=common["days"],
+                    season=season,
+                    since=common["since"],
+                    until=common["until"],
+                    trend_days=trend_days,
+                    trend_games=trend_games,
                 )
             except FileNotFoundError as exc:
                 _send_bytes(
@@ -6562,6 +8156,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             _send_bytes(
                 self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"}
             )
+            # The page is on its way; have search ready before anyone types.
+            warm_card_search(self.db_path)
             return
         if request_path == "/api/deck":
             query = parse_qs(parsed.query)
@@ -6659,6 +8255,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if request_path == "/api/replay":
             self._send_replay(parsed)
+            return
+        if request_path == "/api/challenges":
+            try:
+                body = cached_response(
+                    self.db_path,
+                    request_path,
+                    parsed.query,
+                    lambda: render_snapshot_json(challenges(self.db_path)),
+                )
+            except FileNotFoundError:
+                body = json.dumps({"games": [], "friends": [], "total": 0}).encode("utf-8")
+            except Exception as exc:  # noqa: BLE001
+                _send_bytes(
+                    self,
+                    500,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
+                return
+            _send_bytes(
+                self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"}
+            )
             return
         if request_path == "/api/opponents":
             try:
@@ -6972,11 +8591,14 @@ def create_dashboard_server(
     tracker instead.
     """
     resolved_static_dir = static_dir if static_dir is not None else DEFAULT_STATIC_DIR
+    served = Path(db_path).expanduser()
+    with _response_cache_lock:
+        _served_databases[served.resolve()] = served
     handler_class = type(
         "ConfiguredDashboardHandler",
         (DashboardHandler,),
         {
-            "db_path": Path(db_path).expanduser(),
+            "db_path": served,
             "static_dir": resolved_static_dir if resolved_static_dir.exists() else None,
             "tracker_control": tracker_control,
         },

@@ -8,8 +8,10 @@ from typing import Any, Dict, List, Optional
 
 from .log_parser import tail_lines
 from .opening_hand import state_has_opening_hand_zone
-from .settings import DEFAULT_SESSION_BREAK_HOURS, session_break_hours
 from .state import GameState
+
+#: Hours without a game after which a new match starts a new tracker session.
+SESSION_BREAK_HOURS = 4
 
 
 class TrackerLifecycleMixin:
@@ -49,22 +51,18 @@ class TrackerLifecycleMixin:
     def _start_new_session_after_break(self) -> bool:
         """Start a new session when a new match begins after a long break.
 
-        The break is Settings → Sessions (``sessions.break_hours``, default 4;
-        0 turns it off), so an app left running for days does not pile every
-        night's games into one session. Called only for a brand-new match,
+        The break is `SESSION_BREAK_HOURS`, so an app left running for days
+        does not pile every night's games into one session. Sessions are
+        internal (game ids, the frozen last game, the console's end-of-run
+        summary); what the dashboard shows counts calendar days. Called only
+        for a brand-new match,
         never for game 2+ of a Bo3, so a match always stays in one session.
         The break is measured in log time from the last finished game, or from
         the launch before any game.
         """
-        try:
-            hours = session_break_hours()
-        except Exception:  # noqa: BLE001 - an unreadable settings file keeps the default
-            hours = DEFAULT_SESSION_BREAK_HOURS
-        if hours <= 0:
-            return False
         now = self._now()
         last_activity = getattr(self, "_session_last_game_end", None) or self.session_start_time
-        if now - last_activity < timedelta(hours=hours):
+        if now - last_activity < timedelta(hours=SESSION_BREAK_HOURS):
             return False
         self._start_session(now)
         return True
@@ -420,6 +418,8 @@ class TrackerLifecycleMixin:
                 if getattr(self, "_detailed_logs_last_state", None) is False:
                     self._print_line("✅ Detailed Logs are enabled in Arena — ready to track.")
                 self._detailed_logs_last_state = True
+            if "Message summarized because" in line:
+                self._note_summarized_message()
             self._process_rank_progress(line)
             self._process_inventory(line)
             # Always try to pick up match metadata (format, player name) from any line

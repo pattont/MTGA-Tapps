@@ -75,6 +75,21 @@ export function overlaySections(state: OverlayState, sort: DeckSort): OverlaySec
   return { spells, lands, drawn };
 }
 
+/** Cards that left the library without Arena's log naming them (the overlay's `unseenCount`). */
+export function unseenCount(state: Pick<OverlayState, 'unseen'>): number {
+  return Math.max(0, state.unseen ?? 0);
+}
+
+/** The overlay's line above the list when the counts cannot be read as they stand. */
+export function libraryNotice(state: Pick<OverlayState, 'unseen' | 'log_gap'>): string | null {
+  const unseen = unseenCount(state);
+  if (unseen > 0) {
+    return `${unseen} card${unseen === 1 ? '' : 's'} left your library and Arena's log didn't name ${unseen === 1 ? 'it' : 'them'}. Counts show the most that can be left.`;
+  }
+  if (state.log_gap) return "Arena's log skipped a large move. Counts may be out of date until your next draw.";
+  return null;
+}
+
 /** Whether there is a library to show: live, or frozen on the results screen. */
 export function showsLibrary(state: OverlayState | null | undefined): state is OverlayState {
   return Boolean(state && !state.mid_game_attach && state.cards.length > 0 && (state.game_active || state.game_over));

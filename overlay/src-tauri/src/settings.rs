@@ -37,7 +37,8 @@ pub enum Density {
     Compact,
 }
 
-/// The session record at the foot of the panel.
+/// Today's record at the foot of the panel (`sessionRecord` in overlay.json,
+/// named for the session record it replaced).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionRecord {
@@ -48,13 +49,26 @@ pub enum SessionRecord {
     Split,
 }
 
+/// The flood meter (the Stream Kit Lands widget) at the foot of the panel:
+/// above today's record (the default) or below it, at the very bottom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FloodMeter {
+    Off,
+    Above,
+    Below,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Hotkeys {
     /// Toggle rail ↔ panel.
     pub toggle: String,
     /// Hide / show the overlay.
     pub visibility: String,
+    /// Toggle the opponent panel's rail ↔ panel. Absent from files written
+    /// before the opponent panel; the struct default fills it in.
+    pub opponent: String,
 }
 
 impl Default for Hotkeys {
@@ -65,6 +79,7 @@ impl Default for Hotkeys {
         Self {
             toggle: "Alt+Shift+T".into(),
             visibility: "Alt+Shift+H".into(),
+            opponent: "Alt+Shift+O".into(),
         }
     }
 }
@@ -78,11 +93,29 @@ pub struct Positions {
     /// Free position when floating.
     pub float_x: Option<i32>,
     pub float_y: Option<i32>,
+    /// The opponent panel's top edge, per side it docks on (it always docks
+    /// on the side opposite the deck panel; see `dock::opponent_dock`).
+    pub opponent_left_y: Option<i32>,
+    pub opponent_right_y: Option<i32>,
 }
+
+/// Revision of the defaults a settings file was written under. Bump it when a
+/// default changes and files still holding the old one should follow it once
+/// (`Settings::migrated`).
+pub const SETTINGS_VERSION: u32 = 1;
+
+/// The Max panel height default before revision 1. It cut a 16-row list
+/// (an ordinary 60-card deck) off by a few pixels.
+const PANEL_MAX_HEIGHT_V0: u32 = 800;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
+    /// `SETTINGS_VERSION` when the file was written; 0 (absent) in files from
+    /// before the field existed. The field-level default overrides the
+    /// struct's, so a missing value reads as 0, not as current.
+    #[serde(default)]
+    pub settings_version: u32,
     /// The background slider, 0.0–1.0. Text, lines and numbers are always
     /// fully visible; this only drives the charcoal ground, which tops out
     /// at about 88 % at 1.0 and is gone at 0.0.
@@ -112,6 +145,22 @@ pub struct Settings {
     pub density: Density,
     pub name_color: NameColor,
     pub session_record: SessionRecord,
+    pub flood_meter: FloodMeter,
+    /// The deck panel (rail and panel) is drawn. Off, its window stays up
+    /// but empty and lets every click through: it still holds the poller
+    /// and the ⚙ flyout. Chosen in the tracker's Settings ("Panels"), which
+    /// hands it over as `--panels`; the flyout never changes it.
+    pub deck_panel: bool,
+    /// The opponent panel: a second window on the side opposite the deck
+    /// panel with the opponent's played cards and likely deck. On by
+    /// default; while off its window does not exist. Owned by the tracker's
+    /// Settings like `deck_panel`.
+    pub opponent_panel: bool,
+    /// The opponent panel is "on" (open rather than folded to its rail),
+    /// like `panel_open`; owned by its arrow, chevron and hotkey.
+    pub opponent_open: bool,
+    /// Like `panel_pinned`, for the opponent panel.
+    pub opponent_pinned: bool,
     pub follow_arena: bool,
     pub hide_when_arena_not_in_front: bool,
     pub api_url: String,
@@ -125,10 +174,11 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            settings_version: SETTINGS_VERSION,
             opacity: 0.8,
             rail_opacity: 0.9,
             scale: 100,
-            panel_max_height: 800,
+            panel_max_height: 850,
             dock: Dock::Left,
             return_after_seconds: 4,
             panel_open: false,
@@ -143,6 +193,11 @@ impl Default for Settings {
             density: Density::Comfortable,
             name_color: NameColor::Type,
             session_record: SessionRecord::Scoreboard,
+            flood_meter: FloodMeter::Above,
+            deck_panel: true,
+            opponent_panel: true,
+            opponent_open: false,
+            opponent_pinned: true,
             follow_arena: true,
             hide_when_arena_not_in_front: true,
             api_url: "http://127.0.0.1:8765".into(),
@@ -154,6 +209,18 @@ impl Default for Settings {
     }
 }
 
+/// The tracker's "Panels" choice as it arrives on the command line
+/// (`--panels both|deck|opponent`): which of (deck panel, opponent panel)
+/// are on. There is no "neither": that is the overlay turned off.
+pub fn panels_from_arg(value: &str) -> Option<(bool, bool)> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "both" => Some((true, true)),
+        "deck" => Some((true, false)),
+        "opponent" => Some((false, true)),
+        _ => None,
+    }
+}
+
 impl Settings {
     /// The hotkeys for the platform this binary runs on.
     pub fn hotkeys(&self) -> &Hotkeys {
@@ -162,6 +229,16 @@ impl Settings {
         } else {
             &self.hotkeys_windows
         }
+    }
+
+    /// Brings a stored file up to `SETTINGS_VERSION`: a default that changed
+    /// replaces the old default once, and a value the player picked is kept.
+    pub fn migrated(mut self) -> Self {
+        if self.settings_version < 1 && self.panel_max_height == PANEL_MAX_HEIGHT_V0 {
+            self.panel_max_height = Settings::default().panel_max_height;
+        }
+        self.settings_version = SETTINGS_VERSION;
+        self
     }
 
     pub fn clamped(mut self) -> Self {
@@ -190,6 +267,7 @@ impl Settings {
     pub fn load(path: &PathBuf) -> Self {
         match std::fs::read(path) {
             Ok(bytes) => serde_json::from_slice::<Settings>(&bytes)
+                .map(Settings::migrated)
                 .map(Settings::clamped)
                 .unwrap_or_default(),
             Err(_) => Settings::default(),
@@ -220,7 +298,7 @@ mod tests {
         let fixed = weird.clamped();
         assert_eq!(fixed.opacity, 0.8);
         assert_eq!(fixed.rail_opacity, 0.9);
-        assert_eq!(fixed.panel_max_height, 800);
+        assert_eq!(fixed.panel_max_height, 850);
         assert_eq!(fixed.return_after_seconds, 1);
         assert_eq!(fixed.api_url, "http://127.0.0.1:8765");
         // Missing fields take defaults (a file from an older version keeps working).
@@ -229,6 +307,9 @@ mod tests {
         assert_eq!(fixed.session_record, SessionRecord::Scoreboard);
         let off: Settings = serde_json::from_str(r#"{"sessionRecord": "off"}"#).unwrap();
         assert_eq!(off.session_record, SessionRecord::Off);
+        assert_eq!(fixed.flood_meter, FloodMeter::Above);
+        let below: Settings = serde_json::from_str(r#"{"floodMeter": "below"}"#).unwrap();
+        assert_eq!(below.flood_meter, FloodMeter::Below);
     }
 
     #[test]
@@ -236,9 +317,41 @@ mod tests {
         // A settings file written before the height became pixels carries
         // panelMaxHeightPct, which is simply unknown now.
         let old: Settings = serde_json::from_str(r#"{"panelMaxHeightPct": 70}"#).unwrap();
-        assert_eq!(old.clamped().panel_max_height, 800);
+        assert_eq!(old.clamped().panel_max_height, 850);
         let tiny: Settings = serde_json::from_str(r#"{"panelMaxHeight": 10}"#).unwrap();
         assert_eq!(tiny.clamped().panel_max_height, 200);
+    }
+
+    #[test]
+    fn the_old_default_height_follows_the_new_default_once() {
+        // A file from before the version field still holds the old 800 default.
+        let old: Settings = serde_json::from_str(r#"{"panelMaxHeight": 800}"#).unwrap();
+        assert_eq!(old.settings_version, 0);
+        let moved = old.migrated();
+        assert_eq!(moved.panel_max_height, 850);
+        assert_eq!(moved.settings_version, SETTINGS_VERSION);
+        // A height the player picked is kept.
+        let picked: Settings = serde_json::from_str(r#"{"panelMaxHeight": 600}"#).unwrap();
+        assert_eq!(picked.migrated().panel_max_height, 600);
+        // 800 chosen after the change (a current file) stays 800.
+        let current: Settings = serde_json::from_str(r#"{"settingsVersion": 1, "panelMaxHeight": 800}"#).unwrap();
+        assert_eq!(current.migrated().panel_max_height, 800);
+        // What is written carries the version, so the move never repeats.
+        let saved = serde_json::to_string(&Settings { panel_max_height: 800, ..moved }).unwrap();
+        let back: Settings = serde_json::from_str(&saved).unwrap();
+        assert_eq!(back.migrated().panel_max_height, 800);
+    }
+
+    #[test]
+    fn the_panels_choice_reads_from_the_command_line() {
+        assert_eq!(panels_from_arg("both"), Some((true, true)));
+        assert_eq!(panels_from_arg("deck"), Some((true, false)));
+        assert_eq!(panels_from_arg("Opponent "), Some((false, true)));
+        // Nothing else turns a panel off: an unknown word changes nothing.
+        assert_eq!(panels_from_arg("none"), None);
+        assert_eq!(panels_from_arg(""), None);
+        let saved: Settings = serde_json::from_str(r#"{"deckPanel": false}"#).unwrap();
+        assert!(!saved.deck_panel && saved.opponent_panel);
     }
 
     #[test]
@@ -251,5 +364,27 @@ mod tests {
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.hotkeys_windows.toggle, "Ctrl+Alt+T");
         assert_eq!(back.hotkeys_macos.toggle, "Alt+Shift+T");
+    }
+
+    #[test]
+    fn files_from_before_the_opponent_panel_keep_their_settings() {
+        // Hotkeys without the opponent chord, positions without its offsets:
+        // everything the file has is kept and the new fields take defaults
+        // (a parse failure would reset the whole file).
+        let old: Settings = serde_json::from_str(
+            r#"{"dock": "right", "scale": 130, "hotkeysMacos": {"toggle": "Alt+Shift+K", "visibility": "Alt+Shift+H"}, "positions": {"leftY": 40, "rightY": null, "floatX": null, "floatY": null}}"#,
+        )
+        .unwrap();
+        assert_eq!(old.dock, Dock::Right);
+        assert_eq!(old.scale, 130);
+        assert_eq!(old.hotkeys_macos.toggle, "Alt+Shift+K");
+        assert_eq!(old.hotkeys_macos.opponent, "Alt+Shift+O");
+        assert_eq!(old.positions.left_y, Some(40));
+        assert_eq!(old.positions.opponent_right_y, None);
+        // New in 0.7.8, so no released file holds it: everyone starts with it on.
+        assert!(old.opponent_panel);
+        assert!(old.deck_panel);
+        assert!(!old.opponent_open);
+        assert!(old.opponent_pinned);
     }
 }

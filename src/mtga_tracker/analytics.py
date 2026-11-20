@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from . import game_derived
 from .date_repair import repair_swapped_log_dates
 from .log_sanitize import scrub_raw_log
 from .payload_codec import compress_payload, decode_payload
@@ -315,6 +316,7 @@ class AnalyticsStore:
                 creatures_bounced INTEGER,
                 noncreatures_bounced INTEGER,
                 poison_added INTEGER,
+                library_remaining INTEGER,
                 counters_drawn INTEGER,
                 counters_played INTEGER,
                 spells_countered INTEGER,
@@ -570,11 +572,39 @@ class AnalyticsStore:
                 updated_at TEXT NOT NULL
             );
 
+            -- Values the dashboard derives from a finished game, stored once
+            -- (game_derived.py). Derived data: safe to empty at any time.
+            CREATE TABLE IF NOT EXISTS game_derived (
+                participant_id TEXT PRIMARY KEY,
+                game_id TEXT NOT NULL,
+                rules_version INTEGER NOT NULL,
+                draw_quality_json TEXT,
+                deck_colors TEXT,
+                opp_revealed TEXT NOT NULL DEFAULT '',
+                opp_commander TEXT NOT NULL DEFAULT '',
+                computed_at TEXT NOT NULL,
+                opening_cards INTEGER,
+                opening_lands INTEGER,
+                land_draw_turns TEXT,
+                cards_seen INTEGER,
+                lands_seen INTEGER,
+                land_seen_pct REAL,
+                total_draws INTEGER,
+                land_draws INTEGER,
+                land_flags INTEGER
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_game_derived_game
+            ON game_derived(game_id);
+
             INSERT OR IGNORE INTO schema_migrations(version, applied_at)
             VALUES (1, datetime('now'));
             """
         )
         AnalyticsStore.ensure_table_column(conn, "game_events", "player_life", "INTEGER")
+        # A game_derived table made before its summary columns existed.
+        for column_name, column_type in game_derived.SUMMARY_COLUMNS:
+            AnalyticsStore.ensure_table_column(conn, "game_derived", column_name, column_type)
         AnalyticsStore.ensure_table_column(conn, "game_events", "opponent_life", "INTEGER")
         # Replay capture (see docs/REPLAY_FORMAT.md): structured fields on every
         # event row plus silent replay-only rows (visible = 0).
@@ -751,6 +781,7 @@ class AnalyticsStore:
             # stored since (US logs on a day-first Windows, issue #51).
             (37, AnalyticsStore._migrate_v21_repair_swapped_log_dates),
             (38, AnalyticsStore._migrate_v38_prune_console_logs),
+            (39, AnalyticsStore._migrate_v39_library_remaining),
         )
 
     @staticmethod
@@ -1326,6 +1357,16 @@ class AnalyticsStore:
                 f"🗓️  Repaired {repaired} row(s) whose dates were stored with month and "
                 "day swapped."
             )
+
+    @staticmethod
+    def _migrate_v39_library_remaining(conn: sqlite3.Connection) -> None:
+        """Add library_remaining: each seat's library size when the game ended
+        (nullable: unknown for games recorded before it, never reconstructed)."""
+        existing = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(game_participant_stats)")
+        }
+        if "library_remaining" not in existing:
+            conn.execute("ALTER TABLE game_participant_stats ADD COLUMN library_remaining INTEGER")
 
     @staticmethod
     def _migrate_v20_poison_stat(conn: sqlite3.Connection) -> None:

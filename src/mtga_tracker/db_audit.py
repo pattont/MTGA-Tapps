@@ -1112,6 +1112,12 @@ def repair_database(db_path: Path = DEFAULT_DB_PATH, *, backup: bool = False) ->
                 )
         AnalyticsStore.backfill_estimated_game_turn_times(conn)
         AnalyticsStore.backfill_game_turn_counts(conn)
+        if repaired_count:
+            # A repair can rebuild or remove games and their card rows; the
+            # stored per-game values are recomputed at the next launch.
+            from . import game_derived
+
+            game_derived.invalidate_all(conn)
         conn.commit()
     return RepairResult(findings=findings, repaired_count=repaired_count, backup_path=backup_path)
 

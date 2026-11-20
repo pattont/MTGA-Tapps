@@ -603,11 +603,21 @@ class MenuBarController(QObject):
                     QSystemTrayIcon.MessageIcon.Information,
                     6000,
                 )
-            elif error.get("code") in ("install-failed", "install-not-applied"):
+            elif error.get("code") in (
+                "install-failed",
+                "install-not-applied",
+                "blocked-by-windows",
+            ):
                 self._announced_update_result = True
+                blocked = error.get("code") == "blocked-by-windows"
                 self.tray.showMessage(
                     "Tapps Tracker",
-                    "The update could not be installed. Open Tracker Settings for details.",
+                    (
+                        "Windows Smart App Control blocked the update."
+                        if blocked
+                        else "The update could not be installed."
+                    )
+                    + " Open Tracker Settings for details.",
                     QSystemTrayIcon.MessageIcon.Warning,
                     8000,
                 )

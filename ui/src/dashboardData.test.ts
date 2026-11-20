@@ -33,7 +33,6 @@ function snapshotWithDecks(decks: DashboardSnapshot['decks']): DashboardSnapshot
     matchups: [],
     recent: [],
     matches: [],
-    sessions: [],
     trend: [],
     filter_options: { decks: [], formats: [] },
   };
@@ -85,7 +84,6 @@ describe('metricCards', () => {
       matchups: [],
       recent: [],
       matches: [],
-      sessions: [],
       trend: [],
       filter_options: { decks: [], formats: [] },
     } satisfies DashboardSnapshot;

@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { GameTimelineRow } from '../api';
 import { TimelineList } from './TimelineList';
@@ -109,6 +109,25 @@ describe('TimelineList card references', () => {
     expect(within(timeline as HTMLElement).queryByText('(Enchantment)')).not.toBeInTheDocument();
     expect(within(timeline as HTMLElement).queryByText('(Creature 2/2)')).not.toBeInTheDocument();
     expect(within(timeline as HTMLElement).getByText('[0:25] You: cast')).toBeInTheDocument();
+  });
+
+  it('searches the lines by card name or any other words, and with the other filters', () => {
+    const { container } = render(<TimelineList rows={timelineRows} />);
+    const lines = () => Array.from(container.querySelectorAll('.timeline-event .timeline-text')).map((el) => el.textContent);
+    const total = lines().length;
+    const search = screen.getByLabelText('Search');
+    fireEvent.change(search, { target: { value: 'stashed SKELETON' } });
+    expect(lines()).toHaveLength(1);
+    expect(lines()[0]).toContain('Case of the Stashed Skeleton');
+    expect(screen.getByRole('status').textContent).toBe(`1 of ${total} events`);
+    // Words that are not a card name match too.
+    fireEvent.change(search, { target: { value: 'played' } });
+    expect(lines()[0]).toContain('Island');
+    // Narrowed by the actor filter as well.
+    fireEvent.change(screen.getByLabelText('Actor'), { target: { value: 'player' } });
+    expect(screen.getByText('No events match the current filters.')).toBeTruthy();
+    fireEvent.change(search, { target: { value: '   ' } });
+    expect(lines().length).toBeGreaterThan(0);
   });
 
   it('displays a single slash while retaining the canonical card route', () => {

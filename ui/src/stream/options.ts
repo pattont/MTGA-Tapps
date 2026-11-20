@@ -1,4 +1,3 @@
-import type { Period } from './liveView';
 /**
  * Stream Kit options. Everything a widget needs is in its URL, so OBS keeps
  * the settings with the browser source and the tracker stores nothing.
@@ -83,6 +82,7 @@ export const WIDGET_PARTS: Record<WidgetId, ReadonlyArray<readonly [string, stri
   ],
   spotlight: [],
   break: [
+    // 'session' is the part's name in saved links (it was the session record); it shows today's.
     ['session', 'Record'],
     ['results', 'Results'],
     ['deck', 'Deck'],
@@ -126,8 +126,6 @@ export interface StreamOptions {
   names: 'type' | 'white';
   /** Recent games: how many to list, newest first. */
   count: number;
-  /** Record widget: this session's games or today's. */
-  period: Period;
   /** The widget's optional parts that are turned off (WIDGET_PARTS). */
   hide: string[];
   /** Intermission card: its heading. */
@@ -190,18 +188,18 @@ export const WIDGETS: WidgetInfo[] = [
   {
     id: 'record',
     title: 'Record',
-    description: 'Wins and losses this session or today, win rate, on the play and on the draw, rank, and your record with the current deck.',
+    description: 'Today’s wins and losses, win rate, on the play and on the draw, rank, and your record with the current deck.',
     width: 440,
     height: 110,
-    options: ['period', 'hide'],
+    options: ['hide'],
   },
   {
     id: 'games',
     title: 'Recent games',
-    description: 'Today’s games, newest first: win or loss, play or draw, deck, opponent, turns and length, under your session’s or today’s record.',
+    description: 'Today’s games, newest first: win or loss, play or draw, deck, opponent, turns and length, under today’s record.',
     width: GAMES_SIZE.width,
     height: GAMES_SIZE.head + GAMES_SIZE.record + 10 * GAMES_SIZE.row,
-    options: ['count', 'opponent', 'period', 'hide'],
+    options: ['count', 'opponent', 'hide'],
     size: (options) => ({
       width: GAMES_SIZE.width,
       height: GAMES_SIZE.head + (shows(options, 'record') ? GAMES_SIZE.record : 0) + options.count * GAMES_SIZE.row,
@@ -253,7 +251,7 @@ export const WIDGETS: WidgetInfo[] = [
     description: 'A Victory or Defeat card for a few seconds after each game, with turns, length, the match score and a highlight.',
     width: 560,
     height: 300,
-    options: ['seconds', 'opponent', 'period', 'hide'],
+    options: ['seconds', 'opponent', 'hide'],
   },
   {
     id: 'spotlight',
@@ -266,15 +264,23 @@ export const WIDGETS: WidgetInfo[] = [
   {
     id: 'break',
     title: 'Intermission',
-    description: 'For a “be right back” or between-games scene: your title, your session’s or today’s record and results, the deck and your rank climb.',
+    description: 'For a “be right back” or between-games scene: your title, today’s record and results, the deck and your rank climb.',
     width: 560,
     height: 380,
-    options: ['title', 'period', 'hide'],
+    options: ['title', 'hide'],
     size: (options) => ({
       width: 560,
       height: 110 + WIDGET_PARTS.break.filter(([part]) => shows(options, part)).length * 66,
     }),
   },
+];
+
+/** The Stream Kit page's groups of widgets, in order; their ids are its sidebar's anchors. */
+export const WIDGET_GROUPS: ReadonlyArray<{ id: string; title: string; widgets: readonly WidgetId[] }> = [
+  { id: 'stream-kit-deck', title: 'Your deck', widgets: ['overlay', 'deck', 'lands'] },
+  { id: 'stream-kit-game', title: 'The game', widgets: ['scorebug', 'matchup', 'opponent', 'spotlight'] },
+  { id: 'stream-kit-record', title: 'Your record', widgets: ['record', 'games', 'deckstats', 'result'] },
+  { id: 'stream-kit-breaks', title: 'Breaks', widgets: ['break'] },
 ];
 
 export const DEFAULT_OPTIONS: StreamOptions = {
@@ -294,13 +300,17 @@ export const DEFAULT_OPTIONS: StreamOptions = {
   sideboard: 'right',
   names: 'type',
   count: 10,
-  period: 'session',
   hide: [],
   title: 'Be right back',
 };
 
 /** Options every widget reads. */
 const COMMON: Array<keyof StreamOptions> = ['scale', 'bg', 'brand'];
+
+/** Whether a widget's link carries an option (its own, or one of the shared look options it reads). */
+export function readsOption(widget: WidgetInfo, key: keyof StreamOptions): boolean {
+  return [...(widget.shared ?? COMMON), ...widget.options].includes(key);
+}
 
 const SCALE_RANGE: [number, number] = [50, 300];
 const SECONDS_RANGE: [number, number] = [3, 30];
@@ -343,7 +353,8 @@ export function widgetSize(widget: WidgetInfo, options: StreamOptions): { width:
 function hiddenParts(params: URLSearchParams, widget: WidgetId | null): string[] {
   if (!widget) return [];
   const listed = new Set((params.get('hide') ?? '').split(',').map((part) => part.trim()));
-  // Recent games links from 0.7.5–0.7.6 hid the session record with record=0.
+  // Recent games links from 0.7.5–0.7.6 hid the record with record=0.
+  // (Links' old `period=session|today` is ignored: every record is today's.)
   if (widget === 'games' && params.get('record') !== null && !flag(params.get('record'), true)) listed.add('record');
   return WIDGET_PARTS[widget].map(([part]) => part).filter((part) => listed.has(part));
 }
@@ -370,7 +381,6 @@ export function parseStreamOptions(search: string): StreamOptions {
     sideboard: pick(params.get('sideboard'), ['right', 'left', 'below', 'off'] as const, d.sideboard),
     names: pick(params.get('names'), ['type', 'white'] as const, d.names),
     count: bounded(params.get('count'), COUNT_RANGE, d.count),
-    period: pick(params.get('period'), ['session', 'today'] as const, d.period),
     hide: hiddenParts(params, known),
     title: text(params.get('title'), d.title),
   };

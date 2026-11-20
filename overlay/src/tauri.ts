@@ -18,19 +18,31 @@ export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
+/** Which window this page is: the shell marks the opponent window before
+    the page loads; in a browser, `?view=opponent` does the same. */
+export function pageView(): 'deck' | 'opponent' {
+  if (typeof window === 'undefined') return 'deck';
+  const marked = (window as unknown as { __TAPPS_VIEW__?: string }).__TAPPS_VIEW__;
+  if (marked === 'opponent') return 'opponent';
+  if (!isTauri() && new URLSearchParams(window.location.search).get('view') === 'opponent') return 'opponent';
+  return 'deck';
+}
+
 let shell: Shell | null = null;
 
 async function loadShell(): Promise<Shell> {
   if (shell) return shell;
   if (isTauri()) {
-    const [{ invoke }, { listen }, { getCurrentWindow }] = await Promise.all([
+    const [{ invoke }, { getCurrentWebviewWindow }, { getCurrentWindow }] = await Promise.all([
       import('@tauri-apps/api/core'),
-      import('@tauri-apps/api/event'),
+      import('@tauri-apps/api/webviewWindow'),
       import('@tauri-apps/api/window'),
     ]);
     shell = {
       invoke: (command, args) => invoke(command, args),
-      listen: async (event, handler) => listen(event, (e) => handler(e.payload as never)),
+      // This window's own events: the shell sends each window its layout and
+      // cursor (emit_to), and those never reach a listener for "any" target.
+      listen: async (event, handler) => getCurrentWebviewWindow().listen(event, (e) => handler(e.payload as never)),
       startDragging: () => getCurrentWindow().startDragging(),
     };
   } else {
@@ -47,7 +59,9 @@ function browserShell(): Shell {
     async invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
       switch (command) {
         case 'get_settings':
-          return (settings ?? (settings = defaultSettings())) as T;
+          // `window.__TAPPS_SETTINGS__` starts the page from other settings
+          // (tests and scripts/screenshots.mjs: opponent only, a dock side).
+          return (settings ?? (settings = { ...defaultSettings(), ...((window as { __TAPPS_SETTINGS__?: Partial<Settings> }).__TAPPS_SETTINGS__ ?? {}) })) as T;
         case 'update_settings':
           settings = args.settings as Settings;
           return settings as T;
@@ -83,7 +97,12 @@ function browserShell(): Shell {
           document.documentElement.removeEventListener('mouseleave', leave);
         };
       }
-      return () => undefined;
+      // Any other shell event can be sent by hand as a `tapps:<event>`
+      // CustomEvent on the window, its detail the payload.
+      if (typeof window === 'undefined') return () => undefined;
+      const relay = (e: Event) => handler((e as CustomEvent).detail as T);
+      window.addEventListener(`tapps:${event}`, relay);
+      return () => window.removeEventListener(`tapps:${event}`, relay);
     },
     async startDragging() {
       /* no window to drag */
@@ -98,7 +117,7 @@ export function defaultSettings(): Settings {
     opacity: 0.8,
     railOpacity: 0.9,
     scale: 100,
-    panelMaxHeight: 800,
+    panelMaxHeight: 850,
     dock: 'left',
     returnAfterSeconds: 4,
     panelOpen: false,
@@ -108,11 +127,16 @@ export function defaultSettings(): Settings {
     density: 'comfortable',
     nameColor: 'type',
     sessionRecord: 'scoreboard',
+    floodMeter: 'above',
+    deckPanel: true,
+    opponentPanel: true,
+    opponentOpen: false,
+    opponentPinned: true,
     followArena: true,
     hideWhenArenaNotInFront: true,
     apiUrl: 'http://127.0.0.1:8765',
-    hotkeysMacos: { toggle: 'Alt+Shift+T', visibility: 'Alt+Shift+H' },
-    hotkeysWindows: { toggle: 'Alt+Shift+T', visibility: 'Alt+Shift+H' },
+    hotkeysMacos: { toggle: 'Alt+Shift+T', visibility: 'Alt+Shift+H', opponent: 'Alt+Shift+O' },
+    hotkeysWindows: { toggle: 'Alt+Shift+T', visibility: 'Alt+Shift+H', opponent: 'Alt+Shift+O' },
     positions: { leftY: null, rightY: null, floatX: null, floatY: null },
     monitor: null,
   };

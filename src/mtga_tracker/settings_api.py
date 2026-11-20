@@ -13,8 +13,10 @@ Endpoints (all under /api/settings):
 - POST /api/settings/deck-ai/models -> {provider, api_key?} list the models
                                   that key can use (asks the provider)
 - POST /api/settings/deck-finder -> save the creator lists
-- POST /api/settings/overlay   -> {enabled} start/stop the in-game overlay, or
-                                  {request: "open-settings"} to open its ⚙ flyout
+- POST /api/settings/overlay   -> {enabled} start/stop the in-game overlay,
+                                  {panels: "both"|"deck"|"opponent"} which panels
+                                  it draws, or {request: "open-settings"} to open
+                                  its ⚙ flyout
 - POST /api/settings/buy-on-paper -> {enabled} show Buy on Paper; off stops store
                                   price downloads and deletes the saved lists
 """
@@ -293,13 +295,10 @@ def _save_updates(payload: Dict[str, Any]) -> Dict[str, Any]:
     return _updates_payload()
 
 
-def _sessions_payload() -> Dict[str, Any]:
-    from .settings import SESSION_BREAK_HOURS_CHOICES, session_break_hours
+def _tracking_payload() -> Dict[str, Any]:
+    from .settings import tracked_modes
 
-    return {
-        "break_hours": session_break_hours(),
-        "choices": list(SESSION_BREAK_HOURS_CHOICES),
-    }
+    return dict(tracked_modes())
 
 
 def _set_overlay_enabled(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -311,6 +310,9 @@ def _set_overlay_enabled(payload: Dict[str, Any]) -> Dict[str, Any]:
         if not manager.send(str(payload["request"])):
             raise ValueError("The overlay is not running.")
         return manager.status()
+    if "panels" in payload:
+        # {"panels": "both" | "deck" | "opponent"}: which panels it draws.
+        return manager.set_panels(str(payload["panels"]))
     if "enabled" not in payload:
         raise ValueError("'enabled' is required")
     enabled = bool(payload.get("enabled"))
@@ -322,7 +324,88 @@ def _set_overlay_enabled(payload: Dict[str, Any]) -> Dict[str, Any]:
     return status
 
 
+def _restore_defaults(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Settings → Restore defaults: put the page's preferences back as shipped.
+
+    Startup, update preferences, saved game modes, the
+    overlay, Buy on Paper and the Deck AI switch go back to their defaults.
+    What is the user's own (Deck AI keys, provider and models, Deck Finder
+    creators, the backup folder, Stream Kit links, games and decks) stays.
+    Each setting is restored on its own, so one failure (an overlay that
+    cannot start) does not leave the rest unrestored; failures are listed.
+    """
+    if payload.get("confirm") is not True:
+        raise ValueError('Restoring defaults needs {"confirm": true}')
+    from . import dashboard, deck_llm, paper_prices
+    from .overlay_launcher import OVERLAY_ENABLED_DEFAULT, OVERLAY_PANELS_DEFAULT, get_manager
+    from .settings import (
+        DEFAULT_OPEN_DASHBOARD_ON_LAUNCH,
+        DEFAULT_START_AT_LOGIN,
+        DEFAULT_UPDATE_AUTO_DOWNLOAD,
+        DEFAULT_UPDATE_AUTO_INSTALL,
+        DEFAULT_UPDATE_CHECK,
+        TRACKED_MODE_DEFAULTS,
+        load_app_settings,
+        save_tracked_modes,
+    )
+
+    def startup() -> None:
+        change: Dict[str, Any] = {"open_dashboard_on_launch": DEFAULT_OPEN_DASHBOARD_ON_LAUNCH}
+        # Only touch the OS login item when it has to change.
+        if load_app_settings(create=False).start_at_login != DEFAULT_START_AT_LOGIN:
+            change["start_at_login"] = DEFAULT_START_AT_LOGIN
+        _save_startup(change)
+
+    def tracking() -> None:
+        save_tracked_modes(dict(TRACKED_MODE_DEFAULTS))
+        dashboard.note_tracking_changed()
+
+    def buy_on_paper() -> None:
+        if not paper_prices.status()["enabled"]:
+            paper_prices.set_enabled(True)
+
+    def deck_ai() -> None:
+        # Only the switch: keys, provider and models are the user's own.
+        deck_llm.save_settings({"DECK_LLM_ENABLED": False})
+
+    def overlay() -> None:
+        manager = get_manager()
+        if manager.panels != OVERLAY_PANELS_DEFAULT:
+            manager.set_panels(OVERLAY_PANELS_DEFAULT)
+        if manager.available and manager.enabled != OVERLAY_ENABLED_DEFAULT:
+            _set_overlay_enabled({"enabled": OVERLAY_ENABLED_DEFAULT})
+
+    steps = (
+        ("Startup", startup),
+        (
+            "Updates",
+            lambda: _save_updates(
+                {
+                    "check": DEFAULT_UPDATE_CHECK,
+                    "auto_download": DEFAULT_UPDATE_AUTO_DOWNLOAD,
+                    "auto_install": DEFAULT_UPDATE_AUTO_INSTALL,
+                }
+            ),
+        ),
+        ("Saved game modes", tracking),
+        ("In-game overlay", overlay),
+        ("Buy on Paper", buy_on_paper),
+        ("Deck AI", deck_ai),
+    )
+    errors = []
+    for name, step in steps:
+        try:
+            step()
+        except Exception as exc:  # noqa: BLE001 - reported, and the other steps still run
+            errors.append(f"{name}: {exc}")
+    return {"restored": True, "errors": errors}
+
+
 def handle_get(path: str, db_path: Optional[Path] = None) -> Optional[Tuple[int, Dict[str, Any]]]:
+    if path == "/api/settings/tracking":
+        # Which game modes are saved: the Challenges page reads it without
+        # loading the whole Settings page.
+        return 200, {"tracking": _tracking_payload()}
     if path != "/api/settings":
         return None
     try:
@@ -341,7 +424,7 @@ def handle_get(path: str, db_path: Optional[Path] = None) -> Optional[Tuple[int,
             "overlay": _overlay_status(),
             "updates": _updates_payload(),
             "buy_on_paper": paper_prices.status(),
-            "sessions": _sessions_payload(),
+            "tracking": _tracking_payload(),
         }
     except Exception as exc:  # pragma: no cover - defensive surface
         return 500, {"error": f"{type(exc).__name__}: {exc}"}
@@ -359,13 +442,18 @@ def handle_post(path: str, payload: Dict[str, Any]) -> Optional[Tuple[int, Dict[
             return 200, {"deck_finder": write_creator_config(payload)}
         if path == "/api/settings/startup":
             return 200, {"startup": _save_startup(payload)}
-        if path == "/api/settings/sessions":
-            from .settings import save_session_break_hours
+        if path == "/api/settings/tracking":
+            from . import dashboard
+            from .settings import save_tracked_modes
 
-            save_session_break_hours(payload.get("break_hours"))
-            return 200, {"sessions": _sessions_payload()}
+            save_tracked_modes(payload)
+            # Pages hide the games of a mode that is not saved: rebuild them.
+            dashboard.note_tracking_changed()
+            return 200, {"tracking": _tracking_payload()}
         if path == "/api/settings/overlay":
             return 200, {"overlay": _set_overlay_enabled(payload)}
+        if path == "/api/settings/restore-defaults":
+            return 200, _restore_defaults(payload)
         if path == "/api/settings/updates":
             return 200, {"updates": _save_updates(payload)}
         if path == "/api/settings/buy-on-paper":

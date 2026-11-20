@@ -46,8 +46,8 @@ endpoints the dashboard already serves; there is no new tracker work.
 | --- | --- | --- |
 | `overlay` | The in-game overlay's panel: deck, format, opponent and head-to-head, turn, land-drop odds (next, in 2, in 3), play/draw, library, every card with copies left and next-draw odds, the Lands and Sideboard rows, and the sideboard itself | `GET /api/overlay` (ETag) |
 | `deck` | Deck name, library size, land odds, every card with copies left and next-draw odds | `GET /api/overlay` (ETag) |
-| `record` | Record and win rate for this session or today (`period`), play / draw columns, rank, the current deck's record over the same span (each optional, `hide`; `deck_record` carries `today_*` and `session_*`) | `GET /api/live?events=0` (`session` with its `play`/`draw` split, or `today`) |
-| `games` | Today's games, newest first, as on Live Scoreboard (result, Play/Draw, deck, opponent, turns, length; no replay links or clock time), 1–25 of them (`count`, default 10), under the session record (`record=0` hides it) | `GET /api/live?events=0` (its `games`, up to 40) |
+| `record` | Today's record and win rate (from local midnight), play / draw columns, rank, the current deck's record today (each optional, `hide`; `deck_record` carries `today_*`). Old links' `period` is ignored | `GET /api/live?events=0` (`today` with its `play`/`draw` split) |
+| `games` | Today's games, newest first, as on Live Scoreboard (result, Play/Draw, deck, opponent, turns, length; no replay links or clock time), 1–25 of them (`count`, default 10), under today's record (`record=0` hides it) | `GET /api/live?events=0` (its `games`, up to 40) |
 | `matchup` | Opponent, revealed colors, archetype guess, head-to-head, play/draw, game number, turn | `GET /api/live?events=0` |
 | `spotlight` | A large image of the latest card cast, for a few seconds | `GET /api/live?since=` |
 
@@ -56,8 +56,8 @@ Rules:
   per-widget `sort`, `lands`, `who`, `seconds`, `opponent=0`, `idle=show`,
   and the full overlay's `opacity=0..100`, `sideboard=right|left|below|off`,
   `names=type|white`, and recent games' `count=1..25` and `record=0`),
-  so OBS keeps them and the tracker stores nothing. Settings → Streaming builds
-  the URLs, copies them, and remembers the choices in browser localStorage.
+  so OBS keeps them and the tracker stores nothing. The Stream Kit page
+  (`#/stream-kit`) builds the URLs, copies them, and remembers the choices in browser localStorage.
 - `demo=1` shows sample data so streamers can place and size sources without a
   game running; `preview=1` paints a checkerboard behind the widget in a
   normal browser tab.
@@ -90,8 +90,8 @@ overlay side by side with the in-game overlay (same numbers, sideboard in a Bo3)
 and its `zoom` scaling in OBS's browser on both systems; the deck widget's odds
 against the overlay's; the spotlight for both players' casts,
 split and Alchemy (`A-`) names, and a reload mid-game (it must not replay the
-game so far); hide/show between games and in a Bo3; the record across a
-session break.
+game so far); hide/show between games and in a Bo3; the record across
+midnight.
 
 Not in this phase: dashboard access from another computer (two-PC streaming).
 The server listens on 127.0.0.1 only and has destructive POST routes (reset,
@@ -110,10 +110,10 @@ additions to `/api/live`.
 | Widget | Shows | New data |
 | --- | --- | --- |
 | `scorebug` | A slim TV-style bar: both names and life totals (a change flashes and shows the difference), turn number, whose turn it is with a turn timer, and in Bo3 the game number and match score | `now.match_score` (finished games of the current match) |
-| `result` | After each game, a VICTORY / DEFEAT card for a few seconds: deck, opponent, turns, length, play or draw, the session's or today's record after it (`period`), and one notable fact (flawless win, flood, screw, won on the draw) | `now.draw_quality` (below), frozen with the last game |
+| `result` | After each game, a VICTORY / DEFEAT card for a few seconds: deck, opponent, turns, length, play or draw, today's record after it, and one notable fact (flawless win, flood, screw, won on the draw) | `now.draw_quality` (below), frozen with the last game |
 | `opponent` | "What they're on": the opponent's likely deck, colors and your record against it, then every card they've played this game, grouped by type with mana costs and copies, lands folded into one line | `now.opponent_seen`: name, type, mana cost and times played per card, from the tracker |
 | `lands` | Flood / screw meter: lands seen against the deck's expected count on a gauge, the verdict Game Detail would give (normal, flood, screw, land streak), and the chance the next draw is a land | `now.draw_quality`: `draw_quality_metrics` run live by the tracker on the opening hand and draws |
-| `break` | An intermission card for a "be right back" or between-games scene: a title the streamer types, the session's (with its length) or today's record and its results as W/L squares (`period`), the current deck's record, and rank (with the climb this session) | `now.rank.start`, the rank when the session began |
+| `break` | An intermission card for a "be right back" or between-games scene: a title the streamer types, today's record and its results as W/L squares, the current deck's record, and rank (with the climb since midnight) | `now.rank.start`, the rank at midnight |
 | `deckstats` | One deck's record (a streamer's request): win rate and record, then Deck Manager's splits as a strip of columns, each optional: ranked / casual, play / draw, recent form (dots). Columns with no games drop out; under five games a column (and the headline) shows the record, not a rate | `now.deck_record` gains the ranked / unranked / play / draw splits and the last ten results |
 
 Later, not started:
@@ -122,7 +122,7 @@ Later, not started:
   (●●●●○ ✕). Arena's log reports a run's wins and losses, but the tracker doesn't
   read them yet; this needs parser work first.
 - **Session goal.** "Road to Mythic", "10 wins tonight": the goal goes in the
-  widget's link and a bar fills as the session goes. Rank goals need the rank
+  widget's link and a bar fills as the day goes. Rank goals need the rank
   steps between tiers.
 - **Brawl commanders.** Both commanders' card images side by side in Brawl.
 - **Two-PC streaming** (see "Not in this phase" above) arguably matters more than

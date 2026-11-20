@@ -10,6 +10,7 @@ import webbrowser
 from pathlib import Path
 from typing import Callable, Optional, TextIO
 
+from . import app_nap
 from .analytics import AnalyticsStore
 from .collection_export import COLLECTION_SCAN_FLAG
 from .dashboard import DEFAULT_DB_PATH, create_dashboard_server
@@ -375,15 +376,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     app_settings = load_app_settings(create=False)
     if args.port is None:
         args.port = app_settings.dashboard_port
-    # Keep --no-browser as a one-run override of the saved preference. A
-    # relaunch after an update never opens a tab: the old one reloads itself.
-    args.no_browser = (
-        args.no_browser or args.after_update or not app_settings.open_dashboard_on_launch
-    )
+    # A relaunch by the updater (new version, or the old one after a failed
+    # install) may start while the old process is still exiting, and never
+    # opens a tab: the old one reloads itself.
+    relaunched = bool(args.after_update or args.update_failed)
+    # Keep --no-browser as a one-run override of the saved preference.
+    args.no_browser = args.no_browser or relaunched or not app_settings.open_dashboard_on_launch
 
     instance_guard = SingleInstanceGuard()
     try:
-        if args.after_update:
+        if relaunched:
             # The old version may still be shutting down; wait for its lock.
             guard_acquired = acquire_with_retry(instance_guard, AFTER_UPDATE_LOCK_WAIT_S)
         else:
@@ -399,7 +401,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1
 
     if not guard_acquired:
-        if args.after_update:
+        if relaunched:
+            # Also the second of two relaunches after a failed Windows install
+            # (Setup's own and the hand-off watcher's).
             from .updater_support import append_log
 
             append_log("relaunch after update found another instance still running; exiting")
@@ -419,6 +423,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     try:
+        # A menu-bar app with no window is what macOS naps: the dashboard and
+        # the log reader then run several times slower (see app_nap.py).
+        app_nap.stay_awake()
         if args.no_gui:
             return _run_without_gui(args)
 

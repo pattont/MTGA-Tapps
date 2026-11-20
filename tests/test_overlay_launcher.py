@@ -126,6 +126,8 @@ def test_manager_starts_with_api_url_and_stops(tmp_path):
         str(tmp_path / "data" / "overlay.log"),
         "--parent-pid",
         str(os.getpid()),
+        "--panels",
+        "both",
         "--api",
         "http://127.0.0.1:8123",
     ]
@@ -317,6 +319,59 @@ def test_manager_recognizes_and_stops_external_overlay(tmp_path):
     assert status["enabled"] is False
 
 
+def test_panels_choice_is_saved_sent_to_a_running_overlay_and_passed_at_launch(tmp_path, monkeypatch):
+    """Settings → In-game overlay → Panels: both, the deck panel alone, or the
+    opponent panel alone. settings.json owns it; the overlay is told with a
+    second launch, and every start carries it."""
+    binary = _fake_binary(tmp_path)
+    launched = []
+
+    def popen(args, **kwargs):
+        process = FakeProcess(args, **kwargs)
+        launched.append(process)
+        return process
+
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"overlay": {"enabled": False}, "startup": {"x": 1}}))
+    manager = OverlayManager(
+        binary=binary,
+        settings_path=settings,
+        popen=popen,
+        log_dir=tmp_path,
+        process_finder=lambda _binary: [],
+    )
+    assert manager.panels == "both" and overlay_launcher.load_overlay_panels(settings) == "both"
+
+    # Not running: saved, nothing launched, other settings untouched.
+    status = manager.set_panels("opponent")
+    assert status["panels"] == "opponent" and launched == []
+    saved = json.loads(settings.read_text())
+    assert saved == {"overlay": {"enabled": False, "panels": "opponent"}, "startup": {"x": 1}}
+
+    # The next start carries it.
+    manager.set_enabled(True)
+    assert launched[0].args[-2:] == ["--panels", "opponent"]
+
+    # Running: the overlay is told at once.
+    status = manager.set_panels("deck")
+    assert status["panels"] == "deck"
+    assert launched[-1].args == [str(binary), "--panels", "deck"]
+    assert manager.running is True
+
+    with pytest.raises(ValueError):
+        manager.set_panels("neither")
+    assert manager.panels == "deck"
+    # A hand-edited unknown value reads as the default.
+    settings.write_text(json.dumps({"overlay": {"panels": "sideways"}}))
+    assert manager.panels == "both"
+
+    monkeypatch.setattr(overlay_launcher, "_manager", manager)
+    code, body = settings_api.handle_post("/api/settings/overlay", {"panels": "opponent"})
+    assert code == 200 and body["overlay"]["panels"] == "opponent"
+    code, body = settings_api.handle_post("/api/settings/overlay", {"panels": "none"})
+    assert code == 400
+
+
 def test_settings_api_exposes_and_toggles_the_overlay(tmp_path, monkeypatch):
     binary = _fake_binary(tmp_path)
     manager = OverlayManager(binary=binary, settings_path=tmp_path / "settings.json", popen=FakeProcess, log_dir=tmp_path)
@@ -348,6 +403,7 @@ def test_overlay_status_in_settings_get(tmp_path, monkeypatch):
     assert code == 200
     assert body["overlay"] == {
         "enabled": True,  # on by default until turned off
+        "panels": "both",
         "available": True,
         "running": False,
         "binary": str(manager.binary),

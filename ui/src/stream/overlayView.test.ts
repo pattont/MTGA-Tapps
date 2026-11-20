@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEMO_OVERLAY } from './demo';
-import { deckColors, manaSymbols, oddsTone, overlaySections, shortFormat, showsLibrary, tintAlpha } from './overlayView';
+import { deckColors, libraryNotice, manaSymbols, oddsTone, overlaySections, shortFormat, showsLibrary, tintAlpha, unseenCount } from './overlayView';
 import type { OverlayState } from './types';
 
 const demo = DEMO_OVERLAY.state!;
@@ -24,6 +24,14 @@ describe('overlay view helpers', () => {
     expect(shortFormat('Historic Brawl')).toBe('Hist. Brawl');
     expect(shortFormat(null)).toBe('');
     expect(deckColors([{ mana_cost: '{1}{G}' }, { mana_cost: '{W/U}' }, { mana_cost: null }])).toBe('WUG');
+  });
+
+  it('words cards that left the library unseen the way the overlay does', () => {
+    expect(unseenCount(demo)).toBe(0);
+    expect(libraryNotice(demo)).toBeNull();
+    expect(libraryNotice({ unseen: 24 })).toBe("24 cards left your library and Arena's log didn't name them. Counts show the most that can be left.");
+    expect(libraryNotice({ unseen: 1 })).toContain("didn't name it.");
+    expect(libraryNotice({ log_gap: true })).toBe("Arena's log skipped a large move. Counts may be out of date until your next draw.");
   });
 
   it('tones odds like the overlay', () => {

@@ -2,7 +2,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { ColorPips } from '../../components/ColorPips';
 import type { DeckRow } from '../deckRows';
 import { shows, type DeckSort, type StreamOptions } from '../options';
-import { deckColors, oddsTone, overlaySections, shortFormat, showsLibrary, tintAlpha } from '../overlayView';
+import { deckColors, libraryNotice, oddsTone, overlaySections, shortFormat, showsLibrary, tintAlpha, unseenCount } from '../overlayView';
 import type { OverlayPayload, OverlaySideCard, OverlayState } from '../types';
 import { useOverlay } from '../useOverlay';
 import { AutoScroll } from './AutoScroll';
@@ -30,7 +30,7 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
-function CardRow({ row, sub }: { row: DeckRow; sub?: boolean }) {
+function CardRow({ row, sub, ceiling }: { row: DeckRow; sub?: boolean; ceiling?: boolean }) {
   const out = row.left === 0;
   return (
     <div className={`row${out ? ' dim' : ''}${sub ? ' sub' : ''}`}>
@@ -40,7 +40,11 @@ function CardRow({ row, sub }: { row: DeckRow; sub?: boolean }) {
       </span>
       <span className="right">
         <span className="cnt">
-          <b>{row.left}</b>/{row.total}
+          <b>
+            {ceiling && !out ? '≤' : ''}
+            {row.left}
+          </b>
+          /{row.total}
         </span>
         <span className={`pct ${out ? 'cold' : oddsTone(row.nextDraw)}`}>{out ? '—' : `${row.nextDraw}%`}</span>
       </span>
@@ -115,6 +119,9 @@ export function OverlayView({ payload, options }: { payload: OverlayPayload; opt
   const sideOpen = options.sideboard !== 'off' && sideCount > 0;
   const landsOpen = options.lands === 'all';
   const unaccounted = state.unaccounted ?? 0;
+  // Cards left the library unseen: counts are ceilings, and a line says so.
+  const ceiling = unseenCount(state) > 0;
+  const notice = libraryNotice(state);
 
   return (
     <>
@@ -140,6 +147,7 @@ export function OverlayView({ payload, options }: { payload: OverlayPayload; opt
           <div className="t">
             Land drops
             <small>
+              {ceiling ? 'up to ' : ''}
               {state.lands_left} of {state.library_size} left
             </small>
           </div>
@@ -172,8 +180,9 @@ export function OverlayView({ payload, options }: { payload: OverlayPayload; opt
         ) : null}
       </div>
       <AutoScroll frameClassName="list-frame" className="list" label="Library">
+        {notice ? <div className="note warn">{notice}</div> : null}
         {spells.map((row) => (
-          <CardRow key={row.key} row={row} />
+          <CardRow key={row.key} row={row} ceiling={ceiling} />
         ))}
         {state.lands_total > 0 ? (
           <SummaryRow
@@ -182,7 +191,11 @@ export function OverlayView({ payload, options }: { payload: OverlayPayload; opt
             open={landsOpen}
             count={
               <>
-                <b>{state.lands_left}</b>/{state.lands_total}
+                <b>
+                  {ceiling && state.lands_left > 0 ? '≤' : ''}
+                  {state.lands_left}
+                </b>
+                /{state.lands_total}
               </>
             }
             odds={
@@ -192,7 +205,7 @@ export function OverlayView({ payload, options }: { payload: OverlayPayload; opt
             }
           />
         ) : null}
-        {landsOpen ? lands.map((row) => <CardRow key={row.key} row={row} sub />) : null}
+        {landsOpen ? lands.map((row) => <CardRow key={row.key} row={row} sub ceiling={ceiling} />) : null}
         {drawn > 0 ? <div className="grp">Drawn ({drawn})</div> : null}
         {sideCount > 0 ? <SummaryRow label="Sideboard" typeClass="other" open={sideOpen} count={<b>{sideCount}</b>} /> : null}
         {unaccounted > 0 ? (

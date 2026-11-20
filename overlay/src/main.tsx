@@ -1,6 +1,7 @@
 import { render } from 'preact';
 import { App } from './App';
-import { log } from './tauri';
+import { OpponentApp } from './OpponentApp';
+import { log, pageView } from './tauri';
 import './styles.css';
 
 window.addEventListener('error', (event) => log(`error: ${event.message} (${event.filename}:${event.lineno})`));
@@ -13,4 +14,4 @@ document.addEventListener('keydown', (event) => {
   if ((event.ctrlKey || event.metaKey) && ['+', '-', '=', '0'].includes(event.key)) event.preventDefault();
 });
 
-render(<App />, document.getElementById('root')!);
+render(pageView() === 'opponent' ? <OpponentApp /> : <App />, document.getElementById('root')!);

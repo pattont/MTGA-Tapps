@@ -8,11 +8,13 @@ import sqlite3
 import sys
 import threading
 import time
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from .analytics import AnalyticsStore, SessionSnapshot
+from . import game_derived
 from .analytics_persistence import (
     analytics_card_base_name,
     persist_card_summary,
@@ -23,6 +25,7 @@ from .analytics_persistence import (
     persist_submitted_deck,
 )
 from .format_normalizer import (
+    is_direct_challenge_format,
     is_jump_in_format,
     is_midweek_format,
     is_momir_format,
@@ -40,7 +43,36 @@ from .rank_progress import (
 )
 from .replay_capture import REPLAY_VERSION, PendingEventRow, ReplayFact, replay_safe
 from .replay_capture_events import ReplayEventsMixin
+from .settings import TRACKED_MODE_DEFAULTS, tracked_modes
 from .state import CardEvent
+
+
+#: How each optional game mode is recognized, in the order a reason is named.
+_MODE_TESTS = (
+    ("jump_in", is_jump_in_format),
+    ("midweek_magic", is_midweek_format),
+    ("momir", is_momir_format),
+    ("welcome_deck", is_welcome_deck_format),
+    ("direct_challenge", is_direct_challenge_format),
+)
+
+#: What the console calls a game left out because its mode is not saved.
+UNTRACKED_MODE_LABELS = {
+    "practice": "practice game vs Sparky",
+    "jump_in": "Jump In",
+    "midweek_magic": "Midweek Magic",
+    "momir": "Momir",
+    "welcome_deck": "Welcome Deck Duels",
+    "direct_challenge": "Direct Challenge",
+}
+
+
+def _momir_saved() -> bool:
+    """Settings → Saved game modes' Momir box, for a raw payload that names Momir."""
+    try:
+        return tracked_modes()["momir"]
+    except Exception:  # noqa: BLE001 - an unreadable settings file keeps the default
+        return TRACKED_MODE_DEFAULTS["momir"]
 
 
 class TrackerAnalyticsMixin(ReplayEventsMixin):
@@ -59,24 +91,48 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
         return self._untracked_mode_reason() is not None or self.game_state.mid_game_attach
 
     def _untracked_mode_reason(self) -> Optional[str]:
-        """Name the excluded game mode, or None for a tracked match.
+        """Name the game mode that keeps this match out of history, or None.
 
-        Both the resolved format and the raw queue/event name are checked:
-        a Jump In game can persist with format "Unknown" while the event
-        name still says Jump_In_MSH.
+        Jump In, Midweek Magic, Momir, Welcome Deck Duels and practice games
+        vs Sparky are left out unless switched on in Settings → Saved
+        game modes; Direct Challenge games are saved unless switched off.
+        A match of two modes (Momir in Midweek Magic) is saved only when both
+        are on. Both the resolved format and the raw queue/event name are
+        checked: a Jump In game can persist with format "Unknown" while the
+        event name still says Jump_In_MSH.
         """
-        if self._is_bot_match():
-            return "practice game vs Sparky"
-        for value in (self.game_state.format_str, self.game_state.player_deck_event_name):
-            if is_jump_in_format(value):
-                return "Jump In"
-            if is_midweek_format(value):
-                return "Midweek Magic"
-            if is_momir_format(value):
-                return "Momir"
-            if is_welcome_deck_format(value):
-                return "Welcome Deck Duels"
+        modes = self._game_modes()
+        if not modes:
+            return None
+        saved = self._saved_game_modes()
+        for mode in modes:
+            if not saved.get(mode, False):
+                return UNTRACKED_MODE_LABELS[mode]
         return None
+
+    def _game_modes(self) -> List[str]:
+        """The optional game modes this match belongs to (``TRACKED_MODE_DEFAULTS`` keys)."""
+        state = self.game_state
+        values = (state.format_str, state.player_deck_event_name)
+        modes = [mode for mode, test in _MODE_TESTS if any(test(value) for value in values)]
+        if self._is_bot_match():
+            modes.insert(0, "practice")
+        return modes
+
+    def _saved_game_modes(self) -> Dict[str, bool]:
+        """Settings → Saved game modes, read once per game.
+
+        Read the first time the game is seen to belong to an optional mode,
+        so flipping a box mid-game never saves half a game; it applies from
+        the next game. An unreadable settings file keeps the defaults.
+        """
+        state = self.game_state
+        if state.saved_game_modes is None:
+            try:
+                state.saved_game_modes = tracked_modes()
+            except Exception:  # noqa: BLE001 - an unreadable settings file keeps the defaults
+                state.saved_game_modes = dict(TRACKED_MODE_DEFAULTS)
+        return state.saved_game_modes
 
     def _session_snapshot(self) -> SessionSnapshot:
         """Return the current session counters for analytics persistence."""
@@ -578,10 +634,18 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
         if not deck:
             return json.dumps(idle_overlay_state(game_active=True, deck_name=g.player_deck_name))
         # Departures start from the kept opening hand; everything after it
-        # is counted by _observe_library_zone_transfer.
+        # is counted by _observe_library_zone_transfer. Once Arena has shown
+        # the whole library (a search) they start from that instead: every
+        # copy the snapshot lacks has left, however it went.
         departures: Dict[str, int] = dict(g.library_departures)
-        for name in g.starting_hand or []:
-            departures[name] = departures.get(name, 0) + 1
+        if g.library_snapshot is not None:
+            for name, total in Counter(deck).items():
+                gone = total - int(g.library_snapshot.get(name, 0))
+                if gone > 0:
+                    departures[name] = departures.get(name, 0) + gone
+        else:
+            for name in g.starting_hand or []:
+                departures[name] = departures.get(name, 0) + 1
         library_size = None
         if g.player_seat_id is not None:
             library_size = g.library_size_by_seat.get(int(g.player_seat_id))
@@ -601,6 +665,10 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
             player_commanders=g.player_commanders,
             opponent_commanders=g.opponent_commanders,
             sideboard=self._overlay_sideboard_names(),
+            log_gap=bool(g.library_log_gap),
+            # Before the hand is kept the library is short by the cards
+            # being dealt, which is not a loss.
+            count_unseen=bool(g.opening_hand_capture_closed and (g.turn_number or 0) >= 1),
         )
         self._last_in_game_overlay_state = state
         return json.dumps(state, separators=(",", ":"))
@@ -634,10 +702,16 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
         """JSON list of the opponent's played cards this game, first seen
         first: name, type, mana cost and value, and times played. Feeds the
         Stream Kit's opponent widget; the archetype guess keeps reading the
-        plain name list."""
+        plain name list.
+
+        A played card's event name is its console label, "Shock (Instant)" or
+        "Ajani's Pridemate (Creature 2/2)". The list carries the card's own
+        name: the cost lookup, the card link and the hover image all need it,
+        and one card cast at two sizes is still one card."""
         cards: Dict[str, Dict[str, Any]] = {}
         for event in getattr(self, "opponent_cards", []) or []:
-            name = str(getattr(event, "card_name", "") or "").strip()
+            label = str(getattr(event, "card_name", "") or "").strip()
+            name = analytics_card_base_name(label) or label
             if not name or name.startswith("Card #"):
                 continue
             entry = cards.get(name)
@@ -758,8 +832,11 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
         if isinstance(overlay, dict) and overlay.get("cards"):
             odds = overlay.get("land_odds") or {}
             result["next_land_pct"] = odds.get("1")
-            result["library_size"] = overlay.get("library_size")
-            result["lands_left"] = overlay.get("lands_left")
+            # "N of M left" is a count; with cards gone unseen the lands
+            # left are only a ceiling, so the chance stands alone.
+            if not overlay.get("unseen"):
+                result["library_size"] = overlay.get("library_size")
+                result["lands_left"] = overlay.get("lands_left")
         return json.dumps(result, separators=(",", ":"))
 
     def _live_card_db_path(self) -> Optional[str]:
@@ -804,7 +881,9 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
 
     def _record_raw_payload_snapshot(self, payload_type: str, payload_text: str) -> None:
         """Best-effort sanitized raw payload persistence for diagnostics/replay."""
-        if self._is_untracked_match() or is_momir_format(payload_text):
+        if self._is_untracked_match():
+            return
+        if is_momir_format(payload_text) and not _momir_saved():
             return
         try:
             game_id = self._current_game_id() if self.game_state.game_start_time else None
@@ -950,17 +1029,30 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
         if conn is None:
             return
         try:
-            index = self.card_db.color_identity_index_by_name()
-            if index:
-                AnalyticsStore.backfill_card_colors(conn, index)
-            mana_index = self.card_db.mana_cost_index_by_name()
-            if mana_index:
-                AnalyticsStore.backfill_card_mana(conn, mana_index)
-            stats_index = self.card_db.stats_index_by_name()
-            if stats_index:
-                AnalyticsStore.backfill_card_stats(conn, stats_index)
+            self._backfill_card_metadata(conn)
         except (AttributeError, sqlite3.Error, OSError, TypeError, ValueError):
             return
+
+    def _backfill_card_metadata(self, conn: sqlite3.Connection) -> None:
+        """Fill cards' colours, mana costs and printed stats from the Arena
+        card database, then forget the stored per-game values of games that
+        used a card whose colour or cost was just learned: their deck and
+        opponent colours were worked out without it."""
+        missing_color, missing_cost = game_derived.cards_missing_metadata(conn)
+        index = self.card_db.color_identity_index_by_name()
+        if index:
+            AnalyticsStore.backfill_card_colors(conn, index)
+        mana_index = self.card_db.mana_cost_index_by_name()
+        if mana_index:
+            AnalyticsStore.backfill_card_mana(conn, mana_index)
+        stats_index = self.card_db.stats_index_by_name()
+        if stats_index:
+            AnalyticsStore.backfill_card_stats(conn, stats_index)
+        if missing_color or missing_cost:
+            still_color, still_cost = game_derived.cards_missing_metadata(conn)
+            learned = (missing_color - still_color) | (missing_cost - still_cost)
+            if learned and game_derived.invalidate_for_cards(conn, learned):
+                self._game_derived_refill_needed = True
 
     #: Every table whose display_name can carry a "Card #N" placeholder.
     _CARD_LABEL_TABLES = (
@@ -1044,6 +1136,10 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
                     # every single launch.
                     if conn.total_changes != changes_before:
                         resolved += 1
+                if resolved:
+                    # A renamed row can change a card's type (a land that
+                    # was "Card #N" counted as a spell): recompute everything.
+                    game_derived.invalidate_all(conn)
         except sqlite3.Error:
             return
         if resolved:
@@ -1435,6 +1531,7 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
         # damage_taken means externally inflicted life loss; life_lost keeps the
         # raw total including the participant's own payments/self damage.
         damage_taken = max(0, life_lost - self_damage)
+        library_remaining = self._final_library_size(seat_id)
         conn.execute(
             """
             INSERT INTO game_participant_stats (
@@ -1466,6 +1563,7 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
                 creatures_bounced,
                 noncreatures_bounced,
                 poison_added,
+                library_remaining,
                 counters_drawn,
                 counters_played,
                 spells_countered,
@@ -1480,7 +1578,7 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
                 scry_top,
                 scry_bottom
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(game_id, participant_id) DO UPDATE SET
                 attack_steps = excluded.attack_steps,
                 attacking_creatures = excluded.attacking_creatures,
@@ -1508,6 +1606,7 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
                 creatures_bounced = excluded.creatures_bounced,
                 noncreatures_bounced = excluded.noncreatures_bounced,
                 poison_added = excluded.poison_added,
+                library_remaining = excluded.library_remaining,
                 counters_drawn = excluded.counters_drawn,
                 counters_played = excluded.counters_played,
                 spells_countered = excluded.spells_countered,
@@ -1551,6 +1650,7 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
                 int(stats.get("creatures_bounced", 0)),
                 int(stats.get("noncreatures_bounced", 0)),
                 int(stats.get("poison_added", 0)),
+                library_remaining,
                 int(stats.get("counters_drawn", 0)),
                 int(stats.get("counters_played", 0)),
                 int(stats.get("spells_countered", 0)),
@@ -1566,6 +1666,17 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
                 int(stats.get("scry_bottom", 0)),
             ),
         )
+
+    def _final_library_size(self, seat_id: Optional[int]) -> Optional[int]:
+        """The seat's library size as Arena last listed it, or None when it
+        was never listed or a summarized message may have changed it since."""
+        if seat_id not in (1, 2):
+            return None
+        g = self.game_state
+        if int(seat_id) in g.library_stale_seats:
+            return None
+        size = g.library_size_by_seat.get(int(seat_id))
+        return int(size) if size is not None else None
 
     def _refresh_session_participant_stats(self, conn: sqlite3.Connection) -> None:
         """Recompute session role aggregates from persisted game rows."""
@@ -2004,15 +2115,7 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
             refresh_display_name=self._refresh_fallback_name_text,
         )
         try:
-            color_index = self.card_db.color_identity_index_by_name()
-            if color_index:
-                AnalyticsStore.backfill_card_colors(conn, color_index)
-            mana_index = self.card_db.mana_cost_index_by_name()
-            if mana_index:
-                AnalyticsStore.backfill_card_mana(conn, mana_index)
-            stats_index = self.card_db.stats_index_by_name()
-            if stats_index:
-                AnalyticsStore.backfill_card_stats(conn, stats_index)
+            self._backfill_card_metadata(conn)
         except (AttributeError, sqlite3.Error, OSError, TypeError, ValueError):
             pass
         try:
@@ -2111,6 +2214,52 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
 
         Returns True once the core game row is saved (the replay link is only
         worth printing then)."""
+        # The stored-values pass must not read this game between its core
+        # row and its card rows (see game_derived.WRITE_LOCK).
+        with game_derived.WRITE_LOCK:
+            saved = self._persist_game_analytics_locked(outcome, reason)
+        if getattr(self, "_game_derived_refill_needed", False):
+            # A card's colour or cost was learned: older games that used it
+            # lost their stored rows. Refill them off this thread.
+            self._game_derived_refill_needed = False
+            self._start_game_derived_backfill()
+        if saved:
+            self._tell_dashboard_game_finished()
+        return saved
+
+    def _tell_dashboard_game_finished(self) -> None:
+        """Let the dashboard rebuild, off this thread, the slow pages someone
+        opened lately, so they are ready when next looked at (a very long
+        history; nothing happens otherwise). Never blocks tracking."""
+        try:
+            from . import dashboard  # lazy: dashboard is heavy
+
+            dashboard.note_game_finished(self._analytics_store().path)
+        except Exception:
+            return
+
+    def _start_game_derived_backfill(self, *, at_launch: bool = False) -> None:
+        """Compute stored per-game values for games that have none, on a
+        background thread. Never blocks tracking. ``at_launch`` then lets
+        the dashboard get its Overview ready (a very long history only)."""
+        try:
+            path = self._analytics_store().path
+            game_derived.start_backfill(
+                path, (lambda: self._tell_dashboard_values_ready(path)) if at_launch else None
+            )
+        except Exception:
+            return
+
+    @staticmethod
+    def _tell_dashboard_values_ready(path: Any) -> None:
+        try:
+            from . import dashboard  # lazy: dashboard is heavy
+
+            dashboard.warm_overview(path)
+        except Exception:
+            return
+
+    def _persist_game_analytics_locked(self, outcome: str, reason: str) -> bool:
         if self._is_untracked_match():
             return False
         # A "game" with no turns, no opening hand, and no draws is a ghost:
@@ -2215,6 +2364,15 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
                 self._run_analytics_write(conn, persist_details)
             except sqlite3.Error as exc:
                 self._report_analytics_persistence_error("game details", game_id, exc)
+
+            # Everything the dashboard derives from this game is final now:
+            # store it once, with the functions the dashboard computes with.
+            try:
+                self._run_analytics_write(
+                    conn, lambda: game_derived.store(conn, [player_participant_id])
+                )
+            except Exception as exc:  # noqa: BLE001 - an optimisation must never cost a game
+                self._report_analytics_persistence_error("derived values", game_id, exc)
 
             try:
                 self._run_analytics_write(

@@ -14,6 +14,7 @@ import {
   FileText,
   GitBranch,
   Hand,
+  Handshake,
   Heart,
   History,
   Info,
@@ -25,6 +26,7 @@ import {
   Mountain,
   Palette,
   Play,
+  Radio,
   Repeat,
   Repeat2,
   Search,
@@ -43,13 +45,14 @@ import {
 } from 'lucide-react';
 import { TRACKER_NAME } from '../branding';
 import { dashboardNavItems, type AppNavItem } from '../nav';
-import { REPLAY_ROUTE_HASH, parseDeckFinderRoute, parseDeckManagerRoute } from '../routes';
+import { REPLAY_ROUTE_HASH, STREAM_KIT_ROUTE_HASH, parseDeckFinderRoute, parseDeckManagerRoute } from '../routes';
 import type { ThemeName } from '../theme';
 import { buyMeACoffeeUrl } from '../supportLink';
 import { CardSearch } from './CardSearch';
 import { CollapseToggle } from './CollapseToggle';
 import { UpdateBanner, UpdateIndicator, UpdateNotices } from './UpdateIndicator';
 import { UpdateStatusContext, useUpdateStatus } from './useUpdateStatus';
+import { screenshotVersion as screenshotVersionParam } from '../screenshotVersion';
 
 interface AppShellProps {
   theme: ThemeName;
@@ -79,7 +82,9 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   opponents: Swords,
   'opponents-all': Swords,
   formats: Shapes,
-  sessions: Clock,
+  days: Clock,
+  challenges: Handshake,
+  'challenges-page': Handshake,
   'all-games': List,
   'all-games-list': List,
   'audit-summary': FileText,
@@ -122,6 +127,11 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   'settings-tracker': Info,
   'settings-deck-ai': Bot,
   'settings-creators': Users,
+  'stream-kit-start': Radio,
+  'stream-kit-deck': Layers,
+  'stream-kit-game': Swords,
+  'stream-kit-record': Trophy,
+  'stream-kit-breaks': Coffee,
 };
 
 function NavIcon({ id }: { id: string }) {
@@ -184,10 +194,7 @@ export function AppShell({
   const [version, setVersion] = useState<string | null>(null);
   // Tracker-side update status, shared with Settings → Updates.
   const update = useUpdateStatus();
-  const screenshotVersionParam = new URLSearchParams(window.location.search).get('screenshotVersion');
-  const screenshotVersion = screenshotVersionParam && /^\d+\.\d+(?:\.\d+)?$/.test(screenshotVersionParam)
-    ? screenshotVersionParam
-    : null;
+  const screenshotVersion = screenshotVersionParam();
   const footerVersion = screenshotVersion ?? version;
   // Green when the tracker is running (live or idle), red when it is not.
   const [trackerState, setTrackerState] = useState<'live' | 'idle' | 'offline' | null>(null);
@@ -290,7 +297,7 @@ export function AppShell({
       const marker = 120;
       if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 8) {
         // Scrolled to the very bottom: highlight the last section. A short
-        // final section (Sessions) can never win a "closest to the marker"
+        // final section (Days) can never win a "closest to the marker"
         // contest, so distance-based picking left it permanently unlit.
         setActiveSection(sections[sections.length - 1].id);
         return;
@@ -396,7 +403,12 @@ export function AppShell({
             // Icons carry the arrow for back links; drop the text version.
             const label = item.label.replace(/^←\s*/u, '');
             return item.route ? (
-              <a key={item.id} className="nav-route" href={item.route} title={label}>
+              <a
+                key={item.id}
+                className={item.plain ? undefined : 'nav-route'}
+                href={item.route}
+                title={label}
+              >
                 <NavIcon id={item.id} />
                 <span className="sidebar-nav-label">{label}</span>
               </a>
@@ -517,6 +529,9 @@ export function AppShell({
             >
               {theme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
             </button>
+            <a aria-label="Stream Kit" className="topbar-icon-link" href={STREAM_KIT_ROUTE_HASH} title="Stream Kit">
+              <Radio aria-hidden="true" />
+            </a>
             <a aria-label="Settings" className="topbar-icon-link" href="#/settings" title="Settings">
               <Settings aria-hidden="true" />
             </a>

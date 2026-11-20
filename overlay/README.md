@@ -3,7 +3,9 @@
 The in-game overlay for Tapps Tracker: a Tauri v2 app (Rust shell, Preact
 page) that sits beside MTG Arena and shows the turn, the chance of a land on
 the next draw, the library count, and — in its panel — the full decklist
-with per-card draw odds. It reads the tracker's local `GET /api/overlay`
+with per-card draw odds. An optional second window, the opponent panel,
+docks on the other edge during games with the opponent's played cards and
+likely deck. It reads the tracker's local `GET /api/overlay`
 and, when you hover a card, that card's image from Scryfall — nothing
 else. The tracker enables it by default when its binary is available;
 Settings and the tracker menu control its lifecycle.
@@ -13,8 +15,11 @@ Settings and the tracker menu control its lifecycle.
 - `src/` — the page. `App.tsx` wires the rail, the panel, the ⚙ flyout and
   the poll loop; `model.ts` is the pure view-model (grouping, sorting,
   odds); `poll.ts` the ETag/backoff poller; `tauri.ts` the door to the Rust
-  side (with a browser stand-in for tests and `vite dev`).
-- `src-tauri/` — the shell. `lib.rs` owns the window (rail ↔ panel sizing,
+  side (with a browser stand-in for tests and `vite dev`). `OpponentApp.tsx`
+  is the opponent window's page (`OpponentRail`, `OpponentPanel`,
+  `opponentModel.ts`); `main.tsx` picks it when the shell marks the window
+  (`window.__TAPPS_VIEW__`), or for `?view=opponent` in a browser.
+- `src-tauri/` — the shell. `lib.rs` owns the windows (rail ↔ panel sizing,
   docking, hotkeys, click-through; no tray of its own — the tracker's menu bar
   drives it by launching a second instance with `--open-settings`, `--show`
   or `--hide`, which the single-instance guard hands over), `parent.rs` the
@@ -61,14 +66,39 @@ every dependency once. Both scripts also skip `npm ci` unless
 
 ## Behavior and diagnostics
 
-The panel's pin keeps it open; click-through is a separate preference. An
+The panel's pin keeps it open; click-through is a separate preference. The
+panel window also covers a transparent gutter beside the panel, where the
+hover card, sideboard and settings appear; it passes the mouse to Arena
+there unless the sideboard or settings are open. An
 unpinned open panel folds to the rail after its return delay. Final library
 state remains marked FINAL through Arena's results screen. The shell follows
 Arena's display and focus; macOS supports its fullscreen Space, while Windows
 exclusive fullscreen can cover the overlay.
 
 The page polls `/api/overlay` every 300 ms in game, 2 s between games, and
-10 s while offline, with ETag/304 handling. Library odds use remaining card
+10 s while offline, with ETag/304 handling.
+
+The opponent panel is a second window, `opponent`, built while it is on and
+destroyed when it is turned off. Which panels are on is the tracker's setting,
+not the flyout's: the dashboard's Settings → In-game overlay → Panels (Both,
+My deck, Opponent; `settings.json` `overlay.panels`), which the tracker passes
+as `--panels both|deck|opponent` on every launch and, on a change, through a
+second launch. `overlay.json`'s `deckPanel` / `opponentPanel` only mirror it
+(a standalone launch reads them, or takes `--panels` itself). With the deck
+panel off its window stays up, empty and click-through: it still holds the
+poller and the ⚙ flyout, which the tracker's menu or the opponent panel's ⚙
+(shown only then) opens. The opponent panel docks on the edge opposite the
+deck panel (the right edge beside a floating one); in opponent-only mode the
+Dock setting places the opponent panel instead and the empty deck window takes
+the other edge (`dock::pane_docks`). It has its own remembered offset, pin,
+open state and hotkey (`Alt+Shift+O`; each panel's toggle is registered only
+while that panel is on). It has no poller: the deck
+page hands each new `/api/overlay` body to the shell (`share_payload`), which
+forwards it to the opponent page and shows that window only while the body
+carries an `opponent` block, that is, while a game is on screen. Scale,
+background, rows, card-name colour, the Lands setting, the return delay and
+click-through when pinned are shared with the deck panel. Its list mirrors the
+Stream Kit's opponent widget (`ui/src/stream/liveView.ts` `groupSeen`). Library odds use remaining card
 composition; they do not condition on known scry top/bottom order. The
 tracker publishes state even for game modes excluded from saved history.
 

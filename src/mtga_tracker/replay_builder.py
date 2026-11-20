@@ -214,41 +214,80 @@ def _header_turn(text: Any) -> Optional[int]:
 def _settle_premature_first_turn(
     rows: List[Dict[str, Any]], timings: Iterable[Dict[str, Any]] = ()
 ) -> List[Dict[str, Any]]:
-    """Move a first turn header printed before the opening hands after them.
+    """Put a first turn header printed before the opening hands where turn 1 began.
 
     Before the tracker knew Arena's pregame window, a card leaving the
     opening hand before turn 1 (Leyline Axe) printed "Turn 1" early, with no
     turn number, and the real header was never printed (issue #55). The
-    kept hands, recorded when turn 1 really began, then followed it, so the
-    replay showed T0 and counted both hands as draws. The header belongs
-    after them; Arena's turn timing names who was active.
+    kept hands were recorded later (as turn 1 began, or on the draw as your
+    first turn began), so the replay showed T0 and counted both hands as
+    draws. The header goes before turn 1's first row, or after the hands
+    when nothing of turn 1 comes before them, and hands recorded after that
+    point move up ahead of it: the builder reads the opening hands only
+    before the first turn. The early header named the seat of the card that
+    printed it, and the old turn timing could too, so the active seat comes
+    from turn 2's header (the other seat), else from Arena's turn timing.
     """
     first = next((i for i, row in enumerate(rows) if row.get("event_subtype") == "turn"), None)
     if first is None or rows[first].get("turn_number") is not None:
         return rows
-    last_opening = None
-    for index in range(first + 1, len(rows)):
-        row = rows[index]
-        if row.get("event_subtype") == "turn":
-            break
-        if row.get("event_subtype") == "move" and _payload(row).get("opening"):
-            last_opening = index
-    if last_opening is None:
-        return rows
     header = dict(rows[first])
     turn = _header_turn(header.get("text")) or 1
     header["turn_number"] = turn
-    for timing in timings:
-        if _int(timing.get("turn_number")) == turn and _int(timing.get("seat_id")) in (1, 2):
-            payload = dict(_payload(header))
-            payload["active_seat"] = _int(timing.get("seat_id"))
-            header["payload_json"] = json.dumps(payload)
-            header["seat_id"] = payload["active_seat"]
+    opening: List[int] = []
+    next_header = None
+    for index in range(first + 1, len(rows)):
+        row = rows[index]
+        if row.get("event_subtype") == "turn":
+            next_header = rows[index]
             break
-    out = list(rows)
-    out.pop(first)
-    out.insert(last_opening, header)
-    return out
+        if row.get("event_subtype") == "move" and _payload(row).get("opening"):
+            opening.append(index)
+    if not opening:
+        return rows
+    start = next(
+        (
+            index
+            for index in range(first + 1, opening[-1])
+            if index not in opening
+            and _int(rows[index].get("turn_number")) == turn
+            and not _is_pregame_put(rows[index])
+        ),
+        None,
+    )
+    cut = opening[-1] + 1 if start is None else start
+    moved = [index for index in opening if index >= cut]
+
+    seat = None
+    if next_header is not None and _int(next_header.get("turn_number")) == turn + 1:
+        later = _int(_payload(next_header).get("active_seat")) or _int(next_header.get("seat_id"))
+        if later in (1, 2):
+            seat = 3 - later
+    if seat is None:
+        for timing in timings:
+            if _int(timing.get("turn_number")) == turn and _int(timing.get("seat_id")) in (1, 2):
+                seat = _int(timing.get("seat_id"))
+                break
+    if seat is not None:
+        payload = dict(_payload(header))
+        payload["active_seat"] = seat
+        header["payload_json"] = json.dumps(payload)
+        header["seat_id"] = seat
+
+    skip = {first, *moved}
+    before = [row for index, row in enumerate(rows[:cut]) if index not in skip]
+    after = [row for index, row in enumerate(rows[cut:], start=cut) if index not in skip]
+    return before + [rows[index] for index in moved] + [header] + after
+
+
+def _is_pregame_put(row: Dict[str, Any]) -> bool:
+    """A card put from the hand onto the battlefield (Leyline Axe), not played or cast."""
+    return (
+        row.get("event_subtype") == "move"
+        and _zone(row.get("zone_from")) == "hand"
+        and _zone(row.get("zone_to")) == "battlefield"
+        and _payload(row).get("reason") == "put"
+    )
 
 
 def _hoist_turn_headers(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

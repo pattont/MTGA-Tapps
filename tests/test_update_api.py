@@ -182,3 +182,26 @@ def test_settings_get_includes_updates(monkeypatch, tmp_path, fake_manager):
     assert status == 200
     assert body["updates"]["check"] is True and body["updates"]["supported"] is True
     assert body["updates"]["install_kind"] == "macos-app"
+
+
+def test_restore_defaults_only_from_the_local_dashboard(server):
+    """Restore defaults changes the login item and the overlay at once, so a
+    page on another site, or a non-JSON post, is refused before it runs."""
+    status, _h, _body = _request(
+        server,
+        "POST",
+        "/api/settings/restore-defaults",
+        {"confirm": True},
+        headers={"Origin": "https://example.com"},
+    )
+    assert status == 403
+    status, _h, _body = _request(
+        server,
+        "POST",
+        "/api/settings/restore-defaults",
+        {"confirm": True},
+        headers={"Content-Type": "text/plain"},
+    )
+    assert status == 403
+    status, _h, _body = _request(server, "POST", "/api/settings/restore-defaults", {})
+    assert status == 400

@@ -8318,7 +8318,7 @@ def test_return_to_the_battlefield_is_not_logged_as_a_return_to_hand(capsys):
 def _session_break(monkeypatch, hours):
     from mtga_tracker import tracker_lifecycle
 
-    monkeypatch.setattr(tracker_lifecycle, "session_break_hours", lambda: hours)
+    monkeypatch.setattr(tracker_lifecycle, "SESSION_BREAK_HOURS", hours)
 
 
 def _finish_game_at(tracker, ended_at, outcome="win"):
@@ -8404,22 +8404,6 @@ def test_a_new_session_writes_its_first_row_without_a_restart(tmp_path):
 
     assert tracker.session_id == "test-session"
     assert tracker.session_games_played == 1
-
-
-def test_session_break_follows_the_setting(monkeypatch):
-    """Settings → Sessions: a longer break keeps a late-night return in the
-    same session, and Never leaves only a relaunch to start one."""
-    _session_break(monkeypatch, 8)
-    tracker = make_tracker()
-    _finish_game_at(tracker, datetime(2026, 10, 26, 0, 24))
-    tracker._current_event_time = datetime(2026, 10, 26, 6, 0)
-    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
-    assert tracker.session_id == "test-session"
-
-    _session_break(monkeypatch, 0)
-    tracker._current_event_time = datetime(2026, 11, 2, 20, 0)
-    tracker._reset_new_game_tracking(opening_mulligan_prompt_seen=False)
-    assert tracker.session_id == "test-session"
 
 
 def test_an_ability_object_is_named_after_its_source_card():
@@ -8561,3 +8545,117 @@ def test_maintenance_watermark_is_per_version(tmp_path):
     assert AnalyticsStore.maintenance_watermark(conn, "pass", 2) == "7"
     assert AnalyticsStore.maintenance_watermark(conn, "pass", 1) is None
     store.close()
+
+
+def test_direct_challenge_follows_the_setting_once_per_game(monkeypatch):
+    """Settings → Saved game modes: friend games are saved by default, kept
+    out when the box is cleared, and a mid-game flip waits for the next game."""
+    from mtga_tracker import tracker_analytics
+    from mtga_tracker.settings import TRACKED_MODE_DEFAULTS
+
+    saved = dict(TRACKED_MODE_DEFAULTS)
+    reads = []
+
+    def fake_modes():
+        reads.append(1)
+        return dict(saved)
+
+    monkeypatch.setattr(tracker_analytics, "tracked_modes", fake_modes)
+    tracker = make_tracker()
+    tracker.game_state.format_str = "Traditional_DirectGame"
+    assert tracker._untracked_mode_reason() is None
+    saved["direct_challenge"] = False
+    assert not tracker._is_untracked_match()
+
+    tracker.game_state = type(tracker.game_state)()
+    tracker.game_state.format_str = "Unknown"
+    tracker.game_state.player_deck_event_name = "DirectGameBrawl"
+    assert tracker._untracked_mode_reason() == "Direct Challenge"
+    saved["direct_challenge"] = True
+    assert tracker._is_untracked_match()
+
+    # Other queues never read the setting.
+    reads.clear()
+    tracker.game_state = type(tracker.game_state)()
+    tracker.game_state.format_str = "Play"
+    saved["direct_challenge"] = False
+    assert tracker._untracked_mode_reason() is None
+    assert reads == []
+
+
+def test_unsaved_modes_are_saved_once_their_box_is_ticked(monkeypatch):
+    """Jump In, Midweek Magic, Momir, Welcome Deck Duels and practice vs
+    Sparky stay out by default and are saved when ticked; a match of two
+    modes needs both. Mid-game attaches are never saved."""
+    from mtga_tracker import tracker_analytics
+    from mtga_tracker.settings import TRACKED_MODE_DEFAULTS
+
+    saved = dict(TRACKED_MODE_DEFAULTS)
+    monkeypatch.setattr(tracker_analytics, "tracked_modes", lambda: dict(saved))
+
+    def reason(format_str=None, event=None, opponent=None):
+        tracker = make_tracker()
+        tracker.game_state.format_str = format_str
+        tracker.game_state.player_deck_event_name = event
+        tracker.game_state.opponent_display_name = opponent
+        return tracker._untracked_mode_reason()
+
+    cases = {
+        "jump_in": dict(format_str="Unknown", event="Jump_In_MSH"),
+        "midweek_magic": dict(event="MWM_Pauper"),
+        "momir": dict(format_str="Momir_Event"),
+        "welcome_deck": dict(format_str="Welcome_Deck_Duels_HOB"),
+        "practice": dict(format_str="Starter_Deck_Duels", opponent="Sparky"),
+    }
+    for mode, game in cases.items():
+        assert reason(**game) == tracker_analytics.UNTRACKED_MODE_LABELS[mode]
+        saved[mode] = True
+        assert reason(**game) is None, mode
+        saved[mode] = False
+
+    # Momir run as a Midweek Magic event is saved only with both ticked.
+    saved["momir"] = True
+    assert reason(event="MWM_Momir") == "Midweek Magic"
+    saved["midweek_magic"] = True
+    assert reason(event="MWM_Momir") is None
+
+    tracker = make_tracker()
+    tracker.game_state.format_str = "Jump_In_MSH"
+    saved["jump_in"] = True
+    tracker.game_state.mid_game_attach = True
+    assert tracker._untracked_mode_reason() is None
+    assert tracker._is_untracked_match()
+
+
+def test_full_state_does_not_replay_annotations_a_diff_delivered(monkeypatch):
+    """Arena's GameStateType_Full can repeat annotations an earlier diff carried
+    (a Mountain and The Naked Time printed "was sacrificed" twice, 2026-11-14).
+    Repeats are skipped; a full state's new annotations and every diff still run,
+    and a new game starts with no ids seen."""
+    tracker = make_tracker()
+    handled = []
+    monkeypatch.setattr(
+        tracker, "_process_annotation", lambda annotation, *a, **k: handled.append(annotation["id"])
+    )
+    info = {"matchID": "m1", "gameNumber": 1}
+    sacrifice = {"id": 848, "type": ["AnnotationType_ZoneTransfer"], "affectedIds": [475]}
+    tracker._process_game_events(
+        {"type": "GameStateType_Diff", "gameInfo": info, "annotations": [sacrifice]}
+    )
+    tracker._process_game_events(
+        {
+            "type": "GameStateType_Full",
+            "gameInfo": info,
+            "annotations": [sacrifice, {"id": 860, "type": ["AnnotationType_ObjectIdChanged"]}],
+        }
+    )
+    tracker._process_game_events(
+        {"type": "GameStateType_Diff", "gameInfo": info, "annotations": [sacrifice]}
+    )
+    assert handled == [848, 860, 848]
+
+    game_two = {"matchID": "m1", "gameNumber": 2}
+    tracker._process_game_events(
+        {"type": "GameStateType_Full", "gameInfo": game_two, "annotations": [sacrifice]}
+    )
+    assert handled == [848, 860, 848, 848]

@@ -6,6 +6,17 @@ import App from './App';
 import { makeSampleStream } from './replay/fixtures/sampleStream';
 import { cardRouteHash, gameRouteHash, replayRouteHash } from './routes';
 
+/**
+ * The newest Overview request. Card-image lookups (Scryfall) go through the
+ * same fetch and can land after it, so "the last call" alone is flaky.
+ */
+function lastSnapshotUrl(fetchMock: { mock: { calls: unknown[][] } }): string | undefined {
+  return fetchMock.mock.calls
+    .map((call) => String(call[0]))
+    .filter((url) => url.startsWith('/api/snapshot'))
+    .at(-1);
+}
+
 // No WebGL under jsdom: the replay canvas becomes a plain div and R3F hooks are inert.
 vi.mock('@react-three/fiber', () => ({
   Canvas: ({ className }: { className?: string; children?: ReactNode }) => (
@@ -14,6 +25,12 @@ vi.mock('@react-three/fiber', () => ({
   useFrame: () => undefined,
   useThree: () => undefined,
 }));
+
+/** Now as the tracker stores it: local time without a zone. */
+function localNow(): string {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 19);
+}
 
 const snapshot = {
   summary: { games: 2, wins: 1, losses: 1, draws: 0, win_rate: 50 },
@@ -191,11 +208,11 @@ const snapshot = {
       outcome: 'win',
     },
   ],
-  sessions: [
+  days_played: [
     {
-      session_id: 'session-1',
-      started_at: '2026-06-04T00:00:00',
-      ended_at: '2026-06-04T00:15:00',
+      day: '2026-06-04',
+      first_game_at: '2026-06-04T00:00:00',
+      last_game_at: '2026-06-04T00:15:00',
       duration_seconds: 900,
       games: 2,
       wins: 1,
@@ -663,7 +680,7 @@ describe('App', () => {
       ['Recent Games', '#recent-games'],
       ['Decks', '#decks'],
       ['Formats', '#formats'],
-      ['Sessions', '#sessions'],
+      ['Days', '#days'],
     ].forEach(([label, href]) => {
       expect(screen.getByRole('link', { name: label })).toHaveAttribute('href', href);
     });
@@ -675,11 +692,13 @@ describe('App', () => {
       'Play / Draw',
       'Momentum',
       'Recent Games',
-      'Sessions',
+      'Days',
+      'Games Into the Day',
     ].forEach((sectionName) => {
       expect(screen.getByRole('heading', { name: sectionName })).toBeInTheDocument();
     });
-    expect(screen.getByRole('table', { name: 'Tracker sessions' })).toBeInTheDocument();
+    expect(screen.getByRole('table', { name: 'Days played' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /Session/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('table', { name: 'Draw quality by game' })).not.toBeInTheDocument();
     const dashboardNav = screen.getByRole('navigation', { name: 'Dashboard sections' });
     expect(within(dashboardNav).getAllByRole('link').slice(0, 4).map((link) => link.textContent)).toEqual([
@@ -703,7 +722,7 @@ describe('App', () => {
       'brawl',
       'opponents',
       'formats',
-      'sessions',
+      'days',
     ]);
     const overviewSection = document.getElementById('overview');
     expect(overviewSection).not.toBeNull();
@@ -733,6 +752,12 @@ describe('App', () => {
     await waitFor(() => expect(document.documentElement.dataset.theme).toBe('light'));
     expect(screen.getByRole('button', { name: 'Switch to dark mode' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '#/settings');
+    // The Stream Kit has its own page, its icon between the theme toggle and Settings.
+    const topbarControls = Array.from(document.querySelectorAll('.topbar-actions .topbar-icon-link')).map(
+      (node) => node.getAttribute('aria-label'),
+    );
+    expect(topbarControls).toEqual(['Switch to dark mode', 'Stream Kit', 'Settings']);
+    expect(screen.getByRole('link', { name: 'Stream Kit' })).toHaveAttribute('href', '#/stream-kit');
     // DB Health moved into Settings — it is no longer a sidebar entry.
     expect(screen.queryByRole('link', { name: 'DB Health' })).not.toBeInTheDocument();
     // About 0.5 s alone, but it is the file's first full App render plus four
@@ -1009,20 +1034,20 @@ describe('App', () => {
         opponent_commanders: ["Atraxa, Praetors' Voice"],
         commander_record: [{ commander: "Atraxa, Praetors' Voice", wins: 4, losses: 2 }],
       },
-      session: {
-        id: 'S1',
-        started_at: new Date().toISOString(),
-        games_played: 3,
+      today: {
+        games: 3,
         wins: 2,
         losses: 1,
         draws: 0,
-        runtime_seconds: 1200,
         win_rate: 66.7,
+        play: { wins: 1, losses: 0 },
+        draw: { wins: 1, losses: 1 },
       },
       games: [
         {
-          id: 'G8',
-          started_at: new Date().toISOString(),
+          id: 'S1:G8',
+          // Local time, as the tracker writes it (Today's Games goes by the local date).
+          started_at: localNow(),
           outcome: 'win',
           total_turns: 9,
           duration_seconds: 420,
@@ -1069,13 +1094,14 @@ describe('App', () => {
     expect(screen.getByText('Turn 7 — Opponent')).toBeInTheDocument();
     expect(screen.getByText('Wilhelt, the Rotcleaver')).toBeInTheDocument();
     expect(screen.getByText('Opponent: Casts Big Spell')).toBeInTheDocument();
-    expect(screen.getByText('2–1')).toBeInTheDocument();
+    // The Today box: today's record.
+    expect(screen.getByLabelText('2 wins, 1 losses')).toHaveTextContent('2–1');
     // Brawl: lifetime record against the opponent's commander.
     const commanderRecord = screen.getByText(/4–2 vs/).closest('.live-side-stat');
     expect(commanderRecord).toHaveTextContent("4–2 vs Atraxa, Praetors' Voice");
     // Finished game links to its game page.
     const gameLink = screen.getByRole('link', { name: /PastFoe/ });
-    expect(gameLink.getAttribute('href')).toContain('#/game/G8');
+    expect(gameLink.getAttribute('href')).toContain(`#/game/${encodeURIComponent('S1:G8')}`);
     // The dashboard sidebar gets the Live Scoreboard route entry.
     window.location.hash = '#overview';
   });
@@ -1088,7 +1114,7 @@ describe('App', () => {
         // Server-frozen final snapshot of the last game (survives page loads).
         last_game_frozen: true,
         match_id: 'M1',
-        game_id: 'G8',
+        game_id: 'S1:G8',
         format: 'Standard Best-of-1 (Unranked)',
         match_type: 'best_of_1',
         game_number: 1,
@@ -1107,20 +1133,20 @@ describe('App', () => {
         player_lands: 3,
         opponent_lands: 2,
       },
-      session: {
-        id: 'S1',
-        started_at: new Date().toISOString(),
-        games_played: 1,
+      today: {
+        games: 1,
         wins: 1,
         losses: 0,
         draws: 0,
-        runtime_seconds: 180,
         win_rate: 100,
+        play: { wins: 0, losses: 0 },
+        draw: { wins: 1, losses: 0 },
       },
       games: [
         {
-          id: 'G8',
-          started_at: new Date().toISOString(),
+          id: 'S1:G8',
+          // Local time, as the tracker writes it (Today's Games goes by the local date).
+          started_at: localNow(),
           outcome: 'win',
           outcome_reason: 'Opponent conceded',
           total_turns: 7,
@@ -1158,15 +1184,15 @@ describe('App', () => {
     const previousChip = screen.getByText(/Previous Game — Win · Opponent conceded/);
     expect(previousChip).toBeInTheDocument();
     // A teal Watch replay pill sits right beside the Previous Game chip,
-    // and Today's Games carries a replay icon per row.
+    // and the games list (today's) carries a replay icon per row.
     const chipReplay = previousChip.nextElementSibling as HTMLElement;
     expect(chipReplay).toHaveClass('replay-link-button', 'replay-link-recorded');
-    expect(chipReplay).toHaveAttribute('href', '#/replay/G8?return=%23%2Flive');
+    expect(chipReplay).toHaveAttribute('href', '#/replay/S1%3AG8?return=%23%2Flive');
     expect(chipReplay).toHaveTextContent('Watch replay');
     const todays = document.querySelector('.live-games') as HTMLElement;
     expect(within(todays).getByRole('link', { name: 'Watch replay' })).toHaveAttribute(
       'href',
-      '#/replay/G8?return=%23%2Flive',
+      '#/replay/S1%3AG8?return=%23%2Flive',
     );
     // A tiny play/draw tag rides beside the deck name.
     const tag = todays.querySelector('.live-game-deck-line .live-game-turn-order') as HTMLElement;
@@ -1216,7 +1242,6 @@ describe('App', () => {
         error: null,
       },
       overlay: { enabled: false, available: true, running: false, binary: '/tmp/tapps-overlay', log: '/tmp/data/overlay.log', error: null },
-      sessions: { break_hours: 4, choices: [0, 1, 2, 3, 4, 6, 8, 12] },
     };
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (String(url) === '/api/settings/deck-ai/models') {
@@ -1228,10 +1253,6 @@ describe('App', () => {
           JSON.stringify({ models: [{ id: 'gemini-3-flash', label: 'Gemini 3 Flash' }] }),
           { status: 200 },
         );
-      }
-      if (String(url) === '/api/settings/sessions') {
-        settings.sessions.break_hours = JSON.parse(String(init?.body)).break_hours;
-        return new Response(JSON.stringify({ sessions: settings.sessions }), { status: 200 });
       }
       if (String(url) === '/api/settings/startup') {
         const change = JSON.parse(String(init?.body));
@@ -1286,13 +1307,8 @@ describe('App', () => {
     expect(headings.indexOf('Your data')).toBeLessThan(headings.indexOf('Backup & restore'));
     expect(await screen.findByText('never backed up')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Back up now' })).toBeDisabled();
-    // Sessions: the break defaults to four hours and saves on change.
-    const sessionBreak = screen.getByLabelText('Start a new session') as HTMLSelectElement;
-    expect(sessionBreak.value).toBe('4');
-    expect(within(sessionBreak).getByRole('option', { name: 'Only when the app opens' })).toBeInTheDocument();
-    fireEvent.change(sessionBreak, { target: { value: '8' } });
-    expect(await screen.findByText('Saved. It applies from the next match.')).toBeInTheDocument();
-    expect(settings.sessions.break_hours).toBe(8);
+    // Records count calendar days: no session break to set.
+    expect(screen.queryByLabelText('Start a new session')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Deck Finder Creators' })).toBeInTheDocument();
     expect(await screen.findByRole('switch', { name: 'Deck AI' })).toHaveAttribute('aria-checked', 'true');
     // Deck AI: the saved provider's models load into a dropdown, keeping the
@@ -1508,7 +1524,7 @@ describe('App', () => {
     await user.selectOptions(screen.getByLabelText('Format'), 'Play');
     await user.selectOptions(screen.getByLabelText('Period'), '30');
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?format=Play&days=30&trend_days=30', expect.anything()),
+      expect(lastSnapshotUrl(fetchMock)).toBe('/api/snapshot?format=Play&days=30&trend_days=30'),
     );
 
     expect(screen.getAllByRole('link', { name: 'Boros Mouse' })[0]).toHaveAttribute(
@@ -1533,7 +1549,7 @@ describe('App', () => {
     });
 
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?format=Play&days=30&trend_days=30', expect.anything()),
+      expect(lastSnapshotUrl(fetchMock)).toBe('/api/snapshot?format=Play&days=30&trend_days=30'),
     );
   });
 
@@ -1696,21 +1712,26 @@ describe('App', () => {
     expect(within(deckTable).getByText('Deck 117')).toBeInTheDocument();
   });
 
-  it('offers numbered pages and direct jumps through all tracker sessions', async () => {
-    const sessionSnapshot = {
+  it('offers numbered pages and direct jumps through every day played', async () => {
+    const daySnapshot = {
       ...snapshot,
-      sessions: Array.from({ length: 41 }, (_, index) => ({
-        ...snapshot.sessions[0],
-        session_id: `session-${index}`,
-        started_at: new Date(Date.UTC(2026, 5, 4, 0, index)).toISOString(),
-        games: index + 1,
-      })),
+      days_played: Array.from({ length: 41 }, (_, index) => {
+        const day = new Date(2026, 4, 1 + index);
+        const iso = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+        return {
+          ...snapshot.days_played[0],
+          day: iso,
+          first_game_at: `${iso}T19:00:00`,
+          last_game_at: `${iso}T21:00:00`,
+          games: index + 1,
+        };
+      }),
     };
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(sessionSnapshot), { status: 200 })));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(daySnapshot), { status: 200 })));
     const user = userEvent.setup();
     render(<App />);
-    const pagination = await screen.findByRole('navigation', { name: 'Tracker sessions pagination' });
-    const table = screen.getByRole('table', { name: 'Tracker sessions' });
+    const pagination = await screen.findByRole('navigation', { name: 'Days played pagination' });
+    const table = screen.getByRole('table', { name: 'Days played' });
     expect(within(table).getAllByRole('row')).toHaveLength(16);
     expect(within(table).getByText('41')).toBeInTheDocument();
     await user.click(within(pagination).getByRole('button', { name: 'Page 2' }));
@@ -1750,7 +1771,7 @@ describe('App', () => {
       matchups: [],
       recent: [],
       matches: [],
-      sessions: [],
+      days_played: [],
       trend: [],
     };
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(emptySnapshot), { status: 200 })));
@@ -2341,23 +2362,23 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?trend_days=30', expect.anything());
+    expect(lastSnapshotUrl(fetchMock)).toBe('/api/snapshot?trend_days=30');
 
     // The deck filter is a searchable dropdown: open, type, pick.
     await user.click(screen.getByRole('button', { name: 'Deck filter' }));
     await user.type(screen.getByLabelText('Search decks in filter'), 'boros');
     await user.click(screen.getByRole('option', { name: 'Boros Mouse' }));
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?deck=Boros+Mouse&trend_days=30', expect.anything()),
+      expect(lastSnapshotUrl(fetchMock)).toBe('/api/snapshot?deck=Boros+Mouse&trend_days=30'),
     );
 
     await user.selectOptions(screen.getByLabelText('Period'), '30');
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?deck=Boros+Mouse&days=30&trend_days=30', expect.anything()),
+      expect(lastSnapshotUrl(fetchMock)).toBe('/api/snapshot?deck=Boros+Mouse&days=30&trend_days=30'),
     );
 
     await user.click(screen.getByRole('button', { name: 'Clear filters' }));
-    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?trend_days=30', expect.anything()));
+    await waitFor(() => expect(lastSnapshotUrl(fetchMock)).toBe('/api/snapshot?trend_days=30'));
   });
 
   it('changes the trend range independently of the overview period', async () => {
@@ -2376,15 +2397,15 @@ describe('App', () => {
     expect(within(trendRange).getAllByRole('option').map((option) => option.textContent)).toContain('Last 100 games');
     await user.selectOptions(screen.getByLabelText('Period'), '7');
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?days=7&trend_days=30', expect.anything()),
+      expect(lastSnapshotUrl(fetchMock)).toBe('/api/snapshot?days=7&trend_days=30'),
     );
     await user.selectOptions(trendRange, 'days:0');
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?days=7&trend_days=0', expect.anything()),
+      expect(lastSnapshotUrl(fetchMock)).toBe('/api/snapshot?days=7&trend_days=0'),
     );
     await user.selectOptions(trendRange, 'games:25');
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith('/api/snapshot?days=7&trend_games=25', expect.anything()),
+      expect(lastSnapshotUrl(fetchMock)).toBe('/api/snapshot?days=7&trend_games=25'),
     );
     expect(screen.getByLabelText('Period')).toHaveValue('7');
   });
@@ -2417,6 +2438,10 @@ describe('App', () => {
       if (String(url).includes('/api/update')) {
         // The sidebar's update poller; an idle tracker shows no pill.
         return new Response(JSON.stringify({ state: 'up_to_date' }), { status: 200 });
+      }
+      if (!String(url).startsWith('/api/snapshot')) {
+        // Card images and anything else: not an Overview refresh.
+        return new Response('{}', { status: 404 });
       }
       return responses.shift() ?? new Response('exhausted', { status: 500 });
     });
@@ -2452,6 +2477,10 @@ describe('App', () => {
       if (String(url).includes('/api/update')) {
         // The sidebar's update poller; an idle tracker shows no pill.
         return new Response(JSON.stringify({ state: 'up_to_date' }), { status: 200 });
+      }
+      if (!String(url).startsWith('/api/snapshot')) {
+        // Card images and anything else: not an Overview refresh.
+        return new Response('{}', { status: 404 });
       }
       return responses.shift() ?? new Response('exhausted', { status: 500 });
     });
@@ -2492,6 +2521,10 @@ describe('App', () => {
       }
       if (String(_url).includes('/api/update')) {
         return Promise.resolve(new Response(JSON.stringify({ state: 'up_to_date' }), { status: 200 }));
+      }
+      if (!String(_url).startsWith('/api/snapshot')) {
+        // Card images and anything else: not an Overview refresh.
+        return Promise.resolve(new Response('{}', { status: 404 }));
       }
       callCount += 1;
       if (callCount === 1) {

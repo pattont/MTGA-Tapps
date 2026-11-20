@@ -72,9 +72,34 @@ export function idlePayload(): OverlayPayload {
   };
 }
 
-/** A session of 6–2: 2–1 on the play, 4–1 on the draw. */
-export function sessionRecord(): NonNullable<OverlayPayload['session']> {
-  return { games: 8, wins: 6, losses: 2, draws: 0, win_rate: 75, play: { wins: 2, losses: 1 }, draw: { wins: 4, losses: 1 } };
+/** Today at 6–2: 2–1 on the play, 4–1 on the draw; Diamond 2 and 3–1 with the deck on screen. */
+/** 7 lands in 10 cards from a 60-card deck with 24 lands: the flood meter reads Flooding. */
+export function drawQuality(): NonNullable<OverlayPayload['draw_quality']> {
+  return {
+    lands_seen: 7,
+    total_cards_seen: 10,
+    expected_lands_seen: 4,
+    expected_land_rate: 40,
+    deck_size: 60,
+    deck_lands: 24,
+    is_flood: true,
+    is_screw: false,
+    is_land_streak: false,
+  };
+}
+
+export function todayRecord(): NonNullable<OverlayPayload['today']> {
+  return {
+    games: 8,
+    wins: 6,
+    losses: 2,
+    draws: 0,
+    win_rate: 75,
+    play: { wins: 2, losses: 1 },
+    draw: { wins: 4, losses: 1 },
+    rank: { rank_class: 'Diamond', rank_level: 2, rank_step: 3, rank_steps: 6, mythic_percentile: null, mythic_rank: null },
+    deck: { wins: 3, losses: 1 },
+  };
 }
 
 export function offlinePayload(): OverlayPayload {
@@ -97,4 +122,27 @@ export function brawlState(): OverlayState {
     lands_total: 35,
     cards,
   };
+}
+
+/** The opponent block on turn 5: Rakdos, named from your history. */
+export function opponentBlock(): NonNullable<OverlayPayload['opponent']> {
+  return {
+    colors: 'BR',
+    lands: 4,
+    deck: { label: 'Rakdos Midrange', source: 'history', matched_cards: 3 },
+    record: { wins: 3, losses: 1 },
+    seen: [
+      { name: 'Swamp', type: 'Land', mana_cost: null, mana_value: 0, count: 2 },
+      { name: 'Bloodtithe Harvester', type: 'Creature', mana_cost: '{B}{R}', mana_value: 2, count: 1 },
+      { name: 'Blood Crypt', type: 'Land', mana_cost: null, mana_value: 0, count: 1 },
+      { name: 'Go for the Throat', type: 'Instant', mana_cost: '{1}{B}', mana_value: 2, count: 2 },
+      { name: 'Fable of the Mirror-Breaker // Reflection of Kiki-Jiki', type: 'Enchantment', mana_cost: '{2}{R}', mana_value: 3, count: 1 },
+      { name: 'Mountain', type: 'Land', mana_cost: null, mana_value: 0, count: 1 },
+      { name: 'Cut Down', type: 'Instant', mana_cost: '{B}', mana_value: 1, count: 1 },
+    ],
+  };
+}
+
+export function opponentPayload(): OverlayPayload {
+  return { ...inGamePayload(), opponent: opponentBlock() };
 }

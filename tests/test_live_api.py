@@ -101,7 +101,7 @@ def _live(now=None, **overrides):
     return payload
 
 
-def test_live_payload_snapshot_session_and_events(tmp_path):
+def test_live_payload_snapshot_today_and_events(tmp_path):
     store = _store(tmp_path)
     _log_line(store, "any console line", live=_live())
     # The feed serves game_events — the same rows the /game Timeline shows.
@@ -114,7 +114,9 @@ def test_live_payload_snapshot_session_and_events(tmp_path):
     assert payload["now"]["opponent_name"] == "Villain#12345"
     assert payload["now"]["player_commanders"] == ["Wilhelt, the Rotcleaver"]
     assert payload["now"]["opponent_commanders"] == ["Atraxa, Praetors' Voice"]
-    assert payload["session"]["wins"] == 2 and payload["session"]["win_rate"] == 66.7
+    # Records count calendar days, never the tracker session.
+    assert "session" not in payload
+    assert payload["today"]["games"] == 0 and payload["today"]["win_rate"] is None
     # Only the current game's (G1) events; timeline-shaped rows.
     assert [event["text"] for event in payload["events"]] == [
         "Opponent: Casts [Atraxa, Praetors' Voice]"
@@ -389,7 +391,7 @@ def test_handle_get_events_zero_skips_the_feed(tmp_path):
     assert body["events"] == []
     assert body["seq"] == 7
     assert body["now"]["opponent_name"] == "Villain#12345"
-    assert body["session"]["wins"] == 2
+    assert body["today"]["date"] == datetime.now().strftime("%Y-%m-%d")
 
 
 def test_settings_tracker_info_reads_live_status_paths(monkeypatch, tmp_path):
@@ -905,10 +907,10 @@ def test_frozen_last_game_not_used_while_in_game(tmp_path):
     store.close()
 
 
-def test_games_list_keeps_the_sessions_games_past_midnight(tmp_path):
-    """23:58 → 00:05: the game just played is still the "previous game" with
-    its outcome, even though the calendar day rolled over. Today's games from
-    other sessions still show; older sessions' games do not."""
+def test_games_list_is_todays_games_and_the_most_recent_game(tmp_path):
+    """23:58 → 00:05: the game just played is still the most recent game (the
+    "Last game" line), but yesterday's other games, whatever their session,
+    are not listed; today's games are."""
     store = _store(tmp_path)
     conn = store.connect()
     today = datetime.now().strftime("%Y-%m-%d")
@@ -921,9 +923,17 @@ def test_games_list_keeps_the_sessions_games_past_midnight(tmp_path):
         conn,
         [
             ("S1:match:1:game:1", "Skellies", "Villain", None, "win", yesterday),
-            ("SH:match:9:game:1", "Skellies", "Old Foe", None, "loss", yesterday),
+            ("S1:match:2:game:1", "Skellies", "Late Foe", None, "loss", yesterday),
             ("SH:match:10:game:1", "Skellies", "New Foe", None, "win", today),
         ],
+    )
+    conn.execute(
+        "UPDATE games SET started_at = ? WHERE id = 'S1:match:2:game:1'",
+        (f"{yesterday}T23:58:00",),
+    )
+    conn.execute(
+        "UPDATE games SET started_at = ? WHERE id = 'SH:match:10:game:1'",
+        (f"{today}T00:00:00",),
     )
     with conn:
         store._upsert_live_status(
@@ -933,8 +943,9 @@ def test_games_list_keeps_the_sessions_games_past_midnight(tmp_path):
     store.close()
 
     payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
-    ids = {game["id"] for game in payload["games"]}
-    assert ids == {"S1:match:1:game:1", "SH:match:10:game:1"}
+    ids = [game["id"] for game in payload["games"]]
+    assert ids == ["SH:match:10:game:1"]
+    assert payload["today"]["games"] == 1
 
 
 def test_games_list_always_has_the_most_recent_game(tmp_path):
@@ -1174,7 +1185,7 @@ def test_live_payload_passes_opponent_seen_and_draw_quality(tmp_path):
     assert now["opponent_seen"] == [] and now["draw_quality"] is None
 
 
-def test_rank_start_is_the_rank_before_the_session(tmp_path):
+def test_rank_start_is_the_rank_at_midnight(tmp_path):
     store = _store(tmp_path)
     conn = store.connect()
     conn.execute(
@@ -1188,9 +1199,10 @@ def test_rank_start_is_the_rank_before_the_session(tmp_path):
         ) VALUES ('SH', ?, 40, 'constructed', ?, ?, 0, 6)
         """,
         [
-            ("2026-08-20T10:00:00", "Gold", 2),
-            # Session S1 starts 2026-08-23T10:00:00.
-            ("2026-08-23T11:00:00", "Platinum", 4),
+            ("2026-08-20T10:00:00", "Silver", 1),
+            ((datetime.now() - timedelta(days=1)).strftime("%Y-%m-%dT23:59:00"), "Gold", 2),
+            # Today, from midnight: the climb starts from Gold 2.
+            (datetime.now().strftime("%Y-%m-%dT00:00:00"), "Platinum", 4),
         ],
     )
     conn.commit()
@@ -1201,7 +1213,7 @@ def test_rank_start_is_the_rank_before_the_session(tmp_path):
     assert (rank["start"]["rank_class"], rank["start"]["rank_level"]) == ("Gold", 2)
 
 
-def test_session_and_today_records_split_play_and_draw(tmp_path):
+def test_today_record_splits_play_and_draw(tmp_path):
     store = _store(tmp_path)
     conn = store.connect()
     today = datetime.now().strftime("%Y-%m-%d")
@@ -1222,42 +1234,137 @@ def test_session_and_today_records_split_play_and_draw(tmp_path):
     store.close()
 
     payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
-    # The session (SH) holds every seeded game; unknown turn order counts in neither side.
-    assert payload["session"]["play"] == {"wins": 2, "losses": 1}
-    assert payload["session"]["draw"] == {"wins": 1, "losses": 0}
-    # Today leaves out the older game.
+    # Today leaves out the older game; unknown turn order counts in neither side.
     assert payload["today"] == {
+        "date": today,
         "games": 4,
         "wins": 2,
         "losses": 1,
         "draws": 1,
         "win_rate": 66.7,
+        "started_at": f"{today}T10:00:00",
         "play": {"wins": 1, "losses": 1},
         "draw": {"wins": 1, "losses": 0},
+        # Per deck, most played first; the drawn game counts for neither.
+        "decks": [
+            {"deck_name": "Skellies", "wins": 1, "losses": 1},
+            {"deck_name": "Other Deck", "wins": 1, "losses": 0},
+        ],
+        # No draws were recorded for these games.
+        "flood_games": 0,
+        "screw_games": 0,
     }
+    assert "session" not in payload
 
 
-def test_deck_record_counts_this_session(tmp_path):
+def test_today_counts_flood_and_screw_games(tmp_path, monkeypatch):
+    from mtga_tracker import dashboard, game_derived
+
+    def summary(flood=False, screw=False):
+        return game_derived.DrawSummary(7, 3, 42.9, 0, 0, flood, screw, False)
+
+    verdicts = {
+        "t1-p": summary(flood=True),
+        "t2-p": summary(screw=True),
+        # Flood and screw at once reads as Flood, like every list's Draw Status.
+        "t3-p": summary(flood=True, screw=True),
+        "t4-p": summary(),
+        "o1-p": summary(screw=True),
+    }
+    asked = []
+
+    def fake_batch(conn, participants):
+        asked.append(sorted(pid for pid, _size in participants))
+        return {pid: verdicts[pid] for pid, _size in participants}, {}
+
+    monkeypatch.setattr(dashboard, "_draw_summary_batch", fake_batch)
+    live_api.reset_poll_connections()
     store = _store(tmp_path)
     conn = store.connect()
+    today = datetime.now().strftime("%Y-%m-%d")
     _seed_history(
         conn,
         [
-            ("s1", "Skellies", "A", None, "win", "2026-08-01"),
-            ("s2", "Skellies", "B", None, "loss", "2026-08-02"),
+            ("t1", "Skellies", "A", None, "win", today),
+            ("t2", "Skellies", "B", None, "loss", today),
+            ("t3", "Skellies", "C", None, "win", today),
+            ("t4", "Skellies", "D", None, "draw", today),
+            ("o1", "Skellies", "E", None, "loss", "2026-08-01"),
+        ],
+    )
+    _log_line(store, "x", live=_live(session_id="SH"))
+    store.close()
+
+    payload = live_api.build_live_payload(tmp_path / "tracker.sqlite3")
+    # Today leaves out the older game.
+    assert (payload["today"]["flood_games"], payload["today"]["screw_games"]) == (2, 1)
+    # Only the player's rows of today's games were classified.
+    assert asked == [["t1-p", "t2-p", "t3-p", "t4-p"]]
+
+
+def test_live_payload_carries_the_record_against_the_opponents_colours(tmp_path, monkeypatch):
+    from mtga_tracker import dashboard
+
+    calls = []
+
+    def fake_rows(conn, where, params):
+        calls.append(where)
+        return [
+            {"color_label": "Azorius", "colors": "WU", "games": 10, "wins": 4, "losses": 6},
+            {"color_label": "Mono-Red", "colors": "R", "games": 3, "wins": 0, "losses": 0},
+        ]
+
+    monkeypatch.setattr(dashboard, "_opponent_color_rows", fake_rows)
+    live_api.reset_poll_connections()
+    store = _store(tmp_path)
+    constructed = {"player_commanders": "[]", "opponent_commanders": "[]"}
+    _log_line(store, "x", live=_live(opponent_colors="UW", **constructed))
+    db_path = tmp_path / "tracker.sqlite3"
+    assert live_api.build_live_payload(db_path)["now"]["color_record"] == {
+        "label": "Azorius",
+        "wins": 4,
+        "losses": 6,
+    }
+    # The buckets are built once per set of games, not on every poll or line.
+    _log_line(store, "y", live=_live(opponent_colors="UW", **constructed))
+    assert live_api.build_live_payload(db_path)["now"]["color_record"]["wins"] == 4
+    assert len(calls) == 1
+    # No decided game against these colours, no colour showing, or Brawl: nothing to say.
+    _log_line(store, "z", live=_live(opponent_colors="R", **constructed))
+    assert live_api.build_live_payload(db_path)["now"]["color_record"] is None
+    _log_line(store, "z", live=_live(opponent_colors="", **constructed))
+    assert live_api.build_live_payload(db_path)["now"]["color_record"] is None
+    _log_line(store, "z", live=_live(opponent_colors="UW"))  # the fixture's Brawl game
+    assert live_api.build_live_payload(db_path)["now"]["color_record"] is None
+    store.close()
+
+
+def test_deck_record_counts_today_from_midnight(tmp_path):
+    store = _store(tmp_path)
+    conn = store.connect()
+    now = datetime.now()
+    _seed_history(
+        conn,
+        [
+            ("s1", "Skellies", "A", None, "win", now.strftime("%Y-%m-%d")),
+            ("s2", "Skellies", "B", None, "loss", (now - timedelta(days=1)).strftime("%Y-%m-%d")),
         ],
     )
     conn.execute(
-        "INSERT OR IGNORE INTO tracker_sessions (id, started_at) VALUES ('OLD', '2026-07-01T00:00:00')"
+        "UPDATE games SET started_at = ? WHERE id = 's1'", (now.strftime("%Y-%m-%dT00:00:00"),)
     )
-    conn.execute("UPDATE games SET session_id = 'OLD' WHERE id = 's2'")
+    conn.execute(
+        "UPDATE games SET started_at = ? WHERE id = 's2'",
+        ((now - timedelta(days=1)).strftime("%Y-%m-%dT23:59:59"),),
+    )
     conn.commit()
     _log_line(store, "x", live=_live(session_id="SH"))
     store.close()
 
     record = live_api.build_live_payload(tmp_path / "tracker.sqlite3")["now"]["deck_record"]
     assert (record["wins"], record["losses"]) == (1, 1)
-    assert (record["session_wins"], record["session_losses"]) == (1, 0)
+    assert (record["today_wins"], record["today_losses"]) == (1, 0)
+    assert "session_wins" not in record
 
 
 def test_live_payload_is_memoised_until_something_commits(tmp_path, monkeypatch):

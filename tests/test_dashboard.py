@@ -436,10 +436,11 @@ def test_dashboard_snapshot_and_html_render_latest_game(tmp_path):
     assert snapshot["rank_progress"][0]["rank_score"] == 82
     # Bo1 matches duplicate Recent Games rows, so the matches section is Bo3-only.
     assert snapshot["matches"] == []
-    assert snapshot["sessions"][0]["session_id"] == "session-1"
-    assert snapshot["sessions"][0]["games"] == 2
-    # One game on the play, one on the draw: the Sessions table's Play / Draw.
-    assert (snapshot["sessions"][0]["on_play"], snapshot["sessions"][0]["on_draw"]) == (1, 1)
+    assert "sessions" not in snapshot
+    assert snapshot["days_played"][0]["day"] == "2026-06-04"
+    assert snapshot["days_played"][0]["games"] == 2
+    # One game on the play, one on the draw: the Days table's Play / Draw.
+    assert (snapshot["days_played"][0]["on_play"], snapshot["days_played"][0]["on_draw"]) == (1, 1)
     assert "Boros Mouse" in html
     assert "Draw Quality" in html
     assert "Visible Drawn Cards" in html
@@ -448,42 +449,100 @@ def test_dashboard_snapshot_and_html_render_latest_game(tmp_path):
     assert "Standard Best-of-1" in html
 
 
-def test_dashboard_snapshot_returns_all_sessions_and_preserves_filters(tmp_path):
+def test_dashboard_snapshot_returns_every_day_played_and_preserves_filters(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
     with sqlite3.connect(db_path) as conn:
         for index in range(45):
-            session_id = f"history-session-{index}"
-            started_at = f"2026-09-01T00:{index:02d}:00"
+            game_id = f"history-game-{index}"
+            # Two games a day from 2026-09-01; the last of each day crosses midnight
+            # and still belongs to the day it started.
+            day = 1 + index // 2
+            clock = "10:00:00" if index % 2 == 0 else "23:58:00"
+            started_at = f"2026-09-{day:02d}T{clock}"
             conn.execute(
                 "INSERT INTO tracker_sessions (id, started_at, runtime_seconds) VALUES (?, ?, 300)",
-                (session_id, started_at),
+                (game_id, started_at),
             )
             conn.execute(
                 "INSERT INTO matches (id, session_id, format, best_of) VALUES (?, ?, 'Play', 1)",
-                (session_id, session_id),
+                (game_id, game_id),
             )
             conn.execute(
-                "INSERT INTO games (id, session_id, match_id, game_number, started_at, outcome) "
-                "VALUES (?, ?, ?, 1, ?, 'win')",
-                (session_id, session_id, session_id, started_at),
+                "INSERT INTO games (id, session_id, match_id, game_number, started_at, ended_at, "
+                "duration_seconds, outcome) VALUES (?, ?, ?, 1, ?, ?, 600, ?)",
+                (
+                    game_id,
+                    game_id,
+                    game_id,
+                    started_at,
+                    (
+                        f"2026-09-{day + 1:02d}T00:08:00"
+                        if index % 2
+                        else f"2026-09-{day:02d}T10:10:00"
+                    ),
+                    "win" if index % 3 else "loss",
+                ),
             )
             conn.execute(
                 "INSERT INTO participants (id, game_id, seat_id, role, deck_name) "
                 "VALUES (?, ?, 1, 'player', ?)",
-                (session_id, session_id, "Archived Brew" if index == 0 else "Current Brew"),
+                (game_id, game_id, "Archived Brew" if index == 0 else "Current Brew"),
             )
 
-    sessions = dashboard_snapshot(db_path)["sessions"]
-    assert {row["session_id"] for row in sessions} == {
-        "session-1", *(f"history-session-{index}" for index in range(45))
-    }
-    assert sessions[0]["session_id"] == "history-session-44"
-    assert sessions[-1]["session_id"] == "session-1"
-    assert sum(row["games"] for row in sessions) == 47
-    filtered = dashboard_snapshot(db_path, deck="Archived Brew", fmt="Play")["sessions"]
-    assert [row["session_id"] for row in filtered] == ["history-session-0"]
-    assert filtered[0]["wins"] == 1
-    assert dashboard_snapshot(db_path, since="2026-10-01")["sessions"] == []
+    days = dashboard_snapshot(db_path)["days_played"]
+    # 23 days in September plus the sample's day, newest first, no cap.
+    assert len(days) == 24
+    assert days[0]["day"] == "2026-09-23" and days[0]["games"] == 1
+    assert days[-1]["day"] == "2026-06-04"
+    assert sum(row["games"] for row in days) == 47
+    first = next(row for row in days if row["day"] == "2026-09-01")
+    assert first["games"] == 2
+    assert (first["first_game_at"], first["last_game_at"]) == (
+        "2026-09-01T10:00:00",
+        "2026-09-02T00:08:00",
+    )
+    assert first["duration_seconds"] == 1200
+    # 10:00–10:10, then 23:58: two separate stretches of play.
+    assert first["sittings"] == 2
+    # The sample day's two games, minutes apart, are one sitting.
+    assert days[-1]["sittings"] == 1
+    assert (first["wins"], first["losses"]) == (1, 1)
+    filtered = dashboard_snapshot(db_path, deck="Archived Brew", fmt="Play")["days_played"]
+    assert [row["day"] for row in filtered] == ["2026-09-01"]
+    assert (filtered[0]["wins"], filtered[0]["losses"]) == (0, 1)
+    assert dashboard_snapshot(db_path, since="2026-10-01")["days_played"] == []
+
+
+def test_fatigue_counts_games_into_the_day_not_the_tracker_session(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        # One tracker session across two days: six games on 09-01, then
+        # one on 09-02 that is the first game of its day.
+        for index in range(7):
+            game_id = f"day-game-{index}"
+            started_at = f"2026-09-01T1{index}:00:00" if index < 6 else "2026-09-02T09:00:00"
+            if index == 0:
+                conn.execute(
+                    "INSERT INTO tracker_sessions (id, started_at) VALUES ('long', ?)",
+                    (started_at,),
+                )
+                conn.execute(
+                    "INSERT INTO matches (id, session_id, format, best_of) "
+                    "VALUES ('long-m', 'long', 'Play', 1)"
+                )
+            conn.execute(
+                "INSERT INTO games (id, session_id, match_id, game_number, started_at, outcome) "
+                "VALUES (?, 'long', 'long-m', 1, ?, 'win')",
+                (game_id, started_at),
+            )
+            conn.execute(
+                "INSERT INTO participants (id, game_id, seat_id, role, deck_name) "
+                "VALUES (?, ?, 1, 'player', 'Day Brew')",
+                (game_id, game_id),
+            )
+    snapshot = dashboard_snapshot(db_path, deck="Day Brew")
+    fatigue = {row["label"]: row["games"] for row in snapshot["fatigue"]}
+    assert fatigue == {"Games 1–4": 5, "Games 5–9": 2}
 
 
 def test_dashboard_snapshot_missing_db_does_not_create_file(tmp_path):
@@ -893,6 +952,25 @@ def test_dashboard_snapshot_groups_formats_and_excludes_jump_in(tmp_path):
     assert snapshot["matches"][0]["record"] == "2-0"
     assert snapshot["matches"][0]["format_label"] == "Standard Best-of-3 (Ranked)"
 
+    # Ticked in Settings → Saved game modes, those games are history like any
+    # other, and the page's cache fingerprint changes with the choice.
+    from mtga_tracker import dashboard, settings
+
+    before = dashboard._analytics_fingerprint(db_path)
+    settings.save_tracked_modes({"jump_in": True, "midweek_magic": True})
+    dashboard.note_tracking_changed()
+    assert dashboard._analytics_fingerprint(db_path) != before
+    shown = dashboard_snapshot(db_path)
+    assert shown["summary"]["games"] == 9
+    assert excluded <= {row["game_id"] for row in shown["recent"]}
+    options = {opt["raw_format"]: opt for opt in shown["filter_options"]["formats"]}
+    assert {"Jump_In_MSH", "MWM_SlowStart_20260602"} <= set(options)
+    # The UI keeps Midweek Magic out of format lists unless a row says it is saved.
+    assert options["MWM_SlowStart_20260602"]["saved_mode"] is True
+    assert "saved_mode" not in options["Ladder"]
+    midweek_rows = [row for row in shown["formats"] if "Midweek Magic" in row["format_label"]]
+    assert midweek_rows and all(row["saved_mode"] for row in midweek_rows)
+
 
 def test_dashboard_snapshot_days_filter_keeps_recent_games(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
@@ -918,6 +996,47 @@ def test_dashboard_snapshot_days_filter_keeps_recent_games(tmp_path):
     assert snapshot["summary"]["games"] == 1
     assert snapshot["recent"][0]["game_id"] == "game-3"
     assert snapshot["filters"]["days"] == 7
+
+
+def test_last_n_days_is_whole_calendar_days(tmp_path, monkeypatch):
+    """ "Last 7 days" is today and the six days before it, from local
+    midnight: a game stays in for its whole last day and leaves at midnight
+    with the rest of that day, not seven times 24 hours after it started."""
+    from datetime import datetime
+
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)  # games at 00:01 and 00:10 on 2026-06-04
+    pinned = _pin_now(dash, monkeypatch, datetime(2026, 6, 10, 0, 30, 0))
+
+    def games(**filters):
+        return [row["game_id"] for row in dash.all_games(db_path, **filters)["games"]]
+
+    both = games()
+    assert len(both) == 2
+    # More than seven times 24 hours after both games, at any hour of the
+    # seventh day:
+    assert games(days=7) == both
+    pinned.current = datetime(2026, 6, 10, 23, 59, 59)
+    assert games(days=7) == both
+    # The same games a From date of that first day gives.
+    assert games(since="2026-06-04") == both
+    snapshot = dash.dashboard_snapshot(db_path, days=7)
+    by_date = dash.dashboard_snapshot(db_path, since="2026-06-04")
+    assert snapshot["summary"] == by_date["summary"]
+    assert snapshot["trend"] == dash.dashboard_snapshot(db_path, trend_days=7)["trend"]
+    assert len(snapshot["trend"]) == 2
+
+    pinned.current = datetime(2026, 6, 11, 0, 0, 0)
+    assert games(days=7) == []
+    assert games(days=8) == both
+
+    # One day is today.
+    pinned.current = datetime(2026, 6, 4, 23, 0, 0)
+    assert games(days=1) == both
+    pinned.current = datetime(2026, 6, 5, 0, 5, 0)
+    assert games(days=1) == []
+    assert games(days=2) == both
 
 
 def test_dashboard_snapshot_includes_win_rate_trend(tmp_path):
@@ -3290,6 +3409,46 @@ def test_deck_and_game_payloads_ship_arena_mana_costs(tmp_path):
     assert game["card_mana"]["Duress"] == {"mana_cost": "{B}", "mana_value": 1.0}
 
 
+def test_card_mana_shows_the_front_face_cost_of_a_two_part_card():
+    """A Room has a cost stored under its joined name and under each door.
+    The lookup once walked those names as a set, so which cost a page showed
+    changed from one launch to the next."""
+    from mtga_tracker.dashboard import _card_mana_map
+
+    conn = sqlite3.connect(":memory:")
+    AnalyticsStore.ensure_schema(conn)
+    conn.executemany(
+        "insert into cards (name, first_seen_at, mana_cost, mana_value) "
+        "values (?, '2026-08-01T00:00:00', ?, ?)",
+        [
+            ("Unholy Annex // Ritual Chamber", "{2}{B}{3}{B}{B}", 8.0),
+            ("Ritual Chamber", "{3}{B}{B}", 5.0),
+            ("Unholy Annex", "{2}{B}", 3.0),
+            ("Cease // Desist", "{1}{B/G}{4}{G/W}{G/W}", 8.0),
+            ("Porcelain Gallery", "{4}{W}{W}", 6.0),
+        ],
+    )
+
+    costs = _card_mana_map(
+        conn,
+        [
+            "Unholy Annex // Ritual Chamber (Enchantment)",
+            "Cease // Desist",
+            "Dollmaker's Shop // Porcelain Gallery",
+            "Unholy Annex",
+        ],
+    )
+
+    assert costs["Unholy Annex // Ritual Chamber (Enchantment)"] == {
+        "mana_cost": "{2}{B}",
+        "mana_value": 3.0,
+    }
+    assert costs["Unholy Annex"] == {"mana_cost": "{2}{B}", "mana_value": 3.0}
+    # No row for the front face: the joined name, then the other face.
+    assert costs["Cease // Desist"]["mana_cost"] == "{1}{B/G}{4}{G/W}{G/W}"
+    assert costs["Dollmaker's Shop // Porcelain Gallery"]["mana_cost"] == "{4}{W}{W}"
+
+
 def test_deck_colors_come_from_newest_decklist_casting_costs(tmp_path):
     """Deck colors use mana costs (not identity) from the latest decklist."""
     db_path = _sample_dashboard_db(tmp_path)
@@ -3766,6 +3925,460 @@ def test_response_cache_serves_until_analytics_change(tmp_path):
     assert dash.cached_response(empty, "/api/snapshot", "", compute) == b'{"n": 7}'
 
 
+def test_a_game_in_progress_only_invalidates_the_pages_that_show_its_events(tmp_path):
+    """The event log grows with every line of a live game. Keyed on it, the
+    Overview was rebuilt on every poll for as long as a game lasted."""
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    dash.clear_response_cache()
+    calls = {"/api/snapshot": 0, "/api/games": 0, "/api/deck": 0, "/api/game": 0}
+
+    def ask(path):
+        def compute():
+            calls[path] += 1
+            return b"{}"
+
+        return dash.cached_response(db_path, path, "", compute)
+
+    for path in calls:
+        ask(path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "insert into game_events (session_id, event_time, event_type, text) "
+            "values ('session-1', '2026-06-05T00:00:00', 'draw', 'You draw a card')"
+        )
+    for path in calls:
+        ask(path)
+
+    assert calls == {"/api/snapshot": 1, "/api/games": 1, "/api/deck": 1, "/api/game": 2}
+    dash.clear_response_cache()
+
+
+def test_a_page_asked_for_twice_at_once_is_built_once(tmp_path):
+    import threading
+
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    dash.clear_response_cache()
+    started, release = threading.Event(), threading.Event()
+    builds = []
+    bodies = []
+
+    def compute():
+        builds.append(1)
+        started.set()
+        assert release.wait(5)
+        return b'{"built": %d}' % len(builds)
+
+    def ask():
+        bodies.append(dash.cached_response(db_path, "/api/snapshot", "", compute))
+
+    first = threading.Thread(target=ask)
+    first.start()
+    assert started.wait(5)
+    second = threading.Thread(target=ask)
+    second.start()
+    # Another page is not held up by the one being built.
+    assert dash.cached_response(db_path, "/api/games", "", lambda: b"[]") == b"[]"
+    release.set()
+    first.join(5)
+    second.join(5)
+
+    assert bodies == [b'{"built": 1}', b'{"built": 1}']
+    assert len(builds) == 1
+    assert dash._response_builds == {}
+
+    # A build that fails leaves nothing behind, and the next request builds.
+    def broken():
+        raise RuntimeError("no such deck")
+
+    with pytest.raises(RuntimeError):
+        dash.cached_response(db_path, "/api/deck", "name=x", broken)
+    assert dash._response_builds == {}
+    assert dash.cached_response(db_path, "/api/deck", "name=x", lambda: b"{}") == b"{}"
+    dash.clear_response_cache()
+
+
+def test_response_cache_is_bounded_by_bytes(tmp_path, monkeypatch):
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    dash.clear_response_cache()
+    monkeypatch.setattr(dash, "_RESPONSE_CACHE_MAX_BYTES", 100)
+    built = []
+
+    def page(name, size):
+        def compute():
+            built.append(name)
+            return b"x" * size
+
+        return dash.cached_response(db_path, "/api/games", name, compute)
+
+    page("a", 40)
+    page("b", 40)
+    page("c", 40)  # 120 bytes held: the oldest body goes
+    page("b", 40)
+    page("c", 40)
+    assert built == ["a", "b", "c"]
+    page("a", 40)
+    assert built == ["a", "b", "c", "a"]
+    # A body larger than the whole allowance is still kept while it is the newest.
+    page("huge", 500)
+    page("huge", 500)
+    assert built[-2:] == ["a", "huge"]
+    assert len(dash._response_cache) == 1
+    dash.clear_response_cache()
+
+
+def test_response_cache_keeps_a_slow_page_longer(tmp_path, monkeypatch):
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    dash.clear_response_cache()
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(dash.time, "monotonic", lambda: clock["now"])
+    # How long a body is kept, on its own: no page here counts as slow enough
+    # to be sent past its TTL (the tests below).
+    monkeypatch.setattr(dash, "_WARM_MIN_BUILD_SECONDS", 1e9)
+    built = []
+
+    def page(seconds):
+        def compute():
+            built.append(seconds)
+            clock["now"] += seconds
+            return b"{}"
+
+        return compute
+
+    dash.cached_response(db_path, "/api/snapshot", "fast", page(0.2))
+    dash.cached_response(db_path, "/api/snapshot", "slow", page(5.0))
+    clock["now"] += 90.0
+    # The quick page's minute has passed; the five-second page is kept longer.
+    dash.cached_response(db_path, "/api/snapshot", "fast", page(0.2))
+    dash.cached_response(db_path, "/api/snapshot", "slow", page(5.0))
+    assert built == [0.2, 5.0, 0.2]
+    clock["now"] += 90.0
+    dash.cached_response(db_path, "/api/snapshot", "slow", page(5.0))
+    assert built == [0.2, 5.0, 0.2, 5.0]
+    # Never longer than the cap, however slow the page.
+    dash.cached_response(db_path, "/api/snapshot", "glacial", page(120.0))
+    clock["now"] += dash._RESPONSE_CACHE_TTL_MAX_SECONDS + 1.0
+    dash.cached_response(db_path, "/api/snapshot", "glacial", page(120.0))
+    assert built[-2:] == [120.0, 120.0]
+    dash.clear_response_cache()
+
+
+def _keep_ready(dash, monkeypatch, clock=None):
+    """Every page counts as slow, and a game-end watch takes milliseconds."""
+    dash.clear_response_cache()
+    dash.forget_warm_views()
+    monkeypatch.setattr(dash, "_WARM_MIN_BUILD_SECONDS", 0.0)
+    monkeypatch.setattr(dash, "_WARM_SETTLE_SECONDS", 0.01)
+    monkeypatch.setattr(dash, "_WARM_WATCH_SECONDS", 0.5)
+    if clock is not None:
+        monkeypatch.setattr(dash.time, "monotonic", lambda: clock["now"])
+
+
+def _pin_now(dash, monkeypatch, moment):
+    from datetime import datetime
+
+    class Pinned(datetime):
+        current = moment
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current
+
+    monkeypatch.setattr(dash, "datetime", Pinned)
+    return Pinned
+
+
+def _add_game(db_path, game_id, started_at):
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "insert into games (id, session_id, match_id, game_number, started_at, outcome) "
+            "values (?, 'session-1', 'match-1', 9, ?, 'win')",
+            (game_id, started_at),
+        )
+
+
+def test_a_slow_page_past_its_ttl_is_sent_at_once_and_rebuilt_behind(tmp_path, monkeypatch):
+    import threading
+
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    clock = {"now": 1000.0}
+    _keep_ready(dash, monkeypatch, clock)
+    started, release = threading.Event(), threading.Event()
+    builds = []
+
+    def compute():
+        builds.append(1)
+        if len(builds) == 2:
+            started.set()
+            assert release.wait(5)
+        return b'{"built": %d}' % len(builds)
+
+    def ask():
+        return dash.cached_response(db_path, "/api/snapshot", "", compute)
+
+    assert ask() == b'{"built": 1}'
+    clock["now"] += dash._RESPONSE_CACHE_TTL_SECONDS + 1.0
+    # Past its TTL with nothing changed: the body it has, without waiting for
+    # the rebuild, which is held here until released.
+    assert ask() == b'{"built": 1}'
+    assert started.wait(5)
+    key = (str(db_path), "/api/snapshot", "")
+    refresh = dash._refreshing[key]
+    # More requests during the rebuild start no second one.
+    assert ask() == b'{"built": 1}'
+    release.set()
+    refresh.join(5)
+    assert ask() == b'{"built": 2}'
+    assert len(builds) == 2
+    assert dash._refreshing == {} and dash._response_builds == {}
+
+    # A changed fingerprint is never answered from the old body.
+    _add_game(db_path, "game-9", "2026-06-05T00:00:00")
+    assert ask() == b'{"built": 3}'
+
+    # A rebuild that fails behind a request leaves no body: the next request
+    # builds the page itself and reports the error.
+    def broken():
+        raise RuntimeError("database went away")
+
+    clock["now"] += dash._RESPONSE_CACHE_TTL_SECONDS + 1.0
+    assert dash.cached_response(db_path, "/api/snapshot", "", broken) == b'{"built": 3}'
+    for thread in list(dash._refreshing.values()):
+        thread.join(5)
+    with pytest.raises(RuntimeError):
+        dash.cached_response(db_path, "/api/snapshot", "", broken)
+    dash.clear_response_cache()
+    dash.forget_warm_views()
+
+
+def test_a_page_is_sent_past_its_ttl_only_while_the_clock_cannot_change_it(tmp_path, monkeypatch):
+    """ "Last N days" is the one way a page reads the clock, and its window
+    moves only at midnight. It keeps its games until the midnight that drops
+    its oldest game's day; from then on the body is rebuilt before it is
+    sent, as it always was."""
+    from datetime import datetime, timedelta
+
+    from mtga_tracker import dashboard as dash
+    from mtga_tracker.dashboard import all_games, render_snapshot_json
+
+    db_path = _sample_dashboard_db(tmp_path)
+    clock = {"now": 1000.0}
+    _keep_ready(dash, monkeypatch, clock)
+    # The sample's games start at 00:01 and 00:10 on 2026-06-04.
+    built_at = datetime(2026, 6, 10, 12, 0, 0)
+    pinned = _pin_now(dash, monkeypatch, built_at)
+    day_leaves = datetime(2026, 6, 11, 0, 0, 0)
+
+    assert dash._clock_valid_until(db_path, {7}, built_at) == day_leaves
+    assert dash._clock_valid_until(db_path, {7, 30}, built_at) == day_leaves
+    assert dash._clock_valid_until(db_path, {30}, built_at) == datetime(2026, 7, 4)
+    # No window, or a window holding no game: the clock never changes the body.
+    assert dash._clock_valid_until(db_path, set(), built_at) == datetime.max
+    assert dash._clock_valid_until(db_path, {1}, built_at) == datetime.max
+    assert dash._clock_valid_until(db_path, {6}, built_at) == datetime.max
+    # The oldest game's time not written the way the cutoff is: it cannot be
+    # counted forward.
+    _add_game(db_path, "game-odd", "2026-06-06 00:00:30")
+    assert dash._clock_valid_until(db_path, {6}, built_at) is None
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("delete from games where id = 'game-odd'")
+    assert dash._clock_valid_until(tmp_path / "missing.sqlite3", {7}, built_at) is None
+
+    # The claim itself, on a real page: the same body all day, whatever the
+    # hour it was built at, and another one from midnight.
+    def page():
+        return render_snapshot_json(all_games(db_path, days=7))
+
+    at_build = page()
+    pinned.current = datetime(2026, 6, 10, 0, 0, 0)
+    assert page() == at_build
+    pinned.current = day_leaves - timedelta(seconds=1)
+    assert page() == at_build
+    pinned.current = day_leaves
+    assert page() != at_build
+
+    # And through the cache.
+    pinned.current = built_at
+    builds = []
+
+    def compute():
+        builds.append(1)
+        return page()
+
+    def ask():
+        return dash.cached_response(db_path, "/api/games", "days=7", compute)
+
+    first = ask()
+    key = (str(db_path), "/api/games", "days=7")
+    assert dash._response_cache[key].clock_until == day_leaves
+    clock["now"] += dash._RESPONSE_CACHE_TTL_SECONDS + 1.0
+    pinned.current = day_leaves - timedelta(seconds=1)
+    assert ask() == first
+    for thread in list(dash._refreshing.values()):
+        thread.join(5)
+    assert len(builds) == 2  # sent at once, rebuilt behind
+
+    clock["now"] += dash._RESPONSE_CACHE_TTL_SECONDS + 1.0
+    pinned.current = day_leaves
+    after = ask()
+    assert after != first  # the request waited for the rebuild
+    assert len(builds) == 3 and dash._refreshing == {}
+    # (the window is empty now: the clock can no longer change this page)
+    assert dash._response_cache[key].clock_until == datetime.max
+    dash.clear_response_cache()
+    dash.forget_warm_views()
+
+
+def test_a_quick_page_is_never_kept_ready(tmp_path, monkeypatch):
+    """A normal history builds every page in well under the threshold, so
+    nothing is sent past its TTL and nothing is rebuilt at game end."""
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    clock = {"now": 1000.0}
+    _keep_ready(dash, monkeypatch, clock)
+    monkeypatch.setattr(dash, "_WARM_MIN_BUILD_SECONDS", 0.25)
+    builds = []
+
+    def compute():
+        builds.append(1)
+        return b"%d" % len(builds)
+
+    assert dash.cached_response(db_path, "/api/snapshot", "", compute) == b"1"
+    assert dash._warm_views == {}
+    assert dash.note_game_finished(db_path) is None
+    clock["now"] += dash._RESPONSE_CACHE_TTL_SECONDS + 1.0
+    assert dash.cached_response(db_path, "/api/snapshot", "", compute) == b"2"
+    assert dash._refreshing == {}
+    dash.clear_response_cache()
+
+
+def test_slow_pages_asked_for_lately_are_rebuilt_when_a_game_ends(tmp_path, monkeypatch):
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    _keep_ready(dash, monkeypatch)
+    builds = []
+
+    def page(name):
+        def compute():
+            builds.append(name)
+            return b"%s %d" % (name.encode(), builds.count(name))
+
+        return compute
+
+    def ask(path, name):
+        return dash.cached_response(db_path, path, name, page(name))
+
+    assert ask("/api/snapshot", "overview") == b"overview 1"
+    assert ask("/api/games", "games") == b"games 1"
+    # One game's page is not rebuilt by a later game.
+    assert ask("/api/game", "one-game") == b"one-game 1"
+    assert [view.query for view in dash._warm_views.values()] == ["overview", "games"]
+
+    _add_game(db_path, "game-9", "2026-06-05T00:00:00")
+    # The tracker may spell the path another way.
+    watch = dash.note_game_finished(tmp_path / "." / "analytics.sqlite3")
+    assert watch is not None
+    # A second game during the watch extends it; no second thread.
+    assert dash.note_game_finished(db_path) is None
+    watch.join(10)
+    assert not watch.is_alive()
+    assert sorted(builds) == ["games", "games", "one-game", "overview", "overview"]
+    assert dash._warm_watches == {}
+    # Ready: opening them builds nothing.
+    assert ask("/api/snapshot", "overview") == b"overview 2"
+    assert ask("/api/games", "games") == b"games 2"
+    assert len(builds) == 5
+
+    # Another database's game end touches none of them.
+    assert dash.note_game_finished(tmp_path / "other.sqlite3") is None
+    # Emptying the cache (every POST does) keeps the record of what to rebuild.
+    dash.clear_response_cache()
+    assert len(dash._warm_views) == 2
+    dash.forget_warm_views()
+    assert dash.note_game_finished(db_path) is None
+
+
+def test_a_rebuild_nobody_waits_for_gives_way_to_a_request(tmp_path, monkeypatch):
+    """Two builds at once share one interpreter lock, so a rebuild behind the
+    scenes starts only when no request is building a page of its own."""
+    import threading
+
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    _keep_ready(dash, monkeypatch)
+    order = []
+    started, release = threading.Event(), threading.Event()
+
+    def overview():
+        order.append("overview")
+        return b"overview"
+
+    def deck():
+        order.append("deck starts")
+        started.set()
+        assert release.wait(5)
+        order.append("deck ends")
+        return b"deck"
+
+    assert dash.cached_response(db_path, "/api/snapshot", "", overview) == b"overview"
+    _add_game(db_path, "game-9", "2026-06-05T00:00:00")
+    # A request is building the deck page when the game-end rebuild is due.
+    request = threading.Thread(
+        target=lambda: dash.cached_response(db_path, "/api/deck", "name=x", deck)
+    )
+    request.start()
+    assert started.wait(5)
+    watch = dash.note_game_finished(db_path)
+    watch.join(0.3)  # several settle intervals: the rebuild is due and held
+    assert order == ["overview", "deck starts"]
+    release.set()
+    request.join(5)
+    watch.join(10)
+    assert order[:4] == ["overview", "deck starts", "deck ends", "overview"]
+    assert dash._requests_building == [0]
+    dash.clear_response_cache()
+    dash.forget_warm_views()
+
+
+def test_only_the_last_few_slow_pages_are_kept_ready_and_not_for_ever(tmp_path, monkeypatch):
+    from mtga_tracker import dashboard as dash
+
+    db_path = _sample_dashboard_db(tmp_path)
+    clock = {"now": 1000.0}
+    _keep_ready(dash, monkeypatch, clock)
+    monkeypatch.setattr(dash, "_WARM_VIEWS_MAX", 2)
+
+    def ask(name):
+        clock["now"] += 1.0
+        return dash.cached_response(db_path, "/api/deck", name, lambda: name.encode())
+
+    for name in ("a", "b", "c"):
+        ask(name)
+    assert [view.query for view in dash._warm_views.values()] == ["b", "c"]
+    ask("b")  # asked for again: now the most recent
+    assert [view.query for view in dash._warm_views.values()] == ["c", "b"]
+
+    database = db_path.resolve()
+    assert len(dash._views_to_warm(database, clock["now"])) == 2
+    clock["now"] += dash._WARM_VIEW_IDLE_SECONDS
+    assert dash._views_to_warm(database, clock["now"]) == []
+    assert dash.note_game_finished(db_path) is None
+    dash.clear_response_cache()
+    dash.forget_warm_views()
+
+
 def test_combat_profile_covers_every_deck_not_just_the_first_forty(tmp_path):
     """A player with many small decks lost the Profile and combat columns on
     every deck past the 40th. The Decks table must also include history beyond
@@ -3912,3 +4525,35 @@ def test_dashboard_static_files_are_cached_and_connections_reused(tmp_path):
     assert index.getheader("Last-Modified")
     assert revalidated.status == 304
     assert stale.status == 200
+
+
+def test_challenges_lists_only_direct_challenge_games_with_a_record_per_friend(tmp_path):
+    from mtga_tracker.dashboard import challenges
+
+    db_path = _sample_dashboard_db(tmp_path)
+    assert challenges(db_path) == {"games": [], "friends": [], "total": 0}
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "update matches set format = 'Historic', event_name = 'Traditional_DirectGame' "
+            "where id = 'match-1'"
+        )
+        conn.execute("update participants set display_name = 'Pal#123' where role = 'opponent'")
+        conn.execute("update games set outcome = 'win' where id = 'game-2'")
+
+    result = challenges(db_path)
+    assert result["total"] == 2
+    assert [row["game_id"] for row in result["games"]] == ["game-2", "game-1"]
+    assert result["friends"] == [
+        {
+            "friend": "Pal#123",
+            "matches": 1,
+            "games": 2,
+            "wins": 1,
+            "losses": 0,
+            "last_played": "2026-06-04T00:10:00",
+            "win_rate": 100.0,
+        }
+    ]
+    # All Games still lists them.
+    assert all_games(db_path)["total"] == 2

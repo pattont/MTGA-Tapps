@@ -236,6 +236,13 @@ export function parseSettingsRoute(hash: string): boolean {
   return hash === '#/settings' || hash.startsWith('#/settings?');
 }
 
+/** The Stream Kit's own page: OBS widget links and their options. */
+export const STREAM_KIT_ROUTE_HASH = '#/stream-kit';
+
+export function parseStreamKitRoute(hash: string): boolean {
+  return hash === STREAM_KIT_ROUTE_HASH || hash.startsWith(`${STREAM_KIT_ROUTE_HASH}?`);
+}
+
 export function parseLiveRoute(hash: string): boolean {
   return hash === '#/live' || hash.startsWith('#/live?');
 }
@@ -246,6 +253,13 @@ export function gamesRouteHash(filters: SnapshotFilters = {}): string {
 }
 
 export const OPPONENTS_ROUTE_HASH = '#/opponents';
+
+/** Direct Challenge games against friends (#/challenges). */
+export const CHALLENGES_ROUTE_HASH = '#/challenges';
+
+export function parseChallengesRoute(hash: string): boolean {
+  return hash === CHALLENGES_ROUTE_HASH;
+}
 
 export function parseOpponentsRoute(hash: string): boolean {
   return hash === OPPONENTS_ROUTE_HASH;

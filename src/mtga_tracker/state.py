@@ -140,6 +140,9 @@ class GameState:
         # True when the tracker first saw this game already past turn 1 (its
         # start was never observed). Such games are shown live but not saved.
         self.mid_game_attach = False
+        #: Settings → Saved game modes, read once when this game is first seen
+        #: to belong to an optional mode (None until then).
+        self.saved_game_modes: Optional[Dict[str, bool]] = None
         self.starting_hand: List[str] = []
         self.starting_hand_events: List[CardEvent] = []
         # Every full hand that was mulliganed away (or bottomed from), in order.
@@ -169,6 +172,26 @@ class GameState:
         self.library_returns: Dict[str, int] = {}
         self.library_seen_annotations: set = set()
         self.library_size_by_seat: Dict[int, int] = {}
+        #: Seats whose library size may be out of date: Arena summarized a
+        #: message (no zones logged) since it last listed that library.
+        self.library_stale_seats: set = set()
+        #: Each seat's library zone id and the instance ids Arena last listed
+        #: in it, to recognize a message that shows the player every card.
+        self.library_zone_by_seat: Dict[int, int] = {}
+        self.library_ids_by_seat: Dict[int, frozenset] = {}
+        #: Card name -> copies from the last time Arena showed the player the
+        #: whole library (a search). While set, departures and returns count
+        #: from it instead of from the kept opening hand.
+        self.library_snapshot: Optional[Dict[str, int]] = None
+        #: Arena logged a message only as a summary (over 50 objects or
+        #: annotations) and has not listed the player's library since: cards
+        #: may have left it unseen.
+        self.library_log_gap = False
+        #: Ids of every annotation processed this game. A GameStateType_Full
+        #: message can repeat annotations an earlier diff already carried
+        #: (seen: a land and a card sacrificed twice); those are skipped.
+        self.processed_annotation_ids: set = set()
+        self.processed_annotation_game: Any = None
 
         self.instance_roots: Dict[int, int] = {}
         # Targets printed as "[ID: N]" because the object was still hidden

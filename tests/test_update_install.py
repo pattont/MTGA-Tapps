@@ -173,13 +173,62 @@ def test_windows_spawn_is_detached_with_a_clean_environment(tmp_path):
         plan, popen=popen, reset_dll_directory=lambda: reset.append(True), environ=environ
     )
     command, kwargs = calls[0]
-    assert isinstance(command, str) and command == ui.windows_command(plan)
+    expected, extra = ui.windows_watch_command(plan, system_root=r"C:\Windows")
+    assert isinstance(command, str) and command == expected
     assert kwargs["creationflags"] == 0x00000008 | 0x00000200 | 0x01000000
     env = kwargs["env"]
     assert "_PYI_APPLICATION_HOME_DIR" not in env and env["KEEP"] == "1"
+    assert env[ui.WATCH_SETUP_VAR] == ui.windows_command(plan) == extra[ui.WATCH_SETUP_VAR]
+    assert env[ui.WATCH_EXE_VAR] == r"C:\app\MTGA Tracker.exe"
     assert env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
     assert reset == [True]
     assert kwargs["stdin"] is subprocess.DEVNULL and kwargs["close_fds"] is True
+
+
+def test_windows_watcher_relaunches_the_old_version_when_setup_fails(tmp_path):
+    plan = _plan(tmp_path)
+    command, extra = ui.windows_watch_command(plan, system_root=r"C:\WINDOWS")
+    # Paths travel in the environment, so cmd never parses a path's % ^ or &.
+    assert command == (
+        r'"C:\WINDOWS\System32\cmd.exe" /d /v:off /s /c "'
+        'start "" /wait %TAPPS_SETUP_COMMAND% '
+        "& (if errorlevel 0 if not errorlevel 1 exit 0) "
+        '& start "" "%TAPPS_RELAUNCH_EXE%" --update-failed 0.6.6"'
+    )
+    assert extra == {
+        "TAPPS_SETUP_COMMAND": ui.windows_command(plan),
+        "TAPPS_RELAUNCH_EXE": str(plan.executable),
+    }
+    assert str(tmp_path) not in command
+
+
+def test_windows_watcher_is_skipped_for_install_and_quit(tmp_path):
+    plan = _plan(tmp_path, relaunch=False)
+    assert ui.windows_watch_command(plan, system_root=r"C:\Windows") == (
+        ui.windows_command(plan),
+        {},
+    )
+
+
+def test_windows_watcher_drops_a_version_cmd_could_misread(tmp_path):
+    command, _ = ui.windows_watch_command(
+        _plan(tmp_path, to_version="1.0 & calc"), system_root=r"C:\Windows"
+    )
+    assert command.endswith('--update-failed"') and "calc" not in command
+
+
+def test_smart_app_control_state_reads_the_policy_value():
+    def state(value, platform="win32"):
+        return ui.smart_app_control_state(platform=platform, reader=lambda: value)
+
+    assert state(1) == "on" and state(2) == "evaluation" and state(0) == "off"
+    assert state(None) is None and state(7) is None
+    assert state(1, platform="darwin") is None
+
+    def broken():
+        raise OSError("no access")
+
+    assert ui.smart_app_control_state(platform="win32", reader=broken) is None
 
 
 def test_windows_spawn_falls_back_without_breakaway_and_retries_sharing_violations(tmp_path):

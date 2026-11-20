@@ -552,6 +552,8 @@ export function GameDetailPage({
         ['Discarded', 'cards_discarded'],
         ['Milled', 'cards_milled'],
         ['Exiled', 'cards_exiled'],
+        ['Deck size', 'deck_size'],
+        ['Library left at the end', 'library_remaining'],
       ],
     },
     {

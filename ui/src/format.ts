@@ -24,6 +24,22 @@ export function formatDateTime(value: string): string {
   return formatted.replace(/\s([AaPp])\.?\s?[Mm]\.?$/, (_, letter: string) => `${letter.toUpperCase()}M`);
 }
 
+/** A local calendar day ("2026-11-17") with its weekday: "Tue 11/17/26" in the US. */
+export function formatDay(day: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  if (!match) return day;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return date.toLocaleDateString(undefined, { weekday: 'short', year: '2-digit', month: 'numeric', day: 'numeric' });
+}
+
+/** A length of time in hours and minutes: "3h 20m", "45m", "—" when unknown. */
+export function formatHoursMinutes(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined) return '—';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;
+}
+
 /** How long ago a timestamp was, in calendar days: "today", "yesterday", "3 days ago", "2 months ago". */
 export function formatTimeAgo(value: string, now: Date = new Date()): string | null {
   const date = new Date(value);
