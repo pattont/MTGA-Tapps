@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.8
 
 **An opponent panel in the overlay, records that count today instead of a "session", a Challenges page for games with friends, and pages that stay quick with tens of thousands of games.**
 
